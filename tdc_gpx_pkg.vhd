@@ -115,43 +115,53 @@ package tdc_gpx_pkg is
     -- =========================================================================
     -- t_tdc_cfg : CSR configuration (CSR -> submodules)
     -- All fields latched at packet_start and stable during frame.
+    --
+    -- Register layout (compact):
+    --   CTL0  MAIN_CTRL  : packed control fields + COMMAND[31:28]
+    --   CTL1  BUS_TIMING : bus_clk_div[5:0] + bus_ticks[8:6]
+    --   CTL2  RANGE_COLS : max_range_clks[15:0] + cols_per_face[31:16]
+    --   CTL3  START_OFF1 : [17:0]
+    --   CTL4  CFG_REG7   : [31:0]
     -- =========================================================================
     type t_tdc_cfg is record
-        -- Control registers (0x00~0x34)
-        active_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);     -- 0x00 [3:0]
-        stops_per_chip      : unsigned(3 downto 0);                         -- 0x04 [3:0]
-        cols_per_face       : unsigned(15 downto 0);                        -- 0x08 [15:0]
-        packet_scope        : std_logic;                                    -- 0x0C [0]
-        hit_store_mode      : unsigned(1 downto 0);                         -- 0x10 [1:0]
-        dist_scale          : unsigned(2 downto 0);                         -- 0x14 [2:0]
-        drain_mode          : std_logic;                                    -- 0x18 [0]
-        n_drain_cap         : unsigned(7 downto 0);                         -- 0x1C [7:0]
-        pipeline_en         : std_logic;                                    -- 0x20 [0]
-        n_faces             : unsigned(7 downto 0);                         -- 0x24 [7:0]
-        bus_clk_div         : unsigned(7 downto 0);                         -- 0x28 [7:0]
-        bus_ticks           : unsigned(2 downto 0);                         -- 0x2C [2:0]
-        stopdis_override    : std_logic_vector(4 downto 0);                 -- 0x30 [4:0]
-        max_range_clks      : unsigned(15 downto 0);                        -- 0x34 [15:0]
-        -- TDC settings (0x40~0x44)
-        start_off1          : unsigned(17 downto 0);                        -- 0x40 [17:0]
-        cfg_reg7            : std_logic_vector(31 downto 0);                -- 0x44
+        -- CTL0: MAIN_CTRL packed fields
+        active_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);     -- CTL0[3:0]
+        packet_scope        : std_logic;                                    -- CTL0[4]
+        hit_store_mode      : unsigned(1 downto 0);                         -- CTL0[6:5]
+        dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]
+        drain_mode          : std_logic;                                    -- CTL0[10]
+        pipeline_en         : std_logic;                                    -- CTL0[11]
+        n_faces             : unsigned(2 downto 0);                         -- CTL0[14:12]
+        stops_per_chip      : unsigned(3 downto 0);                         -- CTL0[18:15]
+        n_drain_cap         : unsigned(3 downto 0);                         -- CTL0[22:19]
+        stopdis_override    : std_logic_vector(4 downto 0);                 -- CTL0[27:23]
+        -- CTL1: BUS_TIMING
+        bus_clk_div         : unsigned(5 downto 0);                         -- CTL1[5:0]
+        bus_ticks           : unsigned(2 downto 0);                         -- CTL1[8:6]
+        -- CTL2: RANGE_COLS
+        max_range_clks      : unsigned(15 downto 0);                        -- CTL2[15:0]
+        cols_per_face       : unsigned(15 downto 0);                        -- CTL2[31:16]
+        -- CTL3: START_OFF1
+        start_off1          : unsigned(17 downto 0);                        -- CTL3[17:0]
+        -- CTL4: CFG_REG7
+        cfg_reg7            : std_logic_vector(31 downto 0);                -- CTL4[31:0]
     end record;
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
         active_chip_mask    => (others => '1'),         -- all 4 chips active
-        stops_per_chip      => to_unsigned(8, 4),
-        cols_per_face       => to_unsigned(2400, 16),
-        packet_scope        => '0',                     -- face 단위
+        packet_scope        => '0',                     -- face scope
         hit_store_mode      => "00",                    -- RAW
         dist_scale          => "000",                   -- 1mm
         drain_mode          => '0',                     -- SourceGating
-        n_drain_cap         => (others => '0'),         -- unlimited
         pipeline_en         => '0',                     -- sequential
-        n_faces             => to_unsigned(5, 8),
-        bus_clk_div         => to_unsigned(1, 8),
-        bus_ticks           => to_unsigned(5, 3),
+        n_faces             => to_unsigned(5, 3),
+        stops_per_chip      => to_unsigned(8, 4),
+        n_drain_cap         => (others => '0'),         -- unlimited
         stopdis_override    => (others => '0'),
-        max_range_clks     => to_unsigned(267, 16),       -- ~200m @200MHz
+        bus_clk_div         => to_unsigned(1, 6),
+        bus_ticks           => to_unsigned(5, 3),
+        max_range_clks      => to_unsigned(267, 16),    -- ~200m @200MHz
+        cols_per_face       => to_unsigned(2400, 16),
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0')
     );

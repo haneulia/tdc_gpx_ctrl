@@ -9,23 +9,18 @@
 --   with cross-clock-domain transfer to the TDC processing domain (i_clk).
 --
 -- Register map (9-bit address, 32 CTL + 11 STAT):
---   CTL0  (0x00) ACTIVE_CHIP_MASK  [3:0] chip mask, [31:28] COMMAND
---   CTL1  (0x04) STOPS_PER_CHIP    [3:0]
---   CTL2  (0x08) COLS_PER_FACE     [15:0]
---   CTL3  (0x0C) PACKET_SCOPE      [0]
---   CTL4  (0x10) HIT_STORE_MODE    [1:0]
---   CTL5  (0x14) DIST_SCALE        [2:0]
---   CTL6  (0x18) DRAIN_MODE        [0]
---   CTL7  (0x1C) N_DRAIN_CAP       [7:0]
---   CTL8  (0x20) PIPELINE_EN       [0]
---   CTL9  (0x24) N_FACES           [7:0]
---   CTL10 (0x28) BUS_CLK_DIV       [7:0]
---   CTL11 (0x2C) BUS_TICKS         [2:0]
---   CTL12 (0x30) STOPDIS_OVERRIDE  [4:0]
---   CTL13 (0x34) MAX_RANGE_CLKS    [15:0]
---   CTL14 (0x38) START_OFF1        [17:0]
---   CTL15 (0x3C) CFG_REG7          [31:0]
---   CTL16..31 (0x40~0x7C) CFG_IMAGE[0..15] [31:0] each
+--   CTL0  (0x00) MAIN_CTRL     packed: [3:0] active_chip_mask, [4] packet_scope,
+--                               [6:5] hit_store_mode, [9:7] dist_scale,
+--                               [10] drain_mode, [11] pipeline_en,
+--                               [14:12] n_faces, [18:15] stops_per_chip,
+--                               [22:19] n_drain_cap, [27:23] stopdis_override,
+--                               [31:28] COMMAND
+--   CTL1  (0x04) BUS_TIMING    [5:0] bus_clk_div, [8:6] bus_ticks
+--   CTL2  (0x08) RANGE_COLS    [15:0] max_range_clks, [31:16] cols_per_face
+--   CTL3  (0x0C) START_OFF1    [17:0]
+--   CTL4  (0x10) CFG_REG7      [31:0]
+--   CTL5..20 (0x14~0x50) CFG_IMAGE[0..15] [31:0] each
+--   CTL21..31 reserved
 --
 --   STAT0  (0x80) HW_VERSION       [31:0] (constant)
 --   STAT1  (0x84) HW_CONFIG        packed generics (constant)
@@ -40,9 +35,10 @@
 --   STAT10 (0xA8) K_DIST           [31:0]
 --
 -- CDC structure:
---   CTL: 16 x xpm_cdc_handshake (s_axi_aclk -> i_clk)
---        CTL0~CTL15 individually; CTL16~31 (cfg_image) as group on cfg_write
+--   CTL: 5 x xpm_cdc_handshake (s_axi_aclk -> i_clk) for CTL0~4
+--        16 x xpm_cdc_handshake (s_axi_aclk -> i_clk) for cfg_image CTL5~20
 --   STAT: 6 x xpm_cdc_handshake (i_clk -> s_axi_aclk) for STAT5~10
+--   Total: 27 CDC instances
 --
 -- Clock domains:
 --   s_axi_aclk : AXI4-Lite domain (PS clock)
@@ -119,10 +115,6 @@ architecture rtl of tdc_gpx_csr is
 
     -- =========================================================================
     -- tdc_gpx_axil_csr32 component (Vivado IP: 32 CTL, 11 STAT, 1 IRQ)
-    --   Generated from my_axil_csr32 template with:
-    --     num_ctl_regs  = 32
-    --     num_stat_regs = 11
-    --     addr_width    = 9
     -- =========================================================================
     component tdc_gpx_axil_csr32 is
         port (
@@ -234,7 +226,6 @@ architecture rtl of tdc_gpx_csr is
     -- =========================================================================
     -- Constants
     -- =========================================================================
-    constant C_NUM_CTL_CDC  : natural := 16;    -- CTL0~15: individually CDC'd
     constant C_NUM_STAT_CDC : natural := 6;     -- STAT5~10: live status CDC
     constant C_ZERO32       : std_logic_vector(31 downto 0) := (others => '0');
 
@@ -248,19 +239,19 @@ architecture rtl of tdc_gpx_csr is
     -- =========================================================================
     signal s_ctl_src : t_cdc_data_array(0 to c_NUM_CTL_REGS - 1);
 
-    -- CTL after CDC (i_clk domain) — only CTL0~15 are CDC'd individually
-    signal s_ctl_out : t_cdc_data_array(0 to C_NUM_CTL_CDC - 1) := (others => C_ZERO32);
+    -- CTL after CDC (i_clk domain) — CTL0~4 (5 active registers)
+    signal s_ctl_out : t_cdc_data_array(0 to c_NUM_CTL_CDC - 1) := (others => C_ZERO32);
 
-    -- cfg_image after CDC (i_clk domain) — CTL16~31 CDC'd as group
+    -- cfg_image after CDC (i_clk domain) — CTL5~20 (16 registers)
     signal s_img_out : t_cfg_image := (others => C_ZERO32);
 
-    -- CTL CDC handshake (CTL0~15)
-    signal s_src_send_ctl : std_logic_vector(C_NUM_CTL_CDC - 1 downto 0) := (others => '0');
-    signal s_src_rcv_ctl  : std_logic_vector(C_NUM_CTL_CDC - 1 downto 0);
-    signal s_dest_req_ctl : std_logic_vector(C_NUM_CTL_CDC - 1 downto 0);
-    signal s_ctl_d1       : t_cdc_data_array(0 to C_NUM_CTL_CDC - 1) := (others => (others => '1'));
+    -- CTL CDC handshake (CTL0~4)
+    signal s_src_send_ctl : std_logic_vector(c_NUM_CTL_CDC - 1 downto 0) := (others => '0');
+    signal s_src_rcv_ctl  : std_logic_vector(c_NUM_CTL_CDC - 1 downto 0);
+    signal s_dest_req_ctl : std_logic_vector(c_NUM_CTL_CDC - 1 downto 0);
+    signal s_ctl_d1       : t_cdc_data_array(0 to c_NUM_CTL_CDC - 1) := (others => (others => '1'));
 
-    -- cfg_image CDC handshake (group: 16 regs × 32 bits = 512 bits → per-reg CDC)
+    -- cfg_image CDC handshake (CTL5~20, per-register)
     signal s_src_send_img : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0) := (others => '0');
     signal s_src_rcv_img  : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
     signal s_dest_req_img : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
@@ -330,31 +321,26 @@ begin
             s_axi_csr_rresp   => s_axi_rresp,
             s_axi_csr_rvalid  => s_axi_rvalid,
             s_axi_csr_rready  => s_axi_rready,
-            -- Init values: CTL0~13 = control, CTL14~15 = TDC, CTL16~31 = cfg_image (zero)
-            reg0_init_val  => c_INIT_ACTIVE_MASK,
-            reg1_init_val  => c_INIT_STOPS_PER_CHIP,
-            reg2_init_val  => c_INIT_COLS_PER_FACE,
-            reg3_init_val  => c_INIT_PACKET_SCOPE,
-            reg4_init_val  => c_INIT_HIT_STORE_MODE,
-            reg5_init_val  => c_INIT_DIST_SCALE,
-            reg6_init_val  => c_INIT_DRAIN_MODE,
-            reg7_init_val  => c_INIT_N_DRAIN_CAP,
-            reg8_init_val  => c_INIT_PIPELINE_EN,
-            reg9_init_val  => c_INIT_N_FACES,
-            reg10_init_val => c_INIT_BUS_CLK_DIV,
-            reg11_init_val => c_INIT_BUS_TICKS,
-            reg12_init_val => c_INIT_STOPDIS_OVR,
-            reg13_init_val => c_INIT_MAX_RANGE_CLKS,
-            reg14_init_val => C_ZERO32,   -- START_OFF1
-            reg15_init_val => C_ZERO32,   -- CFG_REG7
-            reg16_init_val => C_ZERO32,   reg17_init_val => C_ZERO32,
-            reg18_init_val => C_ZERO32,   reg19_init_val => C_ZERO32,
-            reg20_init_val => C_ZERO32,   reg21_init_val => C_ZERO32,
-            reg22_init_val => C_ZERO32,   reg23_init_val => C_ZERO32,
-            reg24_init_val => C_ZERO32,   reg25_init_val => C_ZERO32,
-            reg26_init_val => C_ZERO32,   reg27_init_val => C_ZERO32,
-            reg28_init_val => C_ZERO32,   reg29_init_val => C_ZERO32,
-            reg30_init_val => C_ZERO32,   reg31_init_val => C_ZERO32,
+            -- Init values: CTL0~4 active, CTL5~20 cfg_image (zero), CTL21~31 reserved
+            reg0_init_val  => c_INIT_MAIN_CTRL,
+            reg1_init_val  => c_INIT_BUS_TIMING,
+            reg2_init_val  => c_INIT_RANGE_COLS,
+            reg3_init_val  => c_INIT_START_OFF1,
+            reg4_init_val  => c_INIT_CFG_REG7,
+            reg5_init_val  => C_ZERO32,   reg6_init_val  => C_ZERO32,
+            reg7_init_val  => C_ZERO32,   reg8_init_val  => C_ZERO32,
+            reg9_init_val  => C_ZERO32,   reg10_init_val => C_ZERO32,
+            reg11_init_val => C_ZERO32,   reg12_init_val => C_ZERO32,
+            reg13_init_val => C_ZERO32,   reg14_init_val => C_ZERO32,
+            reg15_init_val => C_ZERO32,   reg16_init_val => C_ZERO32,
+            reg17_init_val => C_ZERO32,   reg18_init_val => C_ZERO32,
+            reg19_init_val => C_ZERO32,   reg20_init_val => C_ZERO32,
+            reg21_init_val => C_ZERO32,   reg22_init_val => C_ZERO32,
+            reg23_init_val => C_ZERO32,   reg24_init_val => C_ZERO32,
+            reg25_init_val => C_ZERO32,   reg26_init_val => C_ZERO32,
+            reg27_init_val => C_ZERO32,   reg28_init_val => C_ZERO32,
+            reg29_init_val => C_ZERO32,   reg30_init_val => C_ZERO32,
+            reg31_init_val => C_ZERO32,
             -- CTL outputs → s_ctl_src array
             ctl0_out  => s_ctl_src(0),    ctl1_out  => s_ctl_src(1),
             ctl2_out  => s_ctl_src(2),    ctl3_out  => s_ctl_src(3),
@@ -463,9 +449,9 @@ begin
     end generate gen_stat_cdc;
 
     -- =========================================================================
-    -- [5] CTL CDC: s_axi_aclk -> i_clk (CTL0~15: control + TDC settings)
+    -- [5] CTL CDC: s_axi_aclk -> i_clk (CTL0~4: 5 active control registers)
     -- =========================================================================
-    gen_ctl_cdc : for i in 0 to C_NUM_CTL_CDC - 1 generate
+    gen_ctl_cdc : for i in 0 to c_NUM_CTL_CDC - 1 generate
         u_cdc_ctl : xpm_cdc_handshake
             generic map (
                 DEST_EXT_HSK   => 1,
@@ -505,7 +491,7 @@ begin
     end generate gen_ctl_cdc;
 
     -- =========================================================================
-    -- [6] cfg_image CDC: s_axi_aclk -> i_clk (CTL16~31, per-register)
+    -- [6] cfg_image CDC: s_axi_aclk -> i_clk (CTL5~20, per-register)
     -- =========================================================================
     gen_img_cdc : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
         u_cdc_img : xpm_cdc_handshake
@@ -519,7 +505,7 @@ begin
             )
             port map (
                 src_clk   => s_axi_aclk,
-                src_in    => s_ctl_src(16 + i),
+                src_in    => s_ctl_src(5 + i),      -- CTL5~20
                 src_send  => s_src_send_img(i),
                 src_rcv   => s_src_rcv_img(i),
                 dest_clk  => i_clk,
@@ -535,9 +521,9 @@ begin
                     s_src_send_img(i) <= '0';
                     s_img_d1(i)       <= (others => '1');
                 else
-                    if s_src_send_img(i) = '0' and s_ctl_src(16 + i) /= s_img_d1(i) then
+                    if s_src_send_img(i) = '0' and s_ctl_src(5 + i) /= s_img_d1(i) then
                         s_src_send_img(i) <= '1';
-                        s_img_d1(i)       <= s_ctl_src(16 + i);
+                        s_img_d1(i)       <= s_ctl_src(5 + i);
                     elsif s_src_rcv_img(i) = '1' then
                         s_src_send_img(i) <= '0';
                     end if;
@@ -570,24 +556,33 @@ begin
     o_cmd_cfg_write  <= s_cmd_pulse_r(3);   -- CTL0[31]
 
     -- =========================================================================
-    -- [8] CSR output: t_tdc_cfg (i_clk domain)
+    -- [8] CSR output: t_tdc_cfg field extraction (i_clk domain)
     -- =========================================================================
-    o_cfg.active_chip_mask <= s_ctl_out(0)(c_N_CHIPS - 1 downto 0);
-    o_cfg.stops_per_chip   <= unsigned(s_ctl_out(1)(3 downto 0));
-    o_cfg.cols_per_face    <= unsigned(s_ctl_out(2)(15 downto 0));
-    o_cfg.packet_scope     <= s_ctl_out(3)(0);
-    o_cfg.hit_store_mode   <= unsigned(s_ctl_out(4)(1 downto 0));
-    o_cfg.dist_scale       <= unsigned(s_ctl_out(5)(2 downto 0));
-    o_cfg.drain_mode       <= s_ctl_out(6)(0);
-    o_cfg.n_drain_cap      <= unsigned(s_ctl_out(7)(7 downto 0));
-    o_cfg.pipeline_en      <= s_ctl_out(8)(0);
-    o_cfg.n_faces          <= unsigned(s_ctl_out(9)(7 downto 0));
-    o_cfg.bus_clk_div      <= unsigned(s_ctl_out(10)(7 downto 0));
-    o_cfg.bus_ticks         <= unsigned(s_ctl_out(11)(2 downto 0));
-    o_cfg.stopdis_override <= s_ctl_out(12)(4 downto 0);
-    o_cfg.max_range_clks   <= unsigned(s_ctl_out(13)(15 downto 0));
-    o_cfg.start_off1       <= unsigned(s_ctl_out(14)(17 downto 0));
-    o_cfg.cfg_reg7         <= s_ctl_out(15);
+    -- CTL0: MAIN_CTRL packed fields
+    o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO);
+    o_cfg.packet_scope     <= s_ctl_out(0)(c_MC_PACKET_SCOPE);
+    o_cfg.hit_store_mode   <= unsigned(s_ctl_out(0)(c_MC_HIT_STORE_HI downto c_MC_HIT_STORE_LO));
+    o_cfg.dist_scale       <= unsigned(s_ctl_out(0)(c_MC_DIST_SCALE_HI downto c_MC_DIST_SCALE_LO));
+    o_cfg.drain_mode       <= s_ctl_out(0)(c_MC_DRAIN_MODE);
+    o_cfg.pipeline_en      <= s_ctl_out(0)(c_MC_PIPELINE_EN);
+    o_cfg.n_faces          <= unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO));
+    o_cfg.stops_per_chip   <= unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO));
+    o_cfg.n_drain_cap      <= unsigned(s_ctl_out(0)(c_MC_N_DRAIN_CAP_HI downto c_MC_N_DRAIN_CAP_LO));
+    o_cfg.stopdis_override <= s_ctl_out(0)(c_MC_STOPDIS_HI downto c_MC_STOPDIS_LO);
+
+    -- CTL1: BUS_TIMING
+    o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO));
+    o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO));
+
+    -- CTL2: RANGE_COLS
+    o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));
+    o_cfg.cols_per_face    <= unsigned(s_ctl_out(2)(c_RC_COLS_HI downto c_RC_COLS_LO));
+
+    -- CTL3: START_OFF1
+    o_cfg.start_off1       <= unsigned(s_ctl_out(3)(17 downto 0));
+
+    -- CTL4: CFG_REG7
+    o_cfg.cfg_reg7         <= s_ctl_out(4);
 
     -- =========================================================================
     -- [9] CSR output: t_cfg_image (i_clk domain)

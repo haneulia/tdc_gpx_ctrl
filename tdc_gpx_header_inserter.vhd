@@ -94,7 +94,7 @@ architecture rtl of tdc_gpx_header_inserter is
 
     -- Structure (from i_cfg)
     signal s_active_chip_mask_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_n_faces_r           : unsigned(7 downto 0)  := (others => '0');
+    signal s_n_faces_r           : unsigned(2 downto 0)  := (others => '0');
     signal s_rows_per_face_r     : unsigned(15 downto 0) := (others => '0');
     signal s_cols_per_face_r     : unsigned(15 downto 0) := (others => '0');
     signal s_stops_per_chip_r    : unsigned(3 downto 0)  := (others => '0');
@@ -108,7 +108,7 @@ architecture rtl of tdc_gpx_header_inserter is
 
     -- Calibration
     signal s_start_off1_r        : unsigned(17 downto 0) := (others => '0');
-    signal s_n_drain_cap_r       : unsigned(7 downto 0)  := (others => '0');
+    signal s_n_drain_cap_r       : unsigned(3 downto 0)  := (others => '0');
     signal s_pipeline_en_r       : std_logic := '0';
 
     -- Distance
@@ -260,7 +260,7 @@ begin
                                 v_hdr_data(7 downto 0)   := std_logic_vector(s_face_id_r);
                                 v_hdr_data(15 downto 8)  := (others => '0');
                                 v_hdr_data(16 + c_N_CHIPS - 1 downto 16) := s_active_chip_mask_r;
-                                v_hdr_data(31 downto 24) := std_logic_vector(s_n_faces_r);
+                                v_hdr_data(26 downto 24) := std_logic_vector(s_n_faces_r);
 
                             -- 0x10: rows_per_face [15:0] | cols_per_face [15:0]
                             when 4 =>
@@ -298,7 +298,7 @@ begin
 
                             -- 0x28: rsvd | n_drain_cap | stops_per_chip | pipeline_en
                             when 10 =>
-                                v_hdr_data(15 downto 8)  := std_logic_vector(s_n_drain_cap_r);
+                                v_hdr_data(11 downto 8)  := std_logic_vector(s_n_drain_cap_r);
                                 v_hdr_data(19 downto 16) := std_logic_vector(s_stops_per_chip_r);
                                 v_hdr_data(24)           := s_pipeline_en_r;
 
