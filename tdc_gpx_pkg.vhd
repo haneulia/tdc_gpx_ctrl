@@ -108,6 +108,14 @@ package tdc_gpx_pkg is
         of std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
 
     -- =========================================================================
+    -- TDC-GPX physical bus array types (for top-level port maps)
+    -- =========================================================================
+    type t_tdc_bus_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+    type t_tdc_adr_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(3 downto 0);
+
+    -- =========================================================================
     -- cfg_image array type (TDC-GPX register image stored in CSR)
     -- =========================================================================
     type t_cfg_image is array(0 to 15) of std_logic_vector(31 downto 0);
