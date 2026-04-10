@@ -87,7 +87,7 @@ golden vector와 bit-exact 비교.
 
 - [ ] cha_code 0~3 × ififo_id 0/1 → stop_id 0~7
 - [ ] 비트 경계 테스트
-- [ ] HIT_SLOT_WIDTH=16/17
+- [ ] HIT_SLOT_DATA_WIDTH=16/17
 
 ### 2.4 cell_builder
 

@@ -21,7 +21,6 @@
 - decode_i (raw word → structured fields) → 02번 문서
 - raw_event 스키마, hit_seq_local → 02번 문서
 - cell 변환, face 조립 → 03~04번 문서
-- CONTINUOUS 모드 → 08번 문서
 
 ---
 

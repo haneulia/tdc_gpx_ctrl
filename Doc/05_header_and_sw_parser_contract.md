@@ -18,7 +18,6 @@
 
 - packed line 생성 → 04번 문서
 - VDMA transport (SOF/EOL timing) → 06번 문서
-- CONTINUOUS 모드 header 확장 필드 → 08번 문서
 
 ---
 
@@ -60,7 +59,7 @@ Offset  이름                크기      분류    설명
  0x04   vdma_frame_id       32-bit    자동    vdma_frame 순번
  0x08   scan_frame_id       32-bit    자동    scan_frame 순번
  0x0C   face_id              8-bit    자동    face 번호 (0~N-1)
- 0x0D   measurement_mode     8-bit    CSR     0=SINGLE, 1=CONTINUOUS
+ 0x0D   reserved_0d          8-bit    —       (reserved)
  0x0E   active_chip_mask     8-bit    CSR     [3:0] chip bitmask
  0x0F   n_faces              8-bit    CSR     미러 면 수
 
@@ -80,8 +79,8 @@ Offset  이름                크기      분류    설명
 
  ▶ TDC 보정 (Calibration)
  0x20   start_off1          32-bit    CSR     Reg5[17:0] (18-bit)
- 0x24   start01             32-bit    자동    Reg10[16:0] (17-bit, CONT.)
- 0x28   start_timer          8-bit    CSR     CONTINUOUS 전용
+ 0x24   reserved_24         32-bit    —       (reserved)
+ 0x28   reserved_28          8-bit    —       (reserved)
  0x29   n_drain_cap          8-bit    CSR     drain 읽기 제한
  0x2A   stops_per_chip       8-bit    CSR     칩당 활성 stop 수
  0x2B   pipeline_en          8-bit    CSR     0=순차, 1=pipeline
@@ -147,17 +146,14 @@ def parse_cell(cell_bytes, max_hits=8, hit_slot_width=16):
         offset += 2
     # offset = 16
 
-    start_num = list(cell_bytes[offset:offset+max_hits])
-    offset += max_hits  # offset = 24
-
-    hit_valid = cell_bytes[offset]; offset += 1          # 25
-    slope_vec = cell_bytes[offset]; offset += 1          # 26
-    hit_count = cell_bytes[offset] & 0x0F; offset += 1   # 27 (lower nibble)
-    meta_byte = cell_bytes[offset]; offset += 1           # 28
+    hit_valid = cell_bytes[offset]; offset += 1          # 16
+    slope_vec = cell_bytes[offset]; offset += 1          # 17
+    hit_count = cell_bytes[offset] & 0x0F; offset += 1   # 18 (lower nibble)
+    meta_byte = cell_bytes[offset]; offset += 1           # 19
     hit_dropped = (meta_byte >> 0) & 1
     error_fill  = (meta_byte >> 1) & 1
 
-    return CellData(hit_slot, start_num, hit_valid, slope_vec,
+    return CellData(hit_slot, hit_valid, slope_vec,
                     hit_count, hit_dropped, error_fill)
 ```
 

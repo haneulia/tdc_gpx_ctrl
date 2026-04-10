@@ -16,7 +16,6 @@
 ## 1. 비책임
 
 - 기능 구현 (01~06에서 완료)
-- CONTINUOUS 모드 timing → 08번 문서
 
 ---
 
@@ -98,7 +97,6 @@ T_critical = T_roundtrip + T_drain + T_alu
 | 모드 | BUS_CLK_DIV | 이유 |
 |------|-------------|------|
 | SINGLE_SHOT | 1 (권장) | burst drain → 최대 속도 유리 |
-| CONTINUOUS | 1 (필수) | sustained rate ≥ 40 MHz 필요 |
 
 BUS_TICKS=5 기준: 1 read = 5 ticks × 5ns = 25ns → 40 MHz bus rate.
 

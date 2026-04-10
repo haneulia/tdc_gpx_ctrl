@@ -18,7 +18,6 @@ TDC-GPX raw 28-bit word를 FPGA 내부 표준 포맷(raw_event record)으로 정
 
 - bus_phy / chip_ctrl FSM → 01번 문서
 - cell 변환 (sparse → dense) → 03번 문서
-- CONTINUOUS 모드의 start_num 기반 그룹핑 → 08번 문서
 
 ---
 
@@ -51,7 +50,6 @@ TDC-GPX raw 28-bit word를 FPGA 내부 표준 포맷(raw_event record)으로 정
 |------|-----|------|
 | `raw_hit` | 17 | word[16:0], Stop-Start 시간차 (BIN 단위) |
 | `slope` | 1 | word[17], 에지 방향 |
-| `start_num` | 8 | word[25:18], start window 번호 |
 | `cha_code_raw` | 2 | word[27:26], 채널 코드 |
 | `stop_id_local` | 3 | = ififo_id × 4 + cha_code_raw |
 | `decoded_valid` | 1 | = raw_word_valid (passthrough) |
@@ -77,7 +75,6 @@ t_raw_event = record
 
     -- ② 시간 컨텍스트 (WHEN)
     shot_seq         : unsigned(31 downto 0)  -- 레이저 발사 순번
-    start_num        : unsigned(7 downto 0)   -- start window 번호 (SINGLE=항상 0)
 
     -- ③ 측정 데이터 (WHAT)
     raw_hit          : unsigned(16 downto 0)  -- 17-bit, Stop-Start (BIN 단위)
@@ -103,7 +100,7 @@ end record;
 
 Reg8/Reg9 I-Mode 포맷:
   [27:26] = ChaCode (2-bit)
-  [25:18] = Start#  (8-bit)
+  [25:18] = (reserved, SINGLE_SHOT에서 항상 0)
   [17]    = Slope    (1-bit)
   [16:0]  = Hit      (17-bit)
 
@@ -121,7 +118,7 @@ stop_id_local 복원:
 
 ### 5.2 raw_event_builder: hit_seq_local 생성
 
-**key** = {chip_id, shot_seq, start_num, stop_id_local}
+**key** = {chip_id, shot_seq, stop_id_local}
 
 같은 key로 들어오는 raw_event에 대해:
 - 첫 번째 → hit_seq_local = 0 (가장 가까운 에코)
@@ -130,7 +127,7 @@ stop_id_local 복원:
 
 ```vhdl
 -- hit_seq counter (stop_id_local별 독립)
-type t_hit_cnt_array is array (0 to STOPS_PER_CHIP_MAX-1)
+type t_hit_cnt_array is array (0 to MAX_STOPS_PER_CHIP-1)
     of unsigned(5 downto 0);
 signal hit_cnt : t_hit_cnt_array;
 
@@ -145,7 +142,7 @@ end if;
 
 ### 5.3 HIT_SLOT_WIDTH에 따른 truncation
 
-| 플랫폼 | HIT_SLOT_WIDTH | 처리 |
+| 플랫폼 | HIT_SLOT_DATA_WIDTH | 처리 |
 |--------|----------------|------|
 | Zynq-7000 | 16 | raw_hit[16:0] → 하위 16-bit만 cell에 저장 (MSB 절삭) |
 | Zynq MPSoC | 17 | 원본 17-bit 보존 |
@@ -174,7 +171,6 @@ raw_event에는 항상 17-bit 원본을 보존.
 | — | raw_event는 sparse. hit가 없는 채널에서는 아무것도 생성되지 않음 |
 | — | 같은 채널 내 hit_seq_local 0,1,2... 순서 = 시간순 (FIFO 보장) |
 | — | 다른 채널 간 순서는 보장하지 않음 (cell_builder가 stop_id로 라우팅) |
-| — | start_num: SINGLE_SHOT에서는 항상 0. CONTINUOUS 필드는 구조만 보존 |
 
 ---
 
@@ -196,8 +192,7 @@ raw_event에는 항상 17-bit 원본을 보존.
 | 시나리오 | 입력 | 기대 출력 |
 |----------|------|-----------|
 | 모든 cha_code 조합 | ififo_id=0/1 × cha_code=0~3 | stop_id_local 0~7 정확 |
-| HIT_SLOT_WIDTH=16 | word=0x0FF_FFFF | raw_hit=0x0FFFF (하위 17-bit) |
-| start_num=0 | word[25:18]=0x00 | start_num=0 |
+| HIT_SLOT_DATA_WIDTH=16 | word=0x0FF_FFFF | raw_hit=0x0FFFF (하위 17-bit) |
 | slope=1 | word[17]=1 | slope=1 |
 | 전체 비트 경계 | word=0xFFF_FFFF | 각 필드 bit-exact |
 

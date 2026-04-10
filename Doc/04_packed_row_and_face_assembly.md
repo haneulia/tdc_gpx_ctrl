@@ -73,9 +73,9 @@ active_chip_mask=0b1010 (chip 1,3 활성), stops_per_chip=4:
 | 변수 | 의미 | 가변? |
 |------|------|-------|
 | `rows_per_face` | count_ones(active_mask) × stops_per_chip | 가변 (packet_start latch) |
-| `ROWS_PER_FACE_MAX` | N_CHIPS × STOPS_PER_CHIP_MAX = 32 | 고정 (제너릭) |
+| `MAX_ROWS_PER_FACE` | N_CHIPS × MAX_STOPS_PER_CHIP = 32 | 고정 (제너릭) |
 | `hsize_actual` | rows_per_face × CELL_SIZE_BYTES | 가변 |
-| `HSIZE_MAX` | ROWS_PER_FACE_MAX × CELL_SIZE_BYTES = 1024 | 고정 |
+| `MAX_VDMA_HSIZE_BYTES` | MAX_ROWS_PER_FACE × CELL_SIZE_BYTES = 1024 | 고정 |
 
 ---
 
@@ -98,7 +98,7 @@ active_chip_mask=0b1010 (chip 1,3 활성), stops_per_chip=4:
 ### 5.2 Per-Lane Timeout
 
 ```
-SLICE_TIMEOUT_CLKS: CSR 0x0F (R/W, 8-bit, 기본 200 sys_clk cycles)
+SLICE_TIMEOUT_CLKS: CSR 0x34 (R/W, [7:0], 기본 200 sys_clk cycles)
 
 shot 시작 → lane별 timeout counter 개시
 slice_ready[n] 도착 → 해당 lane counter 정지
@@ -110,7 +110,6 @@ timeout 도달 → 해당 lane TIMEOUT 판정 → blank slice 주입
 ```
 blank_slice (stops_per_chip개 cell):
   모든 hit_slot = 0
-  모든 start_num = 0
   hit_valid = 0x00
   hit_count_actual = 0
   hit_dropped = 0
@@ -142,7 +141,7 @@ SW 식별: cell.error_fill == 1 → skip (point cloud 제외)
 |------|------|
 | [INV-9] | hsize_actual = rows_per_face × CELL_SIZE_BYTES |
 | [INV-10] | rows_per_face ≥ 2 (auto-clamp) |
-| [INV-11] | hsize_actual ≤ HSIZE_MAX ≤ stride |
+| [INV-11] | hsize_actual ≤ MAX_VDMA_HSIZE_BYTES ≤ stride |
 | [INV-12] | vdma_frame 진행 중 rows_per_face / hsize_actual 변경 금지 |
 | — | VDMA line 크기는 항상 rows_per_face × cell_size (timeout lane도 blank으로 채움) |
 
