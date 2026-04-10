@@ -93,7 +93,7 @@ entity tdc_gpx_chip_ctrl is
         o_drain_done        : out std_logic;           -- 1-clk pulse at drain end
 
         -- Status
-        o_shot_seq          : out unsigned(31 downto 0);
+        o_shot_seq          : out unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         o_busy              : out std_logic
     );
 end entity tdc_gpx_chip_ctrl;
@@ -175,7 +175,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- =========================================================================
     -- Shot sequence counter
     -- =========================================================================
-    signal s_shot_seq_r     : unsigned(31 downto 0) := (others => '0');
+    signal s_shot_seq_r     : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Data output registers

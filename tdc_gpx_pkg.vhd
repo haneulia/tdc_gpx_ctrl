@@ -39,6 +39,7 @@ package tdc_gpx_pkg is
     constant c_TDATA_WIDTH          : natural := 32;
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
 
+    constant c_SHOT_SEQ_WIDTH        : natural := 16;
     constant c_TDC_BUS_WIDTH        : natural := 28;
     constant c_RAW_HIT_WIDTH        : natural := 17;   -- TDC-GPX I-Mode raw hit (always 17-bit)
     constant c_MAX_ROWS_PER_FACE    : natural := c_N_CHIPS * c_MAX_STOPS_PER_CHIP;  -- 32
@@ -154,7 +155,7 @@ package tdc_gpx_pkg is
         pipeline_overrun    : std_logic;
         bin_mismatch        : std_logic;
         lane_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        shot_seq_current    : unsigned(31 downto 0);
+        shot_seq_current    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         vdma_frame_count    : unsigned(31 downto 0);
         error_count         : unsigned(31 downto 0);
     end record;
@@ -180,7 +181,7 @@ package tdc_gpx_pkg is
         stop_id_local       : unsigned(2 downto 0);         -- 0..7
         slope               : std_logic;
         raw_hit             : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);       -- 17-bit (truncation at cell_builder)
-        shot_seq            : unsigned(31 downto 0);
+        shot_seq            : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         hit_seq_local       : unsigned(2 downto 0);         -- 0..7
     end record;
 

@@ -37,7 +37,7 @@ entity tdc_gpx_raw_event_builder is
 
         -- Context (from chip_ctrl / TOP)
         i_chip_id         : in  unsigned(1 downto 0);
-        i_shot_seq        : in  unsigned(31 downto 0);
+        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         i_drain_done      : in  std_logic;
 
         -- Configuration
