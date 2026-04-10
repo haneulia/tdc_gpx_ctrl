@@ -147,6 +147,11 @@ architecture rtl of tdc_gpx_chip_ctrl is
 
     signal s_cfg_idx_r      : unsigned(3 downto 0) := (others => '0');
 
+    -- Init mode flag: '1' during powerup sequence, '0' for runtime cfg_write
+    -- Powerup path: cfg_write -> MASTER_RESET -> RECOVERY -> STOPDIS_LOW
+    -- Runtime path: cfg_write -> IDLE (no master reset)
+    signal s_init_mode_r    : std_logic := '1';
+
     -- =========================================================================
     -- Bus request registers
     -- =========================================================================
@@ -252,10 +257,12 @@ begin
     -- =========================================================================
     -- StopDis output: FSM-controlled, with CSR override for debug
     -- stopdis_override[4] = override enable, [g_CHIP_ID] = override value
+    -- override enable=0: FSM이 제어 (init 시 '1', 측정 시 '0')
+    -- override enable=1: SW가 chip별로 StopDis 강제 설정 (디버그용)
     -- =========================================================================
-    o_stopdis <= i_cfg.stopdis_override(g_CHIP_ID)
-                 when i_cfg.stopdis_override(4) = '1'
-                 else s_stopdis_r;
+    o_stopdis <= i_cfg.stopdis_override(g_CHIP_ID)      -- 이 chip의 bit 선택
+                 when i_cfg.stopdis_override(4) = '1'   -- override enable
+                 else s_stopdis_r;                      -- FSM 제어
 
     -- =========================================================================
     -- Main FSM
@@ -291,6 +298,7 @@ begin
                 s_ififo_id_r    <= '0';
                 s_drain_done_r  <= '0';
                 s_busy_r        <= '0';
+                s_init_mode_r   <= '1';
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r  <= '0';
@@ -308,6 +316,7 @@ begin
                     s_busy_r       <= '0';
                     s_wait_cnt_r   <= (others => '0');
                     s_cfg_idx_r    <= (others => '0');
+                    s_init_mode_r  <= '1';
                 else
                     case s_state_r is
 
@@ -358,7 +367,14 @@ begin
                             if i_bus_rsp_valid = '1' then
                                 s_req_valid_r <= '0';
                                 if s_cfg_idx_r = c_CFG_WRITE_LAST then
-                                    s_state_r <= ST_MASTER_RESET;
+                                    -- Init: full sequence (master reset + recovery)
+                                    -- Runtime: just return to IDLE
+                                    if s_init_mode_r = '1' then
+                                        s_state_r <= ST_MASTER_RESET;
+                                    else
+                                        s_busy_r  <= '0';
+                                        s_state_r <= ST_IDLE;
+                                    end if;
                                 else
                                     s_cfg_idx_r <= s_cfg_idx_r + 1;
                                     s_state_r   <= ST_CFG_WRITE;
@@ -407,9 +423,10 @@ begin
                             if i_cmd_start = '1' then
                                 s_state_r <= ST_ARMED;
                             elsif i_cmd_cfg_write = '1' then
-                                s_cfg_idx_r <= (others => '0');
-                                s_busy_r    <= '1';
-                                s_state_r   <= ST_CFG_WRITE;
+                                s_cfg_idx_r   <= (others => '0');
+                                s_init_mode_r <= '0';   -- runtime: no master reset
+                                s_busy_r      <= '1';
+                                s_state_r     <= ST_CFG_WRITE;
                             end if;
 
                         -- =================================================
