@@ -126,6 +126,13 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_state_r        : t_chip_state := ST_POWERUP;
 
     -- =========================================================================
+    -- Timing limit constants (pre-computed from generics, avoids repeated -1)
+    -- =========================================================================
+    constant c_POWERUP_LAST   : unsigned(15 downto 0) := to_unsigned(g_POWERUP_CLKS - 1, 16);
+    constant c_RECOVERY_LAST  : unsigned(15 downto 0) := to_unsigned(g_RECOVERY_CLKS - 1, 16);
+    constant c_ALU_PULSE_LAST : unsigned(15 downto 0) := to_unsigned(g_ALU_PULSE_CLKS - 1, 16);
+
+    -- =========================================================================
     -- Wait counter (shared across timed states)
     -- =========================================================================
     signal s_wait_cnt_r     : unsigned(15 downto 0) := (others => '0');
@@ -302,7 +309,7 @@ begin
                             s_puresn_r  <= '0';         -- chip in reset
                             s_stopdis_r <= '1';         -- stops disabled
                             s_busy_r    <= '1';
-                            if s_wait_cnt_r = g_POWERUP_CLKS - 1 then
+                            if s_wait_cnt_r = c_POWERUP_LAST then
                                 s_wait_cnt_r <= (others => '0');
                                 s_state_r    <= ST_PU_RELEASE;
                             else
@@ -311,7 +318,7 @@ begin
 
                         when ST_PU_RELEASE =>
                             s_puresn_r <= '1';          -- release chip reset
-                            if s_wait_cnt_r = g_RECOVERY_CLKS - 1 then
+                            if s_wait_cnt_r = c_RECOVERY_LAST then
                                 s_wait_cnt_r <= (others => '0');
                                 s_state_r    <= ST_STOPDIS_HIGH;
                             else
@@ -369,7 +376,7 @@ begin
                             end if;
 
                         when ST_RECOVERY =>
-                            if s_wait_cnt_r = g_RECOVERY_CLKS - 1 then
+                            if s_wait_cnt_r = c_RECOVERY_LAST then
                                 s_wait_cnt_r <= (others => '0');
                                 s_state_r    <= ST_STOPDIS_LOW;
                             else
@@ -468,7 +475,7 @@ begin
 
                         when ST_ALU_PULSE =>
                             s_alutrigger_r <= '1';
-                            if s_wait_cnt_r = g_ALU_PULSE_CLKS - 1 then
+                            if s_wait_cnt_r = c_ALU_PULSE_LAST then
                                 s_alutrigger_r <= '0';
                                 s_wait_cnt_r   <= (others => '0');
                                 s_state_r      <= ST_ALU_RECOVERY;
@@ -478,7 +485,7 @@ begin
 
                         when ST_ALU_RECOVERY =>
                             s_alutrigger_r <= '0';
-                            if s_wait_cnt_r = g_RECOVERY_CLKS - 1 then
+                            if s_wait_cnt_r = c_RECOVERY_LAST then
                                 s_wait_cnt_r <= (others => '0');
                                 s_shot_seq_r <= s_shot_seq_r + 1;
                                 s_busy_r     <= '0';
