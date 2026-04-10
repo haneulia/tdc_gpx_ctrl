@@ -95,11 +95,16 @@ package tdc_gpx_pkg is
     -- 158 bits -> 20 bytes -> align_pow2 = 32 bytes
     constant c_CELL_SIZE_BYTES      : natural := 32;
 
+    -- Header prefix (embedded in each VDMA line)
+    constant c_HDR_PREFIX_BEATS     : natural := 12;    -- 12 beats × 4B = 48 bytes
+    constant c_HDR_PREFIX_BYTES     : natural := c_HDR_PREFIX_BEATS * (c_TDATA_WIDTH / 8);  -- 48
+
     -- VDMA line constants (default generics)
-    constant c_HSIZE_MAX            : natural := c_MAX_ROWS_PER_FACE * c_CELL_SIZE_BYTES;   -- 1024
-    constant c_BEATS_PER_LINE_MAX   : natural := c_HSIZE_MAX / (c_TDATA_BYTES);             -- 256
     -- "Beat" = one AXI-Stream transfer (tvalid & tready handshake), TDATA_WIDTH bits wide
     constant c_BEATS_PER_CELL       : natural := c_CELL_SIZE_BYTES / (c_TDATA_BYTES);       -- 8
+    constant c_DATA_BEATS_MAX       : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;    -- 256
+    constant c_HSIZE_BEATS_MAX      : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;     -- 268
+    constant c_HSIZE_MAX            : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);   -- 1072
 
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)

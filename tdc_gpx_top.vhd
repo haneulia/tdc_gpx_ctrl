@@ -460,7 +460,6 @@ begin
             i_chip_error_cnt    => std_logic_vector(s_error_count_r),
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
-            i_hsize_bytes       => s_hsize_bytes_r,
             i_rows_per_face     => s_rows_per_face_r,
             i_s_axis_tdata      => s_face_tdata,
             i_s_axis_tvalid     => s_face_tvalid,
@@ -478,11 +477,12 @@ begin
     -- [5] VDMA line geometry
     --   Computed from CSR config, shared with header_inserter and VDMA.
     --   rows_per_face = active_chips × stops_per_chip (clamp >= 2)
-    --   hsize_bytes   = rows_per_face × c_CELL_SIZE_BYTES
+    --   hsize_bytes   = (data_beats + c_HDR_PREFIX_BEATS) × TDATA_BYTES
     -- =========================================================================
     p_geometry : process(i_axis_aclk)
-        variable v_active_cnt : natural range 0 to c_N_CHIPS;
-        variable v_rows       : natural range 0 to c_MAX_ROWS_PER_FACE;
+        variable v_active_cnt  : natural range 0 to c_N_CHIPS;
+        variable v_rows        : natural range 0 to c_MAX_ROWS_PER_FACE;
+        variable v_data_beats  : natural range 0 to c_DATA_BEATS_MAX;
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
@@ -495,7 +495,9 @@ begin
                     v_rows := 2;
                 end if;
                 s_rows_per_face_r <= to_unsigned(v_rows, 16);
-                s_hsize_bytes_r   <= to_unsigned(v_rows * c_CELL_SIZE_BYTES, 16);
+                v_data_beats := v_rows * c_BEATS_PER_CELL;
+                s_hsize_bytes_r <= to_unsigned(
+                    (v_data_beats + c_HDR_PREFIX_BEATS) * c_TDATA_BYTES, 16);
             end if;
         end if;
     end process p_geometry;
