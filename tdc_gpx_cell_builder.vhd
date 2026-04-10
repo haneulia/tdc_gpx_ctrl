@@ -11,6 +11,8 @@
 --   Phase B (raw_event):  store hits into cell_buffer using hit_count_actual
 --                         as slot index; overflow (>=MAX_HITS) sets hit_dropped
 --   Phase C (drain_done): serialize cells to m_axis (8 beats/cell)
+--                         Pipeline: cell MUX (ST_LOAD) → beat MUX (ST_OUTPUT)
+--                         1-clk bubble at each cell boundary for timing closure
 --
 --   "Beat" = one AXI-Stream transfer (tvalid & tready handshake).
 --   1 beat = TDATA_WIDTH bits = 32 bits = 4 bytes.
@@ -88,8 +90,12 @@ architecture rtl of tdc_gpx_cell_builder is
     -- =========================================================================
     -- FSM
     -- =========================================================================
-    type t_state is (ST_IDLE, ST_COLLECT, ST_OUTPUT);
+    type t_state is (ST_IDLE, ST_COLLECT, ST_LOAD, ST_OUTPUT);
     signal s_state_r : t_state := ST_IDLE;
+
+    -- Pipeline register: selected cell for output serialization.
+    -- Splits critical path: cell 8:1 MUX (ST_LOAD) | beat 8:1 MUX (ST_OUTPUT).
+    signal s_cell_sel_r  : t_cell := c_CELL_INIT;
 
     -- Output serializer counters (registered)
     signal s_stop_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..MAX_STOPS-1
@@ -161,6 +167,7 @@ begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 s_cell_buf_r     <= (others => c_CELL_INIT);
+                s_cell_sel_r     <= c_CELL_INIT;
                 s_state_r        <= ST_IDLE;
                 s_stop_idx_r     <= (others => '0');
                 s_beat_idx_r     <= (others => '0');
@@ -212,26 +219,48 @@ begin
                             end if;
                         end if;
 
-                        -- drain_done: load first beat into output registers
+                        -- drain_done: latch first cell into pipeline register
                         if i_drain_done = '1' then
-                            s_state_r    <= ST_OUTPUT;
+                            s_cell_sel_r <= s_cell_buf_r(0);  -- cell MUX only
                             s_stop_idx_r <= (others => '0');
                             s_beat_idx_r <= (others => '0');
-                            s_tdata_r    <= fn_cell_beat(s_cell_buf_r(0), "000");
-                            s_tvalid_r   <= '1';
-                            s_tlast_r    <= '0';  -- first beat is never last (8 beats/cell min)
+                            s_tvalid_r   <= '0';
+                            s_tlast_r    <= '0';
+                            s_state_r    <= ST_LOAD;
                         end if;
 
                     -- ==========================================================
+                    -- ST_LOAD: beat MUX from pipeline register (1-clk bubble)
+                    --   Critical path split: cell MUX ran in previous cycle,
+                    --   result now in s_cell_sel_r. Only beat MUX here.
+                    -- ==========================================================
+                    when ST_LOAD =>
+                        v_last_stop := i_stops_per_chip(2 downto 0) - 1;
+
+                        s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r);
+                        s_tvalid_r <= '1';
+
+                        -- Pre-compute tlast for loaded beat
+                        if s_stop_idx_r = v_last_stop
+                           and s_beat_idx_r = c_LAST_BEAT then
+                            s_tlast_r <= '1';
+                        else
+                            s_tlast_r <= '0';
+                        end if;
+
+                        s_state_r <= ST_OUTPUT;
+
+                    -- ==========================================================
                     -- ST_OUTPUT: serialize cells to AXI-Stream (registered)
-                    --   On handshake, compute next indices and load next beat
-                    --   data into s_tdata_r. All outputs are FF.
+                    --   Within a cell: beat MUX only (from s_cell_sel_r).
+                    --   At cell boundary: load next cell into s_cell_sel_r,
+                    --   insert 1-clk bubble via ST_LOAD.
                     -- ==========================================================
                     when ST_OUTPUT =>
                         if s_tvalid_r = '1' and i_m_axis_tready = '1' then
                             v_last_stop := i_stops_per_chip(2 downto 0) - 1;
 
-                            -- Check if this was the last beat
+                            -- Check if this was the last beat of last cell
                             if s_stop_idx_r = v_last_stop
                                and s_beat_idx_r = c_LAST_BEAT then
                                 -- Chip slice complete
@@ -239,27 +268,25 @@ begin
                                 s_tlast_r      <= '0';
                                 s_slice_done_r <= '1';
                                 s_state_r      <= ST_IDLE;
+
+                            elsif s_beat_idx_r = c_LAST_BEAT then
+                                -- Cell boundary: load next cell (cell MUX only)
+                                v_nxt_stop       := s_stop_idx_r + 1;
+                                s_stop_idx_r     <= v_nxt_stop;
+                                s_beat_idx_r     <= (others => '0');
+                                s_cell_sel_r     <= s_cell_buf_r(to_integer(v_nxt_stop));
+                                s_tvalid_r       <= '0';  -- 1-clk bubble
+                                s_tlast_r        <= '0';
+                                s_state_r        <= ST_LOAD;
+
                             else
-                                -- Compute next indices
-                                if s_beat_idx_r = c_LAST_BEAT then
-                                    v_nxt_stop := s_stop_idx_r + 1;
-                                    v_nxt_beat := (others => '0');
-                                else
-                                    v_nxt_stop := s_stop_idx_r;
-                                    v_nxt_beat := s_beat_idx_r + 1;
-                                end if;
-
-                                -- Advance counters
-                                s_stop_idx_r <= v_nxt_stop;
+                                -- Same cell: beat MUX only (from s_cell_sel_r)
+                                v_nxt_beat   := s_beat_idx_r + 1;
                                 s_beat_idx_r <= v_nxt_beat;
-
-                                -- Load next beat data into register
-                                s_tdata_r <= fn_cell_beat(
-                                    s_cell_buf_r(to_integer(v_nxt_stop)),
-                                    v_nxt_beat);
+                                s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat);
 
                                 -- Set tlast if NEXT beat is the final one
-                                if v_nxt_stop = v_last_stop
+                                if s_stop_idx_r = v_last_stop
                                    and v_nxt_beat = c_LAST_BEAT then
                                     s_tlast_r <= '1';
                                 else
@@ -275,6 +302,7 @@ begin
                 -- ST_IDLE is handled inside the case statement above.
                 if i_shot_start = '1' and s_state_r /= ST_IDLE then
                     s_cell_buf_r <= (others => c_CELL_INIT);
+                    s_cell_sel_r <= c_CELL_INIT;
                     s_state_r    <= ST_COLLECT;
                     s_tvalid_r   <= '0';
                     s_tlast_r    <= '0';
