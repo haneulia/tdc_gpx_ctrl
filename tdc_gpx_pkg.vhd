@@ -191,7 +191,7 @@ package tdc_gpx_pkg is
         slope               : std_logic;
         raw_hit             : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);       -- 17-bit (truncation at cell_builder)
         shot_seq            : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
-        hit_seq_local       : unsigned(2 downto 0);         -- 0..7
+        hit_seq_local       : unsigned(3 downto 0);         -- 0..15 (>=8 means overflow)
     end record;
 
     constant c_RAW_EVENT_INIT : t_raw_event := (

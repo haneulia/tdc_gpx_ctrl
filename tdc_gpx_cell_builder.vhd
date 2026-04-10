@@ -8,7 +8,8 @@
 --   cells to AXI-Stream as a chip slice (stops_per_chip cells, ascending order).
 --
 --   Phase A (shot_start): clear all cell buffers
---   Phase B (raw_event):  store hits into cell_buffer, respect MAX_HITS limit
+--   Phase B (raw_event):  store hits into cell_buffer using hit_count_actual
+--                         as slot index; overflow (>=MAX_HITS) sets hit_dropped
 --   Phase C (drain_done): serialize cells to m_axis (8 beats/cell)
 --
 --   "Beat" = one AXI-Stream transfer (tvalid & tready handshake).
@@ -21,12 +22,18 @@
 --     Beat 2: hit_slot[5](15:0) & hit_slot[4](15:0)
 --     Beat 3: hit_slot[7](15:0) & hit_slot[6](15:0)
 --     Beat 4: hit_valid(7:0) & slope_vec(7:0) & hit_count(3:0) &
---             hit_dropped & error_fill & "0000000000"
+--             hit_dropped & error_fill & chip_id(1:0) & "00000000"
 --     Beat 5: x"00000000" (padding)
 --     Beat 6: x"00000000" (padding)
 --     Beat 7: x"00000000" (padding)
 --
 --   raw_hit is 17-bit; only lower 16 bits stored (HIT_SLOT_DATA_WIDTH=16).
+--
+--   Hit ordering: IFIFO guarantees time-sorted output. cell_builder stores
+--   hits in arrival order using hit_count_actual as index:
+--     hit_slot[0] = first hit, hit_slot[1] = second, ...
+--   hit_valid bitmask indicates which slots contain valid data.
+--   SW uses hit_valid + slot index to reconstruct arrival order.
 --
 --   All outputs are registered (module boundary = FF).
 --
@@ -40,6 +47,9 @@ use ieee.numeric_std.all;
 use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_cell_builder is
+    generic (
+        g_CHIP_ID           : natural range 0 to 3 := 0
+    );
     port (
         i_clk               : in  std_logic;
         i_rst_n             : in  std_logic;
@@ -82,8 +92,11 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_state_r : t_state := ST_IDLE;
 
     -- Output serializer counters (registered)
-    signal s_stop_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..7
-    signal s_beat_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..7
+    signal s_stop_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..MAX_STOPS-1
+    signal s_beat_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..BEATS_PER_CELL-1
+
+    -- Last beat index constant (for tlast comparison)
+    constant c_LAST_BEAT : unsigned(2 downto 0) := to_unsigned(c_BEATS_PER_CELL - 1, 3);
 
     -- Registered outputs
     signal s_tdata_r     : std_logic_vector(c_TDATA_WIDTH - 1 downto 0) := (others => '0');
@@ -124,7 +137,8 @@ architecture rtl of tdc_gpx_cell_builder is
                 v_result(15 downto 12) := std_logic_vector(cell.hit_count_actual);
                 v_result(11)           := cell.hit_dropped;
                 v_result(10)           := cell.error_fill;
-                v_result(9 downto 0)   := (others => '0');  -- reserved
+                v_result(9 downto 8)   := std_logic_vector(to_unsigned(g_CHIP_ID, 2));
+                v_result(7 downto 0)   := (others => '0');  -- reserved
             when others =>
                 v_result := (others => '0');  -- beats 5~7: padding
         end case;
@@ -139,7 +153,7 @@ begin
     -- =========================================================================
     p_main : process(i_clk)
         variable v_stop     : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
-        variable v_seq      : natural range 0 to c_MAX_HITS_PER_STOP - 1;
+        variable v_seq      : natural range 0 to c_MAX_HITS_PER_STOP - 1;  -- slot index from hit_count_actual
         variable v_nxt_stop : unsigned(2 downto 0);
         variable v_nxt_beat : unsigned(2 downto 0);
         variable v_last_stop : unsigned(2 downto 0);
@@ -180,9 +194,11 @@ begin
                     when ST_COLLECT =>
                         if i_raw_event_valid = '1' then
                             v_stop := to_integer(i_raw_event.stop_id_local);
-                            v_seq  := to_integer(i_raw_event.hit_seq_local);
 
-                            if i_raw_event.hit_seq_local < c_MAX_HITS_PER_STOP then
+                            -- Use hit_count_actual (4-bit) as slot index + overflow guard
+                            if s_cell_buf_r(v_stop).hit_count_actual < c_MAX_HITS_PER_STOP then
+                                v_seq := to_integer(
+                                    s_cell_buf_r(v_stop).hit_count_actual(2 downto 0));
                                 s_cell_buf_r(v_stop).hit_slot(v_seq)
                                     <= i_raw_event.raw_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
                                 s_cell_buf_r(v_stop).hit_valid(v_seq) <= '1';
@@ -190,6 +206,7 @@ begin
                                 s_cell_buf_r(v_stop).hit_count_actual
                                     <= s_cell_buf_r(v_stop).hit_count_actual + 1;
                             else
+                                -- 9th+ hit: overflow, do not overwrite slot
                                 s_cell_buf_r(v_stop).hit_dropped <= '1';
                                 s_hit_dropped_r <= '1';
                             end if;
@@ -197,19 +214,12 @@ begin
 
                         -- drain_done: load first beat into output registers
                         if i_drain_done = '1' then
-                            v_last_stop := i_stops_per_chip(2 downto 0) - 1;
-
                             s_state_r    <= ST_OUTPUT;
                             s_stop_idx_r <= (others => '0');
                             s_beat_idx_r <= (others => '0');
                             s_tdata_r    <= fn_cell_beat(s_cell_buf_r(0), "000");
                             s_tvalid_r   <= '1';
-                            -- tlast if single-stop, single-beat (degenerate case)
-                            if v_last_stop = "000" and c_BEATS_PER_CELL = 1 then
-                                s_tlast_r <= '1';
-                            else
-                                s_tlast_r <= '0';
-                            end if;
+                            s_tlast_r    <= '0';  -- first beat is never last (8 beats/cell min)
                         end if;
 
                     -- ==========================================================
@@ -223,7 +233,7 @@ begin
 
                             -- Check if this was the last beat
                             if s_stop_idx_r = v_last_stop
-                               and s_beat_idx_r = c_BEATS_PER_CELL - 1 then
+                               and s_beat_idx_r = c_LAST_BEAT then
                                 -- Chip slice complete
                                 s_tvalid_r     <= '0';
                                 s_tlast_r      <= '0';
@@ -231,7 +241,7 @@ begin
                                 s_state_r      <= ST_IDLE;
                             else
                                 -- Compute next indices
-                                if s_beat_idx_r = c_BEATS_PER_CELL - 1 then
+                                if s_beat_idx_r = c_LAST_BEAT then
                                     v_nxt_stop := s_stop_idx_r + 1;
                                     v_nxt_beat := (others => '0');
                                 else
@@ -250,7 +260,7 @@ begin
 
                                 -- Set tlast if NEXT beat is the final one
                                 if v_nxt_stop = v_last_stop
-                                   and v_nxt_beat = c_BEATS_PER_CELL - 1 then
+                                   and v_nxt_beat = c_LAST_BEAT then
                                     s_tlast_r <= '1';
                                 else
                                     s_tlast_r <= '0';

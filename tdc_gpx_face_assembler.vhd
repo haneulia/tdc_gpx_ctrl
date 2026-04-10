@@ -1,28 +1,30 @@
 -- =============================================================================
 -- tdc_gpx_face_assembler.vhd
--- TDC-GPX Controller - Face Assembler (Packed Row)
+-- TDC-GPX Controller - Face Assembler (Packed Row, FCFS)
 -- =============================================================================
 --
 -- Purpose:
---   Collects 4 chip cells (AXI-Stream) and concatenates active chips into
---   a single packed row. Inactive chips are skipped.
---   Timed-out chips receive blank cells with error_fill=1.
+--   Collects 4 chip cells (AXI-Stream) and assembles into a packed row.
+--   Inactive chips are skipped. Timed-out chips receive blank cells
+--   with error_fill=1.
 --
---   Per-shot flow (per-chip sequential):
---     1. shot_start → begin with first active chip
---     2. For each active chip in ascending order:
---        a. ST_WAIT: wait for chip ready (tvalid) or timeout
---        b. ST_FORWARD: output chip data (real or blank)
---        While forwarding, remaining chips continue accumulating in
---        their cell_builders, hiding drain latency.
---     3. After last active chip forwarded → assert row_done
+--   FCFS (First-Come First-Served: 먼저 준비된 chip부터 출력) scheduling:
+--     Ready chips are forwarded in arrival order (lowest index breaks ties).
+--     While forwarding one chip, remaining chips continue accumulating
+--     in their cell_builders, hiding drain latency.
+--     Each cell carries a chip_id tag (beat 4, bits [9:8]) so downstream
+--     can identify chip origin regardless of output order.
 --
---   Packed Row policy: only active chips contribute rows.
---     active_mask=0b1010, stops_per_chip=4 → rows_per_face = 2×4 = 8
+--   Per-shot flow:
+--     1. shot_start → ST_SCAN
+--     2. ST_SCAN: find any undone chip with tvalid (ready first),
+--        or blank on timeout
+--     3. ST_FORWARD: output selected chip data (real or blank)
+--     4. Chip done → mark s_chip_done_r, back to ST_SCAN
+--     5. All active chips done → row_done, ST_IDLE
 --
---   Single shot counter from shot_start, shared across all chips.
---   A chip times out if its cell_builder has not asserted tvalid
---   before the counter reaches timeout_limit.
+--   Packed Row: only active chips contribute rows. Chip order within
+--   the row is non-deterministic (FCFS). SW uses chip_id tag to parse.
 --
 --   All outputs are registered (module boundary = FF).
 --   tready to cell_builders is combinational (internal interface).
@@ -57,8 +59,8 @@ entity tdc_gpx_face_assembler is
         i_active_chip_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_stops_per_chip     : in  unsigned(3 downto 0);
         i_max_range_clks     : in  unsigned(15 downto 0);   -- capture timeout (SW: 2*dist/c*fclk)
-        i_bus_ticks          : in  unsigned(2 downto 0);
-        i_bus_clk_div        : in  unsigned(7 downto 0);
+        i_bus_ticks          : in  unsigned(2 downto 0);    -- capture timeout 
+        i_bus_clk_div        : in  unsigned(7 downto 0);    -- capture timeout 
 
         -- AXI-Stream master (packed row output)
         o_m_axis_tdata       : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
@@ -77,16 +79,17 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- FSM
     -- =========================================================================
-    type t_state is (ST_IDLE, ST_WAIT, ST_FORWARD);
+    type t_state is (ST_IDLE, ST_SCAN, ST_FORWARD);
     signal s_state_r : t_state := ST_IDLE;
 
     -- =========================================================================
-    -- Per-chip ready latch (set when tvalid seen, cleared on shot_start)
+    -- Per-chip status
     -- =========================================================================
     signal s_chip_ready_r    : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_chip_done_r     : std_logic_vector(3 downto 0) := (others => '0');
 
     -- =========================================================================
-    -- Single shot counter (runs from shot_start through ST_WAIT/ST_FORWARD)
+    -- Single shot counter (runs from shot_start through ST_SCAN/ST_FORWARD)
     -- =========================================================================
     signal s_shot_cnt_r      : unsigned(15 downto 0) := (others => '0');
     signal s_timeout_limit_r : unsigned(15 downto 0) := (others => '0');
@@ -99,7 +102,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     signal s_cur_chip_r      : unsigned(1 downto 0) := (others => '0');
     signal s_is_blank_r      : std_logic := '0';   -- current chip is timed out
-    signal s_is_last_chip_r  : std_logic := '0';   -- no more active chips after this
+    signal s_is_last_chip_r  : std_logic := '0';   -- no more undone active chips after this
 
     -- Blank beat generation counters
     signal s_blank_stop_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
@@ -118,16 +121,18 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_chip_error_r    : std_logic_vector(3 downto 0) := (others => '0');
 
     -- =========================================================================
-    -- Blank beat data: all zeros except beat 4 has error_fill=1 (bit 10)
+    -- Blank beat data: all zeros except beat 4 has error_fill + chip_id
     -- =========================================================================
     function fn_blank_beat(
-        beat_idx : unsigned(2 downto 0)
+        beat_idx : unsigned(2 downto 0);
+        chip_id  : unsigned(1 downto 0)
     ) return std_logic_vector is
         variable v_result : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
     begin
         v_result := (others => '0');
         if to_integer(beat_idx) = 4 then
-            v_result(10) := '1';   -- error_fill
+            v_result(10)          := '1';   -- error_fill
+            v_result(9 downto 8)  := std_logic_vector(chip_id);
         end if;
         return v_result;
     end function;
@@ -168,11 +173,13 @@ begin
         variable v_is_last        : boolean;
         variable v_found          : boolean;
         variable v_blank_last     : boolean;
+        variable v_done_after     : std_logic_vector(3 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 s_state_r        <= ST_IDLE;
                 s_chip_ready_r   <= (others => '0');
+                s_chip_done_r    <= (others => '0');
                 s_shot_cnt_r     <= (others => '0');
                 s_timeout_limit_r <= (others => '0');
                 s_cur_chip_r     <= (others => '0');
@@ -191,10 +198,10 @@ begin
                 s_row_done_r <= '0';
 
                 -- ============================================================
-                -- Common logic for ST_WAIT / ST_FORWARD:
+                -- Common logic for ST_SCAN / ST_FORWARD:
                 --   shot counter + tvalid latch (runs until back to ST_IDLE)
                 -- ============================================================
-                if s_state_r = ST_WAIT or s_state_r = ST_FORWARD then
+                if s_state_r = ST_SCAN or s_state_r = ST_FORWARD then
                     -- Increment shot counter (saturate at max)
                     if s_shot_cnt_r /= x"FFFF" then
                         s_shot_cnt_r <= s_shot_cnt_r + 1;
@@ -221,54 +228,64 @@ begin
                     if i_shot_start = '1' then
                         s_timeout_limit_r <= s_timeout_limit;
                         s_chip_ready_r    <= (others => '0');
+                        s_chip_done_r     <= (others => '0');
                         s_shot_cnt_r      <= (others => '0');
                         s_chip_error_r    <= (others => '0');
+                        s_state_r         <= ST_SCAN;
+                    end if;
 
-                        -- Find first active chip
-                        v_found := false;
-                        v_cur_chip := (others => '0');
+                -- ==============================================================
+                -- ST_SCAN: find any undone active chip to forward
+                --   Priority 1: ready chip (tvalid latched, lowest index)
+                --   Priority 2: timeout → blank any undone chip
+                -- ==============================================================
+                when ST_SCAN =>
+                    -- Priority 1: find undone + ready chip
+                    v_found := false;
+                    v_cur_chip := (others => '0');
+                    for i in 0 to 3 loop
+                        if i_active_chip_mask(i) = '1'
+                           and s_chip_done_r(i) = '0'
+                           and (s_chip_ready_r(i) = '1'
+                                or i_s_axis_tvalid(i) = '1')
+                           and not v_found then
+                            v_cur_chip := to_unsigned(i, 2);
+                            v_found := true;
+                        end if;
+                    end loop;
+
+                    if v_found then
+                        s_is_blank_r <= '0';
+                    elsif s_shot_cnt_r >= s_timeout_limit_r then
+                        -- Priority 2: timeout → pick any undone chip
                         for i in 0 to 3 loop
-                            if i_active_chip_mask(i) = '1' and not v_found then
+                            if i_active_chip_mask(i) = '1'
+                               and s_chip_done_r(i) = '0'
+                               and not v_found then
                                 v_cur_chip := to_unsigned(i, 2);
                                 v_found := true;
                             end if;
                         end loop;
+                        if v_found then
+                            s_is_blank_r <= '1';
+                            s_chip_error_r(to_integer(v_cur_chip)) <= '1';
+                        end if;
+                    end if;
 
-                        -- Is it also the last active chip?
-                        v_is_last := true;
-                        for i in 0 to 3 loop
-                            if i > to_integer(v_cur_chip)
-                               and i_active_chip_mask(i) = '1' then
-                                v_is_last := false;
-                            end if;
-                        end loop;
-
+                    if v_found then
                         s_cur_chip_r <= v_cur_chip;
+
+                        -- Is this the last undone active chip?
+                        v_done_after := s_chip_done_r;
+                        v_done_after(to_integer(v_cur_chip)) := '1';
+                        v_is_last := (v_done_after or (not i_active_chip_mask)) = "1111";
+
                         if v_is_last then
                             s_is_last_chip_r <= '1';
                         else
                             s_is_last_chip_r <= '0';
                         end if;
 
-                        s_state_r <= ST_WAIT;
-                    end if;
-
-                -- ==============================================================
-                -- ST_WAIT: wait for current chip ready or timeout
-                -- ==============================================================
-                when ST_WAIT =>
-                    if s_chip_ready_r(to_integer(s_cur_chip_r)) = '1'
-                       or i_s_axis_tvalid(to_integer(s_cur_chip_r)) = '1' then
-                        -- Current chip ready: forward real data
-                        s_is_blank_r   <= '0';
-                        s_blank_stop_r <= (others => '0');
-                        s_blank_beat_r <= (others => '0');
-                        s_state_r      <= ST_FORWARD;
-
-                    elsif s_shot_cnt_r >= s_timeout_limit_r then
-                        -- Timeout: generate blank cells
-                        s_is_blank_r   <= '1';
-                        s_chip_error_r(to_integer(s_cur_chip_r)) <= '1';
                         s_blank_stop_r <= (others => '0');
                         s_blank_beat_r <= (others => '0');
                         s_state_r      <= ST_FORWARD;
@@ -288,50 +305,24 @@ begin
                         s_tvalid_r    <= '0';
                         s_tlast_r     <= '0';
                         s_chip_last_r <= '0';
-                        s_row_done_r <= '1';
+                        s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
+                        s_row_done_r  <= '1';
                         s_state_r     <= ST_IDLE;
 
                     -- ---- Case 2: last beat of current chip consumed ----
-                    --   Advance to next active chip → ST_WAIT
+                    --   Mark done, scan for next chip
                     elsif v_consumed and s_chip_last_r = '1' then
                         s_tvalid_r    <= '0';
                         s_chip_last_r <= '0';
-
-                        -- Find next active chip after current
-                        v_found := false;
-                        v_cur_chip := (others => '0');
-                        for i in 0 to 3 loop
-                            if i > to_integer(s_cur_chip_r)
-                               and i_active_chip_mask(i) = '1'
-                               and not v_found then
-                                v_cur_chip := to_unsigned(i, 2);
-                                v_found := true;
-                            end if;
-                        end loop;
-
-                        v_is_last := true;
-                        for i in 0 to 3 loop
-                            if i > to_integer(v_cur_chip)
-                               and i_active_chip_mask(i) = '1' then
-                                v_is_last := false;
-                            end if;
-                        end loop;
-
-                        s_cur_chip_r <= v_cur_chip;
-                        if v_is_last then
-                            s_is_last_chip_r <= '1';
-                        else
-                            s_is_last_chip_r <= '0';
-                        end if;
-
-                        s_state_r <= ST_WAIT;
+                        s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
+                        s_state_r     <= ST_SCAN;
 
                     -- ---- Case 3: load next beat from current source ----
                     elsif v_can_load then
 
                         if s_is_blank_r = '1' then
                             -- Blank chip: generate beat data
-                            s_tdata_r  <= fn_blank_beat(s_blank_beat_r);
+                            s_tdata_r  <= fn_blank_beat(s_blank_beat_r, s_cur_chip_r);
                             s_tvalid_r <= '1';
 
                             -- Check if this is the last blank beat
@@ -366,7 +357,7 @@ begin
 
                             -- Last beat detection via cell_builder's tlast
                             if i_s_axis_tlast(to_integer(s_cur_chip_r)) = '1' then
-                                s_chip_last_r <= '1';
+                                s_chip_last_r <= '1'; -- Drain 완료 후 다음 Chip Data 송출 
                                 if s_is_last_chip_r = '1' then
                                     s_tlast_r <= '1';
                                 else
@@ -382,43 +373,18 @@ begin
 
                 end case;
 
-                -- shot_start override for ST_WAIT/ST_FORWARD only.
+                -- shot_start override for ST_SCAN/ST_FORWARD only.
                 -- Abort current operation and restart (like cell_builder).
                 if i_shot_start = '1' and s_state_r /= ST_IDLE then
                     s_timeout_limit_r <= s_timeout_limit;
                     s_chip_ready_r    <= (others => '0');
+                    s_chip_done_r     <= (others => '0');
                     s_shot_cnt_r      <= (others => '0');
                     s_chip_error_r    <= (others => '0');
                     s_tvalid_r        <= '0';
                     s_tlast_r         <= '0';
                     s_chip_last_r     <= '0';
-
-                    -- Find first active chip
-                    v_found := false;
-                    v_cur_chip := (others => '0');
-                    for i in 0 to 3 loop
-                        if i_active_chip_mask(i) = '1' and not v_found then
-                            v_cur_chip := to_unsigned(i, 2);
-                            v_found := true;
-                        end if;
-                    end loop;
-
-                    v_is_last := true;
-                    for i in 0 to 3 loop
-                        if i > to_integer(v_cur_chip)
-                           and i_active_chip_mask(i) = '1' then
-                            v_is_last := false;
-                        end if;
-                    end loop;
-
-                    s_cur_chip_r <= v_cur_chip;
-                    if v_is_last then
-                        s_is_last_chip_r <= '1';
-                    else
-                        s_is_last_chip_r <= '0';
-                    end if;
-
-                    s_state_r <= ST_WAIT;
+                    s_state_r         <= ST_SCAN;
                 end if;
             end if;
         end if;
