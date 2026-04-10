@@ -37,6 +37,7 @@ package tdc_gpx_pkg is
     constant c_MAX_HITS_PER_STOP    : natural := 8;
     constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;   -- Zynq-7000 (17 for MPSoC)
     constant c_TDATA_WIDTH          : natural := 32;
+    constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;   -- bytes per beat
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
 
     constant c_SHOT_SEQ_WIDTH       : natural := 16;
@@ -90,13 +91,15 @@ package tdc_gpx_pkg is
 
     function fn_count_ones(v : std_logic_vector) return natural;
 
-    -- Default cell_size_bytes (for c_HIT_SLOT_DATA_WIDTH=16, c_MAX_HITS=8)
-    -- 150 bits -> 19 bytes -> align_pow2 = 32 bytes
+    -- Default cell_size_bytes (for c_HIT_SLOT_DATA_WIDTH=17, c_MAX_HITS=8)
+    -- 158 bits -> 20 bytes -> align_pow2 = 32 bytes
     constant c_CELL_SIZE_BYTES      : natural := 32;
 
     -- VDMA line constants (default generics)
-    constant c_HSIZE_MAX            : natural := c_MAX_ROWS_PER_FACE * c_CELL_SIZE_BYTES;  -- 1024
-    constant c_BEATS_PER_LINE_MAX   : natural := c_HSIZE_MAX / (c_TDATA_WIDTH / 8);        -- 256
+    constant c_HSIZE_MAX            : natural := c_MAX_ROWS_PER_FACE * c_CELL_SIZE_BYTES;   -- 1024
+    constant c_BEATS_PER_LINE_MAX   : natural := c_HSIZE_MAX / (c_TDATA_BYTES);             -- 256
+    -- "Beat" = one AXI-Stream transfer (tvalid & tready handshake), TDATA_WIDTH bits wide
+    constant c_BEATS_PER_CELL       : natural := c_CELL_SIZE_BYTES / (c_TDATA_BYTES);       -- 8
 
     -- =========================================================================
     -- cfg_image array type (TDC-GPX register image stored in CSR)
@@ -110,22 +113,22 @@ package tdc_gpx_pkg is
     type t_tdc_cfg is record
         -- Control registers (0x00~0x34)
         active_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);     -- 0x00 [3:0]
-        stops_per_chip      : unsigned(3 downto 0);                          -- 0x04 [3:0]
-        cols_per_face       : unsigned(15 downto 0);                         -- 0x08 [15:0]
-        packet_scope        : std_logic;                                     -- 0x0C [0]
-        hit_store_mode      : unsigned(1 downto 0);                          -- 0x10 [1:0]
-        dist_scale          : unsigned(2 downto 0);                          -- 0x14 [2:0]
-        drain_mode          : std_logic;                                     -- 0x18 [0]
-        n_drain_cap         : unsigned(7 downto 0);                          -- 0x1C [7:0]
-        pipeline_en         : std_logic;                                     -- 0x20 [0]
-        n_faces             : unsigned(7 downto 0);                          -- 0x24 [7:0]
-        bus_clk_div         : unsigned(7 downto 0);                          -- 0x28 [7:0]
-        bus_ticks           : unsigned(2 downto 0);                          -- 0x2C [2:0]
-        stopdis_override    : std_logic_vector(4 downto 0);                  -- 0x30 [4:0]
-        slice_timeout_clks  : unsigned(7 downto 0);                          -- 0x34 [7:0]
+        stops_per_chip      : unsigned(3 downto 0);                         -- 0x04 [3:0]
+        cols_per_face       : unsigned(15 downto 0);                        -- 0x08 [15:0]
+        packet_scope        : std_logic;                                    -- 0x0C [0]
+        hit_store_mode      : unsigned(1 downto 0);                         -- 0x10 [1:0]
+        dist_scale          : unsigned(2 downto 0);                         -- 0x14 [2:0]
+        drain_mode          : std_logic;                                    -- 0x18 [0]
+        n_drain_cap         : unsigned(7 downto 0);                         -- 0x1C [7:0]
+        pipeline_en         : std_logic;                                    -- 0x20 [0]
+        n_faces             : unsigned(7 downto 0);                         -- 0x24 [7:0]
+        bus_clk_div         : unsigned(7 downto 0);                         -- 0x28 [7:0]
+        bus_ticks           : unsigned(2 downto 0);                         -- 0x2C [2:0]
+        stopdis_override    : std_logic_vector(4 downto 0);                 -- 0x30 [4:0]
+        slice_timeout_clks  : unsigned(7 downto 0);                         -- 0x34 [7:0]
         -- TDC settings (0x40~0x44)
-        start_off1          : unsigned(17 downto 0);                         -- 0x40 [17:0]
-        cfg_reg7            : std_logic_vector(31 downto 0);                 -- 0x44
+        start_off1          : unsigned(17 downto 0);                        -- 0x40 [17:0]
+        cfg_reg7            : std_logic_vector(31 downto 0);                -- 0x44
     end record;
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
