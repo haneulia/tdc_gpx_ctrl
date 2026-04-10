@@ -40,7 +40,7 @@ entity tdc_gpx_chip_ctrl is
     generic (
         g_BUS_DATA_WIDTH    : natural := c_TDC_BUS_WIDTH;   -- 28
         g_CHIP_ID           : natural := 0;                  -- 0..3
-        g_POWERUP_CLKS      : natural := 20000;  -- PuResN low duration (~100us @ 200MHz)
+        g_POWERUP_CLKS      : natural := 48;     -- PuResN low duration (>200ns, ~240ns @ 200MHz)
         g_RECOVERY_CLKS     : natural := 8;       -- Reset/ALU recovery (~40ns @ 200MHz)
         g_ALU_PULSE_CLKS    : natural := 4        -- AluTrigger pulse width (~20ns @ 200MHz)
     );
