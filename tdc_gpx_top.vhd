@@ -205,6 +205,12 @@ architecture rtl of tdc_gpx_top is
     signal s_chip_error_flags: std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
+    -- VDMA line geometry (computed once, shared with header_inserter & VDMA)
+    -- =========================================================================
+    signal s_rows_per_face_r : unsigned(15 downto 0) := (others => '0');
+    signal s_hsize_bytes_r   : unsigned(15 downto 0) := (others => '0');
+
+    -- =========================================================================
     -- Face sequencer
     -- =========================================================================
     type t_face_state is (ST_IDLE, ST_WAIT_SHOT, ST_IN_FACE);
@@ -454,6 +460,8 @@ begin
             i_chip_error_cnt    => std_logic_vector(s_error_count_r),
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
+            i_hsize_bytes       => s_hsize_bytes_r,
+            i_rows_per_face     => s_rows_per_face_r,
             i_s_axis_tdata      => s_face_tdata,
             i_s_axis_tvalid     => s_face_tvalid,
             i_s_axis_tlast      => s_face_tlast,
@@ -467,7 +475,33 @@ begin
         );
 
     -- =========================================================================
-    -- [5] Face sequencer
+    -- [5] VDMA line geometry
+    --   Computed from CSR config, shared with header_inserter and VDMA.
+    --   rows_per_face = active_chips × stops_per_chip (clamp >= 2)
+    --   hsize_bytes   = rows_per_face × c_CELL_SIZE_BYTES
+    -- =========================================================================
+    p_geometry : process(i_axis_aclk)
+        variable v_active_cnt : natural range 0 to c_N_CHIPS;
+        variable v_rows       : natural range 0 to c_MAX_ROWS_PER_FACE;
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
+                s_hsize_bytes_r   <= to_unsigned(c_HSIZE_MAX, 16);
+            else
+                v_active_cnt := fn_count_ones(s_cfg.active_chip_mask);
+                v_rows := v_active_cnt * to_integer(s_cfg.stops_per_chip);
+                if v_rows < 2 then
+                    v_rows := 2;
+                end if;
+                s_rows_per_face_r <= to_unsigned(v_rows, 16);
+                s_hsize_bytes_r   <= to_unsigned(v_rows * c_CELL_SIZE_BYTES, 16);
+            end if;
+        end if;
+    end process p_geometry;
+
+    -- =========================================================================
+    -- [6] Face sequencer
     --   ST_IDLE → cmd_start → ST_WAIT_SHOT
     --   ST_WAIT_SHOT → shot_start → face_start pulse → ST_IN_FACE
     --   ST_IN_FACE → frame_done → advance face_id → ST_WAIT_SHOT (or wrap)
@@ -520,7 +554,7 @@ begin
     end process p_face_seq;
 
     -- =========================================================================
-    -- [6] Timestamp counter (free-running, i_axis_aclk domain)
+    -- [7] Timestamp counter (free-running, i_axis_aclk domain)
     --   SW interprets as cycles; multiply by clock period for nanoseconds.
     -- =========================================================================
     p_timestamp : process(i_axis_aclk)
@@ -535,7 +569,7 @@ begin
     end process p_timestamp;
 
     -- =========================================================================
-    -- [7] Error counter (increments on stop_id_error or hit overflow)
+    -- [8] Error counter (increments on stop_id_error or hit overflow)
     -- =========================================================================
     p_error_cnt : process(i_axis_aclk)
     begin
@@ -552,7 +586,7 @@ begin
     end process p_error_cnt;
 
     -- =========================================================================
-    -- [8] Status aggregation (-> CSR -> STAT registers)
+    -- [9] Status aggregation (-> CSR -> STAT registers)
     -- =========================================================================
     s_status.busy              <= '1' when s_face_state_r /= ST_IDLE else '0';
     s_status.pipeline_overrun  <= '1' when s_chip_error_flags /= C_ZEROS_CHIPS

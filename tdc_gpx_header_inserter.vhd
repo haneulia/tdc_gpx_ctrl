@@ -9,7 +9,7 @@
 --
 --   Per-frame flow:
 --     1. face_start -> latch CSR snapshot + metadata -> ST_HEADER
---     2. ST_HEADER: generate header beats (16 valid + padding zeros)
+--     2. ST_HEADER: generate header beats (12 valid + padding zeros)
 --        - Beat 0: tuser(0)=1 (SOF for AXI-Stream Video / VDMA)
 --        - Last beat: tlast=1 (EOL)
 --     3. ST_DATA: passthrough face_assembler rows, count cols
@@ -17,9 +17,32 @@
 --        - col_cnt increments on each row tlast
 --        - col_cnt = cols_per_face -> frame_done, ST_IDLE
 --
---   Header line structure (64 bytes valid, rest 0-padded to hsize_actual):
+--   Header line structure (48 bytes valid, rest 0-padded to hsize_actual):
 --     See 05_header_and_sw_parser_contract.md for full byte-level layout.
 --     All multi-byte fields are little-endian.
+--
+--     Beat  Offset  Content (packed, LE)
+--     ----  ------  -------------------------------------------------
+--       0   0x00    magic "TDCG"                        [31:0]  32 full
+--       1   0x04    vdma_frame_id                       [31:0]  32 full
+--       2   0x08    scan_frame_id (reserved=0)          [31:0]  32 full
+--       3   0x0C    face_id[7:0] | mask[11:8] |
+--                   n_faces[14:12] | stops[18:15] |
+--                   ndcap[22:19] | pipe_en[23] |
+--                   hit_store[25:24] | dist_scale[28:26] |
+--                   drain_mode[29]                              30/32
+--       4   0x10    rows_per_face[15:0] | cols[31:16]   [31:0]  32 full
+--       5   0x14    max_hits[7:0] | cell_size[15:8] |
+--                   hit_slot_w[23:16] | n_chips[27:24] |
+--                   max_stops[31:28]                            32 full
+--       6   0x18    shot_seq[15:0] | bin_res_ps[31:16]  [31:0]  32 full
+--       7   0x1C    start_off1[17:0] | cell_fmt[21:18] |
+--                   chip_err_mask[25:22]                        26/32
+--       8   0x20    k_dist_fixed                        [31:0]  32 full
+--       9   0x24    timestamp_ns [31:0]                 [31:0]  32 full
+--      10   0x28    timestamp_ns [63:32]                [31:0]  32 full
+--      11   0x2C    error_count                         [31:0]  32 full
+--     12-N  0x30+   padding (zeros)
 --
 --   VDMA frame line count:
 --     VSIZE = cols_per_face + 1 (1 header line + cols_per_face data lines)
@@ -58,6 +81,10 @@ entity tdc_gpx_header_inserter is
         i_chip_error_cnt    : in  std_logic_vector(31 downto 0);  -- packed LE: cnt3 & cnt2 & cnt1 & cnt0
         i_bin_resolution_ps : in  unsigned(15 downto 0);
         i_k_dist_fixed      : in  unsigned(31 downto 0);
+
+        -- VDMA line geometry (from top, shared with VDMA config)
+        i_hsize_bytes       : in  unsigned(15 downto 0);   -- HSIZE in bytes (must be TDATA-aligned)
+        i_rows_per_face     : in  unsigned(15 downto 0);   -- active_chips × stops_per_chip
 
         -- AXI-Stream slave (from face_assembler)
         i_s_axis_tdata      : in  std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
@@ -124,12 +151,12 @@ architecture rtl of tdc_gpx_header_inserter is
     -- =========================================================================
     -- Derived (latched)
     -- =========================================================================
-    signal s_beats_per_line_m1_r : unsigned(7 downto 0) := (others => '0');
+    signal s_hsize_beats_last_r : unsigned(13 downto 0) := (others => '0');  -- HSIZE/4 - 1
 
     -- =========================================================================
     -- Counters
     -- =========================================================================
-    signal s_beat_idx_r : unsigned(7 downto 0)  := (others => '0');
+    signal s_beat_idx_r : unsigned(13 downto 0) := (others => '0');
     signal s_col_cnt_r  : unsigned(15 downto 0) := (others => '0');
 
     -- =========================================================================
@@ -172,10 +199,7 @@ begin
     -- Main process
     -- =========================================================================
     p_main : process(i_clk)
-        variable v_active_cnt : natural range 0 to c_N_CHIPS;
-        variable v_rows       : natural range 0 to c_MAX_ROWS_PER_FACE;
-        variable v_beats      : natural range 0 to c_BEATS_PER_LINE_MAX;
-        variable v_beat       : natural range 0 to 255;
+        variable v_beat       : natural range 0 to 16383;
         variable v_hdr_data   : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
     begin
         if rising_edge(i_clk) then
@@ -188,7 +212,7 @@ begin
                 s_out_tlast_r       <= '0';
                 s_out_tuser_r       <= '0';
                 s_frame_done_r      <= '0';
-                s_beats_per_line_m1_r <= (others => '0');
+                s_hsize_beats_last_r <= (others => '0');
                 s_rows_per_face_r   <= (others => '0');
                 s_cols_per_face_r   <= (others => '0');
                 s_vdma_frame_id_r   <= (others => '0');
@@ -229,7 +253,7 @@ begin
 
                 -- ==============================================================
                 -- ST_HEADER: generate header beats into output register
-                --   16 beats of metadata (64 bytes), rest padding zeros.
+                --   12 beats of metadata (48 bytes), rest padding zeros.
                 --   Beat 0: SOF (tuser=1). Last beat: EOL (tlast=1).
                 -- ==============================================================
                 when ST_HEADER =>
@@ -238,106 +262,83 @@ begin
                         v_hdr_data := (others => '0');
 
                         -- ==============================================
-                        -- Header beat ROM (little-endian byte order)
-                        -- TDATA[7:0]=byte_N, TDATA[31:24]=byte_N+3
+                        -- Header beat ROM (packed, little-endian)
+                        -- 12 valid beats (48 bytes), rest zero-padded
                         -- ==============================================
                         case v_beat is
 
-                            -- 0x00: magic_word "TDCG" (LE: T,D,C,G)
+                            -- Beat 0 (0x00): magic_word "TDCG" (LE: T,D,C,G)
                             when 0 =>
                                 v_hdr_data := c_HEADER_MAGIC;
 
-                            -- 0x04: vdma_frame_id [31:0]
+                            -- Beat 1 (0x04): vdma_frame_id [31:0]
                             when 1 =>
                                 v_hdr_data := std_logic_vector(s_vdma_frame_id_r);
 
-                            -- 0x08: scan_frame_id [31:0] (Phase 1: always 0)
+                            -- Beat 2 (0x08): scan_frame_id [31:0] (Phase 1: always 0)
                             when 2 =>
                                 v_hdr_data := (others => '0');
 
-                            -- 0x0C: face_id[7:0] | active_chip_mask[11:8] |
-                            --       n_faces[14:12] | rsvd[31:15]
+                            -- Beat 3 (0x0C): face_id[7:0] | mask[11:8] |
+                            --   n_faces[14:12] | stops[18:15] | ndcap[22:19] |
+                            --   pipe_en[23] | hit_store[25:24] |
+                            --   dist_scale[28:26] | drain_mode[29]
                             when 3 =>
                                 v_hdr_data(7 downto 0)   := std_logic_vector(s_face_id_r);
                                 v_hdr_data(11 downto 8)  := s_active_chip_mask_r;
                                 v_hdr_data(14 downto 12) := std_logic_vector(s_n_faces_r);
+                                v_hdr_data(18 downto 15) := std_logic_vector(s_stops_per_chip_r);
+                                v_hdr_data(22 downto 19) := std_logic_vector(s_n_drain_cap_r);
+                                v_hdr_data(23)           := s_pipeline_en_r;
+                                v_hdr_data(25 downto 24) := std_logic_vector(s_hit_store_mode_r);
+                                v_hdr_data(28 downto 26) := std_logic_vector(s_dist_scale_r);
+                                v_hdr_data(29)           := s_drain_mode_r;
 
-                            -- 0x10: rows_per_face [15:0] | cols_per_face [15:0]
+                            -- Beat 4 (0x10): rows_per_face[15:0] | cols_per_face[31:16]
                             when 4 =>
                                 v_hdr_data(15 downto 0)  := std_logic_vector(s_rows_per_face_r);
                                 v_hdr_data(31 downto 16) := std_logic_vector(s_cols_per_face_r);
 
-                            -- 0x14: max_hits[7:0] | cell_size[15:8] |
-                            --       hit_slot_width[23:16] | hit_store_mode[25:24]
+                            -- Beat 5 (0x14): max_hits[7:0] | cell_size[15:8] |
+                            --   hit_slot_width[23:16] | n_chips[27:24] |
+                            --   max_stops[31:28]
                             when 5 =>
-                                v_hdr_data(7 downto 0)   := std_logic_vector(
-                                    to_unsigned(c_MAX_HITS_PER_STOP, 8));
-                                v_hdr_data(15 downto 8)  := std_logic_vector(
-                                    to_unsigned(c_CELL_SIZE_BYTES, 8));
-                                v_hdr_data(23 downto 16) := std_logic_vector(
-                                    to_unsigned(c_HIT_SLOT_DATA_WIDTH, 8));
-                                v_hdr_data(25 downto 24) := std_logic_vector(s_hit_store_mode_r);
+                                v_hdr_data(7 downto 0)   := std_logic_vector(to_unsigned(c_MAX_HITS_PER_STOP, 8));
+                                v_hdr_data(15 downto 8)  := std_logic_vector(to_unsigned(c_CELL_SIZE_BYTES, 8));
+                                v_hdr_data(23 downto 16) := std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 8));
+                                v_hdr_data(27 downto 24) := std_logic_vector(to_unsigned(c_N_CHIPS, 4));
+                                v_hdr_data(31 downto 28) := std_logic_vector(to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
 
-                            -- 0x18: shot_seq_start [31:0] (zero-extended from SHOT_SEQ_WIDTH)
+                            -- Beat 6 (0x18): shot_seq[15:0] | bin_resolution_ps[31:16]
                             when 6 =>
                                 v_hdr_data(c_SHOT_SEQ_WIDTH - 1 downto 0) :=
                                     std_logic_vector(s_shot_seq_start_r);
+                                v_hdr_data(31 downto 16) := std_logic_vector(s_bin_resolution_ps_r);
 
-                            -- 0x1C: bin_resolution_ps[15:0] | dist_scale[18:16] |
-                            --       drain_mode[19] | rsvd[31:20]
+                            -- Beat 7 (0x1C): start_off1[17:0] | cell_format[21:18] |
+                            --   chip_error_mask[25:22]
                             when 7 =>
-                                v_hdr_data(15 downto 0)  := std_logic_vector(s_bin_resolution_ps_r);
-                                v_hdr_data(18 downto 16) := std_logic_vector(s_dist_scale_r);
-                                v_hdr_data(19)           := s_drain_mode_r;
+                                v_hdr_data(17 downto 0)  := std_logic_vector(s_start_off1_r);
+                                v_hdr_data(21 downto 18) := std_logic_vector(to_unsigned(c_CELL_FORMAT, 4));
+                                v_hdr_data(25 downto 22) := s_chip_error_mask_r;
 
-                            -- 0x20: start_off1 [31:0] (18-bit, upper zero-extended)
+                            -- Beat 8 (0x20): k_dist_fixed [31:0]
                             when 8 =>
-                                v_hdr_data(17 downto 0) := std_logic_vector(s_start_off1_r);
-
-                            -- 0x24: reserved
-                            when 9 =>
-                                v_hdr_data := (others => '0');
-
-                            -- 0x28: stops_per_chip[3:0] | n_drain_cap[7:4] |
-                            --       pipeline_en[8] | rsvd[31:9]
-                            when 10 =>
-                                v_hdr_data(3 downto 0)   := std_logic_vector(s_stops_per_chip_r);
-                                v_hdr_data(7 downto 4)   := std_logic_vector(s_n_drain_cap_r);
-                                v_hdr_data(8)            := s_pipeline_en_r;
-
-                            -- 0x2C: k_dist_fixed [31:0]
-                            when 11 =>
                                 v_hdr_data := std_logic_vector(s_k_dist_fixed_r);
 
-                            -- 0x30: timestamp_ns [31:0]
-                            when 12 =>
+                            -- Beat 9 (0x24): timestamp_ns [31:0]
+                            when 9 =>
                                 v_hdr_data := std_logic_vector(s_timestamp_ns_r(31 downto 0));
 
-                            -- 0x34: timestamp_ns [63:32]
-                            when 13 =>
+                            -- Beat 10 (0x28): timestamp_ns [63:32]
+                            when 10 =>
                                 v_hdr_data := std_logic_vector(s_timestamp_ns_r(63 downto 32));
 
-                            -- 0x38: chip_error_mask[3:0] | rsvd[7:4] |
-                            --       error_count[31:8] (lower 24 bits)
-                            when 14 =>
-                                v_hdr_data(c_N_CHIPS - 1 downto 0) := s_chip_error_mask_r;
-                                v_hdr_data(15 downto 8)  := s_chip_error_cnt_r(7 downto 0);
-                                v_hdr_data(23 downto 16) := s_chip_error_cnt_r(15 downto 8);
-                                v_hdr_data(31 downto 24) := s_chip_error_cnt_r(23 downto 16);
+                            -- Beat 11 (0x2C): error_count [31:0]
+                            when 11 =>
+                                v_hdr_data := s_chip_error_cnt_r;
 
-                            -- 0x3C: error_count[7:0] (upper 8 bits) |
-                            --       n_chips[11:8] | max_stops[15:12] |
-                            --       cell_format[19:16] | rsvd[31:20]
-                            when 15 =>
-                                v_hdr_data(7 downto 0)   := s_chip_error_cnt_r(31 downto 24);
-                                v_hdr_data(11 downto 8)  := std_logic_vector(
-                                    to_unsigned(c_N_CHIPS, 4));
-                                v_hdr_data(15 downto 12) := std_logic_vector(
-                                    to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
-                                v_hdr_data(19 downto 16) := std_logic_vector(
-                                    to_unsigned(c_CELL_FORMAT, 4));
-
-                            -- 0x40~: padding (all zeros)
+                            -- Beat 12+: padding (all zeros)
                             when others =>
                                 v_hdr_data := (others => '0');
 
@@ -355,7 +356,7 @@ begin
                         end if;
 
                         -- EOL on last beat of header line
-                        if s_beat_idx_r = s_beats_per_line_m1_r then
+                        if s_beat_idx_r = s_hsize_beats_last_r then
                             s_out_tlast_r <= '1';
                             s_col_cnt_r   <= (others => '0');
                             s_state_r     <= ST_DATA;
@@ -429,17 +430,9 @@ begin
                     s_chip_error_mask_r   <= i_chip_error_mask;
                     s_chip_error_cnt_r    <= i_chip_error_cnt;
 
-                    -- Compute rows_per_face (INV-10: clamp >= 2)
-                    v_active_cnt := fn_count_ones(i_cfg.active_chip_mask);
-                    v_rows := v_active_cnt * to_integer(i_cfg.stops_per_chip);
-                    if v_rows < 2 then
-                        v_rows := 2;
-                    end if;
-                    s_rows_per_face_r <= to_unsigned(v_rows, 16);
-
-                    -- beats_per_line = rows_per_face * BEATS_PER_CELL
-                    v_beats := v_rows * c_BEATS_PER_CELL;
-                    s_beats_per_line_m1_r <= to_unsigned(v_beats - 1, 8);
+                    -- Line geometry (from top-level, shared with VDMA)
+                    s_rows_per_face_r     <= i_rows_per_face;
+                    s_hsize_beats_last_r <= resize(shift_right(i_hsize_bytes, 2) - 1, 14);  -- HSIZE/4 - 1
 
                     -- Start header generation
                     s_beat_idx_r   <= (others => '0');
