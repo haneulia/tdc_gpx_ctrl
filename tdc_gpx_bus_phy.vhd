@@ -296,7 +296,11 @@ begin
                             s_oen_r <= '1';
                         end if;
 
-                        if i_req_valid = '1' and i_tick_en = '1' then
+                        -- Guard: s_rsp_valid_r = '0' prevents spurious
+                        -- re-acceptance when chip_ctrl's req_valid is still
+                        -- high from the just-completed transaction (1-clk lag).
+                        if i_req_valid = '1' and i_tick_en = '1'
+                           and s_rsp_valid_r = '0' then
                             s_busy_r <= '1';
 
                             if i_req_rw = '1' then

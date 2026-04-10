@@ -97,6 +97,11 @@ package tdc_gpx_pkg is
     constant c_BEATS_PER_LINE_MAX   : natural := c_HSIZE_MAX / (c_TDATA_WIDTH / 8);        -- 256
 
     -- =========================================================================
+    -- cfg_image array type (TDC-GPX register image stored in CSR)
+    -- =========================================================================
+    type t_cfg_image is array(0 to 15) of std_logic_vector(31 downto 0);
+
+    -- =========================================================================
     -- t_tdc_cfg : CSR configuration (CSR -> submodules)
     -- All fields latched at packet_start and stable during frame.
     -- =========================================================================
