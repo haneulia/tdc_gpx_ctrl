@@ -194,6 +194,16 @@ architecture rtl of tdc_gpx_chip_ctrl is
 begin
 
     -- =========================================================================
+    -- Generic sanity checks (elaboration-only, ignored by synthesis)
+    -- =========================================================================
+    assert g_POWERUP_CLKS >= 1
+        report "g_POWERUP_CLKS must be >= 1" severity failure;
+    assert g_RECOVERY_CLKS >= 1
+        report "g_RECOVERY_CLKS must be >= 1" severity failure;
+    assert g_ALU_PULSE_CLKS >= 1
+        report "g_ALU_PULSE_CLKS must be >= 1" severity failure;
+
+    -- =========================================================================
     -- Tick enable generation
     -- Produces a 1-clk pulse every BUS_CLK_DIV sys_clk cycles.
     -- BUS_CLK_DIV=1: tick_en every cycle. BUS_CLK_DIV=0: clamped to 1.
