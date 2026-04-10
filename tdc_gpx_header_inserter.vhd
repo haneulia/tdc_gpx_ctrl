@@ -148,8 +148,9 @@ architecture rtl of tdc_gpx_header_inserter is
     -- =========================================================================
     -- Counters
     -- =========================================================================
-    signal s_prefix_idx_r : unsigned(3 downto 0) := (others => '0');   -- 0..11
-    signal s_col_cnt_r    : unsigned(15 downto 0) := (others => '0');
+    signal s_prefix_idx_r      : unsigned(3 downto 0) := (others => '0');   -- 0..11
+    signal s_col_cnt_r         : unsigned(15 downto 0) := (others => '0');
+    signal s_cols_per_face_m1_r : unsigned(15 downto 0) := (others => '0'); -- pre-computed
 
     -- =========================================================================
     -- First-line flag (header valid only on line 0)
@@ -203,6 +204,7 @@ begin
                 s_state_r           <= ST_IDLE;
                 s_prefix_idx_r      <= (others => '0');
                 s_col_cnt_r         <= (others => '0');
+                s_cols_per_face_m1_r <= (others => '0');
                 s_first_line_r      <= '0';
                 s_out_tdata_r       <= (others => '0');
                 s_out_tvalid_r      <= '0';
@@ -374,7 +376,7 @@ begin
 
                         -- Line complete (upstream EOL)
                         if i_s_axis_tlast = '1' then
-                            if s_col_cnt_r = s_cols_per_face_r - 1 then
+                            if s_col_cnt_r = s_cols_per_face_m1_r then
                                 -- All lines sent: face done
                                 s_frame_done_r <= '1';
                                 s_state_r      <= ST_IDLE;
@@ -402,6 +404,7 @@ begin
                     s_active_chip_mask_r  <= i_cfg.active_chip_mask;
                     s_n_faces_r           <= i_cfg.n_faces;
                     s_cols_per_face_r     <= i_cfg.cols_per_face;
+                    s_cols_per_face_m1_r  <= i_cfg.cols_per_face - 1;
                     s_stops_per_chip_r    <= i_cfg.stops_per_chip;
                     s_hit_store_mode_r    <= i_cfg.hit_store_mode;
 
