@@ -6,7 +6,7 @@
 --
 -- Function:
 --   AXI4-Lite register interface wrapping tdc_gpx_axil_csr32 (32 CTL + 11 STAT)
---   with cross-clock-domain transfer to the TDC processing domain (i_clk).
+--   with cross-clock-domain transfer to the TDC processing domain (i_axis_aclk).
 --
 -- Register map (9-bit address, 32 CTL + 11 STAT):
 --   CTL0  (0x00) MAIN_CTRL     packed: [3:0] active_chip_mask, [4] packet_scope,
@@ -35,14 +35,14 @@
 --   STAT10 (0xA8) K_DIST           [31:0]
 --
 -- CDC structure:
---   CTL: 5 x xpm_cdc_handshake (s_axi_aclk -> i_clk) for CTL0~4
---        16 x xpm_cdc_handshake (s_axi_aclk -> i_clk) for cfg_image CTL5~20
---   STAT: 6 x xpm_cdc_handshake (i_clk -> s_axi_aclk) for STAT5~10
+--   CTL: 5 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for CTL0~4
+--        16 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for cfg_image CTL5~20
+--   STAT: 6 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) for STAT5~10
 --   Total: 27 CDC instances
 --
 -- Clock domains:
 --   s_axi_aclk : AXI4-Lite domain (PS clock)
---   i_clk      : TDC processing domain (200 MHz)
+--   i_axis_aclk : TDC processing / AXI-Stream domain (200 MHz)
 --
 -- Standard: VHDL-93 compatible
 -- =============================================================================
@@ -88,20 +88,25 @@ entity tdc_gpx_csr is
         s_axi_rresp         : out std_logic_vector(1 downto 0);
 
         -- TDC processing clock / reset
-        i_clk               : in  std_logic;
-        i_rst_n             : in  std_logic;
+        i_axis_aclk         : in  std_logic;
+        i_axis_aresetn      : in  std_logic;
 
-        -- Configuration output (i_clk domain)
+        -- laser_ctrl_result stream input (i_axis_aclk domain)
+        -- tdata[15:0] → cols_per_face override (latched on tvalid)
+        i_lsr_tvalid        : in  std_logic;
+        i_lsr_tdata         : in  std_logic_vector(31 downto 0);
+
+        -- Configuration output (i_axis_aclk domain)
         o_cfg               : out t_tdc_cfg;
         o_cfg_image         : out t_cfg_image;
 
-        -- Command pulses (i_clk domain, 1-clk, rising-edge detect)
+        -- Command pulses (i_axis_aclk domain, 1-clk, rising-edge detect)
         o_cmd_start         : out std_logic;
         o_cmd_stop          : out std_logic;
         o_cmd_soft_reset    : out std_logic;
         o_cmd_cfg_write     : out std_logic;
 
-        -- Status input (i_clk domain)
+        -- Status input (i_axis_aclk domain)
         i_status            : in  t_tdc_status;
         i_bin_resolution_ps : in  unsigned(15 downto 0);
         i_k_dist_fixed      : in  unsigned(31 downto 0);
@@ -239,10 +244,10 @@ architecture rtl of tdc_gpx_csr is
     -- =========================================================================
     signal s_ctl_src : t_cdc_data_array(0 to c_NUM_CTL_REGS - 1);
 
-    -- CTL after CDC (i_clk domain) — CTL0~4 (5 active registers)
+    -- CTL after CDC (i_axis_aclk domain) — CTL0~4 (5 active registers)
     signal s_ctl_out : t_cdc_data_array(0 to c_NUM_CTL_CDC - 1) := (others => C_ZERO32);
 
-    -- cfg_image after CDC (i_clk domain) — CTL5~20 (16 registers)
+    -- cfg_image after CDC (i_axis_aclk domain) — CTL5~20 (16 registers)
     signal s_img_out : t_cfg_image := (others => C_ZERO32);
 
     -- CTL CDC handshake (CTL0~4)
@@ -257,7 +262,7 @@ architecture rtl of tdc_gpx_csr is
     signal s_dest_req_img : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
     signal s_img_d1       : t_cdc_data_array(0 to c_CFG_IMAGE_N_REGS - 1) := (others => (others => '1'));
 
-    -- STAT source (i_clk domain, 6 live registers)
+    -- STAT source (i_axis_aclk domain, 6 live registers)
     signal s_stat_src : t_cdc_data_array(0 to C_NUM_STAT_CDC - 1);
 
     -- STAT after CDC (s_axi_aclk domain)
@@ -272,9 +277,13 @@ architecture rtl of tdc_gpx_csr is
     -- HW_CONFIG constant (compile-time)
     signal s_hw_config : std_logic_vector(31 downto 0);
 
-    -- Command edge detect (i_clk domain)
+    -- Command edge detect (i_axis_aclk domain)
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_pulse_r : std_logic_vector(3 downto 0) := (others => '0');
+
+    -- laser_ctrl cols_per_face latch (i_axis_aclk domain)
+    signal s_lsr_cols_r  : unsigned(15 downto 0) := (others => '0');
+    signal s_lsr_valid_r : std_logic := '0';    -- '1' after first tvalid
 
 begin
 
@@ -364,7 +373,7 @@ begin
             stat2_in  => std_logic_vector(to_unsigned(c_MAX_ROWS_PER_FACE, 32)),
             stat3_in  => std_logic_vector(to_unsigned(c_CELL_SIZE_BYTES, 32)),
             stat4_in  => std_logic_vector(to_unsigned(c_HSIZE_MAX, 32)),
-            -- STAT5~10 = live status (CDC'd from i_clk)
+            -- STAT5~10 = live status (CDC'd from i_axis_aclk)
             stat5_in  => s_stat_out(0),
             stat6_in  => s_stat_out(1),
             stat7_in  => s_stat_out(2),
@@ -377,7 +386,7 @@ begin
         );
 
     -- =========================================================================
-    -- [3] STAT source packing (i_clk domain)
+    -- [3] STAT source packing (i_axis_aclk domain)
     -- =========================================================================
     -- STAT5 = STATUS word
     s_stat_src(0)(c_STAT_BUSY)       <= i_status.busy;
@@ -407,7 +416,7 @@ begin
     s_stat_src(5) <= std_logic_vector(i_k_dist_fixed);
 
     -- =========================================================================
-    -- [4] STAT CDC: i_clk -> s_axi_aclk (6 live registers)
+    -- [4] STAT CDC: i_axis_aclk -> s_axi_aclk (6 live registers)
     -- =========================================================================
     gen_stat_cdc : for i in 0 to C_NUM_STAT_CDC - 1 generate
         u_cdc_stat : xpm_cdc_handshake
@@ -420,7 +429,7 @@ begin
                 WIDTH          => 32
             )
             port map (
-                src_clk   => i_clk,
+                src_clk   => i_axis_aclk,
                 src_in    => s_stat_src(i),
                 src_send  => s_src_send_stat(i),
                 src_rcv   => s_src_rcv_stat(i),
@@ -430,10 +439,10 @@ begin
                 dest_out  => s_stat_out(i)
             );
 
-        p_send_stat : process(i_clk)
+        p_send_stat : process(i_axis_aclk)
         begin
-            if rising_edge(i_clk) then
-                if i_rst_n = '0' then
+            if rising_edge(i_axis_aclk) then
+                if i_axis_aresetn = '0' then
                     s_src_send_stat(i) <= '0';
                     s_stat_d1(i)       <= (others => '1');
                 else
@@ -449,7 +458,7 @@ begin
     end generate gen_stat_cdc;
 
     -- =========================================================================
-    -- [5] CTL CDC: s_axi_aclk -> i_clk (CTL0~4: 5 active control registers)
+    -- [5] CTL CDC: s_axi_aclk -> i_axis_aclk (CTL0~4: 5 active control registers)
     -- =========================================================================
     gen_ctl_cdc : for i in 0 to c_NUM_CTL_CDC - 1 generate
         u_cdc_ctl : xpm_cdc_handshake
@@ -466,7 +475,7 @@ begin
                 src_in    => s_ctl_src(i),
                 src_send  => s_src_send_ctl(i),
                 src_rcv   => s_src_rcv_ctl(i),
-                dest_clk  => i_clk,
+                dest_clk  => i_axis_aclk,
                 dest_req  => s_dest_req_ctl(i),
                 dest_ack  => s_dest_req_ctl(i),
                 dest_out  => s_ctl_out(i)
@@ -491,7 +500,7 @@ begin
     end generate gen_ctl_cdc;
 
     -- =========================================================================
-    -- [6] cfg_image CDC: s_axi_aclk -> i_clk (CTL5~20, per-register)
+    -- [6] cfg_image CDC: s_axi_aclk -> i_axis_aclk (CTL5~20, per-register)
     -- =========================================================================
     gen_img_cdc : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
         u_cdc_img : xpm_cdc_handshake
@@ -508,7 +517,7 @@ begin
                 src_in    => s_ctl_src(5 + i),      -- CTL5~20
                 src_send  => s_src_send_img(i),
                 src_rcv   => s_src_rcv_img(i),
-                dest_clk  => i_clk,
+                dest_clk  => i_axis_aclk,
                 dest_req  => s_dest_req_img(i),
                 dest_ack  => s_dest_req_img(i),
                 dest_out  => s_img_out(i)
@@ -533,14 +542,14 @@ begin
     end generate gen_img_cdc;
 
     -- =========================================================================
-    -- [7] Command edge detect (i_clk domain)
+    -- [7] Command edge detect (i_axis_aclk domain)
     --   CTL0[31:28] = {cfg_write, soft_reset, stop, start}
-    --   Rising edge in i_clk domain → 1-clk pulse
+    --   Rising edge in i_axis_aclk domain → 1-clk pulse
     -- =========================================================================
-    p_cmd_edge : process(i_clk)
+    p_cmd_edge : process(i_axis_aclk)
     begin
-        if rising_edge(i_clk) then
-            if i_rst_n = '0' then
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
                 s_cmd_prev_r  <= (others => '0');
                 s_cmd_pulse_r <= (others => '0');
             else
@@ -556,7 +565,27 @@ begin
     o_cmd_cfg_write  <= s_cmd_pulse_r(3);   -- CTL0[31]
 
     -- =========================================================================
-    -- [8] CSR output: t_tdc_cfg field extraction (i_clk domain)
+    -- [8] laser_ctrl cols_per_face latch (i_axis_aclk domain)
+    --   On tvalid, latch tdata[15:0] as cols_per_face override.
+    --   Once latched (s_lsr_valid_r='1'), overrides CTL2[31:16].
+    -- =========================================================================
+    p_lsr_latch : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_lsr_cols_r  <= (others => '0');
+                s_lsr_valid_r <= '0';
+            else
+                if i_lsr_tvalid = '1' then
+                    s_lsr_cols_r  <= unsigned(i_lsr_tdata(15 downto 0));
+                    s_lsr_valid_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_lsr_latch;
+
+    -- =========================================================================
+    -- [9] CSR output: t_tdc_cfg field extraction (i_axis_aclk domain)
     -- =========================================================================
     -- CTL0: MAIN_CTRL packed fields
     o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO);
@@ -574,9 +603,9 @@ begin
     o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO));
     o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO));
 
-    -- CTL2: RANGE_COLS
+    -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when available)
     o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));
-    o_cfg.cols_per_face    <= unsigned(s_ctl_out(2)(c_RC_COLS_HI downto c_RC_COLS_LO));
+    o_cfg.cols_per_face    <= s_lsr_cols_r;
 
     -- CTL3: START_OFF1
     o_cfg.start_off1       <= unsigned(s_ctl_out(3)(17 downto 0));
@@ -585,7 +614,7 @@ begin
     o_cfg.cfg_reg7         <= s_ctl_out(4);
 
     -- =========================================================================
-    -- [9] CSR output: t_cfg_image (i_clk domain)
+    -- [10] CSR output: t_cfg_image (i_axis_aclk domain)
     -- =========================================================================
     o_cfg_image <= s_img_out;
 
