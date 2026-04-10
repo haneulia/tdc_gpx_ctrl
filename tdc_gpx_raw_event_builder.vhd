@@ -41,7 +41,7 @@ entity tdc_gpx_raw_event_builder is
         i_drain_done      : in  std_logic;
 
         -- Configuration
-        i_stops_per_chip  : in  unsigned(7 downto 0);
+        i_stops_per_chip  : in  unsigned(3 downto 0);
 
         -- Output
         o_raw_event       : out t_raw_event;
@@ -88,7 +88,7 @@ begin
 
                 if i_decoded_valid = '1' then
                     -- Range check: stop_id_local < stops_per_chip
-                    if i_stop_id_local >= i_stops_per_chip(2 downto 0) then
+                    if ('0' & i_stop_id_local) >= i_stops_per_chip then
                         -- Out-of-range stop_id: discard event, flag error
                         s_stop_id_error_r <= '1';
                     else

@@ -39,7 +39,7 @@ package tdc_gpx_pkg is
     constant c_TDATA_WIDTH          : natural := 32;
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
 
-    constant c_SHOT_SEQ_WIDTH        : natural := 16;
+    constant c_SHOT_SEQ_WIDTH       : natural := 16;
     constant c_TDC_BUS_WIDTH        : natural := 28;
     constant c_RAW_HIT_WIDTH        : natural := 17;   -- TDC-GPX I-Mode raw hit (always 17-bit)
     constant c_MAX_ROWS_PER_FACE    : natural := c_N_CHIPS * c_MAX_STOPS_PER_CHIP;  -- 32
@@ -110,7 +110,7 @@ package tdc_gpx_pkg is
     type t_tdc_cfg is record
         -- Control registers (0x00~0x34)
         active_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);     -- 0x00 [3:0]
-        stops_per_chip      : unsigned(7 downto 0);                          -- 0x04 [7:0]
+        stops_per_chip      : unsigned(3 downto 0);                          -- 0x04 [3:0]
         cols_per_face       : unsigned(15 downto 0);                         -- 0x08 [15:0]
         packet_scope        : std_logic;                                     -- 0x0C [0]
         hit_store_mode      : unsigned(1 downto 0);                          -- 0x10 [1:0]
@@ -130,7 +130,7 @@ package tdc_gpx_pkg is
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
         active_chip_mask    => (others => '1'),         -- all 4 chips active
-        stops_per_chip      => to_unsigned(8, 8),
+        stops_per_chip      => to_unsigned(8, 4),
         cols_per_face       => to_unsigned(2400, 16),
         packet_scope        => '0',                     -- face 단위
         hit_store_mode      => "00",                    -- RAW
