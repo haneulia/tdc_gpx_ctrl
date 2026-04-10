@@ -102,6 +102,12 @@ package tdc_gpx_pkg is
     constant c_BEATS_PER_CELL       : natural := c_CELL_SIZE_BYTES / (c_TDATA_BYTES);       -- 8
 
     -- =========================================================================
+    -- AXI-Stream array type (for multi-lane slice data)
+    -- =========================================================================
+    type t_axis_tdata_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+
+    -- =========================================================================
     -- cfg_image array type (TDC-GPX register image stored in CSR)
     -- =========================================================================
     type t_cfg_image is array(0 to 15) of std_logic_vector(31 downto 0);
@@ -125,7 +131,7 @@ package tdc_gpx_pkg is
         bus_clk_div         : unsigned(7 downto 0);                         -- 0x28 [7:0]
         bus_ticks           : unsigned(2 downto 0);                         -- 0x2C [2:0]
         stopdis_override    : std_logic_vector(4 downto 0);                 -- 0x30 [4:0]
-        slice_timeout_clks  : unsigned(7 downto 0);                         -- 0x34 [7:0]
+        max_range_clks      : unsigned(15 downto 0);                        -- 0x34 [15:0]
         -- TDC settings (0x40~0x44)
         start_off1          : unsigned(17 downto 0);                        -- 0x40 [17:0]
         cfg_reg7            : std_logic_vector(31 downto 0);                -- 0x44
@@ -145,7 +151,7 @@ package tdc_gpx_pkg is
         bus_clk_div         => to_unsigned(1, 8),
         bus_ticks           => to_unsigned(5, 3),
         stopdis_override    => (others => '0'),
-        slice_timeout_clks  => to_unsigned(200, 8),
+        max_range_clks     => to_unsigned(267, 16),       -- ~200m @200MHz
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0')
     );

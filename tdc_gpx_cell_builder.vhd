@@ -259,6 +259,16 @@ begin
                         end if;
 
                 end case;
+
+                -- shot_start override for ST_COLLECT/ST_OUTPUT only.
+                -- Handles timeout recovery (cell_builder stuck in ST_OUTPUT).
+                -- ST_IDLE is handled inside the case statement above.
+                if i_shot_start = '1' and s_state_r /= ST_IDLE then
+                    s_cell_buf_r <= (others => c_CELL_INIT);
+                    s_state_r    <= ST_COLLECT;
+                    s_tvalid_r   <= '0';
+                    s_tlast_r    <= '0';
+                end if;
             end if;
         end if;
     end process p_main;
