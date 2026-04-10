@@ -1,0 +1,597 @@
+-- =============================================================================
+-- tdc_gpx_csr.vhd
+-- TDC-GPX Controller - AXI4-Lite CSR Wrapper + CDC
+-- (based on my_axil_csr32, echo_receiver_csr pattern)
+-- =============================================================================
+--
+-- Function:
+--   AXI4-Lite register interface wrapping tdc_gpx_axil_csr32 (32 CTL + 11 STAT)
+--   with cross-clock-domain transfer to the TDC processing domain (i_clk).
+--
+-- Register map (9-bit address, 32 CTL + 11 STAT):
+--   CTL0  (0x00) ACTIVE_CHIP_MASK  [3:0] chip mask, [31:28] COMMAND
+--   CTL1  (0x04) STOPS_PER_CHIP    [3:0]
+--   CTL2  (0x08) COLS_PER_FACE     [15:0]
+--   CTL3  (0x0C) PACKET_SCOPE      [0]
+--   CTL4  (0x10) HIT_STORE_MODE    [1:0]
+--   CTL5  (0x14) DIST_SCALE        [2:0]
+--   CTL6  (0x18) DRAIN_MODE        [0]
+--   CTL7  (0x1C) N_DRAIN_CAP       [7:0]
+--   CTL8  (0x20) PIPELINE_EN       [0]
+--   CTL9  (0x24) N_FACES           [7:0]
+--   CTL10 (0x28) BUS_CLK_DIV       [7:0]
+--   CTL11 (0x2C) BUS_TICKS         [2:0]
+--   CTL12 (0x30) STOPDIS_OVERRIDE  [4:0]
+--   CTL13 (0x34) MAX_RANGE_CLKS    [15:0]
+--   CTL14 (0x38) START_OFF1        [17:0]
+--   CTL15 (0x3C) CFG_REG7          [31:0]
+--   CTL16..31 (0x40~0x7C) CFG_IMAGE[0..15] [31:0] each
+--
+--   STAT0  (0x80) HW_VERSION       [31:0] (constant)
+--   STAT1  (0x84) HW_CONFIG        packed generics (constant)
+--   STAT2  (0x88) MAX_ROWS         [15:0] (constant)
+--   STAT3  (0x8C) CELL_SIZE        [15:0] (constant)
+--   STAT4  (0x90) MAX_HSIZE        [15:0] (constant)
+--   STAT5  (0x94) STATUS           [0] busy, [1] overrun, [2] bin_mismatch, [7:4] lane_err
+--   STAT6  (0x98) SHOT_SEQ         [15:0]
+--   STAT7  (0x9C) FRAME_COUNT      [31:0]
+--   STAT8  (0xA0) ERROR_COUNT      [31:0]
+--   STAT9  (0xA4) BIN_PS           [15:0]
+--   STAT10 (0xA8) K_DIST           [31:0]
+--
+-- CDC structure:
+--   CTL: 16 x xpm_cdc_handshake (s_axi_aclk -> i_clk)
+--        CTL0~CTL15 individually; CTL16~31 (cfg_image) as group on cfg_write
+--   STAT: 6 x xpm_cdc_handshake (i_clk -> s_axi_aclk) for STAT5~10
+--
+-- Clock domains:
+--   s_axi_aclk : AXI4-Lite domain (PS clock)
+--   i_clk      : TDC processing domain (200 MHz)
+--
+-- Standard: VHDL-93 compatible
+-- =============================================================================
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.tdc_gpx_pkg.all;
+use work.tdc_gpx_cfg_pkg.all;
+
+library xpm;
+use xpm.vcomponents.all;
+
+entity tdc_gpx_csr is
+    generic (
+        g_HW_VERSION : std_logic_vector(31 downto 0) := x"00010000"
+    );
+    port (
+        -- AXI4-Lite clock / reset
+        s_axi_aclk          : in  std_logic;
+        s_axi_aresetn       : in  std_logic;
+
+        -- AXI4-Lite Slave (9-bit address)
+        s_axi_awvalid       : in  std_logic;
+        s_axi_awready       : out std_logic;
+        s_axi_awaddr        : in  std_logic_vector(c_CSR_ADDR_WIDTH - 1 downto 0);
+        s_axi_awprot        : in  std_logic_vector(2 downto 0);
+        s_axi_wvalid        : in  std_logic;
+        s_axi_wready        : out std_logic;
+        s_axi_wdata         : in  std_logic_vector(31 downto 0);
+        s_axi_wstrb         : in  std_logic_vector(3 downto 0);
+        s_axi_bvalid        : out std_logic;
+        s_axi_bready        : in  std_logic;
+        s_axi_bresp         : out std_logic_vector(1 downto 0);
+        s_axi_arvalid       : in  std_logic;
+        s_axi_arready       : out std_logic;
+        s_axi_araddr        : in  std_logic_vector(c_CSR_ADDR_WIDTH - 1 downto 0);
+        s_axi_arprot        : in  std_logic_vector(2 downto 0);
+        s_axi_rvalid        : out std_logic;
+        s_axi_rready        : in  std_logic;
+        s_axi_rdata         : out std_logic_vector(31 downto 0);
+        s_axi_rresp         : out std_logic_vector(1 downto 0);
+
+        -- TDC processing clock / reset
+        i_clk               : in  std_logic;
+        i_rst_n             : in  std_logic;
+
+        -- Configuration output (i_clk domain)
+        o_cfg               : out t_tdc_cfg;
+        o_cfg_image         : out t_cfg_image;
+
+        -- Command pulses (i_clk domain, 1-clk, rising-edge detect)
+        o_cmd_start         : out std_logic;
+        o_cmd_stop          : out std_logic;
+        o_cmd_soft_reset    : out std_logic;
+        o_cmd_cfg_write     : out std_logic;
+
+        -- Status input (i_clk domain)
+        i_status            : in  t_tdc_status;
+        i_bin_resolution_ps : in  unsigned(15 downto 0);
+        i_k_dist_fixed      : in  unsigned(31 downto 0);
+
+        -- Interrupt
+        o_irq               : out std_logic
+    );
+end entity tdc_gpx_csr;
+
+architecture rtl of tdc_gpx_csr is
+
+    -- =========================================================================
+    -- tdc_gpx_axil_csr32 component (Vivado IP: 32 CTL, 11 STAT, 1 IRQ)
+    --   Generated from my_axil_csr32 template with:
+    --     num_ctl_regs  = 32
+    --     num_stat_regs = 11
+    --     addr_width    = 9
+    -- =========================================================================
+    component tdc_gpx_axil_csr32 is
+        port (
+            s_axi_csr_aclk      : in  std_logic;
+            s_axi_csr_aresetn   : in  std_logic;
+            s_axi_csr_awaddr    : in  std_logic_vector(8 downto 0);
+            s_axi_csr_awprot    : in  std_logic_vector(2 downto 0);
+            s_axi_csr_awvalid   : in  std_logic;
+            s_axi_csr_awready   : out std_logic;
+            s_axi_csr_wdata     : in  std_logic_vector(31 downto 0);
+            s_axi_csr_wstrb     : in  std_logic_vector(3 downto 0);
+            s_axi_csr_wvalid    : in  std_logic;
+            s_axi_csr_wready    : out std_logic;
+            s_axi_csr_bresp     : out std_logic_vector(1 downto 0);
+            s_axi_csr_bvalid    : out std_logic;
+            s_axi_csr_bready    : in  std_logic;
+            s_axi_csr_araddr    : in  std_logic_vector(8 downto 0);
+            s_axi_csr_arprot    : in  std_logic_vector(2 downto 0);
+            s_axi_csr_arvalid   : in  std_logic;
+            s_axi_csr_arready   : out std_logic;
+            s_axi_csr_rdata     : out std_logic_vector(31 downto 0);
+            s_axi_csr_rresp     : out std_logic_vector(1 downto 0);
+            s_axi_csr_rvalid    : out std_logic;
+            s_axi_csr_rready    : in  std_logic;
+            -- Init values (32 CTL registers)
+            reg0_init_val       : in  std_logic_vector(31 downto 0);
+            reg1_init_val       : in  std_logic_vector(31 downto 0);
+            reg2_init_val       : in  std_logic_vector(31 downto 0);
+            reg3_init_val       : in  std_logic_vector(31 downto 0);
+            reg4_init_val       : in  std_logic_vector(31 downto 0);
+            reg5_init_val       : in  std_logic_vector(31 downto 0);
+            reg6_init_val       : in  std_logic_vector(31 downto 0);
+            reg7_init_val       : in  std_logic_vector(31 downto 0);
+            reg8_init_val       : in  std_logic_vector(31 downto 0);
+            reg9_init_val       : in  std_logic_vector(31 downto 0);
+            reg10_init_val      : in  std_logic_vector(31 downto 0);
+            reg11_init_val      : in  std_logic_vector(31 downto 0);
+            reg12_init_val      : in  std_logic_vector(31 downto 0);
+            reg13_init_val      : in  std_logic_vector(31 downto 0);
+            reg14_init_val      : in  std_logic_vector(31 downto 0);
+            reg15_init_val      : in  std_logic_vector(31 downto 0);
+            reg16_init_val      : in  std_logic_vector(31 downto 0);
+            reg17_init_val      : in  std_logic_vector(31 downto 0);
+            reg18_init_val      : in  std_logic_vector(31 downto 0);
+            reg19_init_val      : in  std_logic_vector(31 downto 0);
+            reg20_init_val      : in  std_logic_vector(31 downto 0);
+            reg21_init_val      : in  std_logic_vector(31 downto 0);
+            reg22_init_val      : in  std_logic_vector(31 downto 0);
+            reg23_init_val      : in  std_logic_vector(31 downto 0);
+            reg24_init_val      : in  std_logic_vector(31 downto 0);
+            reg25_init_val      : in  std_logic_vector(31 downto 0);
+            reg26_init_val      : in  std_logic_vector(31 downto 0);
+            reg27_init_val      : in  std_logic_vector(31 downto 0);
+            reg28_init_val      : in  std_logic_vector(31 downto 0);
+            reg29_init_val      : in  std_logic_vector(31 downto 0);
+            reg30_init_val      : in  std_logic_vector(31 downto 0);
+            reg31_init_val      : in  std_logic_vector(31 downto 0);
+            -- CTL outputs (32)
+            ctl0_out            : out std_logic_vector(31 downto 0);
+            ctl1_out            : out std_logic_vector(31 downto 0);
+            ctl2_out            : out std_logic_vector(31 downto 0);
+            ctl3_out            : out std_logic_vector(31 downto 0);
+            ctl4_out            : out std_logic_vector(31 downto 0);
+            ctl5_out            : out std_logic_vector(31 downto 0);
+            ctl6_out            : out std_logic_vector(31 downto 0);
+            ctl7_out            : out std_logic_vector(31 downto 0);
+            ctl8_out            : out std_logic_vector(31 downto 0);
+            ctl9_out            : out std_logic_vector(31 downto 0);
+            ctl10_out           : out std_logic_vector(31 downto 0);
+            ctl11_out           : out std_logic_vector(31 downto 0);
+            ctl12_out           : out std_logic_vector(31 downto 0);
+            ctl13_out           : out std_logic_vector(31 downto 0);
+            ctl14_out           : out std_logic_vector(31 downto 0);
+            ctl15_out           : out std_logic_vector(31 downto 0);
+            ctl16_out           : out std_logic_vector(31 downto 0);
+            ctl17_out           : out std_logic_vector(31 downto 0);
+            ctl18_out           : out std_logic_vector(31 downto 0);
+            ctl19_out           : out std_logic_vector(31 downto 0);
+            ctl20_out           : out std_logic_vector(31 downto 0);
+            ctl21_out           : out std_logic_vector(31 downto 0);
+            ctl22_out           : out std_logic_vector(31 downto 0);
+            ctl23_out           : out std_logic_vector(31 downto 0);
+            ctl24_out           : out std_logic_vector(31 downto 0);
+            ctl25_out           : out std_logic_vector(31 downto 0);
+            ctl26_out           : out std_logic_vector(31 downto 0);
+            ctl27_out           : out std_logic_vector(31 downto 0);
+            ctl28_out           : out std_logic_vector(31 downto 0);
+            ctl29_out           : out std_logic_vector(31 downto 0);
+            ctl30_out           : out std_logic_vector(31 downto 0);
+            ctl31_out           : out std_logic_vector(31 downto 0);
+            -- STAT inputs (11)
+            stat0_in            : in  std_logic_vector(31 downto 0);
+            stat1_in            : in  std_logic_vector(31 downto 0);
+            stat2_in            : in  std_logic_vector(31 downto 0);
+            stat3_in            : in  std_logic_vector(31 downto 0);
+            stat4_in            : in  std_logic_vector(31 downto 0);
+            stat5_in            : in  std_logic_vector(31 downto 0);
+            stat6_in            : in  std_logic_vector(31 downto 0);
+            stat7_in            : in  std_logic_vector(31 downto 0);
+            stat8_in            : in  std_logic_vector(31 downto 0);
+            stat9_in            : in  std_logic_vector(31 downto 0);
+            stat10_in           : in  std_logic_vector(31 downto 0);
+            -- Interrupt
+            intrpt_src_in       : in  std_logic_vector(0 downto 0);
+            irq                 : out std_logic
+        );
+    end component tdc_gpx_axil_csr32;
+
+    -- =========================================================================
+    -- Constants
+    -- =========================================================================
+    constant C_NUM_CTL_CDC  : natural := 16;    -- CTL0~15: individually CDC'd
+    constant C_NUM_STAT_CDC : natural := 6;     -- STAT5~10: live status CDC
+    constant C_ZERO32       : std_logic_vector(31 downto 0) := (others => '0');
+
+    -- =========================================================================
+    -- Internal types
+    -- =========================================================================
+    type t_cdc_data_array is array(natural range <>) of std_logic_vector(31 downto 0);
+
+    -- =========================================================================
+    -- CTL raw outputs (s_axi_aclk domain)
+    -- =========================================================================
+    signal s_ctl_src : t_cdc_data_array(0 to c_NUM_CTL_REGS - 1);
+
+    -- CTL after CDC (i_clk domain) — only CTL0~15 are CDC'd individually
+    signal s_ctl_out : t_cdc_data_array(0 to C_NUM_CTL_CDC - 1) := (others => C_ZERO32);
+
+    -- cfg_image after CDC (i_clk domain) — CTL16~31 CDC'd as group
+    signal s_img_out : t_cfg_image := (others => C_ZERO32);
+
+    -- CTL CDC handshake (CTL0~15)
+    signal s_src_send_ctl : std_logic_vector(C_NUM_CTL_CDC - 1 downto 0) := (others => '0');
+    signal s_src_rcv_ctl  : std_logic_vector(C_NUM_CTL_CDC - 1 downto 0);
+    signal s_dest_req_ctl : std_logic_vector(C_NUM_CTL_CDC - 1 downto 0);
+    signal s_ctl_d1       : t_cdc_data_array(0 to C_NUM_CTL_CDC - 1) := (others => (others => '1'));
+
+    -- cfg_image CDC handshake (group: 16 regs × 32 bits = 512 bits → per-reg CDC)
+    signal s_src_send_img : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0) := (others => '0');
+    signal s_src_rcv_img  : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
+    signal s_dest_req_img : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
+    signal s_img_d1       : t_cdc_data_array(0 to c_CFG_IMAGE_N_REGS - 1) := (others => (others => '1'));
+
+    -- STAT source (i_clk domain, 6 live registers)
+    signal s_stat_src : t_cdc_data_array(0 to C_NUM_STAT_CDC - 1);
+
+    -- STAT after CDC (s_axi_aclk domain)
+    signal s_stat_out : t_cdc_data_array(0 to C_NUM_STAT_CDC - 1) := (others => C_ZERO32);
+
+    -- STAT CDC handshake
+    signal s_src_send_stat : std_logic_vector(C_NUM_STAT_CDC - 1 downto 0) := (others => '0');
+    signal s_src_rcv_stat  : std_logic_vector(C_NUM_STAT_CDC - 1 downto 0);
+    signal s_dest_req_stat : std_logic_vector(C_NUM_STAT_CDC - 1 downto 0);
+    signal s_stat_d1       : t_cdc_data_array(0 to C_NUM_STAT_CDC - 1) := (others => (others => '1'));
+
+    -- HW_CONFIG constant (compile-time)
+    signal s_hw_config : std_logic_vector(31 downto 0);
+
+    -- Command edge detect (i_clk domain)
+    signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_cmd_pulse_r : std_logic_vector(3 downto 0) := (others => '0');
+
+begin
+
+    -- =========================================================================
+    -- [1] HW_CONFIG constant assembly
+    -- =========================================================================
+    s_hw_config(c_HWCFG_N_CHIPS_HI downto c_HWCFG_N_CHIPS_LO)
+        <= std_logic_vector(to_unsigned(c_N_CHIPS, 4));
+    s_hw_config(c_HWCFG_MAX_STOPS_HI downto c_HWCFG_MAX_STOPS_LO)
+        <= std_logic_vector(to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
+    s_hw_config(c_HWCFG_MAX_HITS_HI downto c_HWCFG_MAX_HITS_LO)
+        <= std_logic_vector(to_unsigned(c_MAX_HITS_PER_STOP, 4));
+    s_hw_config(c_HWCFG_HIT_WIDTH_HI downto c_HWCFG_HIT_WIDTH_LO)
+        <= std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 5));
+    s_hw_config(c_HWCFG_TDATA_HI downto c_HWCFG_TDATA_LO)
+        <= std_logic_vector(to_unsigned(c_TDATA_WIDTH, 8));
+    s_hw_config(c_HWCFG_CELL_FMT_HI downto c_HWCFG_CELL_FMT_LO)
+        <= std_logic_vector(to_unsigned(c_CELL_FORMAT, 3));
+    s_hw_config(31 downto c_HWCFG_CELL_FMT_HI + 1) <= (others => '0');
+
+    -- =========================================================================
+    -- [2] tdc_gpx_axil_csr32 instantiation (32 CTL, 11 STAT)
+    -- =========================================================================
+    u_csr : tdc_gpx_axil_csr32
+        port map (
+            s_axi_csr_aclk    => s_axi_aclk,
+            s_axi_csr_aresetn => s_axi_aresetn,
+            s_axi_csr_awaddr  => s_axi_awaddr,
+            s_axi_csr_awprot  => s_axi_awprot,
+            s_axi_csr_awvalid => s_axi_awvalid,
+            s_axi_csr_awready => s_axi_awready,
+            s_axi_csr_wdata   => s_axi_wdata,
+            s_axi_csr_wstrb   => s_axi_wstrb,
+            s_axi_csr_wvalid  => s_axi_wvalid,
+            s_axi_csr_wready  => s_axi_wready,
+            s_axi_csr_bresp   => s_axi_bresp,
+            s_axi_csr_bvalid  => s_axi_bvalid,
+            s_axi_csr_bready  => s_axi_bready,
+            s_axi_csr_araddr  => s_axi_araddr,
+            s_axi_csr_arprot  => s_axi_arprot,
+            s_axi_csr_arvalid => s_axi_arvalid,
+            s_axi_csr_arready => s_axi_arready,
+            s_axi_csr_rdata   => s_axi_rdata,
+            s_axi_csr_rresp   => s_axi_rresp,
+            s_axi_csr_rvalid  => s_axi_rvalid,
+            s_axi_csr_rready  => s_axi_rready,
+            -- Init values: CTL0~13 = control, CTL14~15 = TDC, CTL16~31 = cfg_image (zero)
+            reg0_init_val  => c_INIT_ACTIVE_MASK,
+            reg1_init_val  => c_INIT_STOPS_PER_CHIP,
+            reg2_init_val  => c_INIT_COLS_PER_FACE,
+            reg3_init_val  => c_INIT_PACKET_SCOPE,
+            reg4_init_val  => c_INIT_HIT_STORE_MODE,
+            reg5_init_val  => c_INIT_DIST_SCALE,
+            reg6_init_val  => c_INIT_DRAIN_MODE,
+            reg7_init_val  => c_INIT_N_DRAIN_CAP,
+            reg8_init_val  => c_INIT_PIPELINE_EN,
+            reg9_init_val  => c_INIT_N_FACES,
+            reg10_init_val => c_INIT_BUS_CLK_DIV,
+            reg11_init_val => c_INIT_BUS_TICKS,
+            reg12_init_val => c_INIT_STOPDIS_OVR,
+            reg13_init_val => c_INIT_MAX_RANGE_CLKS,
+            reg14_init_val => C_ZERO32,   -- START_OFF1
+            reg15_init_val => C_ZERO32,   -- CFG_REG7
+            reg16_init_val => C_ZERO32,   reg17_init_val => C_ZERO32,
+            reg18_init_val => C_ZERO32,   reg19_init_val => C_ZERO32,
+            reg20_init_val => C_ZERO32,   reg21_init_val => C_ZERO32,
+            reg22_init_val => C_ZERO32,   reg23_init_val => C_ZERO32,
+            reg24_init_val => C_ZERO32,   reg25_init_val => C_ZERO32,
+            reg26_init_val => C_ZERO32,   reg27_init_val => C_ZERO32,
+            reg28_init_val => C_ZERO32,   reg29_init_val => C_ZERO32,
+            reg30_init_val => C_ZERO32,   reg31_init_val => C_ZERO32,
+            -- CTL outputs → s_ctl_src array
+            ctl0_out  => s_ctl_src(0),    ctl1_out  => s_ctl_src(1),
+            ctl2_out  => s_ctl_src(2),    ctl3_out  => s_ctl_src(3),
+            ctl4_out  => s_ctl_src(4),    ctl5_out  => s_ctl_src(5),
+            ctl6_out  => s_ctl_src(6),    ctl7_out  => s_ctl_src(7),
+            ctl8_out  => s_ctl_src(8),    ctl9_out  => s_ctl_src(9),
+            ctl10_out => s_ctl_src(10),   ctl11_out => s_ctl_src(11),
+            ctl12_out => s_ctl_src(12),   ctl13_out => s_ctl_src(13),
+            ctl14_out => s_ctl_src(14),   ctl15_out => s_ctl_src(15),
+            ctl16_out => s_ctl_src(16),   ctl17_out => s_ctl_src(17),
+            ctl18_out => s_ctl_src(18),   ctl19_out => s_ctl_src(19),
+            ctl20_out => s_ctl_src(20),   ctl21_out => s_ctl_src(21),
+            ctl22_out => s_ctl_src(22),   ctl23_out => s_ctl_src(23),
+            ctl24_out => s_ctl_src(24),   ctl25_out => s_ctl_src(25),
+            ctl26_out => s_ctl_src(26),   ctl27_out => s_ctl_src(27),
+            ctl28_out => s_ctl_src(28),   ctl29_out => s_ctl_src(29),
+            ctl30_out => s_ctl_src(30),   ctl31_out => s_ctl_src(31),
+            -- STAT inputs: STAT0~4 = constants (s_axi_aclk domain, no CDC)
+            stat0_in  => g_HW_VERSION,
+            stat1_in  => s_hw_config,
+            stat2_in  => std_logic_vector(to_unsigned(c_MAX_ROWS_PER_FACE, 32)),
+            stat3_in  => std_logic_vector(to_unsigned(c_CELL_SIZE_BYTES, 32)),
+            stat4_in  => std_logic_vector(to_unsigned(c_HSIZE_MAX, 32)),
+            -- STAT5~10 = live status (CDC'd from i_clk)
+            stat5_in  => s_stat_out(0),
+            stat6_in  => s_stat_out(1),
+            stat7_in  => s_stat_out(2),
+            stat8_in  => s_stat_out(3),
+            stat9_in  => s_stat_out(4),
+            stat10_in => s_stat_out(5),
+            -- Interrupt
+            intrpt_src_in => "0",
+            irq           => o_irq
+        );
+
+    -- =========================================================================
+    -- [3] STAT source packing (i_clk domain)
+    -- =========================================================================
+    -- STAT5 = STATUS word
+    s_stat_src(0)(c_STAT_BUSY)       <= i_status.busy;
+    s_stat_src(0)(c_STAT_OVERRUN)    <= i_status.pipeline_overrun;
+    s_stat_src(0)(c_STAT_BIN_MISMATCH) <= i_status.bin_mismatch;
+    s_stat_src(0)(3) <= '0';
+    s_stat_src(0)(c_STAT_LANE_ERR_HI downto c_STAT_LANE_ERR_LO)
+        <= i_status.lane_error_mask;
+    s_stat_src(0)(31 downto c_STAT_LANE_ERR_HI + 1) <= (others => '0');
+
+    -- STAT6 = SHOT_SEQ
+    s_stat_src(1)(c_SHOT_SEQ_WIDTH - 1 downto 0)
+        <= std_logic_vector(i_status.shot_seq_current);
+    s_stat_src(1)(31 downto c_SHOT_SEQ_WIDTH) <= (others => '0');
+
+    -- STAT7 = FRAME_COUNT
+    s_stat_src(2) <= std_logic_vector(i_status.vdma_frame_count);
+
+    -- STAT8 = ERROR_COUNT
+    s_stat_src(3) <= std_logic_vector(i_status.error_count);
+
+    -- STAT9 = BIN_PS
+    s_stat_src(4)(15 downto 0) <= std_logic_vector(i_bin_resolution_ps);
+    s_stat_src(4)(31 downto 16) <= (others => '0');
+
+    -- STAT10 = K_DIST
+    s_stat_src(5) <= std_logic_vector(i_k_dist_fixed);
+
+    -- =========================================================================
+    -- [4] STAT CDC: i_clk -> s_axi_aclk (6 live registers)
+    -- =========================================================================
+    gen_stat_cdc : for i in 0 to C_NUM_STAT_CDC - 1 generate
+        u_cdc_stat : xpm_cdc_handshake
+            generic map (
+                DEST_EXT_HSK   => 1,
+                DEST_SYNC_FF   => 4,
+                INIT_SYNC_FF   => 0,
+                SIM_ASSERT_CHK => 0,
+                SRC_SYNC_FF    => 4,
+                WIDTH          => 32
+            )
+            port map (
+                src_clk   => i_clk,
+                src_in    => s_stat_src(i),
+                src_send  => s_src_send_stat(i),
+                src_rcv   => s_src_rcv_stat(i),
+                dest_clk  => s_axi_aclk,
+                dest_req  => s_dest_req_stat(i),
+                dest_ack  => s_dest_req_stat(i),
+                dest_out  => s_stat_out(i)
+            );
+
+        p_send_stat : process(i_clk)
+        begin
+            if rising_edge(i_clk) then
+                if i_rst_n = '0' then
+                    s_src_send_stat(i) <= '0';
+                    s_stat_d1(i)       <= (others => '1');
+                else
+                    if s_src_send_stat(i) = '0' and s_stat_src(i) /= s_stat_d1(i) then
+                        s_src_send_stat(i) <= '1';
+                        s_stat_d1(i)       <= s_stat_src(i);
+                    elsif s_src_rcv_stat(i) = '1' then
+                        s_src_send_stat(i) <= '0';
+                    end if;
+                end if;
+            end if;
+        end process p_send_stat;
+    end generate gen_stat_cdc;
+
+    -- =========================================================================
+    -- [5] CTL CDC: s_axi_aclk -> i_clk (CTL0~15: control + TDC settings)
+    -- =========================================================================
+    gen_ctl_cdc : for i in 0 to C_NUM_CTL_CDC - 1 generate
+        u_cdc_ctl : xpm_cdc_handshake
+            generic map (
+                DEST_EXT_HSK   => 1,
+                DEST_SYNC_FF   => 4,
+                INIT_SYNC_FF   => 0,
+                SIM_ASSERT_CHK => 0,
+                SRC_SYNC_FF    => 4,
+                WIDTH          => 32
+            )
+            port map (
+                src_clk   => s_axi_aclk,
+                src_in    => s_ctl_src(i),
+                src_send  => s_src_send_ctl(i),
+                src_rcv   => s_src_rcv_ctl(i),
+                dest_clk  => i_clk,
+                dest_req  => s_dest_req_ctl(i),
+                dest_ack  => s_dest_req_ctl(i),
+                dest_out  => s_ctl_out(i)
+            );
+
+        p_send_ctl : process(s_axi_aclk)
+        begin
+            if rising_edge(s_axi_aclk) then
+                if s_axi_aresetn = '0' then
+                    s_src_send_ctl(i) <= '0';
+                    s_ctl_d1(i)       <= (others => '1');
+                else
+                    if s_src_send_ctl(i) = '0' and s_ctl_src(i) /= s_ctl_d1(i) then
+                        s_src_send_ctl(i) <= '1';
+                        s_ctl_d1(i)       <= s_ctl_src(i);
+                    elsif s_src_rcv_ctl(i) = '1' then
+                        s_src_send_ctl(i) <= '0';
+                    end if;
+                end if;
+            end if;
+        end process p_send_ctl;
+    end generate gen_ctl_cdc;
+
+    -- =========================================================================
+    -- [6] cfg_image CDC: s_axi_aclk -> i_clk (CTL16~31, per-register)
+    -- =========================================================================
+    gen_img_cdc : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
+        u_cdc_img : xpm_cdc_handshake
+            generic map (
+                DEST_EXT_HSK   => 1,
+                DEST_SYNC_FF   => 4,
+                INIT_SYNC_FF   => 0,
+                SIM_ASSERT_CHK => 0,
+                SRC_SYNC_FF    => 4,
+                WIDTH          => 32
+            )
+            port map (
+                src_clk   => s_axi_aclk,
+                src_in    => s_ctl_src(16 + i),
+                src_send  => s_src_send_img(i),
+                src_rcv   => s_src_rcv_img(i),
+                dest_clk  => i_clk,
+                dest_req  => s_dest_req_img(i),
+                dest_ack  => s_dest_req_img(i),
+                dest_out  => s_img_out(i)
+            );
+
+        p_send_img : process(s_axi_aclk)
+        begin
+            if rising_edge(s_axi_aclk) then
+                if s_axi_aresetn = '0' then
+                    s_src_send_img(i) <= '0';
+                    s_img_d1(i)       <= (others => '1');
+                else
+                    if s_src_send_img(i) = '0' and s_ctl_src(16 + i) /= s_img_d1(i) then
+                        s_src_send_img(i) <= '1';
+                        s_img_d1(i)       <= s_ctl_src(16 + i);
+                    elsif s_src_rcv_img(i) = '1' then
+                        s_src_send_img(i) <= '0';
+                    end if;
+                end if;
+            end if;
+        end process p_send_img;
+    end generate gen_img_cdc;
+
+    -- =========================================================================
+    -- [7] Command edge detect (i_clk domain)
+    --   CTL0[31:28] = {cfg_write, soft_reset, stop, start}
+    --   Rising edge in i_clk domain → 1-clk pulse
+    -- =========================================================================
+    p_cmd_edge : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_cmd_prev_r  <= (others => '0');
+                s_cmd_pulse_r <= (others => '0');
+            else
+                s_cmd_prev_r  <= s_ctl_out(0)(31 downto 28);
+                s_cmd_pulse_r <= s_ctl_out(0)(31 downto 28) and (not s_cmd_prev_r);
+            end if;
+        end if;
+    end process p_cmd_edge;
+
+    o_cmd_start      <= s_cmd_pulse_r(0);   -- CTL0[28]
+    o_cmd_stop       <= s_cmd_pulse_r(1);   -- CTL0[29]
+    o_cmd_soft_reset <= s_cmd_pulse_r(2);   -- CTL0[30]
+    o_cmd_cfg_write  <= s_cmd_pulse_r(3);   -- CTL0[31]
+
+    -- =========================================================================
+    -- [8] CSR output: t_tdc_cfg (i_clk domain)
+    -- =========================================================================
+    o_cfg.active_chip_mask <= s_ctl_out(0)(c_N_CHIPS - 1 downto 0);
+    o_cfg.stops_per_chip   <= unsigned(s_ctl_out(1)(3 downto 0));
+    o_cfg.cols_per_face    <= unsigned(s_ctl_out(2)(15 downto 0));
+    o_cfg.packet_scope     <= s_ctl_out(3)(0);
+    o_cfg.hit_store_mode   <= unsigned(s_ctl_out(4)(1 downto 0));
+    o_cfg.dist_scale       <= unsigned(s_ctl_out(5)(2 downto 0));
+    o_cfg.drain_mode       <= s_ctl_out(6)(0);
+    o_cfg.n_drain_cap      <= unsigned(s_ctl_out(7)(7 downto 0));
+    o_cfg.pipeline_en      <= s_ctl_out(8)(0);
+    o_cfg.n_faces          <= unsigned(s_ctl_out(9)(7 downto 0));
+    o_cfg.bus_clk_div      <= unsigned(s_ctl_out(10)(7 downto 0));
+    o_cfg.bus_ticks         <= unsigned(s_ctl_out(11)(2 downto 0));
+    o_cfg.stopdis_override <= s_ctl_out(12)(4 downto 0);
+    o_cfg.max_range_clks   <= unsigned(s_ctl_out(13)(15 downto 0));
+    o_cfg.start_off1       <= unsigned(s_ctl_out(14)(17 downto 0));
+    o_cfg.cfg_reg7         <= s_ctl_out(15);
+
+    -- =========================================================================
+    -- [9] CSR output: t_cfg_image (i_clk domain)
+    -- =========================================================================
+    o_cfg_image <= s_img_out;
+
+end architecture rtl;
