@@ -154,8 +154,8 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT_BUSY             : natural := 0;
     constant c_STAT_OVERRUN          : natural := 1;
     constant c_STAT_BIN_MISMATCH     : natural := 2;
-    constant c_STAT_LANE_ERR_HI      : natural := 7;
-    constant c_STAT_LANE_ERR_LO      : natural := 4;
+    constant c_STAT_CHIP_ERR_HI      : natural := 7;
+    constant c_STAT_CHIP_ERR_LO      : natural := 4;
 
     -- =========================================================================
     -- Init values

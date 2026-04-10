@@ -102,7 +102,7 @@ package tdc_gpx_pkg is
     constant c_BEATS_PER_CELL       : natural := c_CELL_SIZE_BYTES / (c_TDATA_BYTES);       -- 8
 
     -- =========================================================================
-    -- AXI-Stream array type (for multi-lane slice data)
+    -- AXI-Stream array type (for multi-chip slice data)
     -- =========================================================================
     type t_axis_tdata_array is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
@@ -181,7 +181,7 @@ package tdc_gpx_pkg is
         busy                : std_logic;
         pipeline_overrun    : std_logic;
         bin_mismatch        : std_logic;
-        lane_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        chip_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
         shot_seq_current    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         vdma_frame_count    : unsigned(31 downto 0);
         error_count         : unsigned(31 downto 0);
@@ -191,7 +191,7 @@ package tdc_gpx_pkg is
         busy                => '0',
         pipeline_overrun    => '0',
         bin_mismatch        => '0',
-        lane_error_mask     => (others => '0'),
+        chip_error_mask     => (others => '0'),
         shot_seq_current    => (others => '0'),
         vdma_frame_count    => (others => '0'),
         error_count         => (others => '0')

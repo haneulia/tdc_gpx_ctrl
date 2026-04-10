@@ -450,8 +450,8 @@ begin
             i_face_id           => s_face_id_r,
             i_shot_seq_start    => s_chip_shot_seq(0),
             i_timestamp_ns      => s_timestamp_r,
-            i_lane_error_mask   => s_errflag_sync,
-            i_lane_error_cnt    => std_logic_vector(s_error_count_r),
+            i_chip_error_mask   => s_errflag_sync,
+            i_chip_error_cnt    => std_logic_vector(s_error_count_r),
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             i_s_axis_tdata      => s_face_tdata,
@@ -558,7 +558,7 @@ begin
     s_status.pipeline_overrun  <= '1' when s_chip_error_flags /= C_ZEROS_CHIPS
                                       else '0';
     s_status.bin_mismatch      <= '0';  -- Phase 2: calibration check
-    s_status.lane_error_mask   <= s_errflag_sync;
+    s_status.chip_error_mask   <= s_errflag_sync;
     s_status.shot_seq_current  <= s_chip_shot_seq(0);
     s_status.vdma_frame_count  <= s_frame_id_r;
     s_status.error_count       <= s_error_count_r;

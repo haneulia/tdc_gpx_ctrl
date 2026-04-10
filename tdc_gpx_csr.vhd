@@ -27,7 +27,7 @@
 --   STAT2  (0x88) MAX_ROWS         [15:0] (constant)
 --   STAT3  (0x8C) CELL_SIZE        [15:0] (constant)
 --   STAT4  (0x90) MAX_HSIZE        [15:0] (constant)
---   STAT5  (0x94) STATUS           [0] busy, [1] overrun, [2] bin_mismatch, [7:4] lane_err
+--   STAT5  (0x94) STATUS           [0] busy, [1] overrun, [2] bin_mismatch, [7:4] chip_err
 --   STAT6  (0x98) SHOT_SEQ         [15:0]
 --   STAT7  (0x9C) FRAME_COUNT      [31:0]
 --   STAT8  (0xA0) ERROR_COUNT      [31:0]
@@ -393,9 +393,9 @@ begin
     s_stat_src(0)(c_STAT_OVERRUN)    <= i_status.pipeline_overrun;
     s_stat_src(0)(c_STAT_BIN_MISMATCH) <= i_status.bin_mismatch;
     s_stat_src(0)(3) <= '0';
-    s_stat_src(0)(c_STAT_LANE_ERR_HI downto c_STAT_LANE_ERR_LO)
-        <= i_status.lane_error_mask;
-    s_stat_src(0)(31 downto c_STAT_LANE_ERR_HI + 1) <= (others => '0');
+    s_stat_src(0)(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO)
+        <= i_status.chip_error_mask;
+    s_stat_src(0)(31 downto c_STAT_CHIP_ERR_HI + 1) <= (others => '0');
 
     -- STAT6 = SHOT_SEQ
     s_stat_src(1)(c_SHOT_SEQ_WIDTH - 1 downto 0)

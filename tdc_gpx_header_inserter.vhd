@@ -54,8 +54,8 @@ entity tdc_gpx_header_inserter is
         i_face_id           : in  unsigned(7 downto 0);
         i_shot_seq_start    : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         i_timestamp_ns      : in  unsigned(63 downto 0);
-        i_lane_error_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_lane_error_cnt    : in  std_logic_vector(31 downto 0);  -- packed LE: cnt3 & cnt2 & cnt1 & cnt0
+        i_chip_error_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_chip_error_cnt    : in  std_logic_vector(31 downto 0);  -- packed LE: cnt3 & cnt2 & cnt1 & cnt0
         i_bin_resolution_ps : in  unsigned(15 downto 0);
         i_k_dist_fixed      : in  unsigned(31 downto 0);
 
@@ -118,8 +118,8 @@ architecture rtl of tdc_gpx_header_inserter is
     signal s_timestamp_ns_r      : unsigned(63 downto 0) := (others => '0');
 
     -- Error
-    signal s_lane_error_mask_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_lane_error_cnt_r    : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_chip_error_mask_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_chip_error_cnt_r    : std_logic_vector(31 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Derived (latched)
@@ -206,8 +206,8 @@ begin
                 s_pipeline_en_r     <= '0';
                 s_k_dist_fixed_r    <= (others => '0');
                 s_timestamp_ns_r    <= (others => '0');
-                s_lane_error_mask_r <= (others => '0');
-                s_lane_error_cnt_r  <= (others => '0');
+                s_chip_error_mask_r <= (others => '0');
+                s_chip_error_cnt_r  <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_frame_done_r <= '0';
@@ -317,19 +317,19 @@ begin
                             when 13 =>
                                 v_hdr_data := std_logic_vector(s_timestamp_ns_r(63 downto 32));
 
-                            -- 0x38: lane_error_mask[3:0] | rsvd[7:4] |
+                            -- 0x38: chip_error_mask[3:0] | rsvd[7:4] |
                             --       error_count[31:8] (lower 24 bits)
                             when 14 =>
-                                v_hdr_data(c_N_CHIPS - 1 downto 0) := s_lane_error_mask_r;
-                                v_hdr_data(15 downto 8)  := s_lane_error_cnt_r(7 downto 0);
-                                v_hdr_data(23 downto 16) := s_lane_error_cnt_r(15 downto 8);
-                                v_hdr_data(31 downto 24) := s_lane_error_cnt_r(23 downto 16);
+                                v_hdr_data(c_N_CHIPS - 1 downto 0) := s_chip_error_mask_r;
+                                v_hdr_data(15 downto 8)  := s_chip_error_cnt_r(7 downto 0);
+                                v_hdr_data(23 downto 16) := s_chip_error_cnt_r(15 downto 8);
+                                v_hdr_data(31 downto 24) := s_chip_error_cnt_r(23 downto 16);
 
                             -- 0x3C: error_count[7:0] (upper 8 bits) |
                             --       n_chips[11:8] | max_stops[15:12] |
                             --       cell_format[19:16] | rsvd[31:20]
                             when 15 =>
-                                v_hdr_data(7 downto 0)   := s_lane_error_cnt_r(31 downto 24);
+                                v_hdr_data(7 downto 0)   := s_chip_error_cnt_r(31 downto 24);
                                 v_hdr_data(11 downto 8)  := std_logic_vector(
                                     to_unsigned(c_N_CHIPS, 4));
                                 v_hdr_data(15 downto 12) := std_logic_vector(
@@ -426,8 +426,8 @@ begin
                     s_timestamp_ns_r      <= i_timestamp_ns;
 
                     -- Error
-                    s_lane_error_mask_r   <= i_lane_error_mask;
-                    s_lane_error_cnt_r    <= i_lane_error_cnt;
+                    s_chip_error_mask_r   <= i_chip_error_mask;
+                    s_chip_error_cnt_r    <= i_chip_error_cnt;
 
                     -- Compute rows_per_face (INV-10: clamp >= 2)
                     v_active_cnt := fn_count_ones(i_cfg.active_chip_mask);
