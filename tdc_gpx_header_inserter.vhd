@@ -255,19 +255,20 @@ begin
                             when 2 =>
                                 v_hdr_data := (others => '0');
 
-                            -- 0x0C: face_id | rsvd | active_chip_mask | n_faces
+                            -- 0x0C: face_id[7:0] | active_chip_mask[11:8] |
+                            --       n_faces[14:12] | rsvd[31:15]
                             when 3 =>
                                 v_hdr_data(7 downto 0)   := std_logic_vector(s_face_id_r);
-                                v_hdr_data(15 downto 8)  := (others => '0');
-                                v_hdr_data(16 + c_N_CHIPS - 1 downto 16) := s_active_chip_mask_r;
-                                v_hdr_data(26 downto 24) := std_logic_vector(s_n_faces_r);
+                                v_hdr_data(11 downto 8)  := s_active_chip_mask_r;
+                                v_hdr_data(14 downto 12) := std_logic_vector(s_n_faces_r);
 
                             -- 0x10: rows_per_face [15:0] | cols_per_face [15:0]
                             when 4 =>
                                 v_hdr_data(15 downto 0)  := std_logic_vector(s_rows_per_face_r);
                                 v_hdr_data(31 downto 16) := std_logic_vector(s_cols_per_face_r);
 
-                            -- 0x14: max_hits | cell_size | hit_slot_width | hit_store_mode
+                            -- 0x14: max_hits[7:0] | cell_size[15:8] |
+                            --       hit_slot_width[23:16] | hit_store_mode[25:24]
                             when 5 =>
                                 v_hdr_data(7 downto 0)   := std_logic_vector(
                                     to_unsigned(c_MAX_HITS_PER_STOP, 8));
@@ -282,11 +283,12 @@ begin
                                 v_hdr_data(c_SHOT_SEQ_WIDTH - 1 downto 0) :=
                                     std_logic_vector(s_shot_seq_start_r);
 
-                            -- 0x1C: bin_resolution_ps [15:0] | dist_scale [7:0] | drain_mode [7:0]
+                            -- 0x1C: bin_resolution_ps[15:0] | dist_scale[18:16] |
+                            --       drain_mode[19] | rsvd[31:20]
                             when 7 =>
                                 v_hdr_data(15 downto 0)  := std_logic_vector(s_bin_resolution_ps_r);
                                 v_hdr_data(18 downto 16) := std_logic_vector(s_dist_scale_r);
-                                v_hdr_data(24)           := s_drain_mode_r;
+                                v_hdr_data(19)           := s_drain_mode_r;
 
                             -- 0x20: start_off1 [31:0] (18-bit, upper zero-extended)
                             when 8 =>
@@ -296,11 +298,12 @@ begin
                             when 9 =>
                                 v_hdr_data := (others => '0');
 
-                            -- 0x28: rsvd | n_drain_cap | stops_per_chip | pipeline_en
+                            -- 0x28: stops_per_chip[3:0] | n_drain_cap[7:4] |
+                            --       pipeline_en[8] | rsvd[31:9]
                             when 10 =>
-                                v_hdr_data(11 downto 8)  := std_logic_vector(s_n_drain_cap_r);
-                                v_hdr_data(19 downto 16) := std_logic_vector(s_stops_per_chip_r);
-                                v_hdr_data(24)           := s_pipeline_en_r;
+                                v_hdr_data(3 downto 0)   := std_logic_vector(s_stops_per_chip_r);
+                                v_hdr_data(7 downto 4)   := std_logic_vector(s_n_drain_cap_r);
+                                v_hdr_data(8)            := s_pipeline_en_r;
 
                             -- 0x2C: k_dist_fixed [31:0]
                             when 11 =>
@@ -314,24 +317,25 @@ begin
                             when 13 =>
                                 v_hdr_data := std_logic_vector(s_timestamp_ns_r(63 downto 32));
 
-                            -- 0x38: lane_error_mask | cnt0 | cnt1 | cnt2
+                            -- 0x38: lane_error_mask[3:0] | rsvd[7:4] |
+                            --       error_count[31:8] (lower 24 bits)
                             when 14 =>
                                 v_hdr_data(c_N_CHIPS - 1 downto 0) := s_lane_error_mask_r;
                                 v_hdr_data(15 downto 8)  := s_lane_error_cnt_r(7 downto 0);
                                 v_hdr_data(23 downto 16) := s_lane_error_cnt_r(15 downto 8);
                                 v_hdr_data(31 downto 24) := s_lane_error_cnt_r(23 downto 16);
 
-                            -- 0x3C: cnt3 | n_chips | stops_per_chip_max | format_scope
+                            -- 0x3C: error_count[7:0] (upper 8 bits) |
+                            --       n_chips[11:8] | max_stops[15:12] |
+                            --       cell_format[19:16] | rsvd[31:20]
                             when 15 =>
                                 v_hdr_data(7 downto 0)   := s_lane_error_cnt_r(31 downto 24);
-                                v_hdr_data(15 downto 8)  := std_logic_vector(
-                                    to_unsigned(c_N_CHIPS, 8));
-                                v_hdr_data(23 downto 16) := std_logic_vector(
-                                    to_unsigned(c_MAX_STOPS_PER_CHIP, 8));
-                                -- format_scope: [3:0]=cell_format, [7:4]=packet_scope
-                                v_hdr_data(27 downto 24) := std_logic_vector(
+                                v_hdr_data(11 downto 8)  := std_logic_vector(
+                                    to_unsigned(c_N_CHIPS, 4));
+                                v_hdr_data(15 downto 12) := std_logic_vector(
+                                    to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
+                                v_hdr_data(19 downto 16) := std_logic_vector(
                                     to_unsigned(c_CELL_FORMAT, 4));
-                                -- [31:28] = packet_scope = 0 (Phase 1)
 
                             -- 0x40~: padding (all zeros)
                             when others =>
