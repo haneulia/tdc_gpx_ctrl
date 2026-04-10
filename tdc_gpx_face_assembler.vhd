@@ -19,15 +19,24 @@
 --     1. shot_start → ST_SCAN
 --     2. ST_SCAN: find any undone chip with tvalid (ready first),
 --        or blank on timeout
---     3. ST_FORWARD: output selected chip data (real or blank)
+--     3. ST_FORWARD: produce beats into output skid buffer
 --     4. Chip done → mark s_chip_done_r, back to ST_SCAN
 --     5. All active chips done → row_done, ST_IDLE
 --
 --   Packed Row: only active chips contribute rows. Chip order within
 --   the row is non-deterministic (FCFS). SW uses chip_id tag to parse.
 --
+--   Timing closure (200MHz+):
+--     Output skid buffer (2-deep) breaks downstream tready from reaching
+--     upstream cell_builder tready. All critical paths are ≤ 2.5ns:
+--       tready to cell_builder: f(state, cur_chip, is_blank, can_produce)
+--         → all registered inputs, ~1.5ns combinational
+--       data MUX: i_s_axis_tdata(cur_chip_r) → 4:1 MUX → skid/out reg
+--         → ~1.5ns combinational
+--
 --   All outputs are registered (module boundary = FF).
---   tready to cell_builders is combinational (internal interface).
+--   tready to cell_builders is combinational from registered signals only
+--   (no downstream tready dependency).
 --
 -- Standard: VHDL-93 compatible
 -- =============================================================================
@@ -59,8 +68,8 @@ entity tdc_gpx_face_assembler is
         i_active_chip_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_stops_per_chip     : in  unsigned(3 downto 0);
         i_max_range_clks     : in  unsigned(15 downto 0);   -- capture timeout (SW: 2*dist/c*fclk)
-        i_bus_ticks          : in  unsigned(2 downto 0);    -- capture timeout 
-        i_bus_clk_div        : in  unsigned(7 downto 0);    -- capture timeout 
+        i_bus_ticks          : in  unsigned(2 downto 0);    -- capture timeout
+        i_bus_clk_div        : in  unsigned(7 downto 0);    -- capture timeout
 
         -- AXI-Stream master (packed row output)
         o_m_axis_tdata       : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
@@ -108,15 +117,27 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_blank_stop_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
     signal s_blank_beat_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
 
-    -- Is the current output beat the last of the current chip?
-    signal s_chip_last_r     : std_logic := '0';
+    -- =========================================================================
+    -- Output skid buffer (2-deep)
+    --   Breaks downstream tready from upstream tready path.
+    --   FSM produces into {out, skid}. Downstream drains from out.
+    --   can_produce = NOT (out_valid AND skid_valid).
+    -- =========================================================================
+    signal s_out_tdata_r     : std_logic_vector(c_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_out_tvalid_r    : std_logic := '0';
+    signal s_out_tlast_r     : std_logic := '0';
+
+    signal s_skid_tdata_r    : std_logic_vector(c_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_skid_tvalid_r   : std_logic := '0';
+    signal s_skid_tlast_r    : std_logic := '0';
+
+    -- Pipe capacity: can FSM produce a new beat?
+    -- Depends on registered signals only — no downstream tready dependency.
+    signal s_can_produce     : std_logic;
 
     -- =========================================================================
-    -- Output registers
+    -- Status registers
     -- =========================================================================
-    signal s_tdata_r         : std_logic_vector(c_TDATA_WIDTH - 1 downto 0) := (others => '0');
-    signal s_tvalid_r        : std_logic := '0';
-    signal s_tlast_r         : std_logic := '0';
     signal s_row_done_r      : std_logic := '0';
     signal s_chip_error_r    : std_logic_vector(3 downto 0) := (others => '0');
 
@@ -142,23 +163,21 @@ begin
     -- Timeout limit: max_range_clks only (drain/ALU margins TBD after bench)
     s_timeout_limit <= i_max_range_clks;
 
+    -- Pipe has space when not FULL (both out and skid occupied)
+    s_can_produce <= '0' when (s_out_tvalid_r = '1' and s_skid_tvalid_r = '1')
+                     else '1';
+
     -- =========================================================================
     -- Combinational tready to cell_builders
-    --   Assert tready for the currently selected ready chip when the output
-    --   register can accept new data (empty or being consumed).
-    --   Suppressed on chip_last / row_last to prevent over-read.
+    --   Depends ONLY on registered signals (state, cur_chip, is_blank,
+    --   can_produce). NO dependency on downstream i_m_axis_tready.
+    --   This breaks the combinational tready chain for timing closure.
     -- =========================================================================
-    p_tready : process(s_state_r, s_cur_chip_r, s_is_blank_r,
-                       s_tvalid_r, i_m_axis_tready,
-                       s_chip_last_r, s_tlast_r)
-        variable v_can_load : boolean;
+    p_tready : process(s_state_r, s_cur_chip_r, s_is_blank_r, s_can_produce)
     begin
         o_s_axis_tready <= (others => '0');
-        v_can_load := (s_tvalid_r = '0')
-                      or (s_tvalid_r = '1' and i_m_axis_tready = '1'
-                          and s_chip_last_r = '0' and s_tlast_r = '0');
-
-        if s_state_r = ST_FORWARD and s_is_blank_r = '0' and v_can_load then
+        if s_state_r = ST_FORWARD and s_is_blank_r = '0'
+           and s_can_produce = '1' then
             o_s_axis_tready(to_integer(s_cur_chip_r)) <= '1';
         end if;
     end process p_tready;
@@ -167,40 +186,66 @@ begin
     -- Main process
     -- =========================================================================
     p_main : process(i_clk)
-        variable v_consumed       : boolean;
-        variable v_can_load       : boolean;
+        variable v_can_produce    : boolean;
+        variable v_out_consumed   : boolean;
         variable v_cur_chip       : unsigned(1 downto 0);
         variable v_is_last        : boolean;
         variable v_found          : boolean;
         variable v_blank_last     : boolean;
         variable v_done_after     : std_logic_vector(3 downto 0);
+        variable v_new_data       : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        variable v_new_last       : std_logic;
+        variable v_producing      : boolean;
+        variable v_chip_idx       : natural range 0 to 3;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_state_r        <= ST_IDLE;
-                s_chip_ready_r   <= (others => '0');
-                s_chip_done_r    <= (others => '0');
-                s_shot_cnt_r     <= (others => '0');
+                s_state_r         <= ST_IDLE;
+                s_chip_ready_r    <= (others => '0');
+                s_chip_done_r     <= (others => '0');
+                s_shot_cnt_r      <= (others => '0');
                 s_timeout_limit_r <= (others => '0');
-                s_cur_chip_r     <= (others => '0');
-                s_is_blank_r     <= '0';
-                s_is_last_chip_r <= '0';
-                s_blank_stop_r   <= (others => '0');
-                s_blank_beat_r   <= (others => '0');
-                s_chip_last_r    <= '0';
-                s_tdata_r        <= (others => '0');
-                s_tvalid_r       <= '0';
-                s_tlast_r        <= '0';
-                s_row_done_r     <= '0';
-                s_chip_error_r   <= (others => '0');
+                s_cur_chip_r      <= (others => '0');
+                s_is_blank_r      <= '0';
+                s_is_last_chip_r  <= '0';
+                s_blank_stop_r    <= (others => '0');
+                s_blank_beat_r    <= (others => '0');
+                s_out_tdata_r     <= (others => '0');
+                s_out_tvalid_r    <= '0';
+                s_out_tlast_r     <= '0';
+                s_skid_tdata_r    <= (others => '0');
+                s_skid_tvalid_r   <= '0';
+                s_skid_tlast_r    <= '0';
+                s_row_done_r      <= '0';
+                s_chip_error_r    <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_row_done_r <= '0';
 
-                -- ============================================================
+                -- =============================================================
+                -- Skid buffer drain: downstream consuming output register
+                --   This block runs FIRST. FSM produce (below) may OVERRIDE
+                --   these assignments (last assignment wins in VHDL process).
+                -- =============================================================
+                v_out_consumed := (s_out_tvalid_r = '1' and i_m_axis_tready = '1');
+
+                if v_out_consumed then
+                    if s_skid_tvalid_r = '1' then
+                        -- Promote skid to output
+                        s_out_tdata_r   <= s_skid_tdata_r;
+                        s_out_tlast_r   <= s_skid_tlast_r;
+                        s_skid_tvalid_r <= '0';
+                    else
+                        -- Output drained, nothing in skid
+                        s_out_tvalid_r <= '0';
+                        s_out_tlast_r  <= '0';
+                    end if;
+                end if;
+
+                -- =============================================================
                 -- Common logic for ST_SCAN / ST_FORWARD:
                 --   shot counter + tvalid latch (runs until back to ST_IDLE)
-                -- ============================================================
+                -- =============================================================
                 if s_state_r = ST_SCAN or s_state_r = ST_FORWARD then
                     -- Increment shot counter (saturate at max)
                     if s_shot_cnt_r /= x"FFFF" then
@@ -215,16 +260,17 @@ begin
                     end loop;
                 end if;
 
+                v_can_produce := (s_can_produce = '1');
+                v_producing   := false;
+                v_new_data    := (others => '0');
+                v_new_last    := '0';
+
                 case s_state_r is
 
                 -- ==============================================================
                 -- ST_IDLE: wait for shot_start
                 -- ==============================================================
                 when ST_IDLE =>
-                    s_tvalid_r    <= '0';
-                    s_tlast_r     <= '0';
-                    s_chip_last_r <= '0';
-
                     if i_shot_start = '1' then
                         s_timeout_limit_r <= s_timeout_limit;
                         s_chip_ready_r    <= (others => '0');
@@ -292,38 +338,20 @@ begin
                     end if;
 
                 -- ==============================================================
-                -- ST_FORWARD: output beats from current chip
-                --   Ready chips: forward from cell_builder AXI-Stream
-                --   Timed-out chips: generate blank beats (error_fill=1)
+                -- ST_FORWARD: produce beats into output skid buffer
+                --   Transitions happen at production time (not consumption).
+                --   Real data: forward from cell_builder when tvalid & can_produce.
+                --   Blank data: generate when can_produce.
                 -- ==============================================================
                 when ST_FORWARD =>
-                    v_consumed := (s_tvalid_r = '1' and i_m_axis_tready = '1');
-                    v_can_load := (s_tvalid_r = '0') or v_consumed;
-
-                    -- ---- Case 1: last beat of entire packed row consumed ----
-                    if v_consumed and s_tlast_r = '1' then
-                        s_tvalid_r    <= '0';
-                        s_tlast_r     <= '0';
-                        s_chip_last_r <= '0';
-                        s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
-                        s_row_done_r  <= '1';
-                        s_state_r     <= ST_IDLE;
-
-                    -- ---- Case 2: last beat of current chip consumed ----
-                    --   Mark done, scan for next chip
-                    elsif v_consumed and s_chip_last_r = '1' then
-                        s_tvalid_r    <= '0';
-                        s_chip_last_r <= '0';
-                        s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
-                        s_state_r     <= ST_SCAN;
-
-                    -- ---- Case 3: load next beat from current source ----
-                    elsif v_can_load then
+                    if v_can_produce then
 
                         if s_is_blank_r = '1' then
+                            -- --------------------------------------------------
                             -- Blank chip: generate beat data
-                            s_tdata_r  <= fn_blank_beat(s_blank_beat_r, s_cur_chip_r);
-                            s_tvalid_r <= '1';
+                            -- --------------------------------------------------
+                            v_producing := true;
+                            v_new_data  := fn_blank_beat(s_blank_beat_r, s_cur_chip_r);
 
                             -- Check if this is the last blank beat
                             v_blank_last :=
@@ -331,14 +359,7 @@ begin
                                 and (s_blank_beat_r = c_BEATS_PER_CELL - 1);
 
                             if v_blank_last and s_is_last_chip_r = '1' then
-                                s_tlast_r     <= '1';
-                                s_chip_last_r <= '1';
-                            elsif v_blank_last then
-                                s_tlast_r     <= '0';
-                                s_chip_last_r <= '1';
-                            else
-                                s_tlast_r     <= '0';
-                                s_chip_last_r <= '0';
+                                v_new_last := '1';  -- row tlast
                             end if;
 
                             -- Advance blank counters
@@ -349,41 +370,84 @@ begin
                                 s_blank_beat_r <= s_blank_beat_r + 1;
                             end if;
 
-                        else
-                            -- Ready chip: forward from cell_builder
-                            -- (tready asserted combinationally by p_tready)
-                            s_tdata_r  <= i_s_axis_tdata(to_integer(s_cur_chip_r));
-                            s_tvalid_r <= '1';
-
-                            -- Last beat detection via cell_builder's tlast
-                            if i_s_axis_tlast(to_integer(s_cur_chip_r)) = '1' then
-                                s_chip_last_r <= '1'; -- Drain 완료 후 다음 Chip Data 송출 
+                            -- State transition on chip done
+                            if v_blank_last then
+                                s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
                                 if s_is_last_chip_r = '1' then
-                                    s_tlast_r <= '1';
+                                    s_row_done_r <= '1';
+                                    s_state_r    <= ST_IDLE;
                                 else
-                                    s_tlast_r <= '0';
+                                    s_state_r    <= ST_SCAN;
                                 end if;
-                            else
-                                s_chip_last_r <= '0';
-                                s_tlast_r     <= '0';
                             end if;
-                        end if;
 
-                    end if;  -- v_consumed / v_can_load
+                        else
+                            -- --------------------------------------------------
+                            -- Ready chip: forward from cell_builder
+                            --   tready asserted by p_tready (combinational,
+                            --   no downstream dependency)
+                            -- --------------------------------------------------
+                            v_chip_idx := to_integer(s_cur_chip_r);
+
+                            if i_s_axis_tvalid(v_chip_idx) = '1' then
+                                v_producing := true;
+                                v_new_data  := i_s_axis_tdata(v_chip_idx);
+
+                                -- Detect chip last from cell_builder's tlast
+                                if i_s_axis_tlast(v_chip_idx) = '1' then
+                                    if s_is_last_chip_r = '1' then
+                                        v_new_last := '1';  -- row tlast
+                                    end if;
+
+                                    -- Chip done: transition immediately
+                                    s_chip_done_r(v_chip_idx) <= '1';
+                                    if s_is_last_chip_r = '1' then
+                                        s_row_done_r <= '1';
+                                        s_state_r    <= ST_IDLE;
+                                    else
+                                        s_state_r    <= ST_SCAN;
+                                    end if;
+                                end if;
+                            end if;
+
+                        end if;  -- blank / real
+                    end if;  -- v_can_produce
 
                 end case;
 
+                -- =============================================================
+                -- Skid buffer write: FSM produced a beat → insert into pipe
+                --   OVERRIDES drain assignments above (last assignment wins).
+                --   Write to output register if available, else to skid.
+                -- =============================================================
+                if v_producing then
+                    if s_out_tvalid_r = '0' or v_out_consumed then
+                        -- Output slot available (empty or being drained)
+                        s_out_tdata_r  <= v_new_data;
+                        s_out_tvalid_r <= '1';
+                        s_out_tlast_r  <= v_new_last;
+                    else
+                        -- Output occupied: store in skid
+                        s_skid_tdata_r  <= v_new_data;
+                        s_skid_tvalid_r <= '1';
+                        s_skid_tlast_r  <= v_new_last;
+                    end if;
+                end if;
+
+                -- =============================================================
                 -- shot_start override for ST_SCAN/ST_FORWARD only.
-                -- Abort current operation and restart (like cell_builder).
+                -- Abort current operation, flush pipe, restart.
+                -- =============================================================
                 if i_shot_start = '1' and s_state_r /= ST_IDLE then
                     s_timeout_limit_r <= s_timeout_limit;
                     s_chip_ready_r    <= (others => '0');
                     s_chip_done_r     <= (others => '0');
                     s_shot_cnt_r      <= (others => '0');
                     s_chip_error_r    <= (others => '0');
-                    s_tvalid_r        <= '0';
-                    s_tlast_r         <= '0';
-                    s_chip_last_r     <= '0';
+                    s_out_tvalid_r    <= '0';
+                    s_out_tlast_r     <= '0';
+                    s_skid_tvalid_r   <= '0';
+                    s_skid_tlast_r    <= '0';
                     s_state_r         <= ST_SCAN;
                 end if;
             end if;
@@ -391,11 +455,11 @@ begin
     end process p_main;
 
     -- =========================================================================
-    -- Output assignments (all registered)
+    -- Output assignments (all from registered skid buffer)
     -- =========================================================================
-    o_m_axis_tdata     <= s_tdata_r;
-    o_m_axis_tvalid    <= s_tvalid_r;
-    o_m_axis_tlast     <= s_tlast_r;
+    o_m_axis_tdata     <= s_out_tdata_r;
+    o_m_axis_tvalid    <= s_out_tvalid_r;
+    o_m_axis_tlast     <= s_out_tlast_r;
     o_row_done         <= s_row_done_r;
     o_chip_error_flags <= s_chip_error_r;
 
