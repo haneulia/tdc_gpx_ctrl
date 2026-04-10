@@ -17,21 +17,21 @@
 --
 --   Per-shot flow:
 --     1. shot_start → ST_SCAN
---     2. ST_SCAN: find any undone chip with tvalid (ready first),
---        or blank on timeout
---     3. ST_FORWARD: produce beats into output skid buffer
---     4. Chip done → mark s_chip_done_r, back to ST_SCAN
---     5. All active chips done → row_done, ST_IDLE
+--     2. ST_SCAN: priority encode undone chip (ready first, timeout blank)
+--     3. ST_RESOLVE: compute is_last_chip from registered result (1 clk)
+--     4. ST_FORWARD: produce beats into output skid buffer
+--     5. Chip done → mark s_chip_done_r, back to ST_SCAN
+--     6. All active chips done → row_done, ST_IDLE
 --
 --   Packed Row: only active chips contribute rows. Chip order within
 --   the row is non-deterministic (FCFS). SW uses chip_id tag to parse.
 --
 --   Timing closure (200MHz+):
 --     5 skid buffers (4 input + 1 output) provide fully registered
---     ready paths at all module boundaries:
---       o_s_axis_tready to cell_builder: 0ns (registered inside skid_buffer)
---       o_m_axis_tready to downstream:   0ns (registered inside skid_buffer)
---       All internal combinational paths: ≤ 2.0ns from registered signals
+--     ready paths at all module boundaries.
+--     ST_SCAN/ST_RESOLVE pipeline split: priority encoder (ST_SCAN) and
+--     is_last_chip computation (ST_RESOLVE) run in separate clock cycles.
+--     Pre-computed s_last_stop_r eliminates runtime subtraction.
 --
 --   All outputs are registered (module boundary = FF).
 --
@@ -118,7 +118,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- FSM
     -- =========================================================================
-    type t_state is (ST_IDLE, ST_SCAN, ST_FORWARD);
+    type t_state is (ST_IDLE, ST_SCAN, ST_RESOLVE, ST_FORWARD);
     signal s_state_r : t_state := ST_IDLE;
 
     -- =========================================================================
@@ -146,6 +146,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- Blank beat generation counters
     signal s_blank_stop_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
     signal s_blank_beat_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
+    signal s_last_stop_r     : unsigned(2 downto 0) := (others => '0');  -- pre-computed: stops-1
 
     -- =========================================================================
     -- Can FSM produce a new beat?
@@ -276,6 +277,7 @@ begin
                 s_is_last_chip_r  <= '0';
                 s_blank_stop_r    <= (others => '0');
                 s_blank_beat_r    <= (others => '0');
+                s_last_stop_r     <= (others => '0');
                 s_pipe_tdata_r    <= (others => '0');
                 s_pipe_tvalid_r   <= '0';
                 s_pipe_tlast_r    <= '0';
@@ -294,7 +296,8 @@ begin
                 -- Common logic for ST_SCAN / ST_FORWARD:
                 --   shot counter + tvalid latch (runs until back to ST_IDLE)
                 -- =============================================================
-                if s_state_r = ST_SCAN or s_state_r = ST_FORWARD then
+                if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE
+                   or s_state_r = ST_FORWARD then
                     -- Increment shot counter (saturate at max)
                     if s_shot_cnt_r /= x"FFFF" then
                         s_shot_cnt_r <= s_shot_cnt_r + 1;
@@ -322,6 +325,7 @@ begin
                         s_chip_done_r     <= (others => '0');
                         s_shot_cnt_r      <= (others => '0');
                         s_chip_error_r    <= (others => '0');
+                        s_last_stop_r     <= i_stops_per_chip(2 downto 0) - 1;
                         s_state_r         <= ST_SCAN;
                     end if;
 
@@ -329,6 +333,7 @@ begin
                 -- ST_SCAN: find any undone active chip to forward
                 --   Priority 1: ready chip (tvalid latched, lowest index)
                 --   Priority 2: timeout → blank any undone chip
+                --   Result registered → ST_RESOLVE computes is_last_chip
                 -- ==============================================================
                 when ST_SCAN =>
                     -- Priority 1: find undone + ready chip
@@ -347,6 +352,8 @@ begin
 
                     if v_found then
                         s_is_blank_r <= '0';
+                        s_cur_chip_r <= v_cur_chip;
+                        s_state_r    <= ST_RESOLVE;
                     elsif s_shot_cnt_r >= s_timeout_limit_r then
                         -- Priority 2: timeout → pick any undone chip
                         for i in 0 to 3 loop
@@ -359,28 +366,30 @@ begin
                         end loop;
                         if v_found then
                             s_is_blank_r <= '1';
+                            s_cur_chip_r <= v_cur_chip;
                             s_chip_error_r(to_integer(v_cur_chip)) <= '1';
+                            s_state_r    <= ST_RESOLVE;
                         end if;
                     end if;
 
-                    if v_found then
-                        s_cur_chip_r <= v_cur_chip;
+                -- ==============================================================
+                -- ST_RESOLVE: compute is_last_chip from registered s_cur_chip_r
+                --   Pipeline split: priority encoder (ST_SCAN) | is_last (here)
+                -- ==============================================================
+                when ST_RESOLVE =>
+                    v_done_after := s_chip_done_r;
+                    v_done_after(to_integer(s_cur_chip_r)) := '1';
+                    v_is_last := (v_done_after or (not i_active_chip_mask)) = "1111";
 
-                        -- Is this the last undone active chip?
-                        v_done_after := s_chip_done_r;
-                        v_done_after(to_integer(v_cur_chip)) := '1';
-                        v_is_last := (v_done_after or (not i_active_chip_mask)) = "1111";
-
-                        if v_is_last then
-                            s_is_last_chip_r <= '1';
-                        else
-                            s_is_last_chip_r <= '0';
-                        end if;
-
-                        s_blank_stop_r <= (others => '0');
-                        s_blank_beat_r <= (others => '0');
-                        s_state_r      <= ST_FORWARD;
+                    if v_is_last then
+                        s_is_last_chip_r <= '1';
+                    else
+                        s_is_last_chip_r <= '0';
                     end if;
+
+                    s_blank_stop_r <= (others => '0');
+                    s_blank_beat_r <= (others => '0');
+                    s_state_r      <= ST_FORWARD;
 
                 -- ==============================================================
                 -- ST_FORWARD: produce beats into output pipe
@@ -397,9 +406,9 @@ begin
                             s_pipe_tdata_r  <= fn_blank_beat(s_blank_beat_r, s_cur_chip_r);
                             s_pipe_tvalid_r <= '1';
 
-                            -- Check if this is the last blank beat
+                            -- Check if this is the last blank beat (s_last_stop_r pre-computed)
                             v_blank_last :=
-                                (s_blank_stop_r = i_stops_per_chip(2 downto 0) - 1)
+                                (s_blank_stop_r = s_last_stop_r)
                                 and (s_blank_beat_r = c_BEATS_PER_CELL - 1);
 
                             if v_blank_last and s_is_last_chip_r = '1' then

@@ -100,6 +100,7 @@ architecture rtl of tdc_gpx_cell_builder is
     -- Output serializer counters (registered)
     signal s_stop_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..MAX_STOPS-1
     signal s_beat_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..BEATS_PER_CELL-1
+    signal s_last_stop_r : unsigned(2 downto 0) := (others => '0'); -- pre-computed: stops_per_chip-1
 
     -- Last beat index constant (for tlast comparison)
     constant c_LAST_BEAT : unsigned(2 downto 0) := to_unsigned(c_BEATS_PER_CELL - 1, 3);
@@ -162,7 +163,6 @@ begin
         variable v_seq      : natural range 0 to c_MAX_HITS_PER_STOP - 1;  -- slot index from hit_count_actual
         variable v_nxt_stop : unsigned(2 downto 0);
         variable v_nxt_beat : unsigned(2 downto 0);
-        variable v_last_stop : unsigned(2 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -171,6 +171,7 @@ begin
                 s_state_r        <= ST_IDLE;
                 s_stop_idx_r     <= (others => '0');
                 s_beat_idx_r     <= (others => '0');
+                s_last_stop_r    <= (others => '0');
                 s_tdata_r        <= (others => '0');
                 s_tvalid_r       <= '0';
                 s_tlast_r        <= '0';
@@ -221,9 +222,10 @@ begin
 
                         -- drain_done: latch first cell into pipeline register
                         if i_drain_done = '1' then
-                            s_cell_sel_r <= s_cell_buf_r(0);  -- cell MUX only
-                            s_stop_idx_r <= (others => '0');
-                            s_beat_idx_r <= (others => '0');
+                            s_cell_sel_r  <= s_cell_buf_r(0);  -- cell MUX only
+                            s_stop_idx_r  <= (others => '0');
+                            s_beat_idx_r  <= (others => '0');
+                            s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
                             s_tvalid_r   <= '0';
                             s_tlast_r    <= '0';
                             s_state_r    <= ST_LOAD;
@@ -235,13 +237,11 @@ begin
                     --   result now in s_cell_sel_r. Only beat MUX here.
                     -- ==========================================================
                     when ST_LOAD =>
-                        v_last_stop := i_stops_per_chip(2 downto 0) - 1;
-
                         s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r);
                         s_tvalid_r <= '1';
 
-                        -- Pre-compute tlast for loaded beat
-                        if s_stop_idx_r = v_last_stop
+                        -- Pre-compute tlast for loaded beat (s_last_stop_r is registered)
+                        if s_stop_idx_r = s_last_stop_r
                            and s_beat_idx_r = c_LAST_BEAT then
                             s_tlast_r <= '1';
                         else
@@ -258,10 +258,8 @@ begin
                     -- ==========================================================
                     when ST_OUTPUT =>
                         if s_tvalid_r = '1' and i_m_axis_tready = '1' then
-                            v_last_stop := i_stops_per_chip(2 downto 0) - 1;
-
                             -- Check if this was the last beat of last cell
-                            if s_stop_idx_r = v_last_stop
+                            if s_stop_idx_r = s_last_stop_r
                                and s_beat_idx_r = c_LAST_BEAT then
                                 -- Chip slice complete
                                 s_tvalid_r     <= '0';
@@ -286,7 +284,7 @@ begin
                                 s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat);
 
                                 -- Set tlast if NEXT beat is the final one
-                                if s_stop_idx_r = v_last_stop
+                                if s_stop_idx_r = s_last_stop_r
                                    and v_nxt_beat = c_LAST_BEAT then
                                     s_tlast_r <= '1';
                                 else
