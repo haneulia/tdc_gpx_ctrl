@@ -40,6 +40,7 @@ package tdc_gpx_pkg is
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
 
     constant c_TDC_BUS_WIDTH        : natural := 28;
+    constant c_RAW_HIT_WIDTH        : natural := 17;   -- TDC-GPX I-Mode raw hit (always 17-bit)
     constant c_MAX_ROWS_PER_FACE    : natural := c_N_CHIPS * c_MAX_STOPS_PER_CHIP;  -- 32
 
     -- =========================================================================
@@ -178,7 +179,7 @@ package tdc_gpx_pkg is
         ififo_id            : std_logic;                    -- '0'=IFIFO1, '1'=IFIFO2
         stop_id_local       : unsigned(2 downto 0);         -- 0..7
         slope               : std_logic;
-        raw_hit             : unsigned(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
+        raw_hit             : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);       -- 17-bit (truncation at cell_builder)
         shot_seq            : unsigned(31 downto 0);
         hit_seq_local       : unsigned(2 downto 0);         -- 0..7
     end record;
