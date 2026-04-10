@@ -61,6 +61,7 @@ entity tdc_gpx_bus_phy is
         i_req_addr      : in  std_logic_vector(3 downto 0);
         i_req_wdata     : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         i_oen_permanent : in  std_logic;                    -- '1' = drain burst
+        i_req_burst     : in  std_logic;                    -- '1' = back-to-back read
 
         -- Response interface (to chip_ctrl)
         o_rsp_valid     : out std_logic;
@@ -421,13 +422,24 @@ begin
                                 s_rsp_rdata_r      <= s_d_in_ff_r;
                                 s_last_was_write_r <= '0';
                                 s_last_was_read_r  <= '1';
-                                s_csn_r            <= '1';
-                                if i_oen_permanent = '0' then
-                                    s_oen_r <= '1';
+
+                                -- Burst: back-to-back read (skip IDLE)
+                                -- Phase H serves as inter-read gap (RDN high)
+                                -- CSN, OEN, ADR unchanged; restart tick counter
+                                if i_oen_permanent = '1'
+                                   and i_req_burst = '1' then
+                                    s_tick_r  <= to_unsigned(1, 3);
+                                    -- stay in ST_READ, busy remains '1'
+                                else
+                                    -- Normal completion: return to IDLE
+                                    s_csn_r   <= '1';
+                                    if i_oen_permanent = '0' then
+                                        s_oen_r <= '1';
+                                    end if;
+                                    s_busy_r  <= '0';
+                                    s_tick_r  <= (others => '0');
+                                    s_state_r <= ST_IDLE;
                                 end if;
-                                s_busy_r  <= '0';
-                                s_tick_r  <= (others => '0');
-                                s_state_r <= ST_IDLE;
                             else
                                 s_tick_r <= s_tick_r + 1;
                             end if;

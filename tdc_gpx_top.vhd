@@ -153,6 +153,7 @@ architecture rtl of tdc_gpx_top is
     signal s_bus_req_addr    : t_slv4_array;
     signal s_bus_req_wdata   : t_slv28_array;
     signal s_bus_oen_perm    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_rsp_valid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_rsp_rdata   : t_slv28_array;
     signal s_bus_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -295,6 +296,7 @@ begin
                 i_req_addr      => s_bus_req_addr(i),
                 i_req_wdata     => s_bus_req_wdata(i),
                 i_oen_permanent => s_bus_oen_perm(i),
+                i_req_burst     => s_bus_req_burst(i),
                 o_rsp_valid     => s_bus_rsp_valid(i),
                 o_rsp_rdata     => s_bus_rsp_rdata(i),
                 o_busy          => s_bus_busy(i),
@@ -341,12 +343,15 @@ begin
                 o_bus_req_addr      => s_bus_req_addr(i),
                 o_bus_req_wdata     => s_bus_req_wdata(i),
                 o_bus_oen_permanent => s_bus_oen_perm(i),
+                o_bus_req_burst     => s_bus_req_burst(i),
                 i_bus_rsp_valid     => s_bus_rsp_valid(i),
                 i_bus_rsp_rdata     => s_bus_rsp_rdata(i),
                 i_bus_busy          => s_bus_busy(i),
                 i_ef1_sync          => s_ef1_sync(i),
                 i_ef2_sync          => s_ef2_sync(i),
                 i_irflag_sync       => s_irflag_sync(i),
+                i_lf1_sync          => s_lf1_sync(i),
+                i_lf2_sync          => s_lf2_sync(i),
                 o_tick_en           => s_tick_en(i),
                 o_stopdis           => o_tdc_stopdis(i),
                 o_alutrigger        => o_tdc_alutrigger(i),

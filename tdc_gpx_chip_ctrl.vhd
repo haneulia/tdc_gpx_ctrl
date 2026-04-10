@@ -15,14 +15,18 @@
 --     - cfg_image write sequence (Reg0~7, Reg11, Reg12, Reg14)
 --     - Master reset via Reg4 bit22
 --     - IrFlag rising-edge detection (MTimer expiry)
---     - EF1-first round-robin IFIFO drain (Phase 1: EF-only, no LF burst)
+--     - EF1-first round-robin IFIFO drain
+--     - oen_permanent control: drain_mode='1' → OEN held low during drain
+--       (bus_phy INV-7 blocks writes while oen_permanent='1')
+--     - n_drain_cap enforcement: limits drain reads to n_drain_cap × 8
+--       (0 = unlimited, prevents runaway drain on stuck IFIFO)
 --     - AluTrigger pulse generation
 --     - Shot sequence counter
 --
 --   Non-responsibilities:
 --     - Bus timing, IOBUF, 2-FF sync   -> bus_phy
---     - Raw word decode                  -> decode_i (Step 2)
---     - Cell building, face assembly     -> Steps 3-4
+--     - Raw word decode                  -> decode_i
+--     - Cell building, face assembly     -> cell_builder, face_assembler
 --
 -- Invariants enforced:
 --   [INV-4] EF=1 (empty) -> never issue read to IFIFO
@@ -67,6 +71,7 @@ entity tdc_gpx_chip_ctrl is
         o_bus_req_addr      : out std_logic_vector(3 downto 0);
         o_bus_req_wdata     : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         o_bus_oen_permanent : out std_logic;
+        o_bus_req_burst     : out std_logic;          -- '1' = back-to-back burst read
 
         -- bus_phy response interface
         i_bus_rsp_valid     : in  std_logic;
@@ -77,6 +82,8 @@ entity tdc_gpx_chip_ctrl is
         i_ef1_sync          : in  std_logic;          -- '1' = IFIFO1 empty
         i_ef2_sync          : in  std_logic;          -- '1' = IFIFO2 empty
         i_irflag_sync       : in  std_logic;          -- '1' = IrFlag active
+        i_lf1_sync          : in  std_logic;          -- '1' = IFIFO1 loaded (reserved)
+        i_lf2_sync          : in  std_logic;          -- '1' = IFIFO2 loaded (reserved)
 
         -- Tick enable output (to bus_phy)
         o_tick_en           : out std_logic;
@@ -119,6 +126,8 @@ architecture rtl of tdc_gpx_chip_ctrl is
         ST_DRAIN_CHECK,     -- Check EF1/EF2 to decide next read
         ST_DRAIN_EF1,       -- Reading IFIFO1 (Reg8), waiting for response
         ST_DRAIN_EF2,       -- Reading IFIFO2 (Reg9), waiting for response
+        ST_DRAIN_BURST,     -- Burst reading: back-to-back reads (LF-gated)
+        ST_DRAIN_FLUSH,     -- Post-burst: capture remaining response, wait bus idle
         ST_ALU_PULSE,       -- AluTrigger high for g_ALU_PULSE_CLKS
         ST_ALU_RECOVERY     -- Post-AluTrigger recovery wait
     );
@@ -161,6 +170,11 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_req_wdata_r    : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
 
     -- =========================================================================
+    -- Burst read control
+    -- =========================================================================
+    signal s_req_burst_r    : std_logic := '0';
+
+    -- =========================================================================
     -- Pin control registers
     -- =========================================================================
     signal s_stopdis_r      : std_logic := '1';     -- high at reset (stops disabled)
@@ -190,6 +204,22 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- =========================================================================
     signal s_div_cnt_r      : unsigned(7 downto 0) := (others => '0');
     signal s_tick_en_r      : std_logic := '0';
+
+    -- =========================================================================
+    -- OEN permanent control (burst drain mode)
+    -- drain_mode='1': asserted during drain, deasserted on drain complete
+    -- drain_mode='0': always '0' (legacy SourceGating mode)
+    -- =========================================================================
+    signal s_oen_permanent_r : std_logic := '0';
+
+    -- =========================================================================
+    -- Drain read counter (for n_drain_cap enforcement)
+    -- Counts actual IFIFO reads per drain cycle. Reset on drain start.
+    -- n_drain_cap=0: unlimited, 1~15: cap at n_drain_cap × 8 reads.
+    -- Max drain per chip = 4 stops/IFIFO × 8 hits × 2 IFIFOs = 64 reads.
+    -- n_drain_cap=8 → cap at 64 (exact full drain).
+    -- =========================================================================
+    signal s_drain_cnt_r    : unsigned(6 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Busy flag
@@ -249,10 +279,12 @@ begin
     end process p_irflag_edge;
 
     -- =========================================================================
-    -- Phase 1: oen_permanent always '0' (no LF burst optimization)
-    -- Phase 1.5 will add LF+OEN support.
+    -- OEN permanent output: FSM-controlled during drain phase
+    --   drain_mode='1': asserted at drain start, released at drain end
+    --   drain_mode='0': always '0' (legacy)
+    --   bus_phy enforces INV-7: oen_permanent='1' blocks WRITE requests
     -- =========================================================================
-    o_bus_oen_permanent <= '0';
+    o_bus_oen_permanent <= s_oen_permanent_r;
 
     -- =========================================================================
     -- StopDis output: FSM-controlled, with CSR override for debug
@@ -299,6 +331,9 @@ begin
                 s_drain_done_r  <= '0';
                 s_busy_r        <= '0';
                 s_init_mode_r   <= '1';
+                s_oen_permanent_r <= '0';
+                s_drain_cnt_r   <= (others => '0');
+                s_req_burst_r   <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r  <= '0';
@@ -314,6 +349,9 @@ begin
                     s_alutrigger_r <= '0';
                     s_req_valid_r  <= '0';
                     s_busy_r       <= '0';
+                    s_oen_permanent_r <= '0';
+                    s_drain_cnt_r  <= (others => '0');
+                    s_req_burst_r  <= '0';
                     s_wait_cnt_r   <= (others => '0');
                     s_cfg_idx_r    <= (others => '0');
                     s_init_mode_r  <= '1';
@@ -449,7 +487,12 @@ begin
                                 s_busy_r    <= '0';
                                 s_state_r   <= ST_IDLE;
                             elsif i_irflag_sync = '1' and s_irflag_prev_r = '0' then
-                                s_state_r <= ST_DRAIN_CHECK;
+                                -- Enter drain phase
+                                if i_cfg.drain_mode = '1' then
+                                    s_oen_permanent_r <= '1';   -- burst: OEN stays low
+                                end if;
+                                s_drain_cnt_r <= (others => '0');
+                                s_state_r     <= ST_DRAIN_CHECK;
                             end if;
 
                         -- =================================================
@@ -459,7 +502,42 @@ begin
                         -- =================================================
 
                         when ST_DRAIN_CHECK =>
-                            if i_ef1_sync = '0' then
+                            -- n_drain_cap enforcement (0 = unlimited)
+                            -- Cap threshold = n_drain_cap × 8 reads
+                            -- (full drain = 4 stops × 8 hits × 2 IFIFOs = 64 → cap=8)
+                            if i_cfg.n_drain_cap /= "0000"
+                               and s_drain_cnt_r >= shift_left(
+                                   resize(i_cfg.n_drain_cap, 7), 3) then
+                                -- Cap reached: force drain complete
+                                s_oen_permanent_r <= '0';
+                                s_drain_done_r    <= '1';
+                                s_wait_cnt_r      <= (others => '0');
+                                s_state_r         <= ST_ALU_PULSE;
+
+                            -- Burst path: drain_mode='1' AND LF='1' (loaded)
+                            -- LF threshold provides safety margin for 2-FF sync
+                            -- latency of EF — prevents reading empty FIFO.
+                            elsif i_cfg.drain_mode = '1'
+                                  and i_ef1_sync = '0' and i_lf1_sync = '1' then
+                                -- IFIFO1 loaded: burst read Reg8
+                                s_req_valid_r <= '1';
+                                s_req_burst_r <= '1';
+                                s_req_rw_r    <= '0';   -- READ
+                                s_req_addr_r  <= c_TDC_REG8_IFIFO1;
+                                s_ififo_id_r  <= '0';
+                                s_state_r     <= ST_DRAIN_BURST;
+                            elsif i_cfg.drain_mode = '1'
+                                  and i_ef2_sync = '0' and i_lf2_sync = '1' then
+                                -- IFIFO2 loaded: burst read Reg9
+                                s_req_valid_r <= '1';
+                                s_req_burst_r <= '1';
+                                s_req_rw_r    <= '0';   -- READ
+                                s_req_addr_r  <= c_TDC_REG9_IFIFO2;
+                                s_ififo_id_r  <= '1';
+                                s_state_r     <= ST_DRAIN_BURST;
+
+                            -- Individual read path (legacy or LF='0')
+                            elsif i_ef1_sync = '0' then
                                 -- IFIFO1 has data -> read Reg8
                                 s_req_valid_r <= '1';
                                 s_req_rw_r    <= '0';   -- READ
@@ -475,9 +553,10 @@ begin
                                 s_state_r     <= ST_DRAIN_EF2;
                             else
                                 -- Both FIFOs empty -> drain complete
-                                s_drain_done_r <= '1';
-                                s_wait_cnt_r   <= (others => '0');
-                                s_state_r      <= ST_ALU_PULSE;
+                                s_oen_permanent_r <= '0';
+                                s_drain_done_r    <= '1';
+                                s_wait_cnt_r      <= (others => '0');
+                                s_state_r         <= ST_ALU_PULSE;
                             end if;
 
                         when ST_DRAIN_EF1 =>
@@ -485,6 +564,7 @@ begin
                                 s_req_valid_r <= '0';
                                 s_raw_word_r  <= i_bus_rsp_rdata;
                                 s_raw_valid_r <= '1';
+                                s_drain_cnt_r <= s_drain_cnt_r + 1;
                                 s_state_r     <= ST_DRAIN_CHECK;
                             end if;
 
@@ -493,7 +573,68 @@ begin
                                 s_req_valid_r <= '0';
                                 s_raw_word_r  <= i_bus_rsp_rdata;
                                 s_raw_valid_r <= '1';
+                                s_drain_cnt_r <= s_drain_cnt_r + 1;
                                 s_state_r     <= ST_DRAIN_CHECK;
+                            end if;
+
+                        -- =================================================
+                        -- Burst drain: back-to-back reads (LF-gated)
+                        --
+                        -- bus_phy stays in ST_READ as long as req_burst='1'.
+                        -- Each rsp_valid delivers one word.
+                        --
+                        -- Stop burst when:
+                        --   (a) LF drops (FIFO near-empty, 2-FF sync safety)
+                        --   (b) n_drain_cap reached
+                        --
+                        -- On burst stop: deassert req_burst → bus_phy will
+                        -- complete the in-flight read (1 extra response) and
+                        -- return to IDLE. ST_DRAIN_FLUSH captures this.
+                        -- =================================================
+
+                        when ST_DRAIN_BURST =>
+                            if i_bus_rsp_valid = '1' then
+                                -- Capture read data
+                                s_raw_word_r  <= i_bus_rsp_rdata;
+                                s_raw_valid_r <= '1';
+                                s_drain_cnt_r <= s_drain_cnt_r + 1;
+
+                                -- Check burst stop conditions on NEXT count
+                                -- (s_drain_cnt_r+1 hasn't taken effect yet,
+                                --  so compare with current+1)
+                                if (s_ififo_id_r = '0' and i_lf1_sync = '0')
+                                   or (s_ififo_id_r = '1' and i_lf2_sync = '0') then
+                                    -- LF dropped: FIFO near-empty, stop burst
+                                    s_req_burst_r <= '0';
+                                    s_req_valid_r <= '0';
+                                    s_state_r     <= ST_DRAIN_FLUSH;
+                                elsif i_cfg.n_drain_cap /= "0000"
+                                      and (s_drain_cnt_r + 1) >= shift_left(
+                                          resize(i_cfg.n_drain_cap, 7), 3) then
+                                    -- Drain cap reached: stop burst
+                                    s_req_burst_r <= '0';
+                                    s_req_valid_r <= '0';
+                                    s_state_r     <= ST_DRAIN_FLUSH;
+                                end if;
+                                -- else: keep bursting (req_burst stays '1')
+                            end if;
+
+                        -- =================================================
+                        -- Post-burst flush: capture remaining in-flight
+                        -- response (bus_phy completes the last started read),
+                        -- then return to ST_DRAIN_CHECK for re-evaluation.
+                        -- =================================================
+
+                        when ST_DRAIN_FLUSH =>
+                            -- Capture any remaining response
+                            if i_bus_rsp_valid = '1' then
+                                s_raw_word_r  <= i_bus_rsp_rdata;
+                                s_raw_valid_r <= '1';
+                                s_drain_cnt_r <= s_drain_cnt_r + 1;
+                            end if;
+                            -- When bus_phy returns to IDLE: re-evaluate drain
+                            if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
+                                s_state_r <= ST_DRAIN_CHECK;
                             end if;
 
                         -- =================================================
@@ -537,6 +678,7 @@ begin
     o_bus_req_rw     <= s_req_rw_r;
     o_bus_req_addr   <= s_req_addr_r;
     o_bus_req_wdata  <= s_req_wdata_r;
+    o_bus_req_burst  <= s_req_burst_r;
 
     o_alutrigger     <= s_alutrigger_r;
     o_puresn         <= s_puresn_r;
