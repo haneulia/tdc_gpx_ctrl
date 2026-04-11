@@ -148,6 +148,10 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_blank_beat_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
     signal s_last_stop_r     : unsigned(2 downto 0) := (others => '0');  -- pre-computed: stops-1
 
+    -- Latched config: snapshot at shot_start to prevent mid-frame changes
+    -- from corrupting priority encoder / is_last_chip computation.
+    signal s_active_mask_r   : std_logic_vector(3 downto 0) := (others => '0');
+
     -- =========================================================================
     -- Can FSM produce a new beat?
     --   True when: pipe empty OR pipe handshake occurring.
@@ -304,7 +308,7 @@ begin
                     end if;
                     -- Latch tvalid from input skid buffer outputs
                     for i in 0 to c_N_CHIPS - 1 loop
-                        if i_active_chip_mask(i) = '1'
+                        if s_active_mask_r(i) = '1'
                            and s_in_tvalid(i) = '1' then
                             s_chip_ready_r(i) <= '1';
                         end if;
@@ -325,6 +329,7 @@ begin
                         s_chip_done_r     <= (others => '0');
                         s_shot_cnt_r      <= (others => '0');
                         s_chip_error_r    <= (others => '0');
+                        s_active_mask_r   <= i_active_chip_mask;    -- latch config
                         s_last_stop_r     <= i_stops_per_chip(2 downto 0) - 1;
                         s_state_r         <= ST_SCAN;
                     end if;
@@ -340,7 +345,7 @@ begin
                     v_found := false;
                     v_cur_chip := (others => '0');
                     for i in 0 to 3 loop
-                        if i_active_chip_mask(i) = '1'
+                        if s_active_mask_r(i) = '1'
                            and s_chip_done_r(i) = '0'
                            and (s_chip_ready_r(i) = '1'
                                 or s_in_tvalid(i) = '1')
@@ -357,7 +362,7 @@ begin
                     elsif s_shot_cnt_r >= s_timeout_limit_r then
                         -- Priority 2: timeout → pick any undone chip
                         for i in 0 to 3 loop
-                            if i_active_chip_mask(i) = '1'
+                            if s_active_mask_r(i) = '1'
                                and s_chip_done_r(i) = '0'
                                and not v_found then
                                 v_cur_chip := to_unsigned(i, 2);
@@ -379,7 +384,7 @@ begin
                 when ST_RESOLVE =>
                     v_done_after := s_chip_done_r;
                     v_done_after(to_integer(s_cur_chip_r)) := '1';
-                    v_is_last := (v_done_after or (not i_active_chip_mask)) = "1111";
+                    v_is_last := (v_done_after or (not s_active_mask_r)) = "1111";
 
                     if v_is_last then
                         s_is_last_chip_r <= '1';

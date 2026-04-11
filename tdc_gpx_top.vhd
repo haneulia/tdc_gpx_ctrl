@@ -483,6 +483,7 @@ begin
     --   Computed from CSR config, shared with header_inserter and VDMA.
     --   rows_per_face = active_chips × stops_per_chip (clamp >= 2)
     --   hsize_bytes   = (data_beats + c_HDR_PREFIX_BEATS) × TDATA_BYTES
+    --   Latched at face_start to prevent mid-frame geometry changes.
     -- =========================================================================
     p_geometry : process(i_axis_aclk)
         variable v_active_cnt  : natural range 0 to c_N_CHIPS;
@@ -493,7 +494,7 @@ begin
             if i_axis_aresetn = '0' then
                 s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
                 s_hsize_bytes_r   <= to_unsigned(c_HSIZE_MAX, 16);
-            else
+            elsif s_face_start_r = '1' then
                 v_active_cnt := fn_count_ones(s_cfg.active_chip_mask);
                 v_rows := v_active_cnt * to_integer(s_cfg.stops_per_chip);
                 if v_rows < 2 then

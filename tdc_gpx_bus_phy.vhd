@@ -52,7 +52,7 @@ entity tdc_gpx_bus_phy is
         -- Tick enable (1 clk pulse per BUS_CLK_DIV period)
         i_tick_en       : in  std_logic;
 
-        -- Bus timing config (latched from CSR at packet_start)
+        -- Bus timing config (latched internally at transaction entry)
         i_bus_ticks     : in  unsigned(2 downto 0);         -- 3..7
 
         -- Request interface (from chip_ctrl)
@@ -143,6 +143,10 @@ architecture rtl of tdc_gpx_bus_phy is
     signal s_rsp_rdata_r     : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_rsp_pending_r   : std_logic := '0';    -- read response deferred by 1 tick
     signal s_busy_r          : std_logic := '0';
+
+    -- Latched bus_ticks: snapshot at transaction entry to prevent
+    -- mid-transaction changes from corrupting tick counter comparisons.
+    signal s_bus_ticks_r      : unsigned(2 downto 0) := "101";  -- default 5
 
     -- Direction tracking for turnaround
     signal s_last_was_write_r : std_logic := '0';
@@ -335,18 +339,20 @@ begin
                                     s_req_wdata_r     <= i_req_wdata;
                                     s_oen_r           <= '1';
                                     s_turn_to_write_r <= '1';
+                                    s_bus_ticks_r     <= i_bus_ticks;   -- latch config
                                     s_state_r         <= ST_TURNAROUND;
 
                                 else
                                     -- Direct entry: Phase A (tick 0)
-                                    s_adr_r   <= i_req_addr;
-                                    s_csn_r   <= '0';
-                                    s_oen_r   <= '1';           -- [INV-1]
-                                    s_d_out_r <= i_req_wdata;
-                                    s_d_tri_r <= '0';           -- drive D-bus
-                                    s_wrn_r   <= '1';           -- high during Phase A
-                                    s_tick_r  <= to_unsigned(1, 3);
-                                    s_state_r <= ST_WRITE;
+                                    s_adr_r       <= i_req_addr;
+                                    s_csn_r       <= '0';
+                                    s_oen_r       <= '1';           -- [INV-1]
+                                    s_d_out_r     <= i_req_wdata;
+                                    s_d_tri_r     <= '0';           -- drive D-bus
+                                    s_wrn_r       <= '1';           -- high during Phase A
+                                    s_bus_ticks_r <= i_bus_ticks;   -- latch config
+                                    s_tick_r      <= to_unsigned(1, 3);
+                                    s_state_r     <= ST_WRITE;
                                 end if;
 
                             else
@@ -355,17 +361,19 @@ begin
                                     -- [INV-5] Need turnaround
                                     s_req_addr_r      <= i_req_addr;
                                     s_turn_to_write_r <= '0';
+                                    s_bus_ticks_r     <= i_bus_ticks;   -- latch config
                                     s_state_r         <= ST_TURNAROUND;
 
                                 else
                                     -- Direct entry: Phase A (tick 0)
-                                    s_adr_r   <= i_req_addr;
-                                    s_csn_r   <= '0';
-                                    s_oen_r   <= '0';           -- chip drives D-bus
-                                    s_d_tri_r <= '1';           -- FPGA Hi-Z [INV-2]
-                                    s_rdn_r   <= '1';           -- high during Phase A
-                                    s_tick_r  <= to_unsigned(1, 3);
-                                    s_state_r <= ST_READ;
+                                    s_adr_r       <= i_req_addr;
+                                    s_csn_r       <= '0';
+                                    s_oen_r       <= '0';           -- chip drives D-bus
+                                    s_d_tri_r     <= '1';           -- FPGA Hi-Z [INV-2]
+                                    s_rdn_r       <= '1';           -- high during Phase A
+                                    s_bus_ticks_r <= i_bus_ticks;   -- latch config
+                                    s_tick_r      <= to_unsigned(1, 3);
+                                    s_state_r     <= ST_READ;
                                 end if;
                             end if;
                         end if;
@@ -423,12 +431,12 @@ begin
                         if i_tick_en = '1' then
 
                             -- RDN: low during Phase L (ticks 1 .. N-2)
-                            if s_tick_r >= 1 and s_tick_r <= i_bus_ticks - 2 then
+                            if s_tick_r >= 1 and s_tick_r <= s_bus_ticks_r - 2 then
                                 s_rdn_r <= '0';
                             end if;
 
                             -- Sample IOB FF at Phase L last tick (tick N-2)
-                            if s_tick_r = i_bus_ticks - 2 then
+                            if s_tick_r = s_bus_ticks_r - 2 then
                                 s_sample_en <= '1';
                             end if;
 
@@ -438,7 +446,7 @@ begin
                             -- rsp_valid is deferred by 1 tick (s_rsp_pending_r)
                             -- so that s_d_in_ff_r has settled from the IOB FF
                             -- capture that happens at this same clock edge.
-                            if s_tick_r = i_bus_ticks - 1 then
+                            if s_tick_r = s_bus_ticks_r - 1 then
                                 s_rdn_r            <= '1';
                                 s_rsp_pending_r    <= '1';
                                 s_last_was_write_r <= '0';
@@ -480,12 +488,12 @@ begin
                         if i_tick_en = '1' then
 
                             -- WRN: low during Phase L (ticks 1 .. N-2)
-                            if s_tick_r >= 1 and s_tick_r <= i_bus_ticks - 2 then
+                            if s_tick_r >= 1 and s_tick_r <= s_bus_ticks_r - 2 then
                                 s_wrn_r <= '0';
                             end if;
 
                             -- Phase H: transaction complete (tick N-1)
-                            if s_tick_r = i_bus_ticks - 1 then
+                            if s_tick_r = s_bus_ticks_r - 1 then
                                 s_wrn_r            <= '1';
                                 s_rsp_valid_r      <= '1';
                                 s_last_was_write_r <= '1';

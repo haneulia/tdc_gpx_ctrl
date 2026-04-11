@@ -127,7 +127,8 @@ package tdc_gpx_pkg is
 
     -- =========================================================================
     -- t_tdc_cfg : CSR configuration (CSR -> submodules)
-    -- All fields latched at packet_start and stable during frame.
+    -- Fields latched at appropriate boundaries (face_start / shot_start /
+    -- transaction entry) and stable during active processing.
     --
     -- Register layout (compact):
     --   CTL0  MAIN_CTRL  : packed control fields + COMMAND[31:28]
