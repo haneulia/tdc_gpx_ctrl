@@ -34,11 +34,17 @@ package tdc_gpx_pkg is
     -- =========================================================================
     constant c_N_CHIPS              : natural := 4;
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
-    constant c_MAX_HITS_PER_STOP    : natural := 8;
+    constant c_MAX_HITS_PER_STOP    : natural := 7;
     constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;   -- Zynq-7000 (17 for MPSoC)
     constant c_TDATA_WIDTH          : natural := 32;
     constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;   -- bytes per beat
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
+
+    -- Derived cell layout constants (auto-calculated from MAX_HITS / TDATA_WIDTH)
+    constant c_SLOTS_PER_BEAT       : natural := c_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH;  -- 2
+    constant c_HIT_DATA_BEATS       : natural := (c_MAX_HITS_PER_STOP + c_SLOTS_PER_BEAT - 1)
+                                                  / c_SLOTS_PER_BEAT;                     -- 4
+    constant c_META_BEAT_IDX        : natural := c_HIT_DATA_BEATS;                        -- 4
 
     -- Stop event AXI-Stream constants
     constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
@@ -111,20 +117,17 @@ package tdc_gpx_pkg is
         tkeep_width : natural
     ) return std_logic_vector;
 
-    -- Default cell_size_bytes (for c_HIT_SLOT_DATA_WIDTH=17, c_MAX_HITS=8)
-    -- 158 bits -> 20 bytes -> align_pow2 = 32 bytes
-    constant c_CELL_SIZE_BYTES      : natural := 32;
+    -- Cell size and derived constants: auto-calculated from MAX_HITS
+    -- (deferred constants — full definitions in package body using fn_cell_size_bytes)
+    constant c_CELL_SIZE_BYTES      : natural;
+    constant c_BEATS_PER_CELL       : natural;
+    constant c_DATA_BEATS_MAX       : natural;
+    constant c_HSIZE_BEATS_MAX      : natural;
+    constant c_HSIZE_MAX            : natural;
 
     -- Header prefix (embedded in each VDMA line)
-    constant c_HDR_PREFIX_BEATS     : natural := 12;    -- 12 beats × 4B = 48 bytes
+    constant c_HDR_PREFIX_BEATS     : natural := 12;    -- 12 beats x 4B = 48 bytes
     constant c_HDR_PREFIX_BYTES     : natural := c_HDR_PREFIX_BEATS * (c_TDATA_WIDTH / 8);  -- 48
-
-    -- VDMA line constants (default generics)
-    -- "Beat" = one AXI-Stream transfer (tvalid & tready handshake), TDATA_WIDTH bits wide
-    constant c_BEATS_PER_CELL       : natural := c_CELL_SIZE_BYTES / (c_TDATA_BYTES);       -- 8
-    constant c_DATA_BEATS_MAX       : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;    -- 256
-    constant c_HSIZE_BEATS_MAX      : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;     -- 268
-    constant c_HSIZE_MAX            : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);   -- 1072
 
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
@@ -255,7 +258,7 @@ package tdc_gpx_pkg is
 
     -- =========================================================================
     -- t_cell : Dense hit storage for one stop channel, one shot
-    -- Cell byte layout: hit_slot[0..7] + hit_valid + slope_vec + meta
+    -- Cell byte layout: hit_slot[0..MAX-1] + hit_valid + slope_vec + meta
     -- =========================================================================
     type t_hit_slot_array is array (0 to c_MAX_HITS_PER_STOP - 1)
         of unsigned(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
@@ -264,7 +267,7 @@ package tdc_gpx_pkg is
         hit_slot            : t_hit_slot_array;
         hit_valid           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
         slope_vec           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
-        hit_count_actual    : unsigned(3 downto 0);         -- 0..8
+        hit_count_actual    : unsigned(3 downto 0);         -- 0..c_MAX_HITS_PER_STOP
         hit_dropped         : std_logic;
         error_fill          : std_logic;
     end record;
@@ -298,6 +301,16 @@ end package tdc_gpx_pkg;
 -- =============================================================================
 
 package body tdc_gpx_pkg is
+
+    -- =========================================================================
+    -- Deferred constants: cell size and derived VDMA line metrics
+    -- =========================================================================
+    constant c_CELL_SIZE_BYTES : natural :=
+        fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, c_MAX_HITS_PER_STOP);
+    constant c_BEATS_PER_CELL  : natural := c_CELL_SIZE_BYTES / c_TDATA_BYTES;
+    constant c_DATA_BEATS_MAX  : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;
+    constant c_HSIZE_BEATS_MAX : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;
+    constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);
 
     -- Cell payload bits (Format 0, Zynq-7000)
     -- hit_slot[MAX] + hit_valid + slope_vec + hit_count(4) + dropped(1) + error_fill(1)

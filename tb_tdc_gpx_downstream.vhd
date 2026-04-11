@@ -181,8 +181,8 @@ begin
     -- to exercise FCFS scheduling.
     --
     -- Data pattern:
-    --   beat 0-3, 5-7: chip[31:28] | stop[27:24] | beat[23:20] | 0[19:0]
-    --   beat 4 (meta): hit_valid=0xFF | slope=0xAA | hit_count=8 |
+    --   beat 0..META-1, META+1..last: chip[31:28] | stop[27:24] | beat[23:20] | 0[19:0]
+    --   beat c_META_BEAT_IDX (meta): hit_valid | slope | hit_count=MAX_HITS |
     --                  dropped=0 | error=0 | chip_id=c | pad=0
     -- =========================================================================
     gen_stim : for c in 0 to c_N_CHIPS - 1 generate
@@ -221,15 +221,17 @@ begin
                         end if;
 
                         -- Beat data
-                        if b = 4 then
-                            -- Metadata beat
-                            cell_tdata(c) <=
-                                x"FF"                                           -- hit_valid [31:24]
-                              & x"AA"                                           -- slope_vec [23:16]
-                              & std_logic_vector(to_unsigned(8, 4))             -- hit_count [15:12]
-                              & "00"                                            -- dropped, error [11:10]
-                              & std_logic_vector(to_unsigned(c, 2))             -- chip_id  [9:8]
-                              & x"00";                                          -- pad      [7:0]
+                        if b = c_META_BEAT_IDX then
+                            -- Metadata beat (auto-layout from c_MAX_HITS_PER_STOP)
+                            cell_tdata(c) <= (others => '0');
+                            cell_tdata(c)(31 downto 32 - c_MAX_HITS_PER_STOP)
+                                <= (others => '1');                              -- hit_valid
+                            cell_tdata(c)(31 - c_MAX_HITS_PER_STOP downto 32 - 2*c_MAX_HITS_PER_STOP)
+                                <= "1010101";                                    -- slope_vec (alternating)
+                            cell_tdata(c)(15 downto 12)
+                                <= std_logic_vector(to_unsigned(c_MAX_HITS_PER_STOP, 4)); -- hit_count
+                            cell_tdata(c)(9 downto 8)
+                                <= std_logic_vector(to_unsigned(c, 2));          -- chip_id
                         else
                             -- Identifiable pattern
                             cell_tdata(c) <=

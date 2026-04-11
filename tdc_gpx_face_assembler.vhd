@@ -168,7 +168,8 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_shot_overrun_r  : std_logic := '0';
 
     -- =========================================================================
-    -- Blank beat data: all zeros except beat 4 has error_fill + chip_id
+    -- Blank beat data: all zeros except metadata beat has error_fill + chip_id
+    -- Metadata beat index = c_META_BEAT_IDX (auto-derived from c_MAX_HITS_PER_STOP)
     -- =========================================================================
     function fn_blank_beat(
         beat_idx : unsigned(2 downto 0);
@@ -177,7 +178,7 @@ architecture rtl of tdc_gpx_face_assembler is
         variable v_result : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
     begin
         v_result := (others => '0');
-        if to_integer(beat_idx) = 4 then
+        if to_integer(beat_idx) = c_META_BEAT_IDX then
             v_result(10)          := '1';   -- error_fill
             v_result(9 downto 8)  := std_logic_vector(chip_id);
         end if;

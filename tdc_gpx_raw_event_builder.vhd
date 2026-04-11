@@ -54,7 +54,7 @@ end entity tdc_gpx_raw_event_builder;
 
 architecture rtl of tdc_gpx_raw_event_builder is
 
-    -- Per-stop hit sequence counters (4-bit: 0..15, >=8 = overflow)
+    -- Per-stop hit sequence counters (4-bit: 0..15, >=MAX_HITS = overflow)
     type t_hit_cnt_array is array (0 to c_MAX_STOPS_PER_CHIP - 1)
         of unsigned(3 downto 0);
 

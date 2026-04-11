@@ -10,24 +10,22 @@
 --   Phase A (shot_start): clear all cell buffers
 --   Phase B (raw_event):  store hits into cell_buffer using hit_count_actual
 --                         as slot index; overflow (>=MAX_HITS) sets hit_dropped
---   Phase C (drain_done): serialize cells to m_axis (8 beats/cell)
---                         Pipeline: cell MUX (ST_LOAD) → beat MUX (ST_OUTPUT)
+--   Phase C (drain_done): serialize cells to m_axis (c_BEATS_PER_CELL beats/cell)
+--                         Pipeline: cell MUX (ST_LOAD) -> beat MUX (ST_OUTPUT)
 --                         1-clk bubble at each cell boundary for timing closure
 --
 --   "Beat" = one AXI-Stream transfer (tvalid & tready handshake).
 --   1 beat = TDATA_WIDTH bits = 32 bits = 4 bytes.
---   1 cell = CELL_SIZE_BYTES / (TDATA_WIDTH/8) = 32/4 = 8 beats.
+--   1 cell = c_CELL_SIZE_BYTES / (TDATA_WIDTH/8) = c_BEATS_PER_CELL beats.
 --
---   Beat layout (cell_format=0, 32-bit TDATA, 32 bytes/cell):
---     Beat 0: hit_slot[1](15:0) & hit_slot[0](15:0)
---     Beat 1: hit_slot[3](15:0) & hit_slot[2](15:0)
---     Beat 2: hit_slot[5](15:0) & hit_slot[4](15:0)
---     Beat 3: hit_slot[7](15:0) & hit_slot[6](15:0)
---     Beat 4: hit_valid(7:0) & slope_vec(7:0) & hit_count(3:0) &
---             hit_dropped & error_fill & chip_id(1:0) & "00000000"
---     Beat 5: x"00000000" (padding)
---     Beat 6: x"00000000" (padding)
---     Beat 7: x"00000000" (padding)
+--   Beat layout (cell_format=0, 32-bit TDATA, auto-calculated from MAX_HITS):
+--     Beat 0..c_HIT_DATA_BEATS-1: hit_slot pairs (c_SLOTS_PER_BEAT slots/beat)
+--       e.g. Beat b: slot[b*2+1](15:0) & slot[b*2](15:0)
+--       Last hit-data beat may have fewer slots (upper bits zero).
+--     Beat c_META_BEAT_IDX: metadata
+--       hit_valid(MAX-1:0) & slope_vec(MAX-1:0) & hit_count(3:0) &
+--       hit_dropped & error_fill & chip_id(1:0) & pad
+--     Remaining beats: padding (zeros)
 --
 --   raw_hit is 17-bit (I-Mode): bit[16]=ALU carry/overflow, bits[15:0]=
 --   calibrated timestamp. Only lower 16 bits stored (HIT_SLOT_DATA_WIDTH=16).
@@ -117,41 +115,52 @@ architecture rtl of tdc_gpx_cell_builder is
 
     -- =========================================================================
     -- Cell-to-beat mux (combinational, used inside process)
+    -- Auto-calculated from c_MAX_HITS_PER_STOP / c_SLOTS_PER_BEAT:
+    --   Beats 0..c_HIT_DATA_BEATS-1: hit_slot pairs (loop-based)
+    --   Beat c_META_BEAT_IDX: metadata
+    --   Remaining beats: padding
     -- =========================================================================
     function fn_cell_beat(
         cell     : t_cell;
         beat_idx : unsigned(2 downto 0)
     ) return std_logic_vector is
-        variable v_result : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
-        variable v_beat   : natural range 0 to 7;
+        variable v_result   : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        variable v_beat     : natural range 0 to 7;
+        variable v_slot_idx : natural;
+        variable v_lo       : natural;
     begin
-        v_beat  := to_integer(beat_idx);
+        v_beat   := to_integer(beat_idx);
         v_result := (others => '0');
 
-        case v_beat is
-            when 0 =>
-                v_result(31 downto 16) := std_logic_vector(cell.hit_slot(1));
-                v_result(15 downto  0) := std_logic_vector(cell.hit_slot(0));
-            when 1 =>
-                v_result(31 downto 16) := std_logic_vector(cell.hit_slot(3));
-                v_result(15 downto  0) := std_logic_vector(cell.hit_slot(2));
-            when 2 =>
-                v_result(31 downto 16) := std_logic_vector(cell.hit_slot(5));
-                v_result(15 downto  0) := std_logic_vector(cell.hit_slot(4));
-            when 3 =>
-                v_result(31 downto 16) := std_logic_vector(cell.hit_slot(7));
-                v_result(15 downto  0) := std_logic_vector(cell.hit_slot(6));
-            when 4 =>
-                v_result(31 downto 24) := cell.hit_valid;
-                v_result(23 downto 16) := cell.slope_vec;
-                v_result(15 downto 12) := std_logic_vector(cell.hit_count_actual);
-                v_result(11)           := cell.hit_dropped;
-                v_result(10)           := cell.error_fill;
-                v_result(9 downto 8)   := std_logic_vector(to_unsigned(g_CHIP_ID, 2));
-                v_result(7 downto 0)   := (others => '0');  -- reserved
-            when others =>
-                v_result := (others => '0');  -- beats 5~7: padding
-        end case;
+        if v_beat < c_HIT_DATA_BEATS then
+            -- Hit-data beat: pack c_SLOTS_PER_BEAT slots per beat
+            for sl in 0 to c_SLOTS_PER_BEAT - 1 loop
+                v_slot_idx := v_beat * c_SLOTS_PER_BEAT + sl;
+                if v_slot_idx < c_MAX_HITS_PER_STOP then
+                    v_lo := sl * c_HIT_SLOT_DATA_WIDTH;
+                    v_result(v_lo + c_HIT_SLOT_DATA_WIDTH - 1 downto v_lo)
+                        := std_logic_vector(cell.hit_slot(v_slot_idx));
+                end if;
+                -- slots beyond MAX_HITS stay zero
+            end loop;
+
+        elsif v_beat = c_META_BEAT_IDX then
+            -- Metadata beat: hit_valid | slope_vec | hit_count | flags | chip_id
+            -- Pack from MSB: hit_valid at top, then slope_vec, etc.
+            v_result(31 downto 32 - c_MAX_HITS_PER_STOP)
+                := cell.hit_valid;
+            v_result(31 - c_MAX_HITS_PER_STOP downto 32 - 2*c_MAX_HITS_PER_STOP)
+                := cell.slope_vec;
+            v_result(15 downto 12) := std_logic_vector(cell.hit_count_actual);
+            v_result(11)           := cell.hit_dropped;
+            v_result(10)           := cell.error_fill;
+            v_result(9 downto 8)   := std_logic_vector(to_unsigned(g_CHIP_ID, 2));
+            v_result(7 downto 0)   := (others => '0');  -- reserved
+
+        else
+            -- Padding beats: zeros
+            v_result := (others => '0');
+        end if;
 
         return v_result;
     end function;
@@ -163,7 +172,7 @@ begin
     -- =========================================================================
     p_main : process(i_clk)
         variable v_stop     : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
-        variable v_seq      : natural range 0 to c_MAX_HITS_PER_STOP - 1;  -- slot index from hit_count_actual
+        variable v_seq      : natural range 0 to c_MAX_HITS_PER_STOP - 1;
         variable v_nxt_stop : unsigned(2 downto 0);
         variable v_nxt_beat : unsigned(2 downto 0);
     begin
@@ -217,7 +226,7 @@ begin
                                 s_cell_buf_r(v_stop).hit_count_actual
                                     <= s_cell_buf_r(v_stop).hit_count_actual + 1;
                             else
-                                -- 9th+ hit: overflow, do not overwrite slot
+                                -- (MAX+1)th+ hit: overflow, do not overwrite slot
                                 s_cell_buf_r(v_stop).hit_dropped <= '1';
                                 s_hit_dropped_r <= '1';
                             end if;
