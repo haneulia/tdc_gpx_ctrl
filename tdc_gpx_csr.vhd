@@ -586,6 +586,13 @@ begin
 
     -- =========================================================================
     -- [9] CSR output: t_tdc_cfg field extraction (i_axis_aclk domain)
+    --
+    -- Safety clamping applied at CSR boundary so all downstream modules
+    -- receive valid values.  Minimum constraints:
+    --   stops_per_chip >= 2  (cell_builder/assembler do stops-1)
+    --   n_faces        >= 1  (face_seq does n_faces-1)
+    --   bus_ticks      >= 3  (bus_phy does ticks-2)
+    --   bus_clk_div    >= 1  (tick divider modulo)
     -- =========================================================================
     -- CTL0: MAIN_CTRL packed fields
     o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO);
@@ -594,14 +601,30 @@ begin
     o_cfg.dist_scale       <= unsigned(s_ctl_out(0)(c_MC_DIST_SCALE_HI downto c_MC_DIST_SCALE_LO));
     o_cfg.drain_mode       <= s_ctl_out(0)(c_MC_DRAIN_MODE);
     o_cfg.pipeline_en      <= s_ctl_out(0)(c_MC_PIPELINE_EN);
-    o_cfg.n_faces          <= unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO));
-    o_cfg.stops_per_chip   <= unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO));
+
+    -- n_faces: clamp >= 1 (face_seq does n_faces-1 comparison)
+    o_cfg.n_faces          <= unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO))
+                              when unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO)) >= 1
+                              else to_unsigned(1, 3);
+
+    -- stops_per_chip: clamp >= 2 (cell_builder/assembler do stops-1)
+    o_cfg.stops_per_chip   <= unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO))
+                              when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) >= 2
+                              else to_unsigned(2, 4);
+
     o_cfg.n_drain_cap      <= unsigned(s_ctl_out(0)(c_MC_N_DRAIN_CAP_HI downto c_MC_N_DRAIN_CAP_LO));
     o_cfg.stopdis_override <= s_ctl_out(0)(c_MC_STOPDIS_HI downto c_MC_STOPDIS_LO);
 
     -- CTL1: BUS_TIMING
-    o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO));
-    o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO));
+    -- bus_clk_div: clamp >= 1 (tick divider uses modulo)
+    o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
+                              when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO)) >= 1
+                              else to_unsigned(1, 6);
+
+    -- bus_ticks: clamp >= 3 (bus_phy does ticks-2, needs Phase A+L+H minimum)
+    o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))
+                              when unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO)) >= 3
+                              else to_unsigned(3, 3);
 
     -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when valid)
     o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));
