@@ -75,10 +75,14 @@ entity tdc_gpx_top is
         -- Shot trigger (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         i_shot_start     : in  std_logic;
 
-        -- External stop signal (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
-        -- Error detection ONLY: if stop_tdc↑ before IrFlag↑ → err_sequence.
+        -- Stop event AXI Stream slave (from echo_receiver, i_axis_aclk domain)
+        -- window close (한계도달거리) 시 echo_receiver가 전송.
+        -- Error detection ONLY: tvalid↑ before IrFlag↑ → err_sequence.
         -- NOT used as a drain trigger (IrFlag is the sole drain trigger).
-        i_stop_tdc       : in  std_logic;
+        -- tdata[15:0] = ch_detected (어느 채널이 echo를 감지했는지)
+        i_stop_evt_tvalid : in  std_logic;
+        i_stop_evt_tdata  : in  std_logic_vector(31 downto 0);
+        o_stop_evt_tready : out std_logic;
 
         -- TDC-GPX physical pins (per chip, x4)
         io_tdc_d         : inout t_tdc_bus_array;
@@ -281,7 +285,21 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_overrun    : std_logic;
     signal s_shot_overrun_r  : std_logic := '0';
 
+    -- =========================================================================
+    -- Stop event stream → stop_tdc pulse extraction
+    -- AXI Stream slave: always ready (tready='1'), tvalid = stop_tdc event.
+    -- =========================================================================
+    signal s_stop_tdc        : std_logic;
+
 begin
+
+    -- =========================================================================
+    -- Stop event AXI Stream slave: always accept, extract stop_tdc pulse
+    -- tvalid='1' = stop_tdc event from echo_receiver (window close)
+    -- tdata[15:0] = ch_detected (reserved for future use)
+    -- =========================================================================
+    o_stop_evt_tready <= '1';
+    s_stop_tdc        <= i_stop_evt_tvalid;
 
     -- =========================================================================
     -- [0] Gated shot_start: suppress when face sequencer is not in run state
@@ -433,7 +451,7 @@ begin
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
                 i_shot_start        => s_shot_start_gated,
                 i_max_range_clks    => s_cfg.max_range_clks,
-                i_stop_tdc          => i_stop_tdc,
+                i_stop_tdc          => s_stop_tdc,
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),
