@@ -29,9 +29,18 @@
 --
 --   tV-DR constraint (data valid <= 11.8 ns after RDN low):
 --     ticks=3: 5 ns  => VIOLATION (sample_en coincides with RDN low)
+--     ticks=4, div=1: 10 ns < 11.8 ns => VIOLATION
 --     ticks=4, div=2: 15 ns => OK (3.2 ns margin)
+--     ticks=5, div=1: 15 ns => OK (3.2 ns margin, fastest: 40 MHz)
 --     ticks=5, div=2: 25 ns => OK (default)
---   CSR clamps: ticks >= 4, div >= 2 (see tdc_gpx_cfg_pkg).
+--
+--   Burst tPW-RH (RDN high between back-to-back reads):
+--     Burst restarts at tick 0 (Phase A gap), so RDN high = 2 ticks.
+--     div=1: 2*5 = 10 ns >= 6 ns OK.
+--
+--   CSR combined constraint: (ticks-3)*div >= 2
+--     div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
+--   See tdc_gpx_cfg_pkg for legal combination table.
 --
 -- Invariants (bus safety, see 01_chip_acquisition §6):
 --   INV-1: WRITE => OEN = '1' (prevent bus contention)
@@ -446,12 +455,15 @@ begin
                                 s_last_was_write_r <= '0';
                                 s_last_was_read_r  <= '1';
 
-                                -- Burst: back-to-back read (skip IDLE)
-                                -- Phase H serves as inter-read gap (RDN high)
-                                -- CSN, OEN, ADR unchanged; restart tick counter
+                                -- Burst: back-to-back read (no IDLE)
+                                -- Restart at tick 0 (Phase A gap) so that
+                                -- RDN high = 2 ticks (Phase H + Phase A),
+                                -- satisfying tPW-RH >= 6 ns even at div=1
+                                -- (2 × 5 ns = 10 ns >= 6 ns).
+                                -- CSN, OEN, ADR unchanged throughout burst.
                                 if i_oen_permanent = '1'
                                    and i_req_burst = '1' then
-                                    s_tick_r  <= to_unsigned(1, 3);
+                                    s_tick_r  <= to_unsigned(0, 3);
                                     -- stay in ST_READ, busy remains '1'
                                 else
                                     -- Normal completion: return to IDLE

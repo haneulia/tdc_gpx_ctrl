@@ -306,6 +306,10 @@ architecture rtl of tdc_gpx_csr is
     signal s_lsr_cols_r  : unsigned(15 downto 0) := (others => '0');
     signal s_lsr_valid_r : std_logic := '0';    -- '1' after first tvalid
 
+    -- Bus timing combined constraint intermediates
+    signal s_div_clamped   : unsigned(5 downto 0);
+    signal s_ticks_min     : unsigned(2 downto 0);
+
 begin
 
     -- =========================================================================
@@ -657,8 +661,8 @@ begin
     --   active_chip_mask != 0  (face_assembler deadlocks on zero mask)
     --   stops_per_chip  [2..8] (cell_builder/assembler use low 3 bits)
     --   n_faces         >= 1   (face_seq does n_faces-1)
-    --   bus_ticks       >= 4   (ticks=3 violates tV-DR; see timing analysis)
-    --   bus_clk_div     >= 2   (div=1: 5ns < tPW-RL 6ns datasheet min)
+    --   bus_ticks       >= 4|5 (combined: (ticks-3)*div >= 2; see timing)
+    --   bus_clk_div     >= 1   (div=1 OK with ticks>=5 for tV-DR)
     --   cols_per_face   >= 1   (header_inserter does cols-1)
     -- =========================================================================
     -- CTL0: MAIN_CTRL packed fields
@@ -695,35 +699,40 @@ begin
     -- Safety clamping rationale (200 MHz, T_clk = 5 ns):
     --
     --   bus_clk_div (tick divider):
-    --     div=1 → tick=5ns < tPW-RL(6ns), tPW-RH(6ns)   => ILLEGAL
-    --     div=2 → tick=10ns: all pulse-width constraints met
-    --     Clamp: div >= c_BUS_CLK_DIV_MIN (2)
+    --     div=0 → clamped to 1 (p_tick_en treats 0 as 1)
+    --     div=1 → tick=5ns; tPW-RL OK at ticks>=4 (15ns), but tV-DR
+    --             requires ticks>=5. Burst tPW-RH=2*5=10ns >= 6ns OK.
+    --     div=2 → tick=10ns; all constraints met at ticks>=4.
+    --     Clamp: div >= c_BUS_CLK_DIV_MIN (1)
     --
     --   bus_ticks (ticks per transaction):
-    --     Constraint from tV-DR (data valid delay ≤ 11.8 ns):
-    --       bus_phy samples IOB FF at ((ticks-3)*div + 1) * T_clk after RDN low
-    --       ticks=3: capture = 5 ns < 11.8 ns => ALWAYS VIOLATES tV-DR
-    --       ticks=4, div=2: capture = 15 ns > 11.8 ns => OK (3.2 ns margin)
-    --     Combined: (ticks-3) * div >= 2; given div>=2, ticks>=4 suffices
-    --     Clamp: ticks >= c_BUS_TICKS_MIN (4)
+    --     Combined constraint from tV-DR: (ticks-3) * div >= 2
+    --       div=1 => ticks >= 5 (c_BUS_TICKS_MIN_DIV1)
+    --       div>=2 => ticks >= 4 (c_BUS_TICKS_MIN)
+    --     s_ticks_min selects the correct minimum based on clamped div.
     --
     --   Legal combinations (div, ticks) → effective bus rate:
-    --     (2, 4) → 25 MHz    fastest safe
+    --     (1, 5) → 40 MHz    fastest safe (TDC-GPX max)
+    --     (2, 4) → 25 MHz
     --     (2, 5) → 20 MHz    default, conservative
     --     (3, 4) → 16.7 MHz
     --     (2, 7) → 14.3 MHz  slowest with 3-bit ticks
     --
-    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN
-    o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
+    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN (1)
+    s_div_clamped          <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
                               when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
                                    >= c_BUS_CLK_DIV_MIN
                               else to_unsigned(c_BUS_CLK_DIV_MIN, 6);
+    o_cfg.bus_clk_div      <= s_div_clamped;
 
-    -- bus_ticks: clamp >= c_BUS_TICKS_MIN (ticks=3 violates tV-DR at any div)
+    -- bus_ticks: combined constraint — div=1 needs ticks>=5, div>=2 needs ticks>=4
+    s_ticks_min            <= to_unsigned(c_BUS_TICKS_MIN_DIV1, 3)
+                              when s_div_clamped = 1
+                              else to_unsigned(c_BUS_TICKS_MIN, 3);
     o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))
                               when unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))
-                                   >= c_BUS_TICKS_MIN
-                              else to_unsigned(c_BUS_TICKS_MIN, 3);
+                                   >= s_ticks_min
+                              else s_ticks_min;
 
     -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when valid)
     o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));

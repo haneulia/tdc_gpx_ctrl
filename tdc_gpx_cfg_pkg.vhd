@@ -214,21 +214,29 @@ package tdc_gpx_cfg_pkg is
     --   RDN low at tick 1, sample_en at tick (ticks-2), IOB FF at +1 clk
     --   => capture delay = ((ticks-3) * div + 1) * T_clk from RDN low
     --
-    -- Legal combination table (T_clk = 5 ns):
-    --   ticks=3, any div : capture=5ns  < 11.8ns  => ILLEGAL (tV-DR)
-    --   ticks=4, div=2   : capture=15ns > 11.8ns  => OK (3.2ns margin)
-    --   ticks=4, div=3   : capture=20ns            => OK
-    --   ticks=5, div=2   : capture=25ns            => OK (default)
-    --   ticks=6, div=2   : capture=35ns            => OK
-    --   ticks=7, div=2   : capture=45ns            => OK
+    -- bus_phy burst path:
+    --   Burst restarts at tick 0 (Phase A gap included).
+    --   RDN high = 2 ticks = 2 * div * T_clk (Phase H + Phase A).
+    --   Per-burst-read cost = (ticks + 1) ticks total.
     --
     -- Combined constraint: (ticks - 3) * div >= 2
-    --   With div >= 2 (already clamped), ticks >= 4 satisfies this.
+    --   div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
     --
-    -- Burst tPW-RH: high = div * T_clk; div >= 2 => 10ns >= 6ns OK.
+    -- Legal combination table (T_clk = 5 ns):
+    --   div  ticks  capture   tPW-RL   tPW-RH(burst)  rate      status
+    --   ---  -----  --------  -------  -------------  --------  --------
+    --    1     4     10 ns     10 ns    10 ns          50 MHz    ILLEGAL (tV-DR)
+    --    1     5     15 ns     15 ns    10 ns          40 MHz    OK (fastest)
+    --    1     6     25 ns     20 ns    10 ns          33 MHz    OK
+    --    1     7     35 ns     25 ns    10 ns          29 MHz    OK
+    --    2     4     15 ns     20 ns    20 ns          25 MHz    OK
+    --    2     5     25 ns     30 ns    20 ns          20 MHz    OK (default)
+    --    3     4     20 ns     30 ns    30 ns          17 MHz    OK
+    --    2     7     45 ns     50 ns    20 ns          14 MHz    OK (slowest 3-bit)
     -- =========================================================================
-    constant c_BUS_TICKS_MIN        : natural := 4;     -- ticks=3 violates tV-DR
-    constant c_BUS_CLK_DIV_MIN      : natural := 2;     -- div=1 violates tPW-RL
+    constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum (div>=2)
+    constant c_BUS_TICKS_MIN_DIV1   : natural := 5;     -- div=1 needs extra tick for tV-DR
+    constant c_BUS_CLK_DIV_MIN      : natural := 1;     -- div=1 OK with ticks>=5
 
     -- =========================================================================
     -- Init values
