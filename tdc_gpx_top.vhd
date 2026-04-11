@@ -79,9 +79,11 @@ entity tdc_gpx_top is
         -- window close (한계도달거리) 시 echo_receiver가 전송.
         -- Error detection ONLY: tvalid↑ before IrFlag↑ → err_sequence.
         -- NOT used as a drain trigger (IrFlag is the sole drain trigger).
-        -- tdata[15:0] = ch_detected (어느 채널이 echo를 감지했는지)
+        -- tdata: per-chip rising edge stop count (8bit × 4chips)
+        -- tuser: per-chip falling edge stop count (8bit × 4chips)
         i_stop_evt_tvalid : in  std_logic;
         i_stop_evt_tdata  : in  std_logic_vector(31 downto 0);
+        i_stop_evt_tuser  : in  std_logic_vector(31 downto 0);
         o_stop_evt_tready : out std_logic;
 
         -- TDC-GPX physical pins (per chip, x4)
@@ -298,7 +300,8 @@ architecture rtl of tdc_gpx_top is
 
     type t_stop_hit_cnt_array is array(0 to c_N_CHIPS - 1)
         of unsigned(7 downto 0);
-    signal s_stop_hit_cnt_r  : t_stop_hit_cnt_array := (others => (others => '0'));
+    signal s_stop_rise_cnt_r : t_stop_hit_cnt_array := (others => (others => '0'));
+    signal s_stop_fall_cnt_r : t_stop_hit_cnt_array := (others => (others => '0'));
 
 begin
 
@@ -309,15 +312,19 @@ begin
     s_stop_tdc        <= i_stop_evt_tvalid;
 
     -- Latch per-chip hit counts on tvalid (registered for downstream use)
+    -- tdata → rising edge counts, tuser → falling edge counts
     p_stop_decode : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_stop_hit_cnt_r <= (others => (others => '0'));
+                s_stop_rise_cnt_r <= (others => (others => '0'));
+                s_stop_fall_cnt_r <= (others => (others => '0'));
             elsif i_stop_evt_tvalid = '1' then
                 for c in 0 to c_N_CHIPS - 1 loop
-                    s_stop_hit_cnt_r(c) <=
+                    s_stop_rise_cnt_r(c) <=
                         unsigned(i_stop_evt_tdata(c*8 + 7 downto c*8));
+                    s_stop_fall_cnt_r(c) <=
+                        unsigned(i_stop_evt_tuser(c*8 + 7 downto c*8));
                 end loop;
             end if;
         end if;
