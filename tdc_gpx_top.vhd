@@ -107,12 +107,19 @@ entity tdc_gpx_top is
         i_tdc_irflag     : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_tdc_errflag    : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-        -- AXI-Stream master output (to CDC FIFO / VDMA)
+        -- AXI-Stream master output: RISING pipeline (to CDC FIFO / VDMA)
         o_m_axis_tdata   : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
         o_m_axis_tvalid  : out std_logic;
         o_m_axis_tlast   : out std_logic;
         o_m_axis_tuser   : out std_logic_vector(0 downto 0);
         i_m_axis_tready  : in  std_logic;
+
+        -- AXI-Stream master output: FALLING pipeline (to CDC FIFO / VDMA)
+        o_m_axis_fall_tdata  : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_fall_tvalid : out std_logic;
+        o_m_axis_fall_tlast  : out std_logic;
+        o_m_axis_fall_tuser  : out std_logic_vector(0 downto 0);
+        i_m_axis_fall_tready : in  std_logic;
 
         -- Calibration inputs (from external computation, i_axis_aclk domain)
         i_bin_resolution_ps : in  unsigned(15 downto 0);
@@ -209,12 +216,17 @@ architecture rtl of tdc_gpx_top is
     signal s_dec_stop_id     : t_u3_array;
     signal s_dec_valid       : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-    -- Per-chip: raw_event_builder -> cell_builder
+    -- Per-chip: raw_event_builder -> slope demux -> cell_builders
     signal s_raw_event       : t_raw_event_array;
     signal s_raw_event_valid : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_stop_id_error   : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-    -- Per-chip: cell_builder -> face_assembler (AXI-Stream)
+    -- Slope demux: split raw_event_valid by slope bit
+    -- slope='1' → rising pipeline (existing), slope='0' → falling pipeline (new)
+    signal s_raw_evt_rise_valid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_evt_fall_valid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- Per-chip: cell_builder (rising) -> face_assembler (AXI-Stream)
     signal s_cell_tdata      : t_axis_tdata_array;
     signal s_cell_tvalid     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cell_tlast      : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -222,8 +234,16 @@ architecture rtl of tdc_gpx_top is
     signal s_slice_done      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_hit_dropped     : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+    -- Per-chip: cell_builder (falling) -> face_assembler_fall (AXI-Stream)
+    signal s_cell_fall_tdata   : t_axis_tdata_array;
+    signal s_cell_fall_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_fall_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_fall_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_slice_fall_done   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_hit_fall_dropped  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
     -- =========================================================================
-    -- face_assembler -> header_inserter (AXI-Stream)
+    -- face_assembler (rising) -> header_inserter (AXI-Stream)
     -- =========================================================================
     signal s_face_tdata      : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
     signal s_face_tvalid     : std_logic;
@@ -231,6 +251,18 @@ architecture rtl of tdc_gpx_top is
     signal s_face_tready     : std_logic;
     signal s_row_done        : std_logic;
     signal s_chip_error_flags: std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- =========================================================================
+    -- face_assembler_fall (falling) -> header_inserter_fall (AXI-Stream)
+    -- =========================================================================
+    signal s_face_fall_tdata   : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+    signal s_face_fall_tvalid  : std_logic;
+    signal s_face_fall_tlast   : std_logic;
+    signal s_face_fall_tready  : std_logic;
+    signal s_row_fall_done     : std_logic;
+    signal s_chip_fall_error   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_fall_overrun : std_logic;
+    signal s_frame_fall_done   : std_logic;
 
     -- =========================================================================
     -- VDMA line geometry (computed once, shared with header_inserter & VDMA)
@@ -245,7 +277,10 @@ architecture rtl of tdc_gpx_top is
     signal s_face_state_r    : t_face_state := ST_IDLE;
     signal s_face_id_r       : unsigned(7 downto 0) := (others => '0');
     signal s_frame_id_r      : unsigned(31 downto 0) := (others => '0');
-    signal s_frame_done      : std_logic;
+    signal s_frame_done        : std_logic;  -- rising pipeline
+    signal s_frame_done_both   : std_logic;  -- combined rise+fall
+    signal s_frame_rise_done_r : std_logic := '0';
+    signal s_frame_fall_done_r : std_logic := '0';
 
     -- =========================================================================
     -- Gated shot_start: only active when face sequencer is in run state.
@@ -348,7 +383,7 @@ begin
     -- =========================================================================
     -- [0b] Unified chip error mask: ErrFlag (physical) OR timeout (assembler)
     -- =========================================================================
-    s_chip_error_merged <= s_errflag_sync or s_chip_error_flags;
+    s_chip_error_merged <= s_errflag_sync or s_chip_error_flags or s_chip_fall_error;
 
     -- =========================================================================
     -- [1] CSR instance (AXI-Lite + CDC)
@@ -543,7 +578,11 @@ begin
                 o_stop_id_error   => s_stop_id_error(i)
             );
 
-        -- ----- cell_builder: sparse events -> dense cell -> AXI-Stream -----
+        -- ----- slope demux: split raw_event_valid by slope bit -----
+        s_raw_evt_rise_valid(i) <= s_raw_event_valid(i) and     s_raw_event(i).slope;
+        s_raw_evt_fall_valid(i) <= s_raw_event_valid(i) and not s_raw_event(i).slope;
+
+        -- ----- cell_builder (rising): sparse events -> dense cell -> AXI-Stream -----
         u_cell_bld : entity work.tdc_gpx_cell_builder
             generic map (
                 g_CHIP_ID => i
@@ -552,7 +591,7 @@ begin
                 i_clk             => i_axis_aclk,
                 i_rst_n           => i_axis_aresetn,
                 i_raw_event       => s_raw_event(i),
-                i_raw_event_valid => s_raw_event_valid(i),
+                i_raw_event_valid => s_raw_evt_rise_valid(i),
                 i_shot_start      => s_shot_start_gated,
                 i_drain_done      => s_drain_done(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
@@ -562,6 +601,27 @@ begin
                 i_m_axis_tready   => s_cell_tready(i),
                 o_slice_done      => s_slice_done(i),
                 o_hit_dropped_any => s_hit_dropped(i)
+            );
+
+        -- ----- cell_builder (falling): same raw_event, fall-filtered valid -----
+        u_cell_bld_fall : entity work.tdc_gpx_cell_builder
+            generic map (
+                g_CHIP_ID => i
+            )
+            port map (
+                i_clk             => i_axis_aclk,
+                i_rst_n           => i_axis_aresetn,
+                i_raw_event       => s_raw_event(i),
+                i_raw_event_valid => s_raw_evt_fall_valid(i),
+                i_shot_start      => s_shot_start_gated,
+                i_drain_done      => s_drain_done(i),
+                i_stops_per_chip  => s_face_stops_per_chip_r,
+                o_m_axis_tdata    => s_cell_fall_tdata(i),
+                o_m_axis_tvalid   => s_cell_fall_tvalid(i),
+                o_m_axis_tlast    => s_cell_fall_tlast(i),
+                i_m_axis_tready   => s_cell_fall_tready(i),
+                o_slice_done      => s_slice_fall_done(i),
+                o_hit_dropped_any => s_hit_fall_dropped(i)
             );
 
     end generate gen_chip;
@@ -596,7 +656,36 @@ begin
         );
 
     -- =========================================================================
-    -- [4] Header inserter (header + SOF/EOL -> VDMA frame)
+    -- [3f] Face assembler - FALLING pipeline (4 chip streams -> packed row)
+    -- =========================================================================
+    u_face_asm_fall : entity work.tdc_gpx_face_assembler
+        generic map (
+            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+        )
+        port map (
+            i_clk              => i_axis_aclk,
+            i_rst_n            => i_axis_aresetn,
+            i_s_axis_tdata     => s_cell_fall_tdata,
+            i_s_axis_tvalid    => s_cell_fall_tvalid,
+            i_s_axis_tlast     => s_cell_fall_tlast,
+            o_s_axis_tready    => s_cell_fall_tready,
+            i_shot_start       => s_shot_start_gated,
+            i_active_chip_mask => s_face_active_mask_r,
+            i_stops_per_chip   => s_face_stops_per_chip_r,
+            i_max_range_clks   => s_cfg.max_range_clks,
+            i_bus_ticks        => s_cfg.bus_ticks,
+            i_bus_clk_div      => resize(s_cfg.bus_clk_div, 8),
+            o_m_axis_tdata     => s_face_fall_tdata,
+            o_m_axis_tvalid    => s_face_fall_tvalid,
+            o_m_axis_tlast     => s_face_fall_tlast,
+            i_m_axis_tready    => s_face_fall_tready,
+            o_row_done         => s_row_fall_done,
+            o_chip_error_flags => s_chip_fall_error,
+            o_shot_overrun     => s_shot_fall_overrun
+        );
+
+    -- =========================================================================
+    -- [4] Header inserter - RISING pipeline (header + SOF/EOL -> VDMA frame)
     -- =========================================================================
     u_header : entity work.tdc_gpx_header_inserter
         port map (
@@ -623,6 +712,36 @@ begin
             o_m_axis_tuser      => o_m_axis_tuser,
             i_m_axis_tready     => i_m_axis_tready,
             o_frame_done        => s_frame_done
+        );
+
+    -- =========================================================================
+    -- [4f] Header inserter - FALLING pipeline (header + SOF/EOL -> VDMA frame)
+    -- =========================================================================
+    u_header_fall : entity work.tdc_gpx_header_inserter
+        port map (
+            i_clk               => i_axis_aclk,
+            i_rst_n             => i_axis_aresetn,
+            i_face_start        => s_packet_start,
+            i_cfg               => s_cfg,
+            i_vdma_frame_id     => s_frame_id_r,
+            i_face_id           => s_face_id_r,
+            i_shot_seq_start    => s_chip_shot_seq(0),
+            i_timestamp_ns      => s_timestamp_r,
+            i_chip_error_mask   => s_chip_error_merged,
+            i_chip_error_cnt    => std_logic_vector(s_error_count_r),
+            i_bin_resolution_ps => i_bin_resolution_ps,
+            i_k_dist_fixed      => i_k_dist_fixed,
+            i_rows_per_face     => s_rows_per_face_r,
+            i_s_axis_tdata      => s_face_fall_tdata,
+            i_s_axis_tvalid     => s_face_fall_tvalid,
+            i_s_axis_tlast      => s_face_fall_tlast,
+            o_s_axis_tready     => s_face_fall_tready,
+            o_m_axis_tdata      => o_m_axis_fall_tdata,
+            o_m_axis_tvalid     => o_m_axis_fall_tvalid,
+            o_m_axis_tlast      => o_m_axis_fall_tlast,
+            o_m_axis_tuser      => o_m_axis_fall_tuser,
+            i_m_axis_tready     => i_m_axis_fall_tready,
+            o_frame_done        => s_frame_fall_done
         );
 
     -- =========================================================================
@@ -675,6 +794,34 @@ begin
     end process p_face_cfg_latch;
 
     -- =========================================================================
+    -- [5c] Frame-done combiner: both rise and fall pipelines must complete.
+    --   Each pipeline's frame_done is a 1-clk pulse.  We latch each one and
+    --   generate s_frame_done_both when both have fired.  Cleared at the
+    --   next packet_start (= next face).
+    -- =========================================================================
+    p_frame_done_both : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or s_packet_start = '1' then
+                s_frame_rise_done_r <= '0';
+                s_frame_fall_done_r <= '0';
+            else
+                if s_frame_done = '1' then
+                    s_frame_rise_done_r <= '1';
+                end if;
+                if s_frame_fall_done = '1' then
+                    s_frame_fall_done_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_frame_done_both;
+
+    -- Combinational: both done (could be same cycle or different cycles)
+    s_frame_done_both <= '1' when (s_frame_rise_done_r = '1' or s_frame_done = '1')
+                                   and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
+                         else '0';
+
+    -- =========================================================================
     -- [6] Face sequencer
     --   ST_IDLE → cmd_start → ST_WAIT_SHOT
     --   ST_WAIT_SHOT → shot_start → face_start pulse → ST_IN_FACE
@@ -690,7 +837,7 @@ begin
                 s_shot_overrun_r <= '0';
             else
                 -- Shot overrun from face_assembler: sticky until cmd_start
-                if s_shot_overrun = '1' then
+                if s_shot_overrun = '1' or s_shot_fall_overrun = '1' then
                     s_shot_overrun_r <= '1';
                 end if;
 
@@ -713,7 +860,7 @@ begin
                     when ST_IN_FACE =>
                         if s_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
-                        elsif s_frame_done = '1' then
+                        elsif s_frame_done_both = '1' then
                             s_frame_id_r <= s_frame_id_r + 1;
                             if s_face_id_r >= resize(s_cfg.n_faces, 8) - 1 then
                                 -- All faces done: wrap to face 0 (continuous)
@@ -765,6 +912,7 @@ begin
 
                 if s_stop_id_error /= C_ZEROS_CHIPS or
                    s_hit_dropped /= C_ZEROS_CHIPS or
+                   s_hit_fall_dropped /= C_ZEROS_CHIPS or
                    v_merged_rising /= C_ZEROS_CHIPS then
                     s_error_count_r <= s_error_count_r + 1;
                 end if;
