@@ -26,8 +26,8 @@
 --       Per-IFIFO drain counters track actual reads from each IFIFO.
 --     - oen_permanent control: drain_mode='1' → OEN held low during drain
 --       (bus_phy INV-7 blocks writes while oen_permanent='1')
---     - n_drain_cap enforcement: limits drain reads to n_drain_cap × 8
---       (0 = unlimited, prevents runaway drain on stuck IFIFO)
+--     - n_drain_cap enforcement: per-IFIFO safety cap, n_drain_cap × 4
+--       (0 = unlimited, max 15×4=60, covers 56 theoretical max per IFIFO)
 --     - AluTrigger pulse generation
 --     - Shot sequence counter
 --

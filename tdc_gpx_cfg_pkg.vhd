@@ -19,6 +19,12 @@
 --   CTL[5..20]  = cfg_image[0..15]
 --   CTL[21..31] = reserved
 --
+--   TDC-GPX chip register bitfield constants (for cfg_image override):
+--     Reg0: TRiseEn[0:8], TFallEn[0:8] (edge sensitivity per stop)
+--     Reg5: StartOff1[17:0]
+--     Reg6: LF threshold[7:0] (Fill value for burst drain)
+--     Reg7: HSDiv, RefClkDiv, MTimer (via CTL4 override)
+--
 -- Standard: VHDL-93 compatible
 -- =============================================================================
 

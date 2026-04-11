@@ -12,6 +12,9 @@
 --     header_inserter (header + SOF/EOL → VDMA frame)
 --
 --   Includes glue logic:
+--     cfg_image override (CTL3→Reg5 StartOff1, CTL4→Reg7 HSDiv/MTimer)
+--     Stop decode with slope gating (Reg0 TRiseEn/TFallEn → per-IFIFO
+--       expected drain counts, IFIFO1=stops 0~3, IFIFO2=stops 4~7)
 --     Face sequencer (shot counting, face/frame ID management)
 --     Status aggregation (t_tdc_status assembly)
 --     Timestamp counter (free-running cycle counter)

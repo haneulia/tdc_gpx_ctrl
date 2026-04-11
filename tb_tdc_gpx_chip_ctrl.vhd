@@ -16,7 +16,7 @@
 --   [1] Powerup + cfg_write + master_reset sequence
 --   [2] Arm -> shot_start -> IrFlag -> Legacy drain (drain_mode='0')
 --   [3] Arm -> shot_start -> IrFlag -> Burst drain (drain_mode='1')
---   [4] n_drain_cap enforcement (cap=2 -> max 16 reads)
+--   [4] n_drain_cap enforcement (per-IFIFO cap=n×4, e.g. cap=2 -> max 8/IFIFO)
 --   [5] Soft reset recovery
 --   [6] cfg_write register content verification
 --   [7] EF=1 -> no reads (INV-4)

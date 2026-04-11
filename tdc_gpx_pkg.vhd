@@ -11,7 +11,11 @@
 --     t_cell       : Dense hit storage for one stop/shot (cell_builder internal)
 --
 --   Design constants for TDC-GPX I-Mode (4-chip, 8-stop, SINGLE_SHOT).
---   Helper functions for cell size calculation and bit manipulation.
+--   Helper functions:
+--     fn_ceil_div          : integer ceiling division (replaces (a+b-1)/b)
+--     fn_cell_size_bytes   : cell size in bytes (ceil_pow2)
+--     fn_cell_beat         : cell-to-AXI beat serialization MUX
+--     fn_stop_evt_valid_bytes : stop event AXI-Stream tkeep width
 --
 --   Each record has a matching c_*_INIT reset constant.
 --
