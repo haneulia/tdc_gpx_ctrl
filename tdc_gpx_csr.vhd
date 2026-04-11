@@ -649,10 +649,10 @@ begin
     -- Safety clamping applied at CSR boundary so all downstream modules
     -- receive valid values.  Minimum constraints:
     --   active_chip_mask != 0  (face_assembler deadlocks on zero mask)
-    --   stops_per_chip  >= 2  (cell_builder/assembler do stops-1)
+    --   stops_per_chip  [2..8] (cell_builder/assembler use low 3 bits)
     --   n_faces         >= 1  (face_seq does n_faces-1)
     --   bus_ticks       >= 3  (bus_phy does ticks-2)
-    --   bus_clk_div     >= 1  (tick divider modulo)
+    --   bus_clk_div     >= 2  (200 MHz: div=1 → 5 ns < 6 ns datasheet min)
     --   cols_per_face   >= 1  (header_inserter does cols-1)
     -- =========================================================================
     -- CTL0: MAIN_CTRL packed fields
@@ -672,19 +672,24 @@ begin
                               when unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO)) >= 1
                               else to_unsigned(1, 3);
 
-    -- stops_per_chip: clamp >= 2 (cell_builder/assembler do stops-1)
+    -- stops_per_chip: clamp [2..8] (cell_builder/assembler use stops(2:0)-1;
+    --   values 9..15 alias to 1..7 after truncation, breaking IFIFO routing)
     o_cfg.stops_per_chip   <= unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO))
                               when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) >= 2
+                                   and unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) <= 8
+                              else to_unsigned(8, 4)
+                              when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) > 8
                               else to_unsigned(2, 4);
 
     o_cfg.n_drain_cap      <= unsigned(s_ctl_out(0)(c_MC_N_DRAIN_CAP_HI downto c_MC_N_DRAIN_CAP_LO));
     o_cfg.stopdis_override <= s_ctl_out(0)(c_MC_STOPDIS_HI downto c_MC_STOPDIS_LO);
 
     -- CTL1: BUS_TIMING
-    -- bus_clk_div: clamp >= 1 (tick divider uses modulo)
+    -- bus_clk_div: clamp >= 2 (at 200 MHz, div=1 → 5 ns period < 6 ns minimum
+    --   strobe width per TDC-GPX datasheet; div=2 → 10 ns is safe)
     o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
-                              when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO)) >= 1
-                              else to_unsigned(1, 6);
+                              when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO)) >= 2
+                              else to_unsigned(2, 6);
 
     -- bus_ticks: clamp >= 3 (bus_phy does ticks-2, needs Phase A+L+H minimum)
     o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))

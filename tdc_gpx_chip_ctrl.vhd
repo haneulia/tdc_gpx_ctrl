@@ -94,9 +94,13 @@ entity tdc_gpx_chip_ctrl is
         i_stop_tdc          : in  std_logic;
 
         -- Per-chip stop pulse counts (from echo_receiver via tdc_gpx_top)
-        -- Accumulated during measurement window, captured at IrFlag↑.
-        -- Used for count-based drain: expected_drain = rise + fall.
-        -- After LF burst, remaining = expected - drained → count-based burst.
+        -- CONTRACT:
+        --   - Values are CUMULATIVE totals, overwritten (not accumulated) on
+        --     each echo_receiver tvalid. Reset by echo_receiver on new window.
+        --   - chip_ctrl captures these at IrFlag↑ (ST_CAPTURE → ST_DRAIN_CHECK).
+        --     By IrFlag time, MTimer has expired so all stop pulses are final.
+        --   - expected_drain = rise + fall (max 128 per chip: 8 stops × 8 hits × 2).
+        --   - If both are 0 → EF-based drain fallback (no count info).
         i_stop_rise_cnt     : in  unsigned(7 downto 0);
         i_stop_fall_cnt     : in  unsigned(7 downto 0);
 
@@ -310,6 +314,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_range_cnt_r        : unsigned(15 downto 0) := (others => '0');
     signal s_range_active_r     : std_logic := '0';     -- '1' during capture+drain (p_fsm)
     signal s_range_active_prev_r : std_logic := '0';    -- edge detect for counter reset
+    signal s_err_drain_to_fired_r : std_logic := '0';  -- one-shot guard for err_drain_timeout
     signal s_err_drain_timeout_r : std_logic := '0';
     signal s_err_sequence_r     : std_logic := '0';
 
@@ -732,42 +737,7 @@ begin
                                 s_state_r       <= ST_DRAIN_BURST;
 
                             -- ==============================================
-                            -- Priority 3: Count-based remaining burst
-                            -- ==============================================
-                            -- After LF bursts exhausted (LF='0'), use expected count
-                            -- to burst the remaining entries without LF check.
-                            -- remaining = expected - drain_cnt (guaranteed > 0 here
-                            -- because Priority 1 already checked expected reached).
-                            -- Route to whichever IFIFO has data (EF='0').
-                            elsif i_cfg.drain_mode = '1'
-                                  and s_expected_drain_r /= 0
-                                  and s_drain_cnt_r < s_expected_drain_r
-                                  and i_ef1_sync = '0' then
-                                -- IFIFO1 has remaining data: burst-read remaining
-                                s_burst_limit_r <= s_expected_drain_r - s_drain_cnt_r;
-                                s_burst_cnt_r   <= (others => '0');
-                                s_req_valid_r   <= '1';
-                                s_req_burst_r   <= '1';
-                                s_req_rw_r      <= '0';   -- READ
-                                s_req_addr_r    <= c_TDC_REG8_IFIFO1;
-                                s_ififo_id_r    <= '0';
-                                s_state_r       <= ST_DRAIN_BURST;
-                            elsif i_cfg.drain_mode = '1'
-                                  and s_expected_drain_r /= 0
-                                  and s_drain_cnt_r < s_expected_drain_r
-                                  and i_ef2_sync = '0' then
-                                -- IFIFO2 has remaining data: burst-read remaining
-                                s_burst_limit_r <= s_expected_drain_r - s_drain_cnt_r;
-                                s_burst_cnt_r   <= (others => '0');
-                                s_req_valid_r   <= '1';
-                                s_req_burst_r   <= '1';
-                                s_req_rw_r      <= '0';   -- READ
-                                s_req_addr_r    <= c_TDC_REG9_IFIFO2;
-                                s_ififo_id_r    <= '1';
-                                s_state_r       <= ST_DRAIN_BURST;
-
-                            -- ==============================================
-                            -- Priority 4: Individual EF-based read (fallback)
+                            -- Priority 3: Individual EF-based read (fallback)
                             -- ==============================================
                             -- No count info (expected=0) or legacy drain_mode='0'.
                             elsif i_ef1_sync = '0' then
@@ -968,10 +938,11 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_range_cnt_r         <= (others => '0');
-                s_range_active_prev_r <= '0';
-                s_err_drain_timeout_r <= '0';
-                s_err_sequence_r      <= '0';
+                s_range_cnt_r          <= (others => '0');
+                s_range_active_prev_r  <= '0';
+                s_err_drain_timeout_r  <= '0';
+                s_err_drain_to_fired_r <= '0';
+                s_err_sequence_r       <= '0';
             else
                 -- Default: clear 1-clk pulses
                 s_err_drain_timeout_r <= '0';
@@ -980,16 +951,20 @@ begin
                 -- Edge detect on range_active (driven by p_fsm)
                 s_range_active_prev_r <= s_range_active_r;
 
-                -- (1) Range counter → err_drain_timeout
+                -- (1) Range counter → err_drain_timeout (true 1-clk pulse)
                 if s_range_active_r = '1' and s_range_active_prev_r = '0' then
-                    -- Rising edge: new shot started, reset counter
-                    s_range_cnt_r <= (others => '0');
+                    -- Rising edge: new shot started, reset counter & fired flag
+                    s_range_cnt_r          <= (others => '0');
+                    s_err_drain_to_fired_r <= '0';
                 elsif s_range_active_r = '1' then
                     if s_range_cnt_r >= i_max_range_clks then
-                        -- Budget exhausted before drain_done
-                        s_err_drain_timeout_r <= '1';
-                        -- Don't clear range_active here — FSM will clear it
-                        -- when drain_done eventually fires (or on soft_reset).
+                        -- Budget exhausted before drain_done — fire once only
+                        if s_err_drain_to_fired_r = '0' then
+                            s_err_drain_timeout_r  <= '1';
+                            s_err_drain_to_fired_r <= '1';
+                        end if;
+                        -- Counter stays frozen; FSM will clear range_active
+                        -- when drain_done fires (or on soft_reset).
                     else
                         s_range_cnt_r <= s_range_cnt_r + 1;
                     end if;

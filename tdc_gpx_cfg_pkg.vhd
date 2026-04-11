@@ -180,9 +180,9 @@ package tdc_gpx_cfg_pkg is
     -- breakdown: n_faces=5→[14:12]=101=0x5000, stops=8→[18:15]=1000_0=0x40000
     --            0x00040000 + 0x00005000 + 0x0000000F = 0x0004500F
 
-    -- CTL1: BUS_TIMING init: clk_div=1→[5:0]=000001, ticks=5→[8:6]=101
-    constant c_INIT_BUS_TIMING       : std_logic_vector(31 downto 0) := x"00000141";
-    -- breakdown: ticks=5→101<<6=0x140, clk_div=1→0x01 → 0x141
+    -- CTL1: BUS_TIMING init: clk_div=2→[5:0]=000010, ticks=5→[8:6]=101
+    constant c_INIT_BUS_TIMING       : std_logic_vector(31 downto 0) := x"00000142";
+    -- breakdown: ticks=5→101<<6=0x140, clk_div=2→0x02 → 0x142
 
     -- CTL2: RANGE_COLS init: max_range=267→[15:0]=0x010B, cols=2400→[31:16]=0x0960
     constant c_INIT_RANGE_COLS       : std_logic_vector(31 downto 0) := x"0960010B";

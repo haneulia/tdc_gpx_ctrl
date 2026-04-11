@@ -40,6 +40,12 @@ package tdc_gpx_pkg is
     constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;   -- bytes per beat
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
 
+    -- Stop event AXI-Stream constants
+    constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
+    constant c_STOP_CNT_WIDTH       : natural := 4;     -- bits per stop channel count
+    -- Layout: 8 stops × 4 bits = 32 bits contiguous in tdata[31:0]
+    -- tkeep = "1111" (all 4 bytes active, full utilization)
+
     constant c_SHOT_SEQ_WIDTH       : natural := 16;
     constant c_TDC_BUS_WIDTH        : natural := 28;
     constant c_RAW_HIT_WIDTH        : natural := 17;   -- TDC-GPX I-Mode raw hit (always 17-bit)
@@ -90,6 +96,20 @@ package tdc_gpx_pkg is
     ) return natural;
 
     function fn_count_ones(v : std_logic_vector) return natural;
+
+    -- Stop event AXI-Stream helpers
+    -- valid_bytes = ceil(n_stops * cnt_width / 8)
+    function fn_stop_evt_valid_bytes(
+        n_stops   : natural;
+        cnt_width : natural
+    ) return natural;
+
+    -- Generate tkeep mask: lower valid_bytes bits = '1', rest = '0'
+    function fn_stop_evt_tkeep(
+        n_stops    : natural;
+        cnt_width  : natural;
+        tkeep_width : natural
+    ) return std_logic_vector;
 
     -- Default cell_size_bytes (for c_HIT_SLOT_DATA_WIDTH=17, c_MAX_HITS=8)
     -- 158 bits -> 20 bytes -> align_pow2 = 32 bytes
@@ -325,6 +345,34 @@ package body tdc_gpx_pkg is
             end if;
         end loop;
         return cnt;
+    end function;
+
+    -- ceil(n_stops * cnt_width / 8)
+    function fn_stop_evt_valid_bytes(
+        n_stops   : natural;
+        cnt_width : natural
+    ) return natural is
+    begin
+        return (n_stops * cnt_width + 7) / 8;
+    end function;
+
+    -- Generate tkeep mask: lower valid_bytes bits set
+    function fn_stop_evt_tkeep(
+        n_stops    : natural;
+        cnt_width  : natural;
+        tkeep_width : natural
+    ) return std_logic_vector is
+        variable v_bytes : natural;
+        variable mask    : std_logic_vector(tkeep_width - 1 downto 0)
+                            := (others => '0');
+    begin
+        v_bytes := fn_stop_evt_valid_bytes(n_stops, cnt_width);
+        for i in 0 to tkeep_width - 1 loop
+            if i < v_bytes then
+                mask(i) := '1';
+            end if;
+        end loop;
+        return mask;
     end function;
 
 end package body tdc_gpx_pkg;

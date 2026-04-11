@@ -29,7 +29,10 @@
 --     Beat 6: x"00000000" (padding)
 --     Beat 7: x"00000000" (padding)
 --
---   raw_hit is 17-bit; only lower 16 bits stored (HIT_SLOT_DATA_WIDTH=16).
+--   raw_hit is 17-bit (I-Mode): bit[16]=ALU carry/overflow, bits[15:0]=
+--   calibrated timestamp. Only lower 16 bits stored (HIT_SLOT_DATA_WIDTH=16).
+--   Bit[16] is redundant for distance calculation and intentionally discarded.
+--   Slope bit is preserved separately in slope_vec[] (1 bit per hit slot).
 --
 --   Hit ordering: IFIFO guarantees time-sorted output. cell_builder stores
 --   hits in arrival order using hit_count_actual as index:
