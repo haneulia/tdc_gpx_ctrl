@@ -5,7 +5,7 @@
 -- =============================================================================
 --
 -- Function:
---   AXI4-Lite register interface wrapping tdc_gpx_axil_csr32 (32 CTL + 11 STAT)
+--   AXI4-Lite register interface wrapping tdc_gpx_axil_csr32 (32 CTL + 12 STAT)
 --   with cross-clock-domain transfer to the TDC processing domain (i_axis_aclk).
 --
 -- Register map (9-bit address, 32 CTL + 11 STAT):
@@ -33,11 +33,12 @@
 --   STAT8  (0xA0) ERROR_COUNT      [31:0]
 --   STAT9  (0xA4) BIN_PS           [15:0]
 --   STAT10 (0xA8) K_DIST           [31:0]
+--   STAT11 (0xAC) REG_RDATA       [27:0] chip register read data
 --
 -- CDC structure:
 --   CTL: 5 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for CTL0~4
 --        16 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for cfg_image CTL5~20
---   STAT: 6 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) for STAT5~10
+--   STAT: 7 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) for STAT5~11
 --   Total: 27 CDC instances
 --
 -- Clock domains:
@@ -131,7 +132,7 @@ end entity tdc_gpx_csr;
 architecture rtl of tdc_gpx_csr is
 
     -- =========================================================================
-    -- tdc_gpx_axil_csr32 component (Vivado IP: 32 CTL, 11 STAT, 1 IRQ)
+    -- tdc_gpx_axil_csr32 component (Vivado IP: 32 CTL, 12 STAT, 1 IRQ)
     -- =========================================================================
     component tdc_gpx_axil_csr32 is
         port (
@@ -222,7 +223,7 @@ architecture rtl of tdc_gpx_csr is
             ctl29_out           : out std_logic_vector(31 downto 0);
             ctl30_out           : out std_logic_vector(31 downto 0);
             ctl31_out           : out std_logic_vector(31 downto 0);
-            -- STAT inputs (11)
+            -- STAT inputs (12)
             stat0_in            : in  std_logic_vector(31 downto 0);
             stat1_in            : in  std_logic_vector(31 downto 0);
             stat2_in            : in  std_logic_vector(31 downto 0);
@@ -234,6 +235,7 @@ architecture rtl of tdc_gpx_csr is
             stat8_in            : in  std_logic_vector(31 downto 0);
             stat9_in            : in  std_logic_vector(31 downto 0);
             stat10_in           : in  std_logic_vector(31 downto 0);
+            stat11_in           : in  std_logic_vector(31 downto 0);
             -- Interrupt
             intrpt_src_in       : in  std_logic_vector(0 downto 0);
             irq                 : out std_logic
@@ -243,7 +245,7 @@ architecture rtl of tdc_gpx_csr is
     -- =========================================================================
     -- Constants
     -- =========================================================================
-    constant C_NUM_STAT_CDC : natural := 6;     -- STAT5~10: live status CDC
+    constant C_NUM_STAT_CDC : natural := 7;     -- STAT5~11: live status CDC
     constant C_ZERO32       : std_logic_vector(31 downto 0) := (others => '0');
 
     -- =========================================================================
@@ -324,7 +326,7 @@ begin
     s_hw_config(31 downto c_HWCFG_CELL_FMT_HI + 1) <= (others => '0');
 
     -- =========================================================================
-    -- [2] tdc_gpx_axil_csr32 instantiation (32 CTL, 11 STAT)
+    -- [2] tdc_gpx_axil_csr32 instantiation (32 CTL, 12 STAT)
     -- =========================================================================
     u_csr : tdc_gpx_axil_csr32
         port map (
@@ -399,6 +401,7 @@ begin
             stat8_in  => s_stat_out(3),
             stat9_in  => s_stat_out(4),
             stat10_in => s_stat_out(5),
+            stat11_in => s_stat_out(6),  -- REG_RDATA: chip register readback
             -- Interrupt
             intrpt_src_in => "0",
             irq           => o_irq
@@ -434,8 +437,11 @@ begin
     -- STAT10 = K_DIST
     s_stat_src(5) <= std_logic_vector(i_k_dist_fixed);
 
+    -- STAT11 = REG_RDATA (chip register read data, latched by p_reg_rdata_latch)
+    s_stat_src(6) <= s_reg_rdata_r;
+
     -- =========================================================================
-    -- [4] STAT CDC: i_axis_aclk -> s_axi_aclk (6 live registers)
+    -- [4] STAT CDC: i_axis_aclk -> s_axi_aclk (7 live registers)
     -- =========================================================================
     gen_stat_cdc : for i in 0 to C_NUM_STAT_CDC - 1 generate
         u_cdc_stat : xpm_cdc_handshake
@@ -606,9 +612,9 @@ begin
     o_cmd_reg_addr  <= s_ctl_out(1)(c_BT_REG_ADDR_HI downto c_BT_REG_ADDR_LO);
     o_cmd_reg_chip  <= unsigned(s_ctl_out(1)(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
 
-    -- Reg read data latch (i_axis_aclk domain): capture for future STAT11 readback.
-    -- NOTE: SW readback requires axil_csr32 IP regeneration to add stat11_in.
-    -- Until then, data is available at top level for ILA/debug.
+    -- Reg read data latch (i_axis_aclk domain): capture for STAT11 readback.
+    -- SW reads 0xAC (STAT11) to get the last chip register read result.
+    -- CDC path: s_reg_rdata_r → s_stat_src(6) → xpm_cdc → stat11_in.
     p_reg_rdata_latch : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then

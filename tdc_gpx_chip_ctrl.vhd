@@ -36,6 +36,13 @@
 --     - Raw word decode                  -> decode_i
 --     - Cell building, face assembly     -> cell_builder, face_assembler
 --
+--   Shot overrun handling:
+--     If shot_start arrives during ST_CAPTURE..ST_DRAIN_SETTLE or ST_ALU*,
+--     current shot is abandoned and FSM restarts for the new shot.
+--     Bus in-flight transactions flushed via ST_OVERRUN_FLUSH.
+--     Consistent with cell_builder (clear+restart) and face_assembler
+--     (truncate+overrun flag) behavior — prevents data corruption.
+--
 -- Invariants enforced:
 --   [INV-4] EF=1 (empty) -> never issue read to IFIFO
 --
@@ -174,6 +181,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
         ST_DRAIN_BURST,     -- Burst reading: count-based (Fill reads, no LF/EF check)
         ST_DRAIN_FLUSH,     -- Post-burst: capture remaining response, wait bus idle
         ST_DRAIN_SETTLE,    -- EF/LF flag settling wait (tS-EF ≤ 11.8ns → 3 clk @ 200MHz)
+        ST_OVERRUN_FLUSH,   -- Shot overrun: wait bus idle, discard in-flight
         ST_REG_ACCESS,      -- Individual register read/write (from IDLE)
         ST_ALU_PULSE,       -- AluTrigger high for g_ALU_PULSE_CLKS
         ST_ALU_RECOVERY     -- Post-AluTrigger recovery wait
@@ -952,10 +960,87 @@ begin
                                 s_wait_cnt_r <= s_wait_cnt_r + 1;
                             end if;
 
+                        -- =================================================
+                        -- Shot overrun flush: wait for bus idle, discard
+                        -- any in-flight responses, then re-enter ST_CAPTURE
+                        -- for the new shot.
+                        -- =================================================
+
+                        when ST_OVERRUN_FLUSH =>
+                            -- Discard any in-flight responses (don't forward)
+                            s_raw_valid_r <= '0';
+                            -- Wait for bus to go idle
+                            if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
+                                s_state_r <= ST_CAPTURE;
+                            end if;
+
                         when others =>
                             s_state_r <= ST_IDLE;
 
                     end case;
+
+                    -- =====================================================
+                    -- Shot overrun override (outside case, highest priority
+                    -- after soft_reset).
+                    --
+                    -- If shot_start arrives while chip_ctrl is still
+                    -- processing a previous shot (CAPTURE..SETTLE, ALU*),
+                    -- abandon the current shot and restart.
+                    --
+                    -- Must match cell_builder/face_assembler behavior:
+                    --   cell_builder: clears buffers, enters ST_COLLECT
+                    --   face_assembler: truncates row, sets overrun flag
+                    --
+                    -- Without this: chip_ctrl continues draining OLD data
+                    -- while cell_builder already cleared for NEW shot →
+                    -- old drain data stored as new shot → DATA CORRUPTION.
+                    --
+                    -- Bus safety: if bus_phy has in-flight transaction,
+                    -- go to ST_OVERRUN_FLUSH to wait for bus idle first.
+                    -- =====================================================
+                    if i_shot_start = '1' then
+                        case s_state_r is
+                            when ST_CAPTURE | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
+                                -- No bus transaction in flight → direct restart
+                                s_range_active_r     <= '1';
+                                s_expected_ififo1_r  <= (others => '0');
+                                s_expected_ififo2_r  <= (others => '0');
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_oen_permanent_r    <= '0';
+                                s_drain_done_r       <= '0';
+                                s_state_r            <= ST_CAPTURE;
+
+                            when ST_DRAIN_EF1 | ST_DRAIN_EF2
+                               | ST_DRAIN_BURST | ST_DRAIN_FLUSH =>
+                                -- Bus transaction in flight → flush first
+                                s_req_burst_r        <= '0';
+                                s_req_valid_r        <= '0';
+                                s_oen_permanent_r    <= '0';
+                                s_drain_done_r       <= '0';
+                                s_range_active_r     <= '1';
+                                s_expected_ififo1_r  <= (others => '0');
+                                s_expected_ififo2_r  <= (others => '0');
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_state_r            <= ST_OVERRUN_FLUSH;
+
+                            when ST_ALU_PULSE | ST_ALU_RECOVERY =>
+                                -- AluTrigger in progress → abort and restart
+                                s_alutrigger_r       <= '0';
+                                s_range_active_r     <= '1';
+                                s_expected_ififo1_r  <= (others => '0');
+                                s_expected_ififo2_r  <= (others => '0');
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_wait_cnt_r         <= (others => '0');
+                                s_state_r            <= ST_CAPTURE;
+
+                            when others =>
+                                null;  -- ST_ARMED handles shot_start in case
+                        end case;
+                    end if;
+
                 end if;  -- soft_reset
             end if;  -- rst_n
         end if;  -- rising_edge

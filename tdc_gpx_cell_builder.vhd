@@ -254,6 +254,12 @@ begin
                         -- ==========================================================
 
                         -- drain_done: latch first cell into pipeline register
+                        -- SAFETY NOTE (issue #5 analysis):
+                        --   drain_done and last raw_event_valid cannot collide.
+                        --   chip_ctrl guarantees ≥2 clk gap (EF path: 4 clk,
+                        --   burst path: ≥5 clk) because ST_DRAIN_SETTLE (3 clk)
+                        --   + raw_event_builder (1 clk pipeline) ensures
+                        --   raw_event_valid arrives well before drain_done.
                         if i_drain_done = '1' then
                             s_cell_sel_r  <= s_cell_buf_r(0);  -- cell MUX only
                             s_stop_idx_r  <= (others => '0');
