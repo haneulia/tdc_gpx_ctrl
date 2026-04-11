@@ -234,6 +234,12 @@ architecture rtl of tdc_gpx_top is
     signal s_timestamp_r     : unsigned(63 downto 0) := (others => '0');
 
     -- =========================================================================
+    -- Unified error mask: physical ErrFlag OR assembler timeout (blank insert)
+    -- Single source for header, status, and error counter.
+    -- =========================================================================
+    signal s_chip_error_merged : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- =========================================================================
     -- Error counter
     -- =========================================================================
     signal s_error_count_r   : unsigned(31 downto 0) := (others => '0');
@@ -246,6 +252,11 @@ begin
     s_shot_start_gated <= i_shot_start
                           when s_face_state_r /= ST_IDLE
                           else '0';
+
+    -- =========================================================================
+    -- [0b] Unified chip error mask: ErrFlag (physical) OR timeout (assembler)
+    -- =========================================================================
+    s_chip_error_merged <= s_errflag_sync or s_chip_error_flags;
 
     -- =========================================================================
     -- [1] CSR instance (AXI-Lite + CDC)
@@ -475,7 +486,7 @@ begin
             i_face_id           => s_face_id_r,
             i_shot_seq_start    => s_chip_shot_seq(0),
             i_timestamp_ns      => s_timestamp_r,
-            i_chip_error_mask   => s_errflag_sync,
+            i_chip_error_mask   => s_chip_error_merged,
             i_chip_error_cnt    => std_logic_vector(s_error_count_r),
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
@@ -591,7 +602,10 @@ begin
     end process p_timestamp;
 
     -- =========================================================================
-    -- [8] Error counter (increments on stop_id_error or hit overflow)
+    -- [8] Error counter (increments on any error source)
+    --   - stop_id_error: raw_event_builder detected out-of-range stop ID
+    --   - hit_dropped:   cell_builder overflow (more hits than slots)
+    --   - chip_error_merged: physical ErrFlag OR assembler timeout/blank
     -- =========================================================================
     p_error_cnt : process(i_axis_aclk)
     begin
@@ -600,7 +614,8 @@ begin
                 s_error_count_r <= (others => '0');
             else
                 if s_stop_id_error /= C_ZEROS_CHIPS or
-                   s_hit_dropped /= C_ZEROS_CHIPS then
+                   s_hit_dropped /= C_ZEROS_CHIPS or
+                   s_chip_error_merged /= C_ZEROS_CHIPS then
                     s_error_count_r <= s_error_count_r + 1;
                 end if;
             end if;
@@ -614,7 +629,7 @@ begin
     s_status.pipeline_overrun  <= '1' when s_chip_error_flags /= C_ZEROS_CHIPS
                                       else '0';
     s_status.bin_mismatch      <= '0';  -- Phase 2: calibration check
-    s_status.chip_error_mask   <= s_errflag_sync;
+    s_status.chip_error_mask   <= s_chip_error_merged;
     s_status.shot_seq_current  <= s_chip_shot_seq(0);
     s_status.vdma_frame_count  <= s_frame_id_r;
     s_status.error_count       <= s_error_count_r;
