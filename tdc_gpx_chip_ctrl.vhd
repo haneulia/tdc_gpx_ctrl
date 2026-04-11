@@ -362,10 +362,10 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_irflag_prev_r  <= '0';
+                s_irflag_prev_r   <= '0';
                 s_stop_tdc_prev_r <= '0';
             else
-                s_irflag_prev_r  <= i_irflag_sync;
+                s_irflag_prev_r   <= i_irflag_sync;
                 s_stop_tdc_prev_r <= i_stop_tdc;
             end if;
         end if;
@@ -407,61 +407,61 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_state_r       <= ST_POWERUP;
-                s_wait_cnt_r    <= (others => '0');
-                s_cfg_idx_r     <= (others => '0');
-                s_req_valid_r   <= '0';
-                s_req_rw_r      <= '0';
-                s_req_addr_r    <= (others => '0');
-                s_req_wdata_r   <= (others => '0');
-                s_stopdis_r     <= '1';
-                s_alutrigger_r  <= '0';
-                s_puresn_r      <= '0';
-                s_shot_seq_r    <= (others => '0');
-                s_raw_word_r    <= (others => '0');
-                s_raw_valid_r   <= '0';
-                s_ififo_id_r    <= '0';
-                s_drain_done_r  <= '0';
-                s_busy_r        <= '0';
-                s_init_mode_r   <= '1';
-                s_oen_permanent_r <= '0';
+                s_state_r           <= ST_POWERUP;
+                s_wait_cnt_r        <= (others => '0');
+                s_cfg_idx_r         <= (others => '0');
+                s_req_valid_r       <= '0';
+                s_req_rw_r          <= '0';
+                s_req_addr_r        <= (others => '0');
+                s_req_wdata_r       <= (others => '0');
+                s_stopdis_r         <= '1';
+                s_alutrigger_r      <= '0';
+                s_puresn_r          <= '0';
+                s_shot_seq_r        <= (others => '0');
+                s_raw_word_r        <= (others => '0');
+                s_raw_valid_r       <= '0';
+                s_ififo_id_r        <= '0';
+                s_drain_done_r      <= '0';
+                s_busy_r            <= '0';
+                s_init_mode_r       <= '1';
+                s_oen_permanent_r   <= '0';
                 s_drain_cnt_r       <= (others => '0');
                 s_expected_drain_r  <= (others => '0');
-                s_req_burst_r   <= '0';
-                s_fill_r        <= (others => '0');
-                s_burst_cnt_r   <= (others => '0');
-                s_burst_limit_r <= (others => '0');
-                s_reg_rdata_r   <= (others => '0');
-                s_reg_rvalid_r  <= '0';
-                s_range_active_r <= '0';
+                s_req_burst_r       <= '0';
+                s_fill_r            <= (others => '0');
+                s_burst_cnt_r       <= (others => '0');
+                s_burst_limit_r     <= (others => '0');
+                s_reg_rdata_r       <= (others => '0');
+                s_reg_rvalid_r      <= '0';
+                s_range_active_r    <= '0';
             else
                 -- Default: clear single-cycle pulses
-                s_raw_valid_r  <= '0';
-                s_drain_done_r <= '0';
-                s_reg_rvalid_r <= '0';
+                s_raw_valid_r   <= '0';
+                s_drain_done_r  <= '0';
+                s_reg_rvalid_r  <= '0';
 
                 -- =========================================================
                 -- Soft reset: highest priority, returns to POWERUP
                 -- =========================================================
                 if i_cmd_soft_reset = '1' then
-                    s_state_r      <= ST_POWERUP;
-                    s_puresn_r     <= '0';
-                    s_stopdis_r    <= '1';
-                    s_alutrigger_r <= '0';
-                    s_req_valid_r  <= '0';
-                    s_busy_r       <= '0';
-                    s_oen_permanent_r <= '0';
-                    s_drain_cnt_r      <= (others => '0');
-                    s_expected_drain_r <= (others => '0');
-                    s_req_burst_r  <= '0';
-                    s_fill_r       <= (others => '0');
-                    s_burst_cnt_r  <= (others => '0');
-                    s_burst_limit_r <= (others => '0');
-                    s_range_active_r <= '0';
-                    s_wait_cnt_r   <= (others => '0');
-                    s_cfg_idx_r    <= (others => '0');
-                    s_init_mode_r  <= '1';
-                    s_shot_seq_r   <= (others => '0');
+                    s_state_r           <= ST_POWERUP;
+                    s_puresn_r          <= '0';
+                    s_stopdis_r         <= '1';
+                    s_alutrigger_r      <= '0';
+                    s_req_valid_r       <= '0';
+                    s_busy_r            <= '0';
+                    s_oen_permanent_r   <= '0';
+                    s_drain_cnt_r       <= (others => '0');
+                    s_expected_drain_r  <= (others => '0');
+                    s_req_burst_r       <= '0';
+                    s_fill_r            <= (others => '0');
+                    s_burst_cnt_r       <= (others => '0');
+                    s_burst_limit_r     <= (others => '0');
+                    s_range_active_r    <= '0';
+                    s_wait_cnt_r        <= (others => '0');
+                    s_cfg_idx_r         <= (others => '0');
+                    s_init_mode_r       <= '1';
+                    s_shot_seq_r        <= (others => '0');
                 else
                     case s_state_r is
 
@@ -481,7 +481,7 @@ begin
                             end if;
 
                         when ST_PU_RELEASE =>
-                            s_puresn_r <= '1';          -- release chip reset
+                            s_puresn_r  <= '1';         -- release chip reset
                             if s_wait_cnt_r = c_RECOVERY_LAST then
                                 s_wait_cnt_r <= (others => '0');
                                 s_state_r    <= ST_STOPDIS_HIGH;
@@ -566,8 +566,8 @@ begin
                         when ST_IDLE =>
                             s_busy_r <= '0';
                             if i_cmd_start = '1' then
-                                s_stopdis_r <= '0';     -- clear stop-disable for new cycle
-                                s_state_r   <= ST_ARMED;
+                                s_stopdis_r   <= '0';   -- clear stop-disable for new cycle
+                                s_state_r     <= ST_ARMED;
                             elsif i_cmd_cfg_write = '1' then
                                 s_cfg_idx_r   <= (others => '0');
                                 s_init_mode_r <= '0';   -- runtime: no master reset
@@ -666,8 +666,7 @@ begin
                                 -- If both are 0 (no stop pulses detected), fall back
                                 -- to EF-based drain (s_expected_drain_r stays 0).
                                 s_expected_drain_r <= resize(
-                                    ("0" & i_stop_rise_cnt) + ("0" & i_stop_fall_cnt),
-                                    8);
+                                    ("0" & i_stop_rise_cnt) + ("0" & i_stop_fall_cnt), 8);
 
                                 s_state_r     <= ST_DRAIN_CHECK;
                             end if;

@@ -177,7 +177,7 @@ architecture rtl of tdc_gpx_top is
     -- Per-chip gated reg access commands (chip demux)
     signal s_cmd_reg_read_g   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_write_g  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_status         : t_tdc_status := c_TDC_STATUS_INIT;
+    signal s_status           : t_tdc_status := c_TDC_STATUS_INIT;
 
     -- =========================================================================
     -- Per-chip: bus_phy <-> chip_ctrl
@@ -363,10 +363,8 @@ begin
                 s_stop_fall_cnt_r <= (others => (others => '0'));
             elsif i_stop_evt_tvalid = '1' then
                 for c in 0 to c_N_CHIPS - 1 loop
-                    s_stop_rise_cnt_r(c) <=
-                        unsigned(i_stop_evt_tdata(c*8 + 7 downto c*8));
-                    s_stop_fall_cnt_r(c) <=
-                        unsigned(i_stop_evt_tuser(c*8 + 7 downto c*8));
+                    s_stop_rise_cnt_r(c) <= unsigned(i_stop_evt_tdata(c*8 + 7 downto c*8));
+                    s_stop_fall_cnt_r(c) <= unsigned(i_stop_evt_tuser(c*8 + 7 downto c*8));
                 end loop;
             end if;
         end if;
@@ -384,9 +382,9 @@ begin
     --   Arrives on the SAME clock edge as shot_start, so geometry/config/header
     --   latch at the same time as cell_builder/face_assembler react to the shot.
     -- =========================================================================
-    s_packet_start <= '1' when s_face_state_r = ST_WAIT_SHOT
-                               and i_shot_start = '1'
-                      else '0';
+    s_packet_start  <= '1'  when s_face_state_r = ST_WAIT_SHOT
+                                and i_shot_start = '1'
+                            else '0';
 
     -- =========================================================================
     -- [0b] Unified chip error mask: ErrFlag (physical) OR timeout (assembler)
@@ -776,8 +774,7 @@ begin
                 end if;
                 s_rows_per_face_r <= to_unsigned(v_rows, 16);
                 v_data_beats := v_rows * c_BEATS_PER_CELL;
-                s_hsize_bytes_r <= to_unsigned(
-                    (v_data_beats + c_HDR_PREFIX_BEATS) * c_TDATA_BYTES, 16);
+                s_hsize_bytes_r <= to_unsigned((v_data_beats + c_HDR_PREFIX_BEATS) * c_TDATA_BYTES, 16);
             end if;
         end if;
     end process p_geometry;
@@ -825,9 +822,9 @@ begin
     end process p_frame_done_both;
 
     -- Combinational: both done (could be same cycle or different cycles)
-    s_frame_done_both <= '1' when (s_frame_rise_done_r = '1' or s_frame_done = '1')
-                                   and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
-                         else '0';
+    s_frame_done_both   <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1')
+                                    and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
+                                else '0';
 
     -- =========================================================================
     -- [6] Face sequencer
@@ -950,16 +947,16 @@ begin
     -- =========================================================================
     -- [9] Status aggregation (-> CSR -> STAT registers)
     -- =========================================================================
-    s_status.busy              <= '1' when s_face_state_r /= ST_IDLE else '0';
-    s_status.pipeline_overrun  <= '1' when s_chip_error_flags /= C_ZEROS_CHIPS
-                                           or s_shot_overrun_r = '1'
-                                      else '0';
-    s_status.bin_mismatch      <= '0';  -- Phase 2: calibration check
-    s_status.chip_error_mask   <= s_chip_error_merged;
+    s_status.busy               <= '1'  when s_face_state_r /= ST_IDLE else '0';
+    s_status.pipeline_overrun   <= '1'  when s_chip_error_flags /= C_ZEROS_CHIPS
+                                            or s_shot_overrun_r = '1'
+                                        else '0';
+    s_status.bin_mismatch       <= '0';  -- Phase 2: calibration check
+    s_status.chip_error_mask    <= s_chip_error_merged;
     s_status.drain_timeout_mask <= s_err_drain_to_sticky_r;
-    s_status.sequence_error_mask <= s_err_seq_sticky_r;
-    s_status.shot_seq_current  <= s_chip_shot_seq(0);
-    s_status.vdma_frame_count  <= s_frame_id_r;
-    s_status.error_count       <= s_error_count_r;
+    s_status.sequence_error_mask<= s_err_seq_sticky_r;
+    s_status.shot_seq_current   <= s_chip_shot_seq(0);
+    s_status.vdma_frame_count   <= s_frame_id_r;
+    s_status.error_count        <= s_error_count_r;
 
 end architecture rtl;

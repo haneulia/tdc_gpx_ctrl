@@ -408,22 +408,18 @@ begin
     -- [3] STAT source packing (i_axis_aclk domain)
     -- =========================================================================
     -- STAT5 = STATUS word
-    s_stat_src(0)(c_STAT_BUSY)       <= i_status.busy;
-    s_stat_src(0)(c_STAT_OVERRUN)    <= i_status.pipeline_overrun;
-    s_stat_src(0)(c_STAT_BIN_MISMATCH) <= i_status.bin_mismatch;
+    s_stat_src(0)(c_STAT_BUSY)          <= i_status.busy;
+    s_stat_src(0)(c_STAT_OVERRUN)       <= i_status.pipeline_overrun;
+    s_stat_src(0)(c_STAT_BIN_MISMATCH)  <= i_status.bin_mismatch;
     s_stat_src(0)(3) <= '0';
-    s_stat_src(0)(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO)
-        <= i_status.chip_error_mask;
-    s_stat_src(0)(c_STAT_DRAIN_TO_HI downto c_STAT_DRAIN_TO_LO)
-        <= i_status.drain_timeout_mask;
-    s_stat_src(0)(c_STAT_SEQ_ERR_HI downto c_STAT_SEQ_ERR_LO)
-        <= i_status.sequence_error_mask;
+    s_stat_src(0)(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO) <= i_status.chip_error_mask;
+    s_stat_src(0)(c_STAT_DRAIN_TO_HI downto c_STAT_DRAIN_TO_LO) <= i_status.drain_timeout_mask;
+    s_stat_src(0)(c_STAT_SEQ_ERR_HI downto c_STAT_SEQ_ERR_LO)   <= i_status.sequence_error_mask;
     s_stat_src(0)(31 downto c_STAT_SEQ_ERR_HI + 1) <= (others => '0');
 
     -- STAT6 = SHOT_SEQ
-    s_stat_src(1)(c_SHOT_SEQ_WIDTH - 1 downto 0)
-        <= std_logic_vector(i_status.shot_seq_current);
-    s_stat_src(1)(31 downto c_SHOT_SEQ_WIDTH) <= (others => '0');
+    s_stat_src(1)(c_SHOT_SEQ_WIDTH - 1 downto 0)    <= std_logic_vector(i_status.shot_seq_current);
+    s_stat_src(1)(31 downto c_SHOT_SEQ_WIDTH)       <= (others => '0');
 
     -- STAT7 = FRAME_COUNT
     s_stat_src(2) <= std_logic_vector(i_status.vdma_frame_count);
@@ -432,7 +428,7 @@ begin
     s_stat_src(3) <= std_logic_vector(i_status.error_count);
 
     -- STAT9 = BIN_PS
-    s_stat_src(4)(15 downto 0) <= std_logic_vector(i_bin_resolution_ps);
+    s_stat_src(4)(15 downto 0)  <= std_logic_vector(i_bin_resolution_ps);
     s_stat_src(4)(31 downto 16) <= (others => '0');
 
     -- STAT10 = K_DIST
