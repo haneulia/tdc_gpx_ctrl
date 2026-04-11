@@ -587,6 +587,25 @@ begin
                             -- DESIGN POINT: IrFlag is the ONLY drain trigger
                             -- ==============================================
                             --
+                            -- Single-shot timing sequence (must hold strictly):
+                            --
+                            --   ① shot_start         — laser fires
+                            --   ② target distance    — last reflected stop event arrives
+                            --   ③ IrFlag (MTimer)    — TDC-GPX IFIFO writes settled → drain starts
+                            --   ④ stop_tdc           — max range reached (external signal)
+                            --   ⑤ max_range_clks     — total time budget upper bound
+                            --   ⑥ next shot_start    — next laser fires
+                            --
+                            --   ① < ② < ③ < ④ < ⑤ < ⑥
+                            --
+                            -- Error conditions:
+                            --   ④ < ③  →  err_sequence      (stop_tdc before IrFlag)
+                            --   ⑤ < drain_done  →  err_drain_timeout  (budget exhausted)
+                            --   ⑥ < ⑤  →  shot overrun      (face_assembler detects)
+                            --
+                            -- Setting principle:
+                            --   MTimer < stop_tdc arrival < max_range_clks < shot period
+                            --
                             -- IrFlag = TDC-GPX internal MTimer expiry.
                             -- It guarantees that ALL pending stop events have
                             -- been written to the IFIFOs before it asserts.
@@ -602,15 +621,6 @@ begin
                             --      stop events arrive asynchronously during the
                             --      measurement window — EF='1' before IrFlag
                             --      does NOT mean "no more data coming."
-                            --
-                            -- The safe sequence is:
-                            --   shot_start → stops arrive → MTimer expires →
-                            --   IrFlag↑ (IFIFO settled) → drain → drain_done
-                            --
-                            -- Error detection:
-                            --   max_range_clks budget covers capture + drain.
-                            --   If drain_done has not fired by max_range_clks,
-                            --   the shot has overrun → err_drain_timeout.
                             --
                             if i_cmd_stop = '1' then
                                 s_stopdis_r      <= '1';
