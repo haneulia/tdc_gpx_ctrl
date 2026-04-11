@@ -286,20 +286,42 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_overrun_r  : std_logic := '0';
 
     -- =========================================================================
-    -- Stop event stream → stop_tdc pulse extraction
+    -- Stop event stream → stop_tdc pulse + per-chip hit count decode
     -- AXI Stream slave: always ready (tready='1'), tvalid = stop_tdc event.
+    -- tdata packing (from echo_receiver):
+    --   [7:0]   = chip 0 hit count (popcount)
+    --   [15:8]  = chip 1 hit count
+    --   [23:16] = chip 2 hit count
+    --   [31:24] = chip 3 hit count
     -- =========================================================================
     signal s_stop_tdc        : std_logic;
+
+    type t_stop_hit_cnt_array is array(0 to c_N_CHIPS - 1)
+        of unsigned(7 downto 0);
+    signal s_stop_hit_cnt_r  : t_stop_hit_cnt_array := (others => (others => '0'));
 
 begin
 
     -- =========================================================================
-    -- Stop event AXI Stream slave: always accept, extract stop_tdc pulse
-    -- tvalid='1' = stop_tdc event from echo_receiver (window close)
-    -- tdata[15:0] = ch_detected (reserved for future use)
+    -- Stop event AXI Stream slave: always accept, decode per-chip hit counts
     -- =========================================================================
     o_stop_evt_tready <= '1';
     s_stop_tdc        <= i_stop_evt_tvalid;
+
+    -- Latch per-chip hit counts on tvalid (registered for downstream use)
+    p_stop_decode : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_stop_hit_cnt_r <= (others => (others => '0'));
+            elsif i_stop_evt_tvalid = '1' then
+                for c in 0 to c_N_CHIPS - 1 loop
+                    s_stop_hit_cnt_r(c) <=
+                        unsigned(i_stop_evt_tdata(c*8 + 7 downto c*8));
+                end loop;
+            end if;
+        end if;
+    end process p_stop_decode;
 
     -- =========================================================================
     -- [0] Gated shot_start: suppress when face sequencer is not in run state
