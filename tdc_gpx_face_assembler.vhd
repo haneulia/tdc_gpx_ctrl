@@ -76,7 +76,8 @@ entity tdc_gpx_face_assembler is
 
         -- Status
         o_row_done           : out std_logic;    -- 1-clk pulse: packed row complete
-        o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0)
+        o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_shot_overrun       : out std_logic     -- 1-clk pulse: shot truncated (was not idle)
     );
 end entity tdc_gpx_face_assembler;
 
@@ -164,6 +165,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     signal s_row_done_r      : std_logic := '0';
     signal s_chip_error_r    : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_shot_overrun_r  : std_logic := '0';
 
     -- =========================================================================
     -- Blank beat data: all zeros except beat 4 has error_fill + chip_id
@@ -287,9 +289,11 @@ begin
                 s_pipe_tlast_r    <= '0';
                 s_row_done_r      <= '0';
                 s_chip_error_r    <= (others => '0');
+                s_shot_overrun_r  <= '0';
             else
                 -- Default: clear single-cycle pulses
-                s_row_done_r <= '0';
+                s_row_done_r     <= '0';
+                s_shot_overrun_r <= '0';
 
                 -- Default: deassert pipe valid after handshake
                 if s_pipe_tvalid_r = '1' and s_pipe_tready = '1' then
@@ -489,6 +493,7 @@ begin
                     s_chip_error_r    <= (others => '0');
                     s_pipe_tvalid_r   <= '0';
                     s_pipe_tlast_r    <= '0';
+                    s_shot_overrun_r  <= '1';   -- row truncated
                     s_state_r         <= ST_SCAN;
                 end if;
             end if;
@@ -500,5 +505,6 @@ begin
     -- =========================================================================
     o_row_done         <= s_row_done_r;
     o_chip_error_flags <= s_chip_error_r;
+    o_shot_overrun     <= s_shot_overrun_r;
 
 end architecture rtl;

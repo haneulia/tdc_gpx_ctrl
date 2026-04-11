@@ -216,7 +216,6 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     type t_face_state is (ST_IDLE, ST_WAIT_SHOT, ST_IN_FACE);
     signal s_face_state_r    : t_face_state := ST_IDLE;
-    signal s_face_start_r    : std_logic := '0';
     signal s_face_id_r       : unsigned(7 downto 0) := (others => '0');
     signal s_frame_id_r      : unsigned(31 downto 0) := (others => '0');
     signal s_frame_done      : std_logic;
@@ -253,9 +252,17 @@ architecture rtl of tdc_gpx_top is
     signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
 
     -- =========================================================================
-    -- Shot overrun detection
+    -- Combinational packet_start: same-cycle face boundary signal.
+    -- Visible to all processes at the same clock edge as the first shot,
+    -- so geometry/config/header all latch simultaneously with data-path.
     -- =========================================================================
-    signal s_shot_overrun_r : std_logic := '0';
+    signal s_packet_start : std_logic;
+
+    -- =========================================================================
+    -- Shot overrun: from face_assembler (real truncation), not face_seq
+    -- =========================================================================
+    signal s_shot_overrun    : std_logic;
+    signal s_shot_overrun_r  : std_logic := '0';
 
 begin
 
@@ -265,6 +272,15 @@ begin
     s_shot_start_gated <= i_shot_start
                           when s_face_state_r /= ST_IDLE
                           else '0';
+
+    -- =========================================================================
+    -- [0a] Combinational packet_start: first shot of a new face.
+    --   Arrives on the SAME clock edge as shot_start, so geometry/config/header
+    --   latch at the same time as cell_builder/face_assembler react to the shot.
+    -- =========================================================================
+    s_packet_start <= '1' when s_face_state_r = ST_WAIT_SHOT
+                               and i_shot_start = '1'
+                      else '0';
 
     -- =========================================================================
     -- [0b] Unified chip error mask: ErrFlag (physical) OR timeout (assembler)
@@ -483,7 +499,8 @@ begin
             o_m_axis_tlast     => s_face_tlast,
             i_m_axis_tready    => s_face_tready,
             o_row_done         => s_row_done,
-            o_chip_error_flags => s_chip_error_flags
+            o_chip_error_flags => s_chip_error_flags,
+            o_shot_overrun     => s_shot_overrun
         );
 
     -- =========================================================================
@@ -493,7 +510,7 @@ begin
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
-            i_face_start        => s_face_start_r,
+            i_face_start        => s_packet_start,
             i_cfg               => s_cfg,
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
@@ -532,7 +549,7 @@ begin
             if i_axis_aresetn = '0' then
                 s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
                 s_hsize_bytes_r   <= to_unsigned(c_HSIZE_MAX, 16);
-            elsif s_face_start_r = '1' then
+            elsif s_packet_start = '1' then
                 v_active_cnt := fn_count_ones(s_cfg.active_chip_mask);
                 v_rows := v_active_cnt * to_integer(s_cfg.stops_per_chip);
                 if v_rows < 2 then
@@ -558,7 +575,7 @@ begin
             if i_axis_aresetn = '0' then
                 s_face_stops_per_chip_r <= to_unsigned(8, 4);
                 s_face_active_mask_r    <= (others => '1');
-            elsif s_face_start_r = '1' then
+            elsif s_packet_start = '1' then
                 s_face_stops_per_chip_r <= s_cfg.stops_per_chip;
                 s_face_active_mask_r    <= s_cfg.active_chip_mask;
             end if;
@@ -575,14 +592,15 @@ begin
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_face_state_r  <= ST_IDLE;
-                s_face_start_r  <= '0';
-                s_face_id_r     <= (others => '0');
-                s_frame_id_r    <= (others => '0');
+                s_face_state_r   <= ST_IDLE;
+                s_face_id_r      <= (others => '0');
+                s_frame_id_r     <= (others => '0');
                 s_shot_overrun_r <= '0';
             else
-                -- Default: clear pulse
-                s_face_start_r <= '0';
+                -- Shot overrun from face_assembler: sticky until cmd_start
+                if s_shot_overrun = '1' then
+                    s_shot_overrun_r <= '1';
+                end if;
 
                 case s_face_state_r is
 
@@ -597,16 +615,10 @@ begin
                         if s_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
                         elsif i_shot_start = '1' then
-                            s_face_start_r <= '1';
                             s_face_state_r <= ST_IN_FACE;
                         end if;
 
                     when ST_IN_FACE =>
-                        -- Detect shot overrun: new shot while face not done
-                        if i_shot_start = '1' then
-                            s_shot_overrun_r <= '1';    -- sticky until cmd_start
-                        end if;
-
                         if s_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
                         elsif s_frame_done = '1' then
