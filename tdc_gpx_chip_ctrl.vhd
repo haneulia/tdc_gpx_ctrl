@@ -355,6 +355,7 @@ begin
                     s_wait_cnt_r   <= (others => '0');
                     s_cfg_idx_r    <= (others => '0');
                     s_init_mode_r  <= '1';
+                    s_shot_seq_r   <= (others => '0');
                 else
                     case s_state_r is
 
