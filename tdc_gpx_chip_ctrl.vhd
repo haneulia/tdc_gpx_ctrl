@@ -273,7 +273,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- Max drain per chip = 4 stops/IFIFO × 8 hits × 2 IFIFOs = 64 reads (rising only).
     -- With slope (rise+fall): max 128 reads. n_drain_cap=16 → cap at 128.
     -- =========================================================================
-    signal s_drain_cnt_r    : unsigned(7 downto 0) := (others => '0');
+    signal s_drain_cnt_r    : unsigned(8 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Expected drain count (from echo_receiver stop pulse counts)
@@ -281,8 +281,9 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- Max = 64 + 64 = 128 (8 stops × 8 hits × 2 edges).
     -- Used as count-based drain cap: when drain_cnt >= expected → done.
     -- s_expected_drain_r=0: fall back to EF-based drain (no count info).
+    -- 9-bit: max = 64 rise + 64 fall = 128 (realistic), up to 256 (theoretical).
     -- =========================================================================
-    signal s_expected_drain_r : unsigned(7 downto 0) := (others => '0');
+    signal s_expected_drain_r : unsigned(8 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Burst read counter (Fill-based: count reads within one burst session)
@@ -293,8 +294,8 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- s_burst_cnt_r: counts responses within one burst session.
     -- =========================================================================
     signal s_fill_r         : unsigned(7 downto 0) := (others => '0');
-    signal s_burst_cnt_r    : unsigned(7 downto 0) := (others => '0');
-    signal s_burst_limit_r  : unsigned(7 downto 0) := (others => '0');
+    signal s_burst_cnt_r    : unsigned(8 downto 0) := (others => '0');
+    signal s_burst_limit_r  : unsigned(8 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Individual register access (read/write single TDC-GPX register)
@@ -665,8 +666,8 @@ begin
                                 -- expected = rise_cnt + fall_cnt (8-bit each, max 128 total).
                                 -- If both are 0 (no stop pulses detected), fall back
                                 -- to EF-based drain (s_expected_drain_r stays 0).
-                                s_expected_drain_r <= resize(
-                                    ("0" & i_stop_rise_cnt) + ("0" & i_stop_fall_cnt), 8);
+                                s_expected_drain_r <=
+                                    resize(i_stop_rise_cnt, 9) + resize(i_stop_fall_cnt, 9);
 
                                 s_state_r     <= ST_DRAIN_CHECK;
                             end if;
@@ -691,7 +692,7 @@ begin
                                 and s_drain_cnt_r >= s_expected_drain_r)
                                or (i_cfg.n_drain_cap /= "0000"
                                    and s_drain_cnt_r >= shift_left(
-                                       resize(i_cfg.n_drain_cap, 8), 3)) then
+                                       resize(i_cfg.n_drain_cap, 9), 3)) then
                                 -- Count cap reached: force drain complete
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
@@ -709,7 +710,7 @@ begin
                                   and s_fill_r >= 2
                                   and i_ef1_sync = '0' and i_lf1_sync = '1' then
                                 -- IFIFO1 loaded: burst read Reg8
-                                s_burst_limit_r <= s_fill_r;
+                                s_burst_limit_r <= resize(s_fill_r, 9);
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
                                 s_req_burst_r   <= '1';
@@ -721,7 +722,7 @@ begin
                                   and s_fill_r >= 2
                                   and i_ef2_sync = '0' and i_lf2_sync = '1' then
                                 -- IFIFO2 loaded: burst read Reg9
-                                s_burst_limit_r <= s_fill_r;
+                                s_burst_limit_r <= resize(s_fill_r, 9);
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
                                 s_req_burst_r   <= '1';
@@ -851,7 +852,7 @@ begin
                                        and (s_drain_cnt_r + 1) >= s_expected_drain_r)
                                       or (i_cfg.n_drain_cap /= "0000"
                                           and (s_drain_cnt_r + 1) >= shift_left(
-                                              resize(i_cfg.n_drain_cap, 8), 3)) then
+                                              resize(i_cfg.n_drain_cap, 9), 3)) then
                                     -- Expected count or safety cap reached: stop burst
                                     s_req_burst_r <= '0';
                                     s_req_valid_r <= '0';
