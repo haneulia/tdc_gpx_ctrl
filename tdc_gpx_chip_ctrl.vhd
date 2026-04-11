@@ -459,7 +459,8 @@ begin
                         when ST_IDLE =>
                             s_busy_r <= '0';
                             if i_cmd_start = '1' then
-                                s_state_r <= ST_ARMED;
+                                s_stopdis_r <= '0';     -- clear stop-disable for new cycle
+                                s_state_r   <= ST_ARMED;
                             elsif i_cmd_cfg_write = '1' then
                                 s_cfg_idx_r   <= (others => '0');
                                 s_init_mode_r <= '0';   -- runtime: no master reset
