@@ -78,8 +78,9 @@ begin
                 s_stop_id_error_r   <= '0';
             else
                 -- Default: clear single-cycle pulses
-                s_raw_event_valid_r <= '0';
-                s_stop_id_error_r   <= '0';
+                s_raw_event_valid_r    <= '0';
+                s_raw_event_r.valid    <= '0';  -- sync with pulse (was stale)
+                s_stop_id_error_r      <= '0';
 
                 -- drain_done: reset all hit counters (shot boundary)
                 if i_drain_done = '1' then

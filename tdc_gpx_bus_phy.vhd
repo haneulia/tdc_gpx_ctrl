@@ -320,11 +320,16 @@ begin
                             s_oen_r <= '1';
                         end if;
 
-                        -- Guard: s_rsp_valid_r = '0' prevents spurious
-                        -- re-acceptance when chip_ctrl's req_valid is still
-                        -- high from the just-completed transaction (1-clk lag).
+                        -- Guard: block acceptance when a response is pending
+                        -- or being emitted this cycle.
+                        -- s_rsp_pending_r check is critical: without it, the
+                        -- deferred-read path sets s_rsp_valid_r='1' above, but
+                        -- VHDL signal semantics mean the ST_IDLE check below
+                        -- still sees the OLD value ('0'), causing spurious
+                        -- re-acceptance of the same request.
                         if i_req_valid = '1' and i_tick_en = '1'
-                           and s_rsp_valid_r = '0' then
+                           and s_rsp_valid_r = '0'
+                           and s_rsp_pending_r = '0' then
                             s_busy_r <= '1';
 
                             if i_req_rw = '1' then
