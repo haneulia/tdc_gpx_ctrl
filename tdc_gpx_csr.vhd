@@ -414,7 +414,11 @@ begin
     s_stat_src(0)(3) <= '0';
     s_stat_src(0)(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO)
         <= i_status.chip_error_mask;
-    s_stat_src(0)(31 downto c_STAT_CHIP_ERR_HI + 1) <= (others => '0');
+    s_stat_src(0)(c_STAT_DRAIN_TO_HI downto c_STAT_DRAIN_TO_LO)
+        <= i_status.drain_timeout_mask;
+    s_stat_src(0)(c_STAT_SEQ_ERR_HI downto c_STAT_SEQ_ERR_LO)
+        <= i_status.sequence_error_mask;
+    s_stat_src(0)(31 downto c_STAT_SEQ_ERR_HI + 1) <= (others => '0');
 
     -- STAT6 = SHOT_SEQ
     s_stat_src(1)(c_SHOT_SEQ_WIDTH - 1 downto 0)

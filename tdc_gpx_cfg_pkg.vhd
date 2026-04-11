@@ -165,6 +165,10 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT_BIN_MISMATCH     : natural := 2;
     constant c_STAT_CHIP_ERR_HI      : natural := 7;
     constant c_STAT_CHIP_ERR_LO      : natural := 4;
+    constant c_STAT_DRAIN_TO_HI      : natural := 11;   -- drain_timeout_mask[3:0]
+    constant c_STAT_DRAIN_TO_LO      : natural := 8;
+    constant c_STAT_SEQ_ERR_HI       : natural := 15;   -- sequence_error_mask[3:0]
+    constant c_STAT_SEQ_ERR_LO       : natural := 12;
 
     -- =========================================================================
     -- Init values

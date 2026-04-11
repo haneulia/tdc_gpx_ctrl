@@ -295,6 +295,14 @@ architecture rtl of tdc_gpx_top is
     signal s_timestamp_r     : unsigned(63 downto 0) := (others => '0');
 
     -- =========================================================================
+    -- Per-chip error signals from chip_ctrl (pulse, sticky in status)
+    -- =========================================================================
+    signal s_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_sequence      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_drain_to_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_seq_sticky_r      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+
+    -- =========================================================================
     -- Unified error mask: physical ErrFlag OR assembler timeout (blank insert)
     -- Single source for header, status, and error counter.
     -- =========================================================================
@@ -541,8 +549,8 @@ begin
                 o_drain_done        => s_drain_done(i),
                 o_shot_seq          => s_chip_shot_seq(i),
                 o_busy              => s_chip_busy(i),
-                o_err_drain_timeout => open,    -- TODO: aggregate to status
-                o_err_sequence      => open     -- TODO: aggregate to status
+                o_err_drain_timeout => s_err_drain_timeout(i),
+                o_err_sequence      => s_err_sequence(i)
             );
 
         -- ----- decode_i: combinational 28-bit I-Mode field extraction -----
@@ -913,12 +921,31 @@ begin
                 if s_stop_id_error /= C_ZEROS_CHIPS or
                    s_hit_dropped /= C_ZEROS_CHIPS or
                    s_hit_fall_dropped /= C_ZEROS_CHIPS or
+                   s_err_drain_timeout /= C_ZEROS_CHIPS or
+                   s_err_sequence /= C_ZEROS_CHIPS or
                    v_merged_rising /= C_ZEROS_CHIPS then
                     s_error_count_r <= s_error_count_r + 1;
                 end if;
             end if;
         end if;
     end process p_error_cnt;
+
+    -- =========================================================================
+    -- [8b] Sticky error latch: drain_timeout and sequence_error per chip
+    --   Pulses from chip_ctrl → sticky until cmd_start clears them.
+    -- =========================================================================
+    p_err_sticky : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or s_cmd_start = '1' then
+                s_err_drain_to_sticky_r <= (others => '0');
+                s_err_seq_sticky_r      <= (others => '0');
+            else
+                s_err_drain_to_sticky_r <= s_err_drain_to_sticky_r or s_err_drain_timeout;
+                s_err_seq_sticky_r      <= s_err_seq_sticky_r      or s_err_sequence;
+            end if;
+        end if;
+    end process p_err_sticky;
 
     -- =========================================================================
     -- [9] Status aggregation (-> CSR -> STAT registers)
@@ -929,6 +956,8 @@ begin
                                       else '0';
     s_status.bin_mismatch      <= '0';  -- Phase 2: calibration check
     s_status.chip_error_mask   <= s_chip_error_merged;
+    s_status.drain_timeout_mask <= s_err_drain_to_sticky_r;
+    s_status.sequence_error_mask <= s_err_seq_sticky_r;
     s_status.shot_seq_current  <= s_chip_shot_seq(0);
     s_status.vdma_frame_count  <= s_frame_id_r;
     s_status.error_count       <= s_error_count_r;

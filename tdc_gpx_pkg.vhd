@@ -188,6 +188,8 @@ package tdc_gpx_pkg is
         pipeline_overrun    : std_logic;
         bin_mismatch        : std_logic;
         chip_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        drain_timeout_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip drain timeout
+        sequence_error_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip sequence error
         shot_seq_current    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         vdma_frame_count    : unsigned(31 downto 0);
         error_count         : unsigned(31 downto 0);
@@ -198,6 +200,8 @@ package tdc_gpx_pkg is
         pipeline_overrun    => '0',
         bin_mismatch        => '0',
         chip_error_mask     => (others => '0'),
+        drain_timeout_mask  => (others => '0'),
+        sequence_error_mask => (others => '0'),
         shot_seq_current    => (others => '0'),
         vdma_frame_count    => (others => '0'),
         error_count         => (others => '0')
