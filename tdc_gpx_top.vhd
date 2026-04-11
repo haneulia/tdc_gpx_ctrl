@@ -480,6 +480,8 @@ begin
                 i_shot_start        => s_shot_start_gated,
                 i_max_range_clks    => s_cfg.max_range_clks,
                 i_stop_tdc          => i_stop_tdc,
+                i_stop_rise_cnt     => s_stop_rise_cnt_r(i),
+                i_stop_fall_cnt     => s_stop_fall_cnt_r(i),
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),

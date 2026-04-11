@@ -225,6 +225,8 @@ begin
             i_shot_start        => s_shot_start,
             i_max_range_clks    => s_cfg.max_range_clks,
             i_stop_tdc          => s_stop_tdc,
+            i_stop_rise_cnt     => (others => '0'),  -- TB: no count-based drain
+            i_stop_fall_cnt     => (others => '0'),  -- (falls back to EF-based)
             o_bus_req_valid     => s_bus_req_valid,
             o_bus_req_rw        => s_bus_req_rw,
             o_bus_req_addr      => s_bus_req_addr,

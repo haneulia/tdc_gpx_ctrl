@@ -20,6 +20,10 @@
 --     - Count-based burst drain: LF='1' → read exactly Fill times
 --       (Fill = cfg_image[6][7:0], TDC-GPX Register 6 LF threshold)
 --       No LF/EF check during burst — deterministic count-based exit.
+--     - Expected drain count (from echo_receiver stop pulse counts):
+--       Captured at IrFlag↑: expected = rise_cnt + fall_cnt.
+--       After LF bursts, remaining = expected - drained → count-based burst.
+--       With slope: max 8 stops × 8 hits × 2 edges = 128 per chip.
 --     - oen_permanent control: drain_mode='1' → OEN held low during drain
 --       (bus_phy INV-7 blocks writes while oen_permanent='1')
 --     - n_drain_cap enforcement: limits drain reads to n_drain_cap × 8
@@ -88,6 +92,13 @@ entity tdc_gpx_chip_ctrl is
         -- IFIFO writes are settled. If stop_tdc arrives first, the MTimer
         -- setting is misconfigured relative to the actual measurement window.
         i_stop_tdc          : in  std_logic;
+
+        -- Per-chip stop pulse counts (from echo_receiver via tdc_gpx_top)
+        -- Accumulated during measurement window, captured at IrFlag↑.
+        -- Used for count-based drain: expected_drain = rise + fall.
+        -- After LF burst, remaining = expected - drained → count-based burst.
+        i_stop_rise_cnt     : in  unsigned(7 downto 0);
+        i_stop_fall_cnt     : in  unsigned(7 downto 0);
 
         -- bus_phy request interface
         o_bus_req_valid     : out std_logic;
@@ -259,10 +270,19 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- Drain read counter (for n_drain_cap enforcement)
     -- Counts actual IFIFO reads per drain cycle. Reset on drain start.
     -- n_drain_cap=0: unlimited, 1~15: cap at n_drain_cap × 8 reads.
-    -- Max drain per chip = 4 stops/IFIFO × 8 hits × 2 IFIFOs = 64 reads.
-    -- n_drain_cap=8 → cap at 64 (exact full drain).
+    -- Max drain per chip = 4 stops/IFIFO × 8 hits × 2 IFIFOs = 64 reads (rising only).
+    -- With slope (rise+fall): max 128 reads. n_drain_cap=16 → cap at 128.
     -- =========================================================================
-    signal s_drain_cnt_r    : unsigned(6 downto 0) := (others => '0');
+    signal s_drain_cnt_r    : unsigned(7 downto 0) := (others => '0');
+
+    -- =========================================================================
+    -- Expected drain count (from echo_receiver stop pulse counts)
+    -- Captured at IrFlag↑: expected = rise_cnt + fall_cnt.
+    -- Max = 64 + 64 = 128 (8 stops × 8 hits × 2 edges).
+    -- Used as count-based drain cap: when drain_cnt >= expected → done.
+    -- s_expected_drain_r=0: fall back to EF-based drain (no count info).
+    -- =========================================================================
+    signal s_expected_drain_r : unsigned(7 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Burst read counter (Fill-based: count reads within one burst session)
@@ -405,7 +425,8 @@ begin
                 s_busy_r        <= '0';
                 s_init_mode_r   <= '1';
                 s_oen_permanent_r <= '0';
-                s_drain_cnt_r   <= (others => '0');
+                s_drain_cnt_r       <= (others => '0');
+                s_expected_drain_r  <= (others => '0');
                 s_req_burst_r   <= '0';
                 s_fill_r        <= (others => '0');
                 s_burst_cnt_r   <= (others => '0');
@@ -430,7 +451,8 @@ begin
                     s_req_valid_r  <= '0';
                     s_busy_r       <= '0';
                     s_oen_permanent_r <= '0';
-                    s_drain_cnt_r  <= (others => '0');
+                    s_drain_cnt_r      <= (others => '0');
+                    s_expected_drain_r <= (others => '0');
                     s_req_burst_r  <= '0';
                     s_fill_r       <= (others => '0');
                     s_burst_cnt_r  <= (others => '0');
@@ -577,9 +599,10 @@ begin
                                 s_stopdis_r <= '1';
                                 s_state_r   <= ST_IDLE;
                             elsif i_shot_start = '1' then
-                                s_busy_r         <= '1';
-                                s_range_active_r <= '1';
-                                s_state_r        <= ST_CAPTURE;
+                                s_busy_r           <= '1';
+                                s_range_active_r   <= '1';
+                                s_expected_drain_r <= (others => '0');  -- reset until IrFlag capture
+                                s_state_r          <= ST_CAPTURE;
                             end if;
 
                         when ST_CAPTURE =>
@@ -637,6 +660,15 @@ begin
                                     s_oen_permanent_r <= '1';   -- burst: OEN stays low
                                 end if;
                                 s_drain_cnt_r <= (others => '0');
+
+                                -- Capture expected drain count from echo_receiver.
+                                -- expected = rise_cnt + fall_cnt (8-bit each, max 128 total).
+                                -- If both are 0 (no stop pulses detected), fall back
+                                -- to EF-based drain (s_expected_drain_r stays 0).
+                                s_expected_drain_r <= resize(
+                                    ("0" & i_stop_rise_cnt) + ("0" & i_stop_fall_cnt),
+                                    8);
+
                                 s_state_r     <= ST_DRAIN_CHECK;
                             end if;
 
@@ -647,24 +679,33 @@ begin
                         -- =================================================
 
                         when ST_DRAIN_CHECK =>
-                            -- n_drain_cap enforcement (0 = unlimited)
-                            -- Cap threshold = n_drain_cap × 8 reads
-                            -- (full drain = 4 stops × 8 hits × 2 IFIFOs = 64 → cap=8)
-                            if i_cfg.n_drain_cap /= "0000"
-                               and s_drain_cnt_r >= shift_left(
-                                   resize(i_cfg.n_drain_cap, 7), 3) then
-                                -- Cap reached: force drain complete
+                            -- ==============================================
+                            -- Priority 1: Count-based drain cap
+                            -- ==============================================
+                            -- (a) Expected count reached (from echo_receiver stop counts).
+                            --     expected>0 means count info is valid.
+                            --     drain_cnt >= expected → all hits drained.
+                            -- (b) n_drain_cap hard safety limit (0 = disabled).
+                            --     Cap threshold = n_drain_cap × 8 reads.
+                            -- Either triggers immediate drain done.
+                            if (s_expected_drain_r /= 0
+                                and s_drain_cnt_r >= s_expected_drain_r)
+                               or (i_cfg.n_drain_cap /= "0000"
+                                   and s_drain_cnt_r >= shift_left(
+                                       resize(i_cfg.n_drain_cap, 8), 3)) then
+                                -- Count cap reached: force drain complete
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
                                 s_range_active_r  <= '0';
                                 s_wait_cnt_r      <= (others => '0');
                                 s_state_r         <= ST_ALU_PULSE;
 
-                            -- Burst path: drain_mode='1' AND LF='1' (loaded)
-                            -- s_fill_r = latched Fill value (registered at drain entry).
+                            -- ==============================================
+                            -- Priority 2: LF burst (LF='1' → Fill entries guaranteed)
+                            -- ==============================================
                             -- LF='1' guarantees >= Fill entries in FIFO.
                             -- Burst exactly Fill times (count-based, no LF/EF check
-                            -- during burst). Fill < 2 → skip burst, use EF path.
+                            -- during burst). Fill < 2 → skip burst, use remaining path.
                             elsif i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
                                   and i_ef1_sync = '0' and i_lf1_sync = '1' then
@@ -690,7 +731,45 @@ begin
                                 s_ififo_id_r    <= '1';
                                 s_state_r       <= ST_DRAIN_BURST;
 
-                            -- Individual read path (legacy or LF='0')
+                            -- ==============================================
+                            -- Priority 3: Count-based remaining burst
+                            -- ==============================================
+                            -- After LF bursts exhausted (LF='0'), use expected count
+                            -- to burst the remaining entries without LF check.
+                            -- remaining = expected - drain_cnt (guaranteed > 0 here
+                            -- because Priority 1 already checked expected reached).
+                            -- Route to whichever IFIFO has data (EF='0').
+                            elsif i_cfg.drain_mode = '1'
+                                  and s_expected_drain_r /= 0
+                                  and s_drain_cnt_r < s_expected_drain_r
+                                  and i_ef1_sync = '0' then
+                                -- IFIFO1 has remaining data: burst-read remaining
+                                s_burst_limit_r <= s_expected_drain_r - s_drain_cnt_r;
+                                s_burst_cnt_r   <= (others => '0');
+                                s_req_valid_r   <= '1';
+                                s_req_burst_r   <= '1';
+                                s_req_rw_r      <= '0';   -- READ
+                                s_req_addr_r    <= c_TDC_REG8_IFIFO1;
+                                s_ififo_id_r    <= '0';
+                                s_state_r       <= ST_DRAIN_BURST;
+                            elsif i_cfg.drain_mode = '1'
+                                  and s_expected_drain_r /= 0
+                                  and s_drain_cnt_r < s_expected_drain_r
+                                  and i_ef2_sync = '0' then
+                                -- IFIFO2 has remaining data: burst-read remaining
+                                s_burst_limit_r <= s_expected_drain_r - s_drain_cnt_r;
+                                s_burst_cnt_r   <= (others => '0');
+                                s_req_valid_r   <= '1';
+                                s_req_burst_r   <= '1';
+                                s_req_rw_r      <= '0';   -- READ
+                                s_req_addr_r    <= c_TDC_REG9_IFIFO2;
+                                s_ififo_id_r    <= '1';
+                                s_state_r       <= ST_DRAIN_BURST;
+
+                            -- ==============================================
+                            -- Priority 4: Individual EF-based read (fallback)
+                            -- ==============================================
+                            -- No count info (expected=0) or legacy drain_mode='0'.
                             elsif i_ef1_sync = '0' then
                                 -- IFIFO1 has data -> read Reg8
                                 s_req_valid_r <= '1';
@@ -765,14 +844,16 @@ begin
                                 -- Read exactly Fill times, then re-evaluate via
                                 -- ST_DRAIN_FLUSH -> ST_DRAIN_CHECK (EF stable).
                                 if (s_burst_cnt_r + 1) >= s_burst_limit_r then
-                                    -- Fill count reached: stop burst
+                                    -- Fill/remaining count reached: stop burst
                                     s_req_burst_r <= '0';
                                     s_req_valid_r <= '0';
                                     s_state_r     <= ST_DRAIN_FLUSH;
-                                elsif i_cfg.n_drain_cap /= "0000"
-                                      and (s_drain_cnt_r + 1) >= shift_left(
-                                          resize(i_cfg.n_drain_cap, 7), 3) then
-                                    -- Drain cap reached: stop burst
+                                elsif (s_expected_drain_r /= 0
+                                       and (s_drain_cnt_r + 1) >= s_expected_drain_r)
+                                      or (i_cfg.n_drain_cap /= "0000"
+                                          and (s_drain_cnt_r + 1) >= shift_left(
+                                              resize(i_cfg.n_drain_cap, 8), 3)) then
+                                    -- Expected count or safety cap reached: stop burst
                                     s_req_burst_r <= '0';
                                     s_req_valid_r <= '0';
                                     s_state_r     <= ST_DRAIN_FLUSH;
