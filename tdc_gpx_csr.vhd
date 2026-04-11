@@ -106,6 +106,18 @@ entity tdc_gpx_csr is
         o_cmd_soft_reset    : out std_logic;
         o_cmd_cfg_write     : out std_logic;
 
+        -- Individual TDC-GPX register access (i_axis_aclk domain)
+        -- Trigger: edge-detected from CTL1[31:30]
+        -- Addr/chip: from CTL1[13:10] / CTL1[15:14]
+        -- Write data: from cfg_image[target_addr] (routed in TOP)
+        -- Read data: from chip_ctrl response → STAT11
+        o_cmd_reg_read      : out std_logic;        -- 1-clk pulse
+        o_cmd_reg_write     : out std_logic;         -- 1-clk pulse
+        o_cmd_reg_addr      : out std_logic_vector(3 downto 0);
+        o_cmd_reg_chip      : out unsigned(1 downto 0);
+        i_cmd_reg_rdata     : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        i_cmd_reg_rvalid    : in  std_logic;
+
         -- Status input (i_axis_aclk domain)
         i_status            : in  t_tdc_status;
         i_bin_resolution_ps : in  unsigned(15 downto 0);
@@ -280,6 +292,13 @@ architecture rtl of tdc_gpx_csr is
     -- Command edge detect (i_axis_aclk domain)
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_pulse_r : std_logic_vector(3 downto 0) := (others => '0');
+
+    -- Reg access edge detect: CTL1[31:30] (i_axis_aclk domain)
+    signal s_reg_cmd_prev_r  : std_logic_vector(1 downto 0) := (others => '0');
+    signal s_reg_cmd_pulse_r : std_logic_vector(1 downto 0) := (others => '0');
+
+    -- Reg access read data latch (i_axis_aclk domain)
+    signal s_reg_rdata_r     : std_logic_vector(31 downto 0) := (others => '0');
 
     -- laser_ctrl cols_per_face latch (i_axis_aclk domain)
     signal s_lsr_cols_r  : unsigned(15 downto 0) := (others => '0');
@@ -563,6 +582,46 @@ begin
     o_cmd_stop       <= s_cmd_pulse_r(1);   -- CTL0[29]
     o_cmd_soft_reset <= s_cmd_pulse_r(2);   -- CTL0[30]
     o_cmd_cfg_write  <= s_cmd_pulse_r(3);   -- CTL0[31]
+
+    -- =========================================================================
+    -- [7a] Reg access edge detect (i_axis_aclk domain)
+    --   CTL1[30] = reg_read trigger, CTL1[31] = reg_write trigger
+    --   Uses existing CTL1 CDC path — no additional CDC instance needed.
+    -- =========================================================================
+    p_reg_cmd_edge : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_reg_cmd_prev_r  <= (others => '0');
+                s_reg_cmd_pulse_r <= (others => '0');
+            else
+                s_reg_cmd_prev_r  <= s_ctl_out(1)(31 downto 30);
+                s_reg_cmd_pulse_r <= s_ctl_out(1)(31 downto 30) and (not s_reg_cmd_prev_r);
+            end if;
+        end if;
+    end process p_reg_cmd_edge;
+
+    o_cmd_reg_read  <= s_reg_cmd_pulse_r(0);    -- CTL1[30]
+    o_cmd_reg_write <= s_reg_cmd_pulse_r(1);    -- CTL1[31]
+    o_cmd_reg_addr  <= s_ctl_out(1)(c_BT_REG_ADDR_HI downto c_BT_REG_ADDR_LO);
+    o_cmd_reg_chip  <= unsigned(s_ctl_out(1)(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
+
+    -- Reg read data latch (i_axis_aclk domain): capture for future STAT11 readback.
+    -- NOTE: SW readback requires axil_csr32 IP regeneration to add stat11_in.
+    -- Until then, data is available at top level for ILA/debug.
+    p_reg_rdata_latch : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_reg_rdata_r <= (others => '0');
+            else
+                if i_cmd_reg_rvalid = '1' then
+                    s_reg_rdata_r(c_TDC_BUS_WIDTH - 1 downto 0) <= i_cmd_reg_rdata;
+                    s_reg_rdata_r(31 downto c_TDC_BUS_WIDTH)     <= (others => '0');
+                end if;
+            end if;
+        end if;
+    end process p_reg_rdata_latch;
 
     -- =========================================================================
     -- [8] laser_ctrl cols_per_face latch (i_axis_aclk domain)

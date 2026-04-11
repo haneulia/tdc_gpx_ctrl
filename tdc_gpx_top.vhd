@@ -75,6 +75,11 @@ entity tdc_gpx_top is
         -- Shot trigger (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         i_shot_start     : in  std_logic;
 
+        -- External stop signal (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
+        -- Error detection ONLY: if stop_tdc↑ before IrFlag↑ → err_sequence.
+        -- NOT used as a drain trigger (IrFlag is the sole drain trigger).
+        i_stop_tdc       : in  std_logic;
+
         -- TDC-GPX physical pins (per chip, x4)
         io_tdc_d         : inout t_tdc_bus_array;
         o_tdc_adr        : out   t_tdc_adr_array;
@@ -143,6 +148,18 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_stop       : std_logic;
     signal s_cmd_soft_reset : std_logic;
     signal s_cmd_cfg_write  : std_logic;
+
+    -- Individual register access (CSR -> chip_ctrl, per-chip)
+    signal s_cmd_reg_read     : std_logic;
+    signal s_cmd_reg_write    : std_logic;
+    signal s_cmd_reg_addr     : std_logic_vector(3 downto 0);
+    signal s_cmd_reg_wdata    : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+    signal s_cmd_reg_chip     : unsigned(1 downto 0);  -- target chip for reg access
+    signal s_cmd_reg_rdata    : t_slv28_array;
+    signal s_cmd_reg_rvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Per-chip gated reg access commands (chip demux)
+    signal s_cmd_reg_read_g   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_write_g  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_status         : t_tdc_status := c_TDC_STATUS_INIT;
 
     -- =========================================================================
@@ -326,11 +343,28 @@ begin
             o_cmd_stop       => s_cmd_stop,
             o_cmd_soft_reset => s_cmd_soft_reset,
             o_cmd_cfg_write  => s_cmd_cfg_write,
+            o_cmd_reg_read   => s_cmd_reg_read,
+            o_cmd_reg_write  => s_cmd_reg_write,
+            o_cmd_reg_addr   => s_cmd_reg_addr,
+            o_cmd_reg_chip   => s_cmd_reg_chip,
+            i_cmd_reg_rdata  => s_cmd_reg_rdata(to_integer(s_cmd_reg_chip)),
+            i_cmd_reg_rvalid => s_cmd_reg_rvalid(to_integer(s_cmd_reg_chip)),
             i_status            => s_status,
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             o_irq            => o_irq
         );
+
+    -- =========================================================================
+    -- [1a] Per-chip reg access demux: route cmd to targeted chip only
+    -- =========================================================================
+    gen_reg_demux : for i in 0 to c_N_CHIPS - 1 generate
+        s_cmd_reg_read_g(i)  <= s_cmd_reg_read  when to_integer(s_cmd_reg_chip) = i else '0';
+        s_cmd_reg_write_g(i) <= s_cmd_reg_write when to_integer(s_cmd_reg_chip) = i else '0';
+    end generate gen_reg_demux;
+
+    -- Write data: from cfg_image indexed by target register address
+    s_cmd_reg_wdata <= s_cfg_image(to_integer(unsigned(s_cmd_reg_addr)))(c_TDC_BUS_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- [2] Per-chip pipeline (generate x4)
@@ -391,7 +425,15 @@ begin
                 i_cmd_stop          => s_cmd_stop,
                 i_cmd_soft_reset    => s_cmd_soft_reset,
                 i_cmd_cfg_write     => s_cmd_cfg_write,
+                i_cmd_reg_read      => s_cmd_reg_read_g(i),
+                i_cmd_reg_write     => s_cmd_reg_write_g(i),
+                i_cmd_reg_addr      => s_cmd_reg_addr,
+                i_cmd_reg_wdata     => s_cmd_reg_wdata,
+                o_cmd_reg_rdata     => s_cmd_reg_rdata(i),
+                o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
                 i_shot_start        => s_shot_start_gated,
+                i_max_range_clks    => s_cfg.max_range_clks,
+                i_stop_tdc          => i_stop_tdc,
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),
@@ -415,7 +457,9 @@ begin
                 o_ififo_id          => s_ififo_id(i),
                 o_drain_done        => s_drain_done(i),
                 o_shot_seq          => s_chip_shot_seq(i),
-                o_busy              => s_chip_busy(i)
+                o_busy              => s_chip_busy(i),
+                o_err_drain_timeout => open,    -- TODO: aggregate to status
+                o_err_sequence      => open     -- TODO: aggregate to status
             );
 
         -- ----- decode_i: combinational 28-bit I-Mode field extraction -----

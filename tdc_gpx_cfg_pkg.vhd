@@ -81,6 +81,14 @@ package tdc_gpx_cfg_pkg is
     constant c_BT_CLK_DIV_LO        : natural := 0;
     constant c_BT_TICKS_HI          : natural := 8;    -- [8:6]   bus_ticks
     constant c_BT_TICKS_LO          : natural := 6;
+    -- [9] reserved
+    constant c_BT_REG_ADDR_HI       : natural := 13;   -- [13:10] reg_target_addr
+    constant c_BT_REG_ADDR_LO       : natural := 10;
+    constant c_BT_REG_CHIP_HI       : natural := 15;   -- [15:14] reg_target_chip_id
+    constant c_BT_REG_CHIP_LO       : natural := 14;
+    -- [29:16] reserved
+    constant c_BT_REG_READ_TRIG     : natural := 30;   -- [30] reg_read trigger (edge)
+    constant c_BT_REG_WRITE_TRIG    : natural := 31;   -- [31] reg_write trigger (edge)
 
     -- =========================================================================
     -- CTL2: RANGE_COLS (max_range_clks + cols_per_face)
@@ -149,6 +157,7 @@ package tdc_gpx_cfg_pkg is
     constant c_ADDR_ERROR_COUNT      : natural := 16#A0#;   -- STAT8
     constant c_ADDR_BIN_PS           : natural := 16#A4#;   -- STAT9
     constant c_ADDR_K_DIST           : natural := 16#A8#;   -- STAT10
+    constant c_ADDR_REG_RDATA        : natural := 16#AC#;   -- STAT11: reg access read data
 
     -- STATUS bitfields (STAT5)
     constant c_STAT_BUSY             : natural := 0;

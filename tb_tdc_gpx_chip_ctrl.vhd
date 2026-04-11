@@ -142,6 +142,9 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_drain_done         : std_logic;
     signal s_shot_seq           : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal s_ctrl_busy          : std_logic;
+    signal s_stop_tdc           : std_logic := '0';
+    signal s_err_drain_timeout  : std_logic;
+    signal s_err_sequence       : std_logic;
 
     -- =========================================================================
     -- TDC-GPX Chip Model: FIFO state
@@ -213,7 +216,15 @@ begin
             i_cmd_stop          => s_cmd_stop,
             i_cmd_soft_reset    => s_cmd_soft_reset,
             i_cmd_cfg_write     => s_cmd_cfg_write,
+            i_cmd_reg_read      => '0',
+            i_cmd_reg_write     => '0',
+            i_cmd_reg_addr      => (others => '0'),
+            i_cmd_reg_wdata     => (others => '0'),
+            o_cmd_reg_rdata     => open,
+            o_cmd_reg_rvalid    => open,
             i_shot_start        => s_shot_start,
+            i_max_range_clks    => s_cfg.max_range_clks,
+            i_stop_tdc          => s_stop_tdc,
             o_bus_req_valid     => s_bus_req_valid,
             o_bus_req_rw        => s_bus_req_rw,
             o_bus_req_addr      => s_bus_req_addr,
@@ -237,7 +248,9 @@ begin
             o_ififo_id          => s_ififo_id,
             o_drain_done        => s_drain_done,
             o_shot_seq          => s_shot_seq,
-            o_busy              => s_ctrl_busy
+            o_busy              => s_ctrl_busy,
+            o_err_drain_timeout => s_err_drain_timeout,
+            o_err_sequence      => s_err_sequence
         );
 
     -- =========================================================================

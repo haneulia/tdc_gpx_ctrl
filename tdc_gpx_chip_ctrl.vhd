@@ -13,9 +13,13 @@
 --     - PuResN powerup sequence
 --     - StopDis pin control
 --     - cfg_image write sequence (Reg0~7, Reg11, Reg12, Reg14)
+--     - Individual register read/write (from IDLE, for runtime access)
 --     - Master reset via Reg4 bit22
 --     - IrFlag rising-edge detection (MTimer expiry)
 --     - EF1-first round-robin IFIFO drain
+--     - Count-based burst drain: LF='1' → read exactly Fill times
+--       (Fill = cfg_image[6][7:0], TDC-GPX Register 6 LF threshold)
+--       No LF/EF check during burst — deterministic count-based exit.
 --     - oen_permanent control: drain_mode='1' → OEN held low during drain
 --       (bus_phy INV-7 blocks writes while oen_permanent='1')
 --     - n_drain_cap enforcement: limits drain reads to n_drain_cap × 8
@@ -62,8 +66,28 @@ entity tdc_gpx_chip_ctrl is
         i_cmd_soft_reset    : in  std_logic;         -- any -> POWERUP
         i_cmd_cfg_write     : in  std_logic;         -- IDLE -> CFG_WRITE
 
+        -- Individual register access (from CSR, 1-clk pulses, IDLE only)
+        i_cmd_reg_read      : in  std_logic;
+        i_cmd_reg_write     : in  std_logic;
+        i_cmd_reg_addr      : in  std_logic_vector(3 downto 0);
+        i_cmd_reg_wdata     : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        o_cmd_reg_rdata     : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        o_cmd_reg_rvalid    : out std_logic;         -- 1-clk pulse with read data
+
         -- Shot start (from laser_ctrl, 1-clk pulse)
         i_shot_start        : in  std_logic;
+
+        -- Max range clock budget (from cfg, latched at shot_start)
+        i_max_range_clks    : in  unsigned(15 downto 0);
+
+        -- External stop signal (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
+        -- Used for ERROR DETECTION ONLY — NOT a drain trigger.
+        -- If stop_tdc rises before IrFlag in ST_CAPTURE → err_sequence.
+        -- Rationale: stop_tdc means "max range reached, no more returns expected,"
+        -- but IrFlag (MTimer expiry) must ALWAYS arrive first to guarantee
+        -- IFIFO writes are settled. If stop_tdc arrives first, the MTimer
+        -- setting is misconfigured relative to the actual measurement window.
+        i_stop_tdc          : in  std_logic;
 
         -- bus_phy request interface
         o_bus_req_valid     : out std_logic;
@@ -101,7 +125,11 @@ entity tdc_gpx_chip_ctrl is
 
         -- Status
         o_shot_seq          : out unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
-        o_busy              : out std_logic
+        o_busy              : out std_logic;
+
+        -- Error flags (1-clk pulses)
+        o_err_drain_timeout : out std_logic;    -- max_range_clks expired before drain_done
+        o_err_sequence      : out std_logic     -- IrFlag expected but not yet received
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -126,8 +154,9 @@ architecture rtl of tdc_gpx_chip_ctrl is
         ST_DRAIN_CHECK,     -- Check EF1/EF2 to decide next read
         ST_DRAIN_EF1,       -- Reading IFIFO1 (Reg8), waiting for response
         ST_DRAIN_EF2,       -- Reading IFIFO2 (Reg9), waiting for response
-        ST_DRAIN_BURST,     -- Burst reading: back-to-back reads (LF-gated)
+        ST_DRAIN_BURST,     -- Burst reading: count-based (Fill reads, no LF/EF check)
         ST_DRAIN_FLUSH,     -- Post-burst: capture remaining response, wait bus idle
+        ST_REG_ACCESS,      -- Individual register read/write (from IDLE)
         ST_ALU_PULSE,       -- AluTrigger high for g_ALU_PULSE_CLKS
         ST_ALU_RECOVERY     -- Post-AluTrigger recovery wait
     );
@@ -187,6 +216,11 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_irflag_prev_r  : std_logic := '0';
 
     -- =========================================================================
+    -- stop_tdc rising-edge detection (for err_sequence only)
+    -- =========================================================================
+    signal s_stop_tdc_prev_r : std_logic := '0';
+
+    -- =========================================================================
     -- Shot sequence counter
     -- =========================================================================
     signal s_shot_seq_r     : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
@@ -220,6 +254,34 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- n_drain_cap=8 → cap at 64 (exact full drain).
     -- =========================================================================
     signal s_drain_cnt_r    : unsigned(6 downto 0) := (others => '0');
+
+    -- =========================================================================
+    -- Burst read counter (Fill-based: count reads within one burst session)
+    -- Fill = cfg_image[6][7:0] = TDC-GPX Register 6 LF threshold.
+    -- LF='1' guarantees >= Fill entries in FIFO.
+    -- s_fill_r: latched at drain entry (FF boundary for 200MHz timing).
+    -- s_burst_limit_r: copied from s_fill_r at burst entry.
+    -- s_burst_cnt_r: counts responses within one burst session.
+    -- =========================================================================
+    signal s_fill_r         : unsigned(7 downto 0) := (others => '0');
+    signal s_burst_cnt_r    : unsigned(7 downto 0) := (others => '0');
+    signal s_burst_limit_r  : unsigned(7 downto 0) := (others => '0');
+
+    -- =========================================================================
+    -- Individual register access (read/write single TDC-GPX register)
+    -- =========================================================================
+    signal s_reg_rdata_r    : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_reg_rvalid_r   : std_logic := '0';
+
+    -- =========================================================================
+    -- Shot range counter: counts clocks from shot_start.
+    -- Used to detect drain timeout (max_range_clks reached before drain_done).
+    -- =========================================================================
+    signal s_range_cnt_r        : unsigned(15 downto 0) := (others => '0');
+    signal s_range_active_r     : std_logic := '0';     -- '1' during capture+drain (p_fsm)
+    signal s_range_active_prev_r : std_logic := '0';    -- edge detect for counter reset
+    signal s_err_drain_timeout_r : std_logic := '0';
+    signal s_err_sequence_r     : std_logic := '0';
 
     -- =========================================================================
     -- Busy flag
@@ -271,9 +333,11 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_irflag_prev_r <= '0';
+                s_irflag_prev_r  <= '0';
+                s_stop_tdc_prev_r <= '0';
             else
-                s_irflag_prev_r <= i_irflag_sync;
+                s_irflag_prev_r  <= i_irflag_sync;
+                s_stop_tdc_prev_r <= i_stop_tdc;
             end if;
         end if;
     end process p_irflag_edge;
@@ -334,10 +398,17 @@ begin
                 s_oen_permanent_r <= '0';
                 s_drain_cnt_r   <= (others => '0');
                 s_req_burst_r   <= '0';
+                s_fill_r        <= (others => '0');
+                s_burst_cnt_r   <= (others => '0');
+                s_burst_limit_r <= (others => '0');
+                s_reg_rdata_r   <= (others => '0');
+                s_reg_rvalid_r  <= '0';
+                s_range_active_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r  <= '0';
                 s_drain_done_r <= '0';
+                s_reg_rvalid_r <= '0';
 
                 -- =========================================================
                 -- Soft reset: highest priority, returns to POWERUP
@@ -352,6 +423,10 @@ begin
                     s_oen_permanent_r <= '0';
                     s_drain_cnt_r  <= (others => '0');
                     s_req_burst_r  <= '0';
+                    s_fill_r       <= (others => '0');
+                    s_burst_cnt_r  <= (others => '0');
+                    s_burst_limit_r <= (others => '0');
+                    s_range_active_r <= '0';
                     s_wait_cnt_r   <= (others => '0');
                     s_cfg_idx_r    <= (others => '0');
                     s_init_mode_r  <= '1';
@@ -467,6 +542,21 @@ begin
                                 s_init_mode_r <= '0';   -- runtime: no master reset
                                 s_busy_r      <= '1';
                                 s_state_r     <= ST_CFG_WRITE;
+                            elsif i_cmd_reg_read = '1' then
+                                -- Individual register read
+                                s_req_valid_r <= '1';
+                                s_req_rw_r    <= '0';   -- READ
+                                s_req_addr_r  <= i_cmd_reg_addr;
+                                s_busy_r      <= '1';
+                                s_state_r     <= ST_REG_ACCESS;
+                            elsif i_cmd_reg_write = '1' then
+                                -- Individual register write
+                                s_req_valid_r <= '1';
+                                s_req_rw_r    <= '1';   -- WRITE
+                                s_req_addr_r  <= i_cmd_reg_addr;
+                                s_req_wdata_r <= i_cmd_reg_wdata;
+                                s_busy_r      <= '1';
+                                s_state_r     <= ST_REG_ACCESS;
                             end if;
 
                         -- =================================================
@@ -478,18 +568,52 @@ begin
                                 s_stopdis_r <= '1';
                                 s_state_r   <= ST_IDLE;
                             elsif i_shot_start = '1' then
-                                s_busy_r  <= '1';
-                                s_state_r <= ST_CAPTURE;
+                                s_busy_r         <= '1';
+                                s_range_active_r <= '1';
+                                s_state_r        <= ST_CAPTURE;
                             end if;
 
                         when ST_CAPTURE =>
-                            -- Wait for IrFlag rising edge (MTimer expired)
+                            -- ==============================================
+                            -- DESIGN POINT: IrFlag is the ONLY drain trigger
+                            -- ==============================================
+                            --
+                            -- IrFlag = TDC-GPX internal MTimer expiry.
+                            -- It guarantees that ALL pending stop events have
+                            -- been written to the IFIFOs before it asserts.
+                            --
+                            -- External signals (e.g. stop_tdc from laser_ctrl)
+                            -- must NOT bypass IrFlag as a drain trigger because:
+                            --   1. External timing has no visibility into TDC-GPX
+                            --      internal IFIFO write pipeline latency.
+                            --   2. Draining before IFIFO writes complete causes
+                            --      DATA LOSS — EF may read '1' (empty) while
+                            --      data is still being written internally.
+                            --   3. EF can transition 0→1→0 multiple times as
+                            --      stop events arrive asynchronously during the
+                            --      measurement window — EF='1' before IrFlag
+                            --      does NOT mean "no more data coming."
+                            --
+                            -- The safe sequence is:
+                            --   shot_start → stops arrive → MTimer expires →
+                            --   IrFlag↑ (IFIFO settled) → drain → drain_done
+                            --
+                            -- Error detection:
+                            --   max_range_clks budget covers capture + drain.
+                            --   If drain_done has not fired by max_range_clks,
+                            --   the shot has overrun → err_drain_timeout.
+                            --
                             if i_cmd_stop = '1' then
-                                s_stopdis_r <= '1';
-                                s_busy_r    <= '0';
-                                s_state_r   <= ST_IDLE;
+                                s_stopdis_r      <= '1';
+                                s_busy_r         <= '0';
+                                s_range_active_r <= '0';
+                                s_state_r        <= ST_IDLE;
+
                             elsif i_irflag_sync = '1' and s_irflag_prev_r = '0' then
-                                -- Enter drain phase
+                                -- MTimer expired: IFIFO settled, safe to drain.
+                                -- Latch Fill value at drain entry (FF boundary
+                                -- for 200MHz timing — no live cfg_image in FSM body)
+                                s_fill_r      <= unsigned(i_cfg_image(6)(7 downto 0));
                                 if i_cfg.drain_mode = '1' then
                                     s_oen_permanent_r <= '1';   -- burst: OEN stays low
                                 end if;
@@ -513,30 +637,39 @@ begin
                                 -- Cap reached: force drain complete
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
+                                s_range_active_r  <= '0';
                                 s_wait_cnt_r      <= (others => '0');
                                 s_state_r         <= ST_ALU_PULSE;
 
                             -- Burst path: drain_mode='1' AND LF='1' (loaded)
-                            -- LF threshold provides safety margin for 2-FF sync
-                            -- latency of EF — prevents reading empty FIFO.
+                            -- s_fill_r = latched Fill value (registered at drain entry).
+                            -- LF='1' guarantees >= Fill entries in FIFO.
+                            -- Burst exactly Fill times (count-based, no LF/EF check
+                            -- during burst). Fill < 2 → skip burst, use EF path.
                             elsif i_cfg.drain_mode = '1'
+                                  and s_fill_r >= 2
                                   and i_ef1_sync = '0' and i_lf1_sync = '1' then
                                 -- IFIFO1 loaded: burst read Reg8
-                                s_req_valid_r <= '1';
-                                s_req_burst_r <= '1';
-                                s_req_rw_r    <= '0';   -- READ
-                                s_req_addr_r  <= c_TDC_REG8_IFIFO1;
-                                s_ififo_id_r  <= '0';
-                                s_state_r     <= ST_DRAIN_BURST;
+                                s_burst_limit_r <= s_fill_r;
+                                s_burst_cnt_r   <= (others => '0');
+                                s_req_valid_r   <= '1';
+                                s_req_burst_r   <= '1';
+                                s_req_rw_r      <= '0';   -- READ
+                                s_req_addr_r    <= c_TDC_REG8_IFIFO1;
+                                s_ififo_id_r    <= '0';
+                                s_state_r       <= ST_DRAIN_BURST;
                             elsif i_cfg.drain_mode = '1'
+                                  and s_fill_r >= 2
                                   and i_ef2_sync = '0' and i_lf2_sync = '1' then
                                 -- IFIFO2 loaded: burst read Reg9
-                                s_req_valid_r <= '1';
-                                s_req_burst_r <= '1';
-                                s_req_rw_r    <= '0';   -- READ
-                                s_req_addr_r  <= c_TDC_REG9_IFIFO2;
-                                s_ififo_id_r  <= '1';
-                                s_state_r     <= ST_DRAIN_BURST;
+                                s_burst_limit_r <= s_fill_r;
+                                s_burst_cnt_r   <= (others => '0');
+                                s_req_valid_r   <= '1';
+                                s_req_burst_r   <= '1';
+                                s_req_rw_r      <= '0';   -- READ
+                                s_req_addr_r    <= c_TDC_REG9_IFIFO2;
+                                s_ififo_id_r    <= '1';
+                                s_state_r       <= ST_DRAIN_BURST;
 
                             -- Individual read path (legacy or LF='0')
                             elsif i_ef1_sync = '0' then
@@ -557,6 +690,7 @@ begin
                                 -- Both FIFOs empty -> drain complete
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
+                                s_range_active_r  <= '0';
                                 s_wait_cnt_r      <= (others => '0');
                                 s_state_r         <= ST_ALU_PULSE;
                             end if;
@@ -600,13 +734,14 @@ begin
                                 s_raw_word_r  <= i_bus_rsp_rdata;
                                 s_raw_valid_r <= '1';
                                 s_drain_cnt_r <= s_drain_cnt_r + 1;
+                                s_burst_cnt_r <= s_burst_cnt_r + 1;
 
-                                -- Check burst stop conditions on NEXT count
-                                -- (s_drain_cnt_r+1 hasn't taken effect yet,
-                                --  so compare with current+1)
-                                if (s_ififo_id_r = '0' and i_lf1_sync = '0')
-                                   or (s_ififo_id_r = '1' and i_lf2_sync = '0') then
-                                    -- LF dropped: FIFO near-empty, stop burst
+                                -- Count-based burst stop (deterministic):
+                                -- LF='1' at entry guaranteed >= Fill entries.
+                                -- Read exactly Fill times, then re-evaluate via
+                                -- ST_DRAIN_FLUSH -> ST_DRAIN_CHECK (EF stable).
+                                if (s_burst_cnt_r + 1) >= s_burst_limit_r then
+                                    -- Fill count reached: stop burst
                                     s_req_burst_r <= '0';
                                     s_req_valid_r <= '0';
                                     s_state_r     <= ST_DRAIN_FLUSH;
@@ -637,6 +772,21 @@ begin
                             -- When bus_phy returns to IDLE: re-evaluate drain
                             if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
                                 s_state_r <= ST_DRAIN_CHECK;
+                            end if;
+
+                        -- =================================================
+                        -- Individual register access (from IDLE)
+                        -- Waits for bus response, captures read data,
+                        -- returns to IDLE.
+                        -- =================================================
+
+                        when ST_REG_ACCESS =>
+                            if i_bus_rsp_valid = '1' then
+                                s_req_valid_r  <= '0';
+                                s_reg_rdata_r  <= i_bus_rsp_rdata;
+                                s_reg_rvalid_r <= '1';  -- 1-clk pulse (also for writes as ack)
+                                s_busy_r       <= '0';
+                                s_state_r      <= ST_IDLE;
                             end if;
 
                         -- =================================================
@@ -674,6 +824,61 @@ begin
     end process p_fsm;
 
     -- =========================================================================
+    -- Range counter: counts clocks from shot_start through drain_done.
+    -- Detects two error conditions:
+    --   (1) err_drain_timeout: max_range_clks reached before drain_done.
+    --       Means the shot took too long (IrFlag late, or drain stalled).
+    --   (2) err_sequence: stop_tdc rising edge detected in ST_CAPTURE
+    --       before IrFlag rising edge. This means the external max-range
+    --       signal arrived before TDC-GPX MTimer expired — indicates
+    --       MTimer is misconfigured (too long) relative to actual range.
+    -- Both are 1-clk pulses, cleared each cycle.
+    -- =========================================================================
+    p_range_cnt : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_range_cnt_r         <= (others => '0');
+                s_range_active_prev_r <= '0';
+                s_err_drain_timeout_r <= '0';
+                s_err_sequence_r      <= '0';
+            else
+                -- Default: clear 1-clk pulses
+                s_err_drain_timeout_r <= '0';
+                s_err_sequence_r      <= '0';
+
+                -- Edge detect on range_active (driven by p_fsm)
+                s_range_active_prev_r <= s_range_active_r;
+
+                -- (1) Range counter → err_drain_timeout
+                if s_range_active_r = '1' and s_range_active_prev_r = '0' then
+                    -- Rising edge: new shot started, reset counter
+                    s_range_cnt_r <= (others => '0');
+                elsif s_range_active_r = '1' then
+                    if s_range_cnt_r >= i_max_range_clks then
+                        -- Budget exhausted before drain_done
+                        s_err_drain_timeout_r <= '1';
+                        -- Don't clear range_active here — FSM will clear it
+                        -- when drain_done eventually fires (or on soft_reset).
+                    else
+                        s_range_cnt_r <= s_range_cnt_r + 1;
+                    end if;
+                end if;
+
+                -- (2) Sequence error: stop_tdc↑ before IrFlag↑ in ST_CAPTURE
+                -- Normal sequence: shot_start → IrFlag↑ → drain → stop_tdc↑
+                -- Error: stop_tdc↑ arrives while still in ST_CAPTURE
+                --        (i.e., IrFlag has NOT yet risen)
+                if s_state_r = ST_CAPTURE then
+                    if i_stop_tdc = '1' and s_stop_tdc_prev_r = '0' then
+                        s_err_sequence_r <= '1';
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_range_cnt;
+
+    -- =========================================================================
     -- Output assignments (directly from registers)
     -- =========================================================================
     o_bus_req_valid  <= s_req_valid_r;
@@ -692,5 +897,11 @@ begin
 
     o_shot_seq       <= s_shot_seq_r;
     o_busy           <= s_busy_r;
+
+    o_cmd_reg_rdata  <= s_reg_rdata_r;
+    o_cmd_reg_rvalid <= s_reg_rvalid_r;
+
+    o_err_drain_timeout <= s_err_drain_timeout_r;
+    o_err_sequence      <= s_err_sequence_r;
 
 end architecture rtl;
