@@ -44,7 +44,7 @@ header + data lines AXI-Stream을 VDMA S2MM 경유 DDR3에 기록:
 |----------|-----|-------------|
 | S2MM_HSIZE | hsize_actual (packet_start latch) | 32 × 32 = 1024 bytes |
 | S2MM_VSIZE | cols_per_face + 1 (header 포함) | 2401 lines |
-| S2MM_STRIDE | 고정, ≥ HSIZE_MAX | 2048 bytes |
+| S2MM_STRIDE | 고정, ≥ MAX_VDMA_HSIZE_BYTES | 2048 bytes |
 | Frame buffer | triple buffer 권장 | 3 × stride × VSIZE ≈ 14 MB |
 
 **HSIZE가 가변이어도 stride는 고정** → DDR 내 line 시작 주소 = stride × line_number.
@@ -72,7 +72,7 @@ padding = stride - hsize_actual bytes (VDMA가 기록하지 않음).
 ## 5. axis_data_fifo
 
 - 역할: header_inserter ↔ VDMA 사이에서 clock domain crossing + burst buffer
-- 권장: depth ≥ 16 lines = 16 × HSIZE_MAX = 16 KB
+- 권장: depth ≥ 16 lines = 16 × MAX_VDMA_HSIZE_BYTES = 16 KB
 - backpressure 발생 시 tready=0 → upstream 정지
 
 ---
@@ -83,7 +83,7 @@ padding = stride - hsize_actual bytes (VDMA가 기록하지 않음).
 |------|------|
 | — | transport는 payload를 바꾸지 않음 (SOF/EOL만 부여) |
 | — | stride = 2048 (고정, CSR 변경 무관) |
-| [INV-11] | hsize_actual ≤ HSIZE_MAX ≤ stride |
+| [INV-11] | hsize_actual ≤ MAX_VDMA_HSIZE_BYTES ≤ stride |
 | [INV-12] | vdma_frame 중 HSIZE 변경 금지 |
 
 ---

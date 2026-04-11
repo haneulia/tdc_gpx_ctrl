@@ -43,7 +43,7 @@
 1. **계약(contract) 우선**: 모듈 경계의 "약속"을 먼저 고정 → 후속 변경 영향 최소화
 2. **vertical slice 관점**: 각 Step 완료 시 관측 가능한 중간 산출물(raw word, raw_event, cell, line, DDR dump)이 명확
 3. **SW parser 계약 명시**: HW-SW 인터페이스를 05번 문서로 독립 → parser 팀과 병렬 작업 가능
-4. **Phase 2 경계 명시적**: CONTINUOUS/SCOPE=1을 08번 문서로 격리 → Phase 1 scope creep 방지
+4. **Phase 2 경계 명시적**: PACKET_SCOPE=1, CELL_FORMAT=1을 08번 문서로 격리 → Phase 1 scope creep 방지
 5. **timing을 마지막으로 분리**: 기능 먼저, 성능 나중 — 올바른 우선순위
 6. **공통 템플릿**: 10개 문서가 동일 구조(책임/비책임/입력/출력/불변식/완료조건) → 일관성
 7. **"비책임" 명시**: 각 문서가 다루지 않는 범위를 선언 → scope 혼동 방지
@@ -56,7 +56,7 @@
 1. **계약 개념 부재**: 모듈 인터페이스는 있지만, "이 모듈이 보장하는 것 vs 보장하지 않는 것"이 불명확
 2. **SW parser 계약 누락**: header 생성은 있지만 SW 측 golden parser / parse 규칙이 없음
 3. **timing이 산재**: T_service, shot_interval 제약이 여러 Step에 흩어져 있음
-4. **Phase 2 경계 모호**: CONTINUOUS 관련 필드가 Step 0 pkg에 포함되지만, 언제 구현하는지 불명확
+4. **Phase 2 경계 모호**: Phase 2 관련 필드가 Step 0 pkg에 포함되지만, 언제 구현하는지 불명확
 5. **문서가 하위 문서 없이 단일 파일**: 600줄 이상 시 관리 어려움
 6. **raw_event_builder 누락**: decode_i만 있고, hit_seq_local 생성 등 raw_event 완성 모듈이 별도로 없음
 
@@ -151,8 +151,8 @@ Step 8: Timing Budget (기능 완료 후)
   내용: T_service 계산, pipeline 조건, double buffer
 
 Step 9: Phase 2 (별도)
-  문서: 09_phase2_continuous.md
-  내용: CONTINUOUS, SCOPE=1 — Phase 1 완료 후
+  문서: 08_phase2_packet_scope1.md
+  내용: PACKET_SCOPE=1, CELL_FORMAT=1 — Phase 1 완료 후
 ```
 
 ### 5.1 통합 테스트 순서 (방안 1에서 채택)
@@ -189,7 +189,7 @@ tdc_gpx_ctrl/docs/
   06_header_and_parser_contract.md ← header layout + SW parse 규칙 + golden vector
   07_vdma_transport.md            ← AXI4-Stream Video, VDMA 설정, DDR layout
   08_timing_budget.md             ← T_service, pipeline, double buffer
-  09_phase2_continuous.md         ← CONTINUOUS, SCOPE=1 (Phase 2)
+  08_phase2_packet_scope1.md      ← PACKET_SCOPE=1, CELL_FORMAT=1 (Phase 2)
   10_verification_plan.md         ← regression matrix, release checklist
 
 tdc_gpx_ctrl/HDL/
@@ -248,7 +248,7 @@ tdc_gpx_ctrl/HDL/
 05: header + parser golden contract → 산출물: header + line (SW parser로 복원 가능)
 06: AXI/VDMA/DDR dump → 산출물: DDR dump (SW parser가 읽음)
 07: timing/pipeline 계산 (기능 완료 후)
-08: Phase 2 확장 (CONTINUOUS, SCOPE=1)
+08: Phase 2 확장 (PACKET_SCOPE=1, CELL_FORMAT=1)
 09: verification plan (매 단계 완료 시 갱신)
 ```
 
@@ -311,7 +311,7 @@ docs/
   05_header_and_parser_contract.md
   06_vdma_transport.md
   07_timing_budget.md
-  08_phase2_continuous.md
+  08_phase2_packet_scope1.md
   09_verification_plan.md
 ```
 
