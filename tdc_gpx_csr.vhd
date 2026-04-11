@@ -567,7 +567,7 @@ begin
     -- =========================================================================
     -- [8] laser_ctrl cols_per_face latch (i_axis_aclk domain)
     --   On tvalid, latch tdata[15:0] as cols_per_face override.
-    --   Once latched (s_lsr_valid_r='1'), overrides CTL2[31:16].
+    --   When s_lsr_valid_r='1', overrides CTL2[31:16]; otherwise CSR value.
     -- =========================================================================
     p_lsr_latch : process(i_axis_aclk)
     begin
@@ -603,9 +603,11 @@ begin
     o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO));
     o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO));
 
-    -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when available)
+    -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when valid)
     o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));
-    o_cfg.cols_per_face    <= s_lsr_cols_r;
+    o_cfg.cols_per_face    <= s_lsr_cols_r
+                              when s_lsr_valid_r = '1'
+                              else unsigned(s_ctl_out(2)(c_RC_COLS_HI downto c_RC_COLS_LO));
 
     -- CTL3: START_OFF1
     o_cfg.start_off1       <= unsigned(s_ctl_out(3)(17 downto 0));
