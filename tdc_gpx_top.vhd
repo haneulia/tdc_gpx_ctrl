@@ -342,11 +342,12 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_overrun_r  : std_logic := '0';
 
     -- =========================================================================
-    -- Stop event stream: per-chip hit count latch
+    -- Stop event stream: per-IFIFO expected drain counts
     -- AXI Stream slave: always ready (tready='1').
     -- echo_receiver가 누적 카운터를 관리하므로, 여기서는 tvalid 시 overwrite.
-    -- tdata/tuser = N stops xg_STOP_CNT_WIDTH bits contiguous (window 시작 이후 누적).
-    -- Per-stop counts → sum all stops → 8-bit total for chip_ctrl.
+    -- tdata/tuser = N stops x g_STOP_CNT_WIDTH bits contiguous.
+    -- Per-stop counts → per-IFIFO sum (rise+fall):
+    --   IFIFO1 = stops 0~3, IFIFO2 = stops 4~7.
     -- =========================================================================
     -- Derived constants from generics
     constant c_STOP_TOTAL_BITS  : natural := c_MAX_STOPS_PER_CHIP * g_STOP_CNT_WIDTH;
@@ -355,13 +356,13 @@ architecture rtl of tdc_gpx_top is
     constant c_STOP_TKEEP_MASK  : std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0) :=
         fn_stop_evt_tkeep(c_MAX_STOPS_PER_CHIP, g_STOP_CNT_WIDTH, g_STOP_EVT_DWIDTH/8);
 
-    type t_per_stop_cnt_array is array(0 to c_MAX_STOPS_PER_CHIP - 1)
-        of unsigned(g_STOP_CNT_WIDTH - 1 downto 0);
-    signal s_stop_rise_per_r : t_per_stop_cnt_array := (others => (others => '0'));
-    signal s_stop_fall_per_r : t_per_stop_cnt_array := (others => (others => '0'));
-    -- Summed totals (8 stops xmax 2^W-1, fits in 8 bits for W<=5)
-    signal s_stop_rise_sum_r : unsigned(7 downto 0) := (others => '0');
-    signal s_stop_fall_sum_r : unsigned(7 downto 0) := (others => '0');
+    -- IFIFO boundary: stops 0..IFIFO_SPLIT-1 = IFIFO1, IFIFO_SPLIT..7 = IFIFO2
+    constant c_IFIFO_SPLIT : natural := c_MAX_STOPS_PER_CHIP / 2;  -- 4
+
+    -- Per-IFIFO expected drain counts (rise+fall combined)
+    -- Max per IFIFO = 4 stops x (2^W - 1) x 2 edges. Fits 8 bits for W<=4.
+    signal s_ififo1_expected_r : unsigned(7 downto 0) := (others => '0');
+    signal s_ififo2_expected_r : unsigned(7 downto 0) := (others => '0');
 
 begin
 
@@ -379,9 +380,9 @@ begin
         report "tdc_gpx_top: g_STOP_EVT_DWIDTH must be a multiple of 8"
         severity failure;
 
-    assert c_MAX_STOPS_PER_CHIP * (2**g_STOP_CNT_WIDTH - 1) <= 255
-        report "tdc_gpx_top: per-stop sum may overflow 8-bit counter; "
-             & "reduce g_STOP_CNT_WIDTH or c_MAX_STOPS_PER_CHIP"
+    assert c_IFIFO_SPLIT * 2 * (2**g_STOP_CNT_WIDTH - 1) <= 255
+        report "tdc_gpx_top: per-IFIFO expected sum may overflow 8-bit counter; "
+             & "reduce g_STOP_CNT_WIDTH or c_IFIFO_SPLIT"
         severity failure;
 
     -- =========================================================================
@@ -389,42 +390,41 @@ begin
     -- =========================================================================
     o_stop_evt_tready <= '1';
 
-    -- Decode per-stop counts from AXI-Stream using generic widths.
-    -- tdata/tuser layout: N stops xg_STOP_CNT_WIDTH bits contiguous.
-    -- Sum all per-stop counts → single 8-bit total (shared across all chips).
-    -- echo_receiver가 내부에서 누적하므로 tdata/tuser가 이미 총 누적값.
-    -- start_rising(새 window)에서 echo_receiver가 0 리셋 → 여기도 자동 반영.
-    --
-    -- tkeep expected: c_STOP_TKEEP_MASK (e.g. "00011111" for 5/8 bytes)
+    -- Decode per-stop counts from AXI-Stream and compute per-IFIFO expected
+    -- drain counts.  IFIFO1 = stops 0..IFIFO_SPLIT-1, IFIFO2 = IFIFO_SPLIT..7.
+    -- Each IFIFO expected = sum(rise + fall) of its stops.
+    -- tdata = rise counts, tuser = fall counts, each g_STOP_CNT_WIDTH bits/stop.
+    -- echo_receiver 내부 누적값이므로 tvalid마다 최신 스냅샷 반영.
     p_stop_decode : process(i_axis_aclk)
-        variable v_rise_sum : unsigned(7 downto 0);
-        variable v_fall_sum : unsigned(7 downto 0);
-        variable v_lo       : natural;
-        variable v_hi       : natural;
+        variable v_ififo1_sum : unsigned(7 downto 0);
+        variable v_ififo2_sum : unsigned(7 downto 0);
+        variable v_lo         : natural;
+        variable v_hi         : natural;
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_stop_rise_per_r <= (others => (others => '0'));
-                s_stop_fall_per_r <= (others => (others => '0'));
-                s_stop_rise_sum_r <= (others => '0');
-                s_stop_fall_sum_r <= (others => '0');
+                s_ififo1_expected_r <= (others => '0');
+                s_ififo2_expected_r <= (others => '0');
             elsif i_stop_evt_tvalid = '1' then
-                v_rise_sum := (others => '0');
-                v_fall_sum := (others => '0');
+                v_ififo1_sum := (others => '0');
+                v_ififo2_sum := (others => '0');
                 for s in 0 to c_MAX_STOPS_PER_CHIP - 1 loop
                     v_lo := s * g_STOP_CNT_WIDTH;
                     v_hi := v_lo + g_STOP_CNT_WIDTH - 1;
-                    s_stop_rise_per_r(s) <= unsigned(
-                        i_stop_evt_tdata(v_hi downto v_lo));
-                    s_stop_fall_per_r(s) <= unsigned(
-                        i_stop_evt_tuser(v_hi downto v_lo));
-                    v_rise_sum := v_rise_sum + resize(unsigned(
-                        i_stop_evt_tdata(v_hi downto v_lo)), 8);
-                    v_fall_sum := v_fall_sum + resize(unsigned(
-                        i_stop_evt_tuser(v_hi downto v_lo)), 8);
+                    if s < c_IFIFO_SPLIT then
+                        -- IFIFO1: stops 0..3, rise + fall
+                        v_ififo1_sum := v_ififo1_sum
+                            + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8)
+                            + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
+                    else
+                        -- IFIFO2: stops 4..7, rise + fall
+                        v_ififo2_sum := v_ififo2_sum
+                            + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8)
+                            + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
+                    end if;
                 end loop;
-                s_stop_rise_sum_r <= v_rise_sum;
-                s_stop_fall_sum_r <= v_fall_sum;
+                s_ififo1_expected_r <= v_ififo1_sum;
+                s_ififo2_expected_r <= v_ififo2_sum;
             end if;
         end if;
     end process p_stop_decode;
@@ -580,8 +580,8 @@ begin
                 i_shot_start        => s_shot_start_gated,
                 i_max_range_clks    => s_cfg.max_range_clks,
                 i_stop_tdc          => i_stop_tdc,
-                i_stop_rise_cnt     => s_stop_rise_sum_r,
-                i_stop_fall_cnt     => s_stop_fall_sum_r,
+                i_expected_ififo1   => s_ififo1_expected_r,
+                i_expected_ififo2   => s_ififo2_expected_r,
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),

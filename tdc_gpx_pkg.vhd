@@ -30,6 +30,12 @@ use ieee.numeric_std.all;
 package tdc_gpx_pkg is
 
     -- =========================================================================
+    -- Utility: integer ceiling division  ceil(a / b)
+    -- Declared first so that derived constants below can use it.
+    -- =========================================================================
+    function fn_ceil_div(a : natural; b : positive) return natural;
+
+    -- =========================================================================
     -- Design constants (defaults — entity generics override where needed)
     -- =========================================================================
     constant c_N_CHIPS              : natural := 4;
@@ -42,8 +48,8 @@ package tdc_gpx_pkg is
 
     -- Derived cell layout constants (auto-calculated from MAX_HITS / TDATA_WIDTH)
     constant c_SLOTS_PER_BEAT       : natural := c_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH;  -- 2
-    constant c_HIT_DATA_BEATS       : natural := (c_MAX_HITS_PER_STOP + c_SLOTS_PER_BEAT - 1)
-                                                  / c_SLOTS_PER_BEAT;                     -- 4
+    constant c_HIT_DATA_BEATS       : natural := fn_ceil_div(c_MAX_HITS_PER_STOP,
+                                                              c_SLOTS_PER_BEAT);          -- 4
     constant c_META_BEAT_IDX        : natural := c_HIT_DATA_BEATS;                        -- 4
 
     -- Stop event AXI-Stream constants
@@ -305,9 +311,9 @@ package body tdc_gpx_pkg is
     -- =========================================================================
     -- Deferred constants: cell size and derived VDMA line metrics
     -- =========================================================================
-    constant c_CELL_SIZE_BYTES : natural :=
+    constant c_CELL_SIZE_BYTES : natural := -- 32
         fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, c_MAX_HITS_PER_STOP);
-    constant c_BEATS_PER_CELL  : natural := c_CELL_SIZE_BYTES / c_TDATA_BYTES;
+    constant c_BEATS_PER_CELL  : natural := c_CELL_SIZE_BYTES / c_TDATA_BYTES;  -- 32/ 4 = 8
     constant c_DATA_BEATS_MAX  : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;
     constant c_HSIZE_BEATS_MAX : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;
     constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);
@@ -322,7 +328,13 @@ package body tdc_gpx_pkg is
         return hit_slot_width * max_hits    -- hit_slot
              + max_hits                     -- hit_valid
              + max_hits                     -- slope_vec
-             + 4 + 1 + 1;                  -- hit_count_actual + hit_dropped + error_fill
+             + 4 + 1 + 1;                   -- hit_count_actual + hit_dropped + error_fill
+    end function;
+
+    -- Integer ceiling division: ceil(a / b)
+    function fn_ceil_div(a : natural; b : positive) return natural is
+    begin
+        return (a + b - 1) / b;
     end function;
 
     -- Round up to next power of 2
@@ -344,7 +356,7 @@ package body tdc_gpx_pkg is
         variable raw_bytes    : natural;
     begin
         payload_bits := fn_cell_payload_bits(hit_slot_width, max_hits);
-        raw_bytes    := (payload_bits + 7) / 8;
+        raw_bytes    := fn_ceil_div(payload_bits, 8);
         return fn_ceil_pow2(raw_bytes);
     end function;
 
@@ -366,7 +378,7 @@ package body tdc_gpx_pkg is
         cnt_width : natural
     ) return natural is
     begin
-        return (n_stops * cnt_width + 7) / 8;
+        return fn_ceil_div(n_stops * cnt_width, 8);
     end function;
 
     -- Generate tkeep mask: lower valid_bytes bits set

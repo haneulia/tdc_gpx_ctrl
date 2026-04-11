@@ -115,10 +115,23 @@ architecture rtl of tdc_gpx_cell_builder is
 
     -- =========================================================================
     -- Cell-to-beat mux (combinational, used inside process)
-    -- Auto-calculated from c_MAX_HITS_PER_STOP / c_SLOTS_PER_BEAT:
-    --   Beats 0..c_HIT_DATA_BEATS-1: hit_slot pairs (loop-based)
-    --   Beat c_META_BEAT_IDX: metadata
-    --   Remaining beats: padding
+    -- Auto-calculated from c_MAX_HITS_PER_STOP / c_SLOTS_PER_BEAT.
+    --
+    -- 32-bit beat layout (MAX_HITS=7, SLOT=16bit, TDATA=32bit):
+    --
+    --   Beat 0: hit_slot[1][15:0] | hit_slot[0][15:0]
+    --   Beat 1: hit_slot[3][15:0] | hit_slot[2][15:0]
+    --   Beat 2: hit_slot[5][15:0] | hit_slot[4][15:0]
+    --   Beat 3:            0x0000 | hit_slot[6][15:0]   (slot 7 absent)
+    --   Beat 4: hit_valid[31:25] | slope_vec[24:18] | unused[17:16]
+    --           | hit_count[15:12] | dropped[11] | error_fill[10]
+    --           | chip_id[9:8] | reserved[7:0]
+    --   Beat 5: 0x00000000  (padding)
+    --   Beat 6: 0x00000000  (padding)
+    --   Beat 7: 0x00000000  (padding)
+    --
+    -- MAX_HITS 변경 시 beat 0..HIT_DATA_BEATS-1 과 meta beat 위치가
+    -- 자동 조정됨. 셀 크기(ceil_pow2)가 달라지면 패딩 beat 수도 변동.
     -- =========================================================================
     function fn_cell_beat(
         cell     : t_cell;
@@ -132,12 +145,12 @@ architecture rtl of tdc_gpx_cell_builder is
         v_beat   := to_integer(beat_idx);
         v_result := (others => '0');
 
-        if v_beat < c_HIT_DATA_BEATS then
+        if v_beat < c_HIT_DATA_BEATS then                           -- 4
             -- Hit-data beat: pack c_SLOTS_PER_BEAT slots per beat
-            for sl in 0 to c_SLOTS_PER_BEAT - 1 loop
+            for sl in 0 to c_SLOTS_PER_BEAT - 1 loop                -- 2
                 v_slot_idx := v_beat * c_SLOTS_PER_BEAT + sl;
-                if v_slot_idx < c_MAX_HITS_PER_STOP then
-                    v_lo := sl * c_HIT_SLOT_DATA_WIDTH;
+                if v_slot_idx < c_MAX_HITS_PER_STOP then            -- 7
+                    v_lo := sl * c_HIT_SLOT_DATA_WIDTH;             -- 0, 16
                     v_result(v_lo + c_HIT_SLOT_DATA_WIDTH - 1 downto v_lo)
                         := std_logic_vector(cell.hit_slot(v_slot_idx));
                 end if;
@@ -217,14 +230,11 @@ begin
 
                             -- Use hit_count_actual (4-bit) as slot index + overflow guard
                             if s_cell_buf_r(v_stop).hit_count_actual < c_MAX_HITS_PER_STOP then
-                                v_seq := to_integer(
-                                    s_cell_buf_r(v_stop).hit_count_actual(2 downto 0));
-                                s_cell_buf_r(v_stop).hit_slot(v_seq)
-                                    <= i_raw_event.raw_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
+                                v_seq := to_integer(s_cell_buf_r(v_stop).hit_count_actual(2 downto 0));
+                                s_cell_buf_r(v_stop).hit_slot(v_seq)  <= i_raw_event.raw_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
                                 s_cell_buf_r(v_stop).hit_valid(v_seq) <= '1';
                                 s_cell_buf_r(v_stop).slope_vec(v_seq) <= i_raw_event.slope;
-                                s_cell_buf_r(v_stop).hit_count_actual
-                                    <= s_cell_buf_r(v_stop).hit_count_actual + 1;
+                                s_cell_buf_r(v_stop).hit_count_actual <= s_cell_buf_r(v_stop).hit_count_actual + 1;
                             else
                                 -- (MAX+1)th+ hit: overflow, do not overwrite slot
                                 s_cell_buf_r(v_stop).hit_dropped <= '1';
@@ -232,15 +242,26 @@ begin
                             end if;
                         end if;
 
+                        
+                        -- ==========================================================
+                        --                  cell MUX (8:1)           beat MUX (8:1)
+                        --                 ┌──────────────┐        ┌──────────────┐
+                        --cell_buf_r[0~7] ─>  s_cell_sel_r  ──────>  fn_cell_beat  ──> s_tdata_r
+                        --                 └──────────────┘        └──────────────┘
+                        --                   이전 사이클에 래치        현재 사이클에 계산
+                        --                   (ST_COLLECT 또는         (ST_LOAD 또는
+                        --                    셀 경계의 ST_OUTPUT)      ST_OUTPUT 내부)
+                        -- ==========================================================
+
                         -- drain_done: latch first cell into pipeline register
                         if i_drain_done = '1' then
                             s_cell_sel_r  <= s_cell_buf_r(0);  -- cell MUX only
                             s_stop_idx_r  <= (others => '0');
                             s_beat_idx_r  <= (others => '0');
                             s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
-                            s_tvalid_r   <= '0';
-                            s_tlast_r    <= '0';
-                            s_state_r    <= ST_LOAD;
+                            s_tvalid_r    <= '0';
+                            s_tlast_r     <= '0';
+                            s_state_r     <= ST_LOAD;
                         end if;
 
                     -- ==========================================================
@@ -249,9 +270,9 @@ begin
                     --   result now in s_cell_sel_r. Only beat MUX here.
                     -- ==========================================================
                     when ST_LOAD =>
-                        s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r);
-                        s_tvalid_r <= '1';
-
+                        s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r); -- beat 데이터 준비
+                        s_tvalid_r <= '1';                                      -- 다음 클럭에 valid
+                                                                                -- tvalid를 세팅만 함 -> 이 클럭에는 아직 handshake 발생 안 함
                         -- Pre-compute tlast for loaded beat (s_last_stop_r is registered)
                         if s_stop_idx_r = s_last_stop_r
                            and s_beat_idx_r = c_LAST_BEAT then
@@ -259,8 +280,8 @@ begin
                         else
                             s_tlast_r <= '0';
                         end if;
-
-                        s_state_r <= ST_OUTPUT;
+                        -- tready 확인 없이 무조건 ST_OUTPUT으로 전환 (bubble)
+                        s_state_r <= ST_OUTPUT;                                 -- 무조건 1클럭 후 전환
 
                     -- ==========================================================
                     -- ST_OUTPUT: serialize cells to AXI-Stream (registered)

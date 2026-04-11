@@ -17,13 +17,13 @@
 --     - Master reset via Reg4 bit22
 --     - IrFlag rising-edge detection (MTimer expiry)
 --     - EF1-first round-robin IFIFO drain
---     - Count-based burst drain: LF='1' → read exactly Fill times
---       (Fill = cfg_image[6][7:0], TDC-GPX Register 6 LF threshold)
+--     - Per-IFIFO count-based burst drain:
+--       IFIFO1 = stops 0~3, IFIFO2 = stops 4~7.
+--       Expected counts from echo_receiver (rise+fall per IFIFO).
+--       Burst limit = min(Fill, remaining_ififo).
+--       Fill = cfg_image[6][7:0], TDC-GPX Register 6 LF threshold.
 --       No LF/EF check during burst — deterministic count-based exit.
---     - Expected drain count (from echo_receiver stop pulse counts):
---       Captured at IrFlag↑: expected = rise_cnt + fall_cnt.
---       After LF bursts, remaining = expected - drained → count-based burst.
---       With slope: max 8 stops × 8 hits × 2 edges = 128 per chip.
+--       Per-IFIFO drain counters track actual reads from each IFIFO.
 --     - oen_permanent control: drain_mode='1' → OEN held low during drain
 --       (bus_phy INV-7 blocks writes while oen_permanent='1')
 --     - n_drain_cap enforcement: limits drain reads to n_drain_cap × 8
@@ -93,16 +93,17 @@ entity tdc_gpx_chip_ctrl is
         -- setting is misconfigured relative to the actual measurement window.
         i_stop_tdc          : in  std_logic;
 
-        -- Per-chip stop pulse counts (from echo_receiver via tdc_gpx_top)
+        -- Per-IFIFO expected drain counts (from echo_receiver via tdc_gpx_top)
         -- CONTRACT:
-        --   - Values are CUMULATIVE totals, overwritten (not accumulated) on
-        --     each echo_receiver tvalid. Reset by echo_receiver on new window.
-        --   - chip_ctrl captures these at IrFlag↑ (ST_CAPTURE → ST_DRAIN_CHECK).
+        --   - IFIFO1 = stops 0~3 (rise+fall), IFIFO2 = stops 4~7 (rise+fall).
+        --   - Values are CUMULATIVE totals from echo_receiver, overwritten on
+        --     each tvalid. Reset by echo_receiver on new window start.
+        --   - chip_ctrl captures these at IrFlag rising edge (ST_CAPTURE).
         --     By IrFlag time, MTimer has expired so all stop pulses are final.
-        --   - expected_drain = rise + fall (max 128 per chip: 8 stops × 8 hits × 2).
-        --   - If both are 0 → EF-based drain fallback (no count info).
-        i_stop_rise_cnt     : in  unsigned(7 downto 0);
-        i_stop_fall_cnt     : in  unsigned(7 downto 0);
+        --   - Max per IFIFO = 4 stops x max_hits x 2 edges (rise+fall).
+        --   - If both are 0 -> EF-based drain fallback (no count info).
+        i_expected_ififo1   : in  unsigned(7 downto 0);
+        i_expected_ififo2   : in  unsigned(7 downto 0);
 
         -- bus_phy request interface
         o_bus_req_valid     : out std_logic;
@@ -271,35 +272,32 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_oen_permanent_r : std_logic := '0';
 
     -- =========================================================================
-    -- Drain read counter (for n_drain_cap enforcement)
-    -- Counts actual IFIFO reads per drain cycle. Reset on drain start.
-    -- n_drain_cap=0: unlimited, 1~15: cap at n_drain_cap × 8 reads.
-    -- Max drain per chip = 4 stops/IFIFO × 8 hits × 2 IFIFOs = 64 reads (rising only).
-    -- With slope (rise+fall): max 128 reads. n_drain_cap=16 → cap at 128.
+    -- Per-IFIFO expected drain counts (from echo_receiver stop pulse counts)
+    -- Captured at IrFlag↑ in ST_CAPTURE.
+    --   IFIFO1: stops 0~3 (rise+fall), IFIFO2: stops 4~7 (rise+fall).
+    --   Max per IFIFO = 4 stops × 7 hits × 2 (rise+fall) = 56.
+    --   expected=0: fall back to EF-based drain for that IFIFO.
+    -- Per-IFIFO drain counters track actual reads from each IFIFO.
+    -- n_drain_cap: per-IFIFO safety cap. 0=unlimited, 1~15: cap at n_drain_cap×4.
+    --   Max cap = 15×4 = 60, covers 56 theoretical max.
     -- =========================================================================
-    signal s_drain_cnt_r    : unsigned(8 downto 0) := (others => '0');
-
-    -- =========================================================================
-    -- Expected drain count (from echo_receiver stop pulse counts)
-    -- Captured at IrFlag↑: expected = rise_cnt + fall_cnt.
-    -- Max = 64 + 64 = 128 (8 stops × 8 hits × 2 edges).
-    -- Used as count-based drain cap: when drain_cnt >= expected → done.
-    -- s_expected_drain_r=0: fall back to EF-based drain (no count info).
-    -- 9-bit: max = 64 rise + 64 fall = 128 (realistic), up to 256 (theoretical).
-    -- =========================================================================
-    signal s_expected_drain_r : unsigned(8 downto 0) := (others => '0');
+    signal s_expected_ififo1_r  : unsigned(7 downto 0) := (others => '0');
+    signal s_expected_ififo2_r  : unsigned(7 downto 0) := (others => '0');
+    signal s_drain_cnt_ififo1_r : unsigned(7 downto 0) := (others => '0');
+    signal s_drain_cnt_ififo2_r : unsigned(7 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Burst read counter (Fill-based: count reads within one burst session)
     -- Fill = cfg_image[6][7:0] = TDC-GPX Register 6 LF threshold.
     -- LF='1' guarantees >= Fill entries in FIFO.
     -- s_fill_r: latched at drain entry (FF boundary for 200MHz timing).
-    -- s_burst_limit_r: copied from s_fill_r at burst entry.
+    -- s_burst_limit_r: min(fill, remaining_ififo) at burst entry.  8-bit
+    --   sufficient: fill is 8-bit, remaining per-IFIFO is 8-bit.
     -- s_burst_cnt_r: counts responses within one burst session.
     -- =========================================================================
     signal s_fill_r         : unsigned(7 downto 0) := (others => '0');
-    signal s_burst_cnt_r    : unsigned(8 downto 0) := (others => '0');
-    signal s_burst_limit_r  : unsigned(8 downto 0) := (others => '0');
+    signal s_burst_cnt_r    : unsigned(7 downto 0) := (others => '0');
+    signal s_burst_limit_r  : unsigned(7 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Individual register access (read/write single TDC-GPX register)
@@ -431,8 +429,10 @@ begin
                 s_busy_r            <= '0';
                 s_init_mode_r       <= '1';
                 s_oen_permanent_r   <= '0';
-                s_drain_cnt_r       <= (others => '0');
-                s_expected_drain_r  <= (others => '0');
+                s_expected_ififo1_r  <= (others => '0');
+                s_expected_ififo2_r  <= (others => '0');
+                s_drain_cnt_ififo1_r <= (others => '0');
+                s_drain_cnt_ififo2_r <= (others => '0');
                 s_req_burst_r       <= '0';
                 s_fill_r            <= (others => '0');
                 s_burst_cnt_r       <= (others => '0');
@@ -457,12 +457,14 @@ begin
                     s_req_valid_r       <= '0';
                     s_busy_r            <= '0';
                     s_oen_permanent_r   <= '0';
-                    s_drain_cnt_r       <= (others => '0');
-                    s_expected_drain_r  <= (others => '0');
-                    s_req_burst_r       <= '0';
-                    s_fill_r            <= (others => '0');
-                    s_burst_cnt_r       <= (others => '0');
-                    s_burst_limit_r     <= (others => '0');
+                    s_expected_ififo1_r  <= (others => '0');
+                    s_expected_ififo2_r  <= (others => '0');
+                    s_drain_cnt_ififo1_r <= (others => '0');
+                    s_drain_cnt_ififo2_r <= (others => '0');
+                    s_req_burst_r        <= '0';
+                    s_fill_r             <= (others => '0');
+                    s_burst_cnt_r        <= (others => '0');
+                    s_burst_limit_r      <= (others => '0');
                     s_range_active_r    <= '0';
                     s_wait_cnt_r        <= (others => '0');
                     s_cfg_idx_r         <= (others => '0');
@@ -605,10 +607,13 @@ begin
                                 s_stopdis_r <= '1';
                                 s_state_r   <= ST_IDLE;
                             elsif i_shot_start = '1' then
-                                s_busy_r           <= '1';
-                                s_range_active_r   <= '1';
-                                s_expected_drain_r <= (others => '0');  -- reset until IrFlag capture
-                                s_state_r          <= ST_CAPTURE;
+                                s_busy_r             <= '1';
+                                s_range_active_r     <= '1';
+                                s_expected_ififo1_r  <= (others => '0');
+                                s_expected_ififo2_r  <= (others => '0');
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_state_r            <= ST_CAPTURE;
                             end if;
 
                         when ST_CAPTURE =>
@@ -665,14 +670,14 @@ begin
                                 if i_cfg.drain_mode = '1' then
                                     s_oen_permanent_r <= '1';   -- burst: OEN stays low
                                 end if;
-                                s_drain_cnt_r <= (others => '0');
-
-                                -- Capture expected drain count from echo_receiver.
-                                -- expected = rise_cnt + fall_cnt (8-bit each, max 128 total).
-                                -- If both are 0 (no stop pulses detected), fall back
-                                -- to EF-based drain (s_expected_drain_r stays 0).
-                                s_expected_drain_r <=
-                                    resize(i_stop_rise_cnt, 9) + resize(i_stop_fall_cnt, 9);
+                                -- Capture per-IFIFO expected drain counts.
+                                -- IFIFO1 = stops 0~3, IFIFO2 = stops 4~7.
+                                -- Each is rise+fall sum from echo_receiver.
+                                -- If both are 0 → EF-based drain fallback.
+                                s_expected_ififo1_r  <= i_expected_ififo1;
+                                s_expected_ififo2_r  <= i_expected_ififo2;
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
 
                                 s_state_r     <= ST_DRAIN_CHECK;
                             end if;
@@ -685,20 +690,15 @@ begin
 
                         when ST_DRAIN_CHECK =>
                             -- ==============================================
-                            -- Priority 1: Count-based drain cap
+                            -- Priority 1: Per-IFIFO safety cap (n_drain_cap × 4)
+                            -- Max = 15×4 = 60, covers 56 theoretical max.
                             -- ==============================================
-                            -- (a) Expected count reached (from echo_receiver stop counts).
-                            --     expected>0 means count info is valid.
-                            --     drain_cnt >= expected → all hits drained.
-                            -- (b) n_drain_cap hard safety limit (0 = disabled).
-                            --     Cap threshold = n_drain_cap × 8 reads.
-                            -- Either triggers immediate drain done.
-                            if (s_expected_drain_r /= 0
-                                and s_drain_cnt_r >= s_expected_drain_r)
-                               or (i_cfg.n_drain_cap /= "0000"
-                                   and s_drain_cnt_r >= shift_left(
-                                       resize(i_cfg.n_drain_cap, 9), 3)) then
-                                -- Count cap reached: force drain complete
+                            if i_cfg.n_drain_cap /= "0000"
+                               and s_drain_cnt_ififo1_r >= shift_left(
+                                   resize(i_cfg.n_drain_cap, 8), 2)
+                               and s_drain_cnt_ififo2_r >= shift_left(
+                                   resize(i_cfg.n_drain_cap, 8), 2) then
+                                -- Both IFIFOs hit safety cap: force drain complete
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
                                 s_range_active_r  <= '0';
@@ -706,16 +706,37 @@ begin
                                 s_state_r         <= ST_ALU_PULSE;
 
                             -- ==============================================
-                            -- Priority 2: LF burst (LF='1' → Fill entries guaranteed)
+                            -- Priority 2: Per-IFIFO count-based completion
+                            -- ==============================================
+                            -- Both IFIFOs have expected info AND both drained.
+                            elsif (s_expected_ififo1_r /= 0 or s_expected_ififo2_r /= 0)
+                                  and s_drain_cnt_ififo1_r >= s_expected_ififo1_r
+                                  and s_drain_cnt_ififo2_r >= s_expected_ififo2_r then
+                                -- Per-IFIFO expected counts reached: drain complete
+                                s_oen_permanent_r <= '0';
+                                s_drain_done_r    <= '1';
+                                s_range_active_r  <= '0';
+                                s_wait_cnt_r      <= (others => '0');
+                                s_state_r         <= ST_ALU_PULSE;
+
+                            -- ==============================================
+                            -- Priority 3: LF burst with per-IFIFO remaining
                             -- ==============================================
                             -- LF='1' guarantees >= Fill entries in FIFO.
-                            -- Burst exactly Fill times (count-based, no LF/EF check
-                            -- during burst). Fill < 2 → skip burst, use remaining path.
+                            -- Burst limit = min(Fill, remaining_ififo).
+                            -- remaining = 0 → skip that IFIFO.
+                            -- Fill < 2 → skip burst, use EF fallback.
                             elsif i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
-                                  and i_ef1_sync = '0' and i_lf1_sync = '1' then
-                                -- IFIFO1 loaded: burst read Reg8
-                                s_burst_limit_r <= resize(s_fill_r, 9);
+                                  and i_ef1_sync = '0' and i_lf1_sync = '1'
+                                  and s_drain_cnt_ififo1_r < s_expected_ififo1_r then
+                                -- IFIFO1 loaded + has remaining: burst read Reg8
+                                -- burst_limit = min(fill, remaining_ififo1)
+                                if s_fill_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r then
+                                    s_burst_limit_r <= s_fill_r;
+                                else
+                                    s_burst_limit_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r;
+                                end if;
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
                                 s_req_burst_r   <= '1';
@@ -723,11 +744,18 @@ begin
                                 s_req_addr_r    <= c_TDC_REG8_IFIFO1;
                                 s_ififo_id_r    <= '0';
                                 s_state_r       <= ST_DRAIN_BURST;
+
                             elsif i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
-                                  and i_ef2_sync = '0' and i_lf2_sync = '1' then
-                                -- IFIFO2 loaded: burst read Reg9
-                                s_burst_limit_r <= resize(s_fill_r, 9);
+                                  and i_ef2_sync = '0' and i_lf2_sync = '1'
+                                  and s_drain_cnt_ififo2_r < s_expected_ififo2_r then
+                                -- IFIFO2 loaded + has remaining: burst read Reg9
+                                -- burst_limit = min(fill, remaining_ififo2)
+                                if s_fill_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r then
+                                    s_burst_limit_r <= s_fill_r;
+                                else
+                                    s_burst_limit_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r;
+                                end if;
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
                                 s_req_burst_r   <= '1';
@@ -737,23 +765,30 @@ begin
                                 s_state_r       <= ST_DRAIN_BURST;
 
                             -- ==============================================
-                            -- Priority 3: Individual EF-based read (fallback)
+                            -- Priority 4: EF-based read (remaining or fallback)
                             -- ==============================================
-                            -- No count info (expected=0) or legacy drain_mode='0'.
-                            elsif i_ef1_sync = '0' then
+                            -- Per-IFIFO remaining but LF not set yet, or
+                            -- no expected info (both=0) → legacy EF drain.
+                            elsif i_ef1_sync = '0'
+                                  and (s_expected_ififo1_r = 0
+                                       or s_drain_cnt_ififo1_r < s_expected_ififo1_r) then
                                 -- IFIFO1 has data -> read Reg8
                                 s_req_valid_r <= '1';
                                 s_req_rw_r    <= '0';   -- READ
                                 s_req_addr_r  <= c_TDC_REG8_IFIFO1;
                                 s_ififo_id_r  <= '0';
                                 s_state_r     <= ST_DRAIN_EF1;
-                            elsif i_ef2_sync = '0' then
+
+                            elsif i_ef2_sync = '0'
+                                  and (s_expected_ififo2_r = 0
+                                       or s_drain_cnt_ififo2_r < s_expected_ififo2_r) then
                                 -- IFIFO2 has data -> read Reg9
                                 s_req_valid_r <= '1';
                                 s_req_rw_r    <= '0';   -- READ
                                 s_req_addr_r  <= c_TDC_REG9_IFIFO2;
                                 s_ififo_id_r  <= '1';
                                 s_state_r     <= ST_DRAIN_EF2;
+
                             else
                                 -- Both FIFOs empty -> drain complete
                                 s_oen_permanent_r <= '0';
@@ -765,10 +800,10 @@ begin
 
                         when ST_DRAIN_EF1 =>
                             if i_bus_rsp_valid = '1' then
-                                s_req_valid_r <= '0';
-                                s_raw_word_r  <= i_bus_rsp_rdata;
-                                s_raw_valid_r <= '1';
-                                s_drain_cnt_r <= s_drain_cnt_r + 1;
+                                s_req_valid_r        <= '0';
+                                s_raw_word_r         <= i_bus_rsp_rdata;
+                                s_raw_valid_r        <= '1';
+                                s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                                 -- Settle before re-checking EF/LF
                                 -- (tS-EF + 2-FF sync must complete)
                                 s_wait_cnt_r  <= (others => '0');
@@ -777,10 +812,10 @@ begin
 
                         when ST_DRAIN_EF2 =>
                             if i_bus_rsp_valid = '1' then
-                                s_req_valid_r <= '0';
-                                s_raw_word_r  <= i_bus_rsp_rdata;
-                                s_raw_valid_r <= '1';
-                                s_drain_cnt_r <= s_drain_cnt_r + 1;
+                                s_req_valid_r        <= '0';
+                                s_raw_word_r         <= i_bus_rsp_rdata;
+                                s_raw_valid_r        <= '1';
+                                s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                                 -- Settle before re-checking EF/LF
                                 s_wait_cnt_r  <= (others => '0');
                                 s_state_r     <= ST_DRAIN_SETTLE;
@@ -806,24 +841,21 @@ begin
                                 -- Capture read data
                                 s_raw_word_r  <= i_bus_rsp_rdata;
                                 s_raw_valid_r <= '1';
-                                s_drain_cnt_r <= s_drain_cnt_r + 1;
                                 s_burst_cnt_r <= s_burst_cnt_r + 1;
 
+                                -- Per-IFIFO drain counter
+                                if s_ififo_id_r = '0' then
+                                    s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
+                                else
+                                    s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
+                                end if;
+
                                 -- Count-based burst stop (deterministic):
-                                -- LF='1' at entry guaranteed >= Fill entries.
-                                -- Read exactly Fill times, then re-evaluate via
-                                -- ST_DRAIN_FLUSH -> ST_DRAIN_CHECK (EF stable).
+                                -- burst_limit = min(Fill, remaining_ififo).
+                                -- Read exactly burst_limit times, then re-evaluate
+                                -- via ST_DRAIN_FLUSH -> ST_DRAIN_CHECK.
                                 if (s_burst_cnt_r + 1) >= s_burst_limit_r then
-                                    -- Fill/remaining count reached: stop burst
-                                    s_req_burst_r <= '0';
-                                    s_req_valid_r <= '0';
-                                    s_state_r     <= ST_DRAIN_FLUSH;
-                                elsif (s_expected_drain_r /= 0
-                                       and (s_drain_cnt_r + 1) >= s_expected_drain_r)
-                                      or (i_cfg.n_drain_cap /= "0000"
-                                          and (s_drain_cnt_r + 1) >= shift_left(
-                                              resize(i_cfg.n_drain_cap, 9), 3)) then
-                                    -- Expected count or safety cap reached: stop burst
+                                    -- Burst limit reached: stop burst
                                     s_req_burst_r <= '0';
                                     s_req_valid_r <= '0';
                                     s_state_r     <= ST_DRAIN_FLUSH;
@@ -838,11 +870,15 @@ begin
                         -- =================================================
 
                         when ST_DRAIN_FLUSH =>
-                            -- Capture any remaining response
+                            -- Capture any remaining in-flight response
                             if i_bus_rsp_valid = '1' then
                                 s_raw_word_r  <= i_bus_rsp_rdata;
                                 s_raw_valid_r <= '1';
-                                s_drain_cnt_r <= s_drain_cnt_r + 1;
+                                if s_ififo_id_r = '0' then
+                                    s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
+                                else
+                                    s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
+                                end if;
                             end if;
                             -- When bus_phy returns to IDLE: enter settling wait
                             -- (EF/LF need time to stabilize after last read)
