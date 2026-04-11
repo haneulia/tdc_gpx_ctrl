@@ -222,6 +222,13 @@ architecture rtl of tdc_gpx_top is
     signal s_frame_done      : std_logic;
 
     -- =========================================================================
+    -- Gated shot_start: only active when face sequencer is in run state.
+    -- Prevents downstream FSMs from reacting to stray shot pulses before
+    -- cmd_start or after cmd_stop.
+    -- =========================================================================
+    signal s_shot_start_gated : std_logic;
+
+    -- =========================================================================
     -- Timestamp (free-running cycle counter, i_axis_aclk domain)
     -- =========================================================================
     signal s_timestamp_r     : unsigned(63 downto 0) := (others => '0');
@@ -232,6 +239,13 @@ architecture rtl of tdc_gpx_top is
     signal s_error_count_r   : unsigned(31 downto 0) := (others => '0');
 
 begin
+
+    -- =========================================================================
+    -- [0] Gated shot_start: suppress when face sequencer is not in run state
+    -- =========================================================================
+    s_shot_start_gated <= i_shot_start
+                          when s_face_state_r /= ST_IDLE
+                          else '0';
 
     -- =========================================================================
     -- [1] CSR instance (AXI-Lite + CDC)
@@ -337,7 +351,7 @@ begin
                 i_cmd_stop          => s_cmd_stop,
                 i_cmd_soft_reset    => s_cmd_soft_reset,
                 i_cmd_cfg_write     => s_cmd_cfg_write,
-                i_shot_start        => i_shot_start,
+                i_shot_start        => s_shot_start_gated,
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),
@@ -407,7 +421,7 @@ begin
                 i_rst_n           => i_axis_aresetn,
                 i_raw_event       => s_raw_event(i),
                 i_raw_event_valid => s_raw_event_valid(i),
-                i_shot_start      => i_shot_start,
+                i_shot_start      => s_shot_start_gated,
                 i_drain_done      => s_drain_done(i),
                 i_stops_per_chip  => s_cfg.stops_per_chip,
                 o_m_axis_tdata    => s_cell_tdata(i),
@@ -434,7 +448,7 @@ begin
             i_s_axis_tvalid    => s_cell_tvalid,
             i_s_axis_tlast     => s_cell_tlast,
             o_s_axis_tready    => s_cell_tready,
-            i_shot_start       => i_shot_start,
+            i_shot_start       => s_shot_start_gated,
             i_active_chip_mask => s_cfg.active_chip_mask,
             i_stops_per_chip   => s_cfg.stops_per_chip,
             i_max_range_clks   => s_cfg.max_range_clks,
