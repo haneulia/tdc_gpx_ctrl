@@ -334,11 +334,19 @@ architecture rtl of tdc_gpx_top is
     signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
 
     -- =========================================================================
-    -- Combinational packet_start: same-cycle face boundary signal.
-    -- Visible to all processes at the same clock edge as the first shot,
-    -- so geometry/config/header all latch simultaneously with data-path.
+    -- Face boundary signals:
+    --   s_packet_start    : combinational, fires at ST_WAIT_SHOT + shot_start.
+    --                       Used by p_geometry and p_face_cfg_latch to latch
+    --                       config into registers at this edge.
+    --   s_face_start_r    : 1-cycle delayed registered version of packet_start.
+    --                       Used by header_inserter and face_assembler so they
+    --                       see the STABLE latched values (VHDL signal semantics:
+    --                       registers updated at edge N are visible at edge N+1).
+    --   s_shot_start_gated: first shot delayed by 1 cycle (via s_face_start_r),
+    --                       mid-face shots pass through immediately.
     -- =========================================================================
-    signal s_packet_start : std_logic;
+    signal s_packet_start  : std_logic;
+    signal s_face_start_r  : std_logic := '0';
 
     -- =========================================================================
     -- Shot overrun: from face_assembler (real truncation), not face_seq
@@ -475,20 +483,40 @@ begin
     end process p_stop_decode;
 
     -- =========================================================================
-    -- [0] Gated shot_start: suppress when face sequencer is not in run state
-    -- =========================================================================
-    s_shot_start_gated <= i_shot_start
-                          when s_face_state_r /= ST_IDLE
-                          else '0';
-
-    -- =========================================================================
     -- [0a] Combinational packet_start: first shot of a new face.
-    --   Arrives on the SAME clock edge as shot_start, so geometry/config/header
-    --   latch at the same time as cell_builder/face_assembler react to the shot.
+    --   Triggers p_geometry and p_face_cfg_latch to latch config registers.
     -- =========================================================================
     s_packet_start  <= '1'  when s_face_state_r = ST_WAIT_SHOT
                                 and i_shot_start = '1'
                             else '0';
+
+    -- =========================================================================
+    -- [0b] 1-cycle delayed face_start: downstream data-path trigger.
+    --   VHDL signal semantics: registers updated at edge N by p_geometry /
+    --   p_face_cfg_latch are visible at edge N+1. s_face_start_r fires at
+    --   N+1 so that header_inserter and face_assembler see stable values.
+    -- =========================================================================
+    p_face_start_delay : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_face_start_r <= '0';
+            else
+                s_face_start_r <= s_packet_start;
+            end if;
+        end if;
+    end process p_face_start_delay;
+
+    -- =========================================================================
+    -- [0c] Gated shot_start: first shot delayed 1 cycle (via s_face_start_r)
+    --   so downstream modules latch stable face config; mid-face shots
+    --   (overrun) pass through immediately.
+    -- =========================================================================
+    s_shot_start_gated <= s_face_start_r
+                          when s_face_start_r = '1'
+                          else i_shot_start
+                               when s_face_state_r = ST_IN_FACE
+                          else '0';
 
     -- =========================================================================
     -- [0b] Unified chip error mask: ErrFlag (physical) OR timeout (assembler)
@@ -801,7 +829,7 @@ begin
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
-            i_face_start        => s_packet_start,
+            i_face_start        => s_face_start_r,
             i_cfg               => s_cfg,
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
@@ -831,7 +859,7 @@ begin
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
-            i_face_start        => s_packet_start,
+            i_face_start        => s_face_start_r,
             i_cfg               => s_cfg,
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
@@ -859,7 +887,8 @@ begin
     --   Computed from CSR config, shared with header_inserter and VDMA.
     --   rows_per_face = active_chips × stops_per_chip (clamp >= 2)
     --   hsize_bytes   = (data_beats + c_HDR_PREFIX_BEATS) × TDATA_BYTES
-    --   Latched at face_start to prevent mid-frame geometry changes.
+    --   Latched at s_packet_start (combinational) so that the registered
+    --   values are stable by the time s_face_start_r fires (+1 cycle).
     -- =========================================================================
     p_geometry : process(i_axis_aclk)
         variable v_active_cnt  : natural range 0 to c_N_CHIPS;
@@ -885,9 +914,9 @@ begin
 
     -- =========================================================================
     -- [5b] Face-start config latch: snapshot for downstream data-path modules
-    --   These feed raw_event_builder, cell_builder, face_assembler so they
-    --   all see the same config throughout the face — consistent with header
-    --   and geometry which also latch at face_start.
+    --   Latched at s_packet_start (combinational, edge N) so values are
+    --   stable by s_face_start_r (edge N+1). face_assembler reads these
+    --   at shot_start = s_face_start_r, seeing the correctly latched values.
     -- =========================================================================
     p_face_cfg_latch : process(i_axis_aclk)
     begin

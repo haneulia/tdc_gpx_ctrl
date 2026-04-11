@@ -739,13 +739,22 @@ begin
                             elsif i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
                                   and i_ef1_sync = '0' and i_lf1_sync = '1'
-                                  and s_drain_cnt_ififo1_r < s_expected_ififo1_r then
-                                -- IFIFO1 loaded + has remaining: burst read Reg8
-                                -- burst_limit = min(fill, remaining_ififo1)
+                                  and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2 then
+                                -- IFIFO1 loaded + remaining >= 2: burst read Reg8
+                                --
+                                -- burst_limit = min(fill, remaining) - 1
+                                -- The -1 accounts for the bus_phy pipeline overlap:
+                                -- at Phase H, bus_phy restarts the next read before
+                                -- chip_ctrl can deassert req_burst. ST_DRAIN_FLUSH
+                                -- captures this in-flight extra read.
+                                -- Total actual reads = burst_limit + 1 = min(fill, remaining).
+                                --
+                                -- remaining >= 2 guard ensures burst_limit >= 1.
+                                -- remaining = 1 falls through to Priority 4 (EF single read).
                                 if s_fill_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r then
-                                    s_burst_limit_r <= s_fill_r;
+                                    s_burst_limit_r <= s_fill_r - 1;
                                 else
-                                    s_burst_limit_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r;
+                                    s_burst_limit_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r - 1;
                                 end if;
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
@@ -758,13 +767,13 @@ begin
                             elsif i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
                                   and i_ef2_sync = '0' and i_lf2_sync = '1'
-                                  and s_drain_cnt_ififo2_r < s_expected_ififo2_r then
-                                -- IFIFO2 loaded + has remaining: burst read Reg9
-                                -- burst_limit = min(fill, remaining_ififo2)
+                                  and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2 then
+                                -- IFIFO2 loaded + remaining >= 2: burst read Reg9
+                                -- (see IFIFO1 comment above for -1 rationale)
                                 if s_fill_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r then
-                                    s_burst_limit_r <= s_fill_r;
+                                    s_burst_limit_r <= s_fill_r - 1;
                                 else
-                                    s_burst_limit_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r;
+                                    s_burst_limit_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r - 1;
                                 end if;
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
@@ -837,13 +846,14 @@ begin
                         -- bus_phy stays in ST_READ as long as req_burst='1'.
                         -- Each rsp_valid delivers one word.
                         --
-                        -- Stop burst when:
-                        --   (a) LF drops (FIFO near-empty, 2-FF sync safety)
-                        --   (b) n_drain_cap reached
+                        -- Pipeline overlap: when chip_ctrl deasserts req_burst
+                        -- at the burst_limit-th response, bus_phy has already
+                        -- started the next read (tick reset at Phase H).
+                        -- ST_DRAIN_FLUSH captures this 1 extra response.
+                        -- Total actual reads = burst_limit + 1 = min(fill, remaining).
                         --
-                        -- On burst stop: deassert req_burst → bus_phy will
-                        -- complete the in-flight read (1 extra response) and
-                        -- return to IDLE. ST_DRAIN_FLUSH captures this.
+                        -- burst_limit was set to min(fill, remaining) - 1
+                        -- at ST_DRAIN_CHECK entry to compensate.
                         -- =================================================
 
                         when ST_DRAIN_BURST =>

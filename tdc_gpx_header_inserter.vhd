@@ -396,6 +396,12 @@ begin
                 -- Post-case override: last assignment wins.
                 -- =============================================================
                 if i_face_start = '1' then
+                    -- All fields latched at face_start (= s_face_start_r in top).
+                    -- Error fields (chip_error_mask, chip_error_cnt) are a
+                    -- SNAPSHOT at face-start time, NOT the post-drain result.
+                    -- This is intentional: the header records the pre-face
+                    -- error state. Post-drain errors appear in the NEXT header.
+
                     -- Identity
                     s_vdma_frame_id_r     <= i_vdma_frame_id;
                     s_face_id_r           <= i_face_id;
