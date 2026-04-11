@@ -656,10 +656,10 @@ begin
     -- receive valid values.  Minimum constraints:
     --   active_chip_mask != 0  (face_assembler deadlocks on zero mask)
     --   stops_per_chip  [2..8] (cell_builder/assembler use low 3 bits)
-    --   n_faces         >= 1  (face_seq does n_faces-1)
-    --   bus_ticks       >= 3  (bus_phy does ticks-2)
-    --   bus_clk_div     >= 2  (200 MHz: div=1 → 5 ns < 6 ns datasheet min)
-    --   cols_per_face   >= 1  (header_inserter does cols-1)
+    --   n_faces         >= 1   (face_seq does n_faces-1)
+    --   bus_ticks       >= 4   (ticks=3 violates tV-DR; see timing analysis)
+    --   bus_clk_div     >= 2   (div=1: 5ns < tPW-RL 6ns datasheet min)
+    --   cols_per_face   >= 1   (header_inserter does cols-1)
     -- =========================================================================
     -- CTL0: MAIN_CTRL packed fields
     -- active_chip_mask: clamp >= "0001" (at least 1 chip must be active,
@@ -691,16 +691,39 @@ begin
     o_cfg.stopdis_override <= s_ctl_out(0)(c_MC_STOPDIS_HI downto c_MC_STOPDIS_LO);
 
     -- CTL1: BUS_TIMING
-    -- bus_clk_div: clamp >= 2 (at 200 MHz, div=1 → 5 ns period < 6 ns minimum
-    --   strobe width per TDC-GPX datasheet; div=2 → 10 ns is safe)
+    --
+    -- Safety clamping rationale (200 MHz, T_clk = 5 ns):
+    --
+    --   bus_clk_div (tick divider):
+    --     div=1 → tick=5ns < tPW-RL(6ns), tPW-RH(6ns)   => ILLEGAL
+    --     div=2 → tick=10ns: all pulse-width constraints met
+    --     Clamp: div >= c_BUS_CLK_DIV_MIN (2)
+    --
+    --   bus_ticks (ticks per transaction):
+    --     Constraint from tV-DR (data valid delay ≤ 11.8 ns):
+    --       bus_phy samples IOB FF at ((ticks-3)*div + 1) * T_clk after RDN low
+    --       ticks=3: capture = 5 ns < 11.8 ns => ALWAYS VIOLATES tV-DR
+    --       ticks=4, div=2: capture = 15 ns > 11.8 ns => OK (3.2 ns margin)
+    --     Combined: (ticks-3) * div >= 2; given div>=2, ticks>=4 suffices
+    --     Clamp: ticks >= c_BUS_TICKS_MIN (4)
+    --
+    --   Legal combinations (div, ticks) → effective bus rate:
+    --     (2, 4) → 25 MHz    fastest safe
+    --     (2, 5) → 20 MHz    default, conservative
+    --     (3, 4) → 16.7 MHz
+    --     (2, 7) → 14.3 MHz  slowest with 3-bit ticks
+    --
+    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN
     o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
-                              when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO)) >= 2
-                              else to_unsigned(2, 6);
+                              when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
+                                   >= c_BUS_CLK_DIV_MIN
+                              else to_unsigned(c_BUS_CLK_DIV_MIN, 6);
 
-    -- bus_ticks: clamp >= 3 (bus_phy does ticks-2, needs Phase A+L+H minimum)
+    -- bus_ticks: clamp >= c_BUS_TICKS_MIN (ticks=3 violates tV-DR at any div)
     o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))
-                              when unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO)) >= 3
-                              else to_unsigned(3, 3);
+                              when unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))
+                                   >= c_BUS_TICKS_MIN
+                              else to_unsigned(c_BUS_TICKS_MIN, 3);
 
     -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when valid)
     o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));

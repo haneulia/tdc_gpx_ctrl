@@ -202,6 +202,35 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT_SEQ_ERR_LO       : natural := 12;
 
     -- =========================================================================
+    -- Bus timing constraints (TDC-GPX datasheet @ 200 MHz, T_clk = 5 ns)
+    --
+    -- Datasheet parameters:
+    --   tS-AD  >= 2 ns    address setup before strobe low
+    --   tPW-RL >= 6 ns    RDN/WRN low pulse width
+    --   tV-DR  <= 11.8 ns data valid delay after RDN low (worst case 40pF)
+    --   tPW-RH >= 6 ns    RDN high pulse width (burst inter-read gap)
+    --
+    -- bus_phy read sample path:
+    --   RDN low at tick 1, sample_en at tick (ticks-2), IOB FF at +1 clk
+    --   => capture delay = ((ticks-3) * div + 1) * T_clk from RDN low
+    --
+    -- Legal combination table (T_clk = 5 ns):
+    --   ticks=3, any div : capture=5ns  < 11.8ns  => ILLEGAL (tV-DR)
+    --   ticks=4, div=2   : capture=15ns > 11.8ns  => OK (3.2ns margin)
+    --   ticks=4, div=3   : capture=20ns            => OK
+    --   ticks=5, div=2   : capture=25ns            => OK (default)
+    --   ticks=6, div=2   : capture=35ns            => OK
+    --   ticks=7, div=2   : capture=45ns            => OK
+    --
+    -- Combined constraint: (ticks - 3) * div >= 2
+    --   With div >= 2 (already clamped), ticks >= 4 satisfies this.
+    --
+    -- Burst tPW-RH: high = div * T_clk; div >= 2 => 10ns >= 6ns OK.
+    -- =========================================================================
+    constant c_BUS_TICKS_MIN        : natural := 4;     -- ticks=3 violates tV-DR
+    constant c_BUS_CLK_DIV_MIN      : natural := 2;     -- div=1 violates tPW-RL
+
+    -- =========================================================================
     -- Init values
     -- =========================================================================
     -- CTL0: MAIN_CTRL init (packed)

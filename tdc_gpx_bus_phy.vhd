@@ -8,7 +8,7 @@
 --   Manages bus timing (Tick-Phase), IOBUF, 2-FF synchronizers, turnaround gaps.
 --
 -- Bus Timing (per deep_analysis section 12.3):
---   1 transaction = i_bus_ticks ticks (min 3, default 5)
+--   1 transaction = i_bus_ticks ticks (min 4, default 5)
 --   Phase A (1 tick):                address setup, strobe high
 --   Phase L (i_bus_ticks - 2 ticks): strobe low (RDN or WRN)
 --   Phase H (1 tick):                strobe high, transaction complete
@@ -20,6 +20,18 @@
 --
 --   The IDLE->ST_READ/ST_WRITE transition on tick_en IS tick 0 (Phase A).
 --   The first tick_en inside ST_READ/ST_WRITE is tick 1.
+--
+-- Read sample timing analysis (200 MHz, T_clk = 5 ns):
+--   RDN low at tick 1 (clock C_k).
+--   sample_en at tick N-2 (clock C_k + (N-3)*div clocks).
+--   IOB FF capture at clock C_k + (N-3)*div + 1.
+--   => Delay from RDN low to capture = ((ticks-3)*div + 1) * T_clk
+--
+--   tV-DR constraint (data valid <= 11.8 ns after RDN low):
+--     ticks=3: 5 ns  => VIOLATION (sample_en coincides with RDN low)
+--     ticks=4, div=2: 15 ns => OK (3.2 ns margin)
+--     ticks=5, div=2: 25 ns => OK (default)
+--   CSR clamps: ticks >= 4, div >= 2 (see tdc_gpx_cfg_pkg).
 --
 -- Invariants (bus safety, see 01_chip_acquisition §6):
 --   INV-1: WRITE => OEN = '1' (prevent bus contention)
