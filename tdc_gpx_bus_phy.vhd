@@ -141,6 +141,7 @@ architecture rtl of tdc_gpx_bus_phy is
     -- =========================================================================
     signal s_rsp_valid_r     : std_logic := '0';
     signal s_rsp_rdata_r     : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_rsp_pending_r   : std_logic := '0';    -- read response deferred by 1 tick
     signal s_busy_r          : std_logic := '0';
 
     -- Direction tracking for turnaround
@@ -244,8 +245,9 @@ begin
     --   ST_READ/ST_WRITE ticks = 1 .. i_bus_ticks-1
     --
     -- Phase A (tick 0):   ADR valid, strobe high, CSN low
-    -- Phase L (tick 1..N-2): strobe low
-    -- Phase H (tick N-1): strobe high, rsp_valid
+    -- Phase L (tick 1..N-2): strobe low, sample_en at tick N-2
+    -- Phase H (tick N-1): strobe high, IOB FF captures, rsp_pending
+    -- Phase H+1 (tick N): rsp_valid + rsp_rdata (READ only)
     --
     -- Pin control within ST_READ/ST_WRITE uses independent if-statements
     -- (not elsif) so conditions can overlap for small BUS_TICKS values.
@@ -266,6 +268,7 @@ begin
                 s_sample_en         <= '0';
                 s_rsp_valid_r       <= '0';
                 s_rsp_rdata_r       <= (others => '0');
+                s_rsp_pending_r     <= '0';
                 s_busy_r            <= '0';
                 s_last_was_write_r  <= '0';
                 s_last_was_read_r   <= '0';
@@ -276,6 +279,22 @@ begin
                 -- Default: clear single-cycle pulses
                 s_rsp_valid_r <= '0';
                 s_sample_en   <= '0';
+
+                -- ==========================================================
+                -- Deferred read response: emit rsp_valid one tick after
+                -- Phase H, so that s_d_in_ff_r (IOB FF) has settled.
+                --
+                -- Timeline:
+                --   tick N-2: s_sample_en = '1'
+                --   tick N-1: IOB FF captures s_d_in -> s_d_in_ff_r
+                --             FSM sets s_rsp_pending_r = '1'
+                --   tick N  : s_d_in_ff_r is valid; emit rsp_valid + rdata
+                -- ==========================================================
+                if s_rsp_pending_r = '1' then
+                    s_rsp_valid_r   <= '1';
+                    s_rsp_rdata_r   <= s_d_in_ff_r;
+                    s_rsp_pending_r <= '0';
+                end if;
 
                 case s_state_r is
 
@@ -416,10 +435,12 @@ begin
                             -- Phase H: transaction complete (tick N-1)
                             -- RDN='1' assignment here overrides the range check
                             -- above (last sequential assignment wins in VHDL).
+                            -- rsp_valid is deferred by 1 tick (s_rsp_pending_r)
+                            -- so that s_d_in_ff_r has settled from the IOB FF
+                            -- capture that happens at this same clock edge.
                             if s_tick_r = i_bus_ticks - 1 then
                                 s_rdn_r            <= '1';
-                                s_rsp_valid_r      <= '1';
-                                s_rsp_rdata_r      <= s_d_in_ff_r;
+                                s_rsp_pending_r    <= '1';
                                 s_last_was_write_r <= '0';
                                 s_last_was_read_r  <= '1';
 
