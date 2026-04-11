@@ -187,30 +187,6 @@ architecture rtl of tdc_gpx_bus_phy is
     attribute ASYNC_REG of s_errflag_meta_r : signal is "TRUE";
     attribute ASYNC_REG of s_errflag_sync_r : signal is "TRUE";
 
-    -- =========================================================================
-    -- Helper: enter READ Phase A (used from IDLE and TURNAROUND)
-    -- Sets bus pins for Phase A and starts tick counter at 1.
-    -- =========================================================================
-    procedure prc_enter_read(
-        signal addr   : in  std_logic_vector(3 downto 0);
-        signal adr_r  : out std_logic_vector(3 downto 0);
-        signal csn_r  : out std_logic;
-        signal oen_r  : out std_logic;
-        signal rdn_r  : out std_logic;
-        signal tri_r  : out std_logic;
-        signal tick_r : out unsigned(2 downto 0);
-        signal state  : out t_bus_state
-    ) is
-    begin
-        adr_r  <= addr;
-        csn_r  <= '0';
-        oen_r  <= '0';                      -- chip drives D-bus
-        rdn_r  <= '1';                      -- high during Phase A
-        tri_r  <= '1';                      -- FPGA Hi-Z [INV-2]
-        tick_r <= to_unsigned(1, 3);        -- next tick is 1
-        state  <= ST_READ;
-    end procedure;
-
 begin
 
     -- =========================================================================
@@ -279,6 +255,7 @@ begin
                 s_req_addr_r        <= (others => '0');
                 s_req_wdata_r       <= (others => '0');
                 s_turn_to_write_r   <= '0';
+                s_bus_ticks_r       <= "101";            -- default 5
             else
                 -- Default: clear single-cycle pulses
                 s_rsp_valid_r <= '0';
