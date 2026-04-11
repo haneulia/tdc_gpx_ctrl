@@ -75,12 +75,16 @@ entity tdc_gpx_top is
         -- Shot trigger (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         i_shot_start     : in  std_logic;
 
-        -- Stop event AXI Stream slave (from echo_receiver, i_axis_aclk domain)
-        -- window close (한계도달거리) 시 echo_receiver가 전송.
-        -- Error detection ONLY: tvalid↑ before IrFlag↑ → err_sequence.
+        -- Stop TDC pulse (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
+        -- 한계도달거리 deadline. Error detection ONLY: stop_tdc↑ before
+        -- IrFlag↑ in ST_CAPTURE → err_sequence.
         -- NOT used as a drain trigger (IrFlag is the sole drain trigger).
-        -- tdata: per-chip rising edge stop count (8bit × 4chips)
-        -- tuser: per-chip falling edge stop count (8bit × 4chips)
+        i_stop_tdc        : in  std_logic;
+
+        -- Stop event AXI Stream slave (from echo_receiver, i_axis_aclk domain)
+        -- 매 사이클 stop pulse 발생 시 즉시 전송 (실시간 이벤트).
+        -- tdata: 해당 사이클 per-chip rising stop count (8bit × 4chips)
+        -- tuser: 해당 사이클 per-chip falling stop count (8bit × 4chips)
         i_stop_evt_tvalid : in  std_logic;
         i_stop_evt_tdata  : in  std_logic_vector(31 downto 0);
         i_stop_evt_tuser  : in  std_logic_vector(31 downto 0);
@@ -288,16 +292,11 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_overrun_r  : std_logic := '0';
 
     -- =========================================================================
-    -- Stop event stream → stop_tdc pulse + per-chip hit count decode
-    -- AXI Stream slave: always ready (tready='1'), tvalid = stop_tdc event.
-    -- tdata packing (from echo_receiver):
-    --   [7:0]   = chip 0 hit count (popcount)
-    --   [15:8]  = chip 1 hit count
-    --   [23:16] = chip 2 hit count
-    --   [31:24] = chip 3 hit count
+    -- Stop event stream: per-chip hit count latch
+    -- AXI Stream slave: always ready (tready='1').
+    -- echo_receiver가 누적 카운터를 관리하므로, 여기서는 tvalid 시 overwrite.
+    -- tdata/tuser = window 시작 이후 누적된 총 count (echo_receiver 측 누적).
     -- =========================================================================
-    signal s_stop_tdc        : std_logic;
-
     type t_stop_hit_cnt_array is array(0 to c_N_CHIPS - 1)
         of unsigned(7 downto 0);
     signal s_stop_rise_cnt_r : t_stop_hit_cnt_array := (others => (others => '0'));
@@ -306,13 +305,13 @@ architecture rtl of tdc_gpx_top is
 begin
 
     -- =========================================================================
-    -- Stop event AXI Stream slave: always accept, decode per-chip hit counts
+    -- Stop event AXI Stream slave: always accept, latch per-chip counts
     -- =========================================================================
     o_stop_evt_tready <= '1';
-    s_stop_tdc        <= i_stop_evt_tvalid;
 
-    -- Latch per-chip hit counts on tvalid (registered for downstream use)
-    -- tdata → rising edge counts, tuser → falling edge counts
+    -- Latch per-chip hit counts on tvalid (overwrite, not accumulate).
+    -- echo_receiver가 내부에서 누적하므로 tdata/tuser가 이미 총 누적값.
+    -- start_rising(새 window)에서 echo_receiver가 0 리셋 → 여기도 자동 반영.
     p_stop_decode : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
@@ -480,7 +479,7 @@ begin
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
                 i_shot_start        => s_shot_start_gated,
                 i_max_range_clks    => s_cfg.max_range_clks,
-                i_stop_tdc          => s_stop_tdc,
+                i_stop_tdc          => i_stop_tdc,
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),
