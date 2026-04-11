@@ -589,13 +589,19 @@ begin
     --
     -- Safety clamping applied at CSR boundary so all downstream modules
     -- receive valid values.  Minimum constraints:
-    --   stops_per_chip >= 2  (cell_builder/assembler do stops-1)
-    --   n_faces        >= 1  (face_seq does n_faces-1)
-    --   bus_ticks      >= 3  (bus_phy does ticks-2)
-    --   bus_clk_div    >= 1  (tick divider modulo)
+    --   active_chip_mask != 0  (face_assembler deadlocks on zero mask)
+    --   stops_per_chip  >= 2  (cell_builder/assembler do stops-1)
+    --   n_faces         >= 1  (face_seq does n_faces-1)
+    --   bus_ticks       >= 3  (bus_phy does ticks-2)
+    --   bus_clk_div     >= 1  (tick divider modulo)
+    --   cols_per_face   >= 1  (header_inserter does cols-1)
     -- =========================================================================
     -- CTL0: MAIN_CTRL packed fields
-    o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO);
+    -- active_chip_mask: clamp >= "0001" (at least 1 chip must be active,
+    -- otherwise face_assembler deadlocks in ST_SCAN)
+    o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO)
+                              when s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO) /= "0000"
+                              else "0001";
     o_cfg.packet_scope     <= s_ctl_out(0)(c_MC_PACKET_SCOPE);
     o_cfg.hit_store_mode   <= unsigned(s_ctl_out(0)(c_MC_HIT_STORE_HI downto c_MC_HIT_STORE_LO));
     o_cfg.dist_scale       <= unsigned(s_ctl_out(0)(c_MC_DIST_SCALE_HI downto c_MC_DIST_SCALE_LO));
@@ -628,9 +634,13 @@ begin
 
     -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when valid)
     o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));
+
+    -- cols_per_face: clamp >= 1 (header_inserter does cols-1, underflows to 65535)
     o_cfg.cols_per_face    <= s_lsr_cols_r
-                              when s_lsr_valid_r = '1'
-                              else unsigned(s_ctl_out(2)(c_RC_COLS_HI downto c_RC_COLS_LO));
+                              when s_lsr_valid_r = '1' and s_lsr_cols_r >= 1
+                              else unsigned(s_ctl_out(2)(c_RC_COLS_HI downto c_RC_COLS_LO))
+                              when unsigned(s_ctl_out(2)(c_RC_COLS_HI downto c_RC_COLS_LO)) >= 1
+                              else to_unsigned(1, 16);
 
     -- CTL3: START_OFF1
     o_cfg.start_off1       <= unsigned(s_ctl_out(3)(17 downto 0));

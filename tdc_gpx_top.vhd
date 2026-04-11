@@ -240,9 +240,22 @@ architecture rtl of tdc_gpx_top is
     signal s_chip_error_merged : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
-    -- Error counter
+    -- Error counter (edge-detected: counts error events, not level duration)
     -- =========================================================================
-    signal s_error_count_r   : unsigned(31 downto 0) := (others => '0');
+    signal s_error_count_r       : unsigned(31 downto 0) := (others => '0');
+    signal s_chip_error_prev_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+
+    -- =========================================================================
+    -- Face-start latched config: snapshot at face_start for downstream modules
+    -- that must see a stable config throughout the face.
+    -- =========================================================================
+    signal s_face_stops_per_chip_r : unsigned(3 downto 0) := to_unsigned(8, 4);
+    signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
+
+    -- =========================================================================
+    -- Shot overrun detection
+    -- =========================================================================
+    signal s_shot_overrun_r : std_logic := '0';
 
 begin
 
@@ -416,7 +429,7 @@ begin
                 i_chip_id         => to_unsigned(i, 2),
                 i_shot_seq        => s_chip_shot_seq(i),
                 i_drain_done      => s_drain_done(i),
-                i_stops_per_chip  => s_cfg.stops_per_chip,
+                i_stops_per_chip  => s_face_stops_per_chip_r,
                 o_raw_event       => s_raw_event(i),
                 o_raw_event_valid => s_raw_event_valid(i),
                 o_stop_id_error   => s_stop_id_error(i)
@@ -434,7 +447,7 @@ begin
                 i_raw_event_valid => s_raw_event_valid(i),
                 i_shot_start      => s_shot_start_gated,
                 i_drain_done      => s_drain_done(i),
-                i_stops_per_chip  => s_cfg.stops_per_chip,
+                i_stops_per_chip  => s_face_stops_per_chip_r,
                 o_m_axis_tdata    => s_cell_tdata(i),
                 o_m_axis_tvalid   => s_cell_tvalid(i),
                 o_m_axis_tlast    => s_cell_tlast(i),
@@ -460,8 +473,8 @@ begin
             i_s_axis_tlast     => s_cell_tlast,
             o_s_axis_tready    => s_cell_tready,
             i_shot_start       => s_shot_start_gated,
-            i_active_chip_mask => s_cfg.active_chip_mask,
-            i_stops_per_chip   => s_cfg.stops_per_chip,
+            i_active_chip_mask => s_face_active_mask_r,
+            i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
             i_bus_ticks        => s_cfg.bus_ticks,
             i_bus_clk_div      => resize(s_cfg.bus_clk_div, 8),
@@ -534,6 +547,25 @@ begin
     end process p_geometry;
 
     -- =========================================================================
+    -- [5b] Face-start config latch: snapshot for downstream data-path modules
+    --   These feed raw_event_builder, cell_builder, face_assembler so they
+    --   all see the same config throughout the face — consistent with header
+    --   and geometry which also latch at face_start.
+    -- =========================================================================
+    p_face_cfg_latch : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_face_stops_per_chip_r <= to_unsigned(8, 4);
+                s_face_active_mask_r    <= (others => '1');
+            elsif s_face_start_r = '1' then
+                s_face_stops_per_chip_r <= s_cfg.stops_per_chip;
+                s_face_active_mask_r    <= s_cfg.active_chip_mask;
+            end if;
+        end if;
+    end process p_face_cfg_latch;
+
+    -- =========================================================================
     -- [6] Face sequencer
     --   ST_IDLE → cmd_start → ST_WAIT_SHOT
     --   ST_WAIT_SHOT → shot_start → face_start pulse → ST_IN_FACE
@@ -543,10 +575,11 @@ begin
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_face_state_r <= ST_IDLE;
-                s_face_start_r <= '0';
-                s_face_id_r    <= (others => '0');
-                s_frame_id_r   <= (others => '0');
+                s_face_state_r  <= ST_IDLE;
+                s_face_start_r  <= '0';
+                s_face_id_r     <= (others => '0');
+                s_frame_id_r    <= (others => '0');
+                s_shot_overrun_r <= '0';
             else
                 -- Default: clear pulse
                 s_face_start_r <= '0';
@@ -555,8 +588,9 @@ begin
 
                     when ST_IDLE =>
                         if s_cmd_start = '1' then
-                            s_face_id_r    <= (others => '0');
-                            s_face_state_r <= ST_WAIT_SHOT;
+                            s_face_id_r      <= (others => '0');
+                            s_shot_overrun_r <= '0';
+                            s_face_state_r   <= ST_WAIT_SHOT;
                         end if;
 
                     when ST_WAIT_SHOT =>
@@ -568,6 +602,11 @@ begin
                         end if;
 
                     when ST_IN_FACE =>
+                        -- Detect shot overrun: new shot while face not done
+                        if i_shot_start = '1' then
+                            s_shot_overrun_r <= '1';    -- sticky until cmd_start
+                        end if;
+
                         if s_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
                         elsif s_frame_done = '1' then
@@ -602,20 +641,27 @@ begin
     end process p_timestamp;
 
     -- =========================================================================
-    -- [8] Error counter (increments on any error source)
-    --   - stop_id_error: raw_event_builder detected out-of-range stop ID
-    --   - hit_dropped:   cell_builder overflow (more hits than slots)
-    --   - chip_error_merged: physical ErrFlag OR assembler timeout/blank
+    -- [8] Error counter (increments on error events, not level duration)
+    --   - stop_id_error: 1-clk pulse from raw_event_builder
+    --   - hit_dropped:   1-clk pulse from cell_builder
+    --   - chip_error_merged: level → edge-detected (rising only)
     -- =========================================================================
     p_error_cnt : process(i_axis_aclk)
+        variable v_merged_rising : std_logic_vector(c_N_CHIPS - 1 downto 0);
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_error_count_r <= (others => '0');
+                s_error_count_r     <= (others => '0');
+                s_chip_error_prev_r <= (others => '0');
             else
+                -- Edge detect: new bits that just went high
+                v_merged_rising := s_chip_error_merged
+                                   and (not s_chip_error_prev_r);
+                s_chip_error_prev_r <= s_chip_error_merged;
+
                 if s_stop_id_error /= C_ZEROS_CHIPS or
                    s_hit_dropped /= C_ZEROS_CHIPS or
-                   s_chip_error_merged /= C_ZEROS_CHIPS then
+                   v_merged_rising /= C_ZEROS_CHIPS then
                     s_error_count_r <= s_error_count_r + 1;
                 end if;
             end if;
@@ -627,6 +673,7 @@ begin
     -- =========================================================================
     s_status.busy              <= '1' when s_face_state_r /= ST_IDLE else '0';
     s_status.pipeline_overrun  <= '1' when s_chip_error_flags /= C_ZEROS_CHIPS
+                                           or s_shot_overrun_r = '1'
                                       else '0';
     s_status.bin_mismatch      <= '0';  -- Phase 2: calibration check
     s_status.chip_error_mask   <= s_chip_error_merged;
