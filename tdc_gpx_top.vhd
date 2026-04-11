@@ -167,7 +167,9 @@ architecture rtl of tdc_gpx_top is
     -- CSR outputs (i_axis_aclk domain)
     -- =========================================================================
     signal s_cfg            : t_tdc_cfg;
-    signal s_cfg_image      : t_cfg_image;
+    signal s_cfg_image_raw  : t_cfg_image;  -- raw from CSR
+    signal s_cfg_image      : t_cfg_image;  -- effective (with overrides)
+    signal s_bus_clk_div_8  : unsigned(7 downto 0);
     signal s_cmd_start      : std_logic;
     signal s_cmd_stop       : std_logic;
     signal s_cmd_soft_reset : std_logic;
@@ -366,6 +368,26 @@ architecture rtl of tdc_gpx_top is
 
 begin
 
+    s_bus_clk_div_8 <= resize(s_cfg.bus_clk_div, 8);
+
+    -- =========================================================================
+    -- cfg_image override: enforce t_tdc_cfg → TDC-GPX register dependencies
+    --   Reg5[17:0]  ← s_cfg.start_off1  (CTL3)
+    --   Reg7[31:0]  ← s_cfg.cfg_reg7    (CTL4)
+    -- Other registers pass through from CSR raw image unchanged.
+    -- =========================================================================
+    p_cfg_image_override : process(s_cfg_image_raw, s_cfg)
+        variable v_img : t_cfg_image;
+    begin
+        v_img := s_cfg_image_raw;
+        -- Reg5: StartOff1 from CTL3
+        v_img(5)(c_REG5_STARTOFF1_HI downto c_REG5_STARTOFF1_LO)
+            := std_logic_vector(s_cfg.start_off1);
+        -- Reg7: HSDiv/RefClkDiv/MTimer from CTL4
+        v_img(7) := s_cfg.cfg_reg7;
+        s_cfg_image <= v_img;
+    end process;
+
     -- =========================================================================
     -- Generic parameter validation (elaboration-time)
     -- =========================================================================
@@ -392,14 +414,21 @@ begin
 
     -- Decode per-stop counts from AXI-Stream and compute per-IFIFO expected
     -- drain counts.  IFIFO1 = stops 0..IFIFO_SPLIT-1, IFIFO2 = IFIFO_SPLIT..7.
-    -- Each IFIFO expected = sum(rise + fall) of its stops.
+    -- Each IFIFO expected = sum of enabled-edge counts per stop.
     -- tdata = rise counts, tuser = fall counts, each g_STOP_CNT_WIDTH bits/stop.
-    -- echo_receiver 내부 누적값이므로 tvalid마다 최신 스냅샷 반영.
+    --
+    -- Edge gating: cfg_image[0] Reg0 TRiseEn/TFallEn determines which edges
+    -- the TDC-GPX actually captures. Only count edges that are enabled:
+    --   TRiseEn[s+1]=1 → include rise count for stop s
+    --   TFallEn[s+1]=1 → include fall count for stop s
+    -- (bit offset +1 because index 0 = TStart, 1..8 = TStop1..TStop8)
     p_stop_decode : process(i_axis_aclk)
         variable v_ififo1_sum : unsigned(7 downto 0);
         variable v_ififo2_sum : unsigned(7 downto 0);
         variable v_lo         : natural;
         variable v_hi         : natural;
+        variable v_rise_en    : std_logic;
+        variable v_fall_en    : std_logic;
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
@@ -411,16 +440,29 @@ begin
                 for s in 0 to c_MAX_STOPS_PER_CHIP - 1 loop
                     v_lo := s * g_STOP_CNT_WIDTH;
                     v_hi := v_lo + g_STOP_CNT_WIDTH - 1;
+                    -- Reg0: TRiseEn bit (11+s), TFallEn bit (20+s)
+                    v_rise_en := s_cfg_image(0)(c_REG0_TRISEEN_LO + c_REG0_STOP_OFFSET + s);
+                    v_fall_en := s_cfg_image(0)(c_REG0_TFALLEN_LO + c_REG0_STOP_OFFSET + s);
                     if s < c_IFIFO_SPLIT then
-                        -- IFIFO1: stops 0..3, rise + fall
-                        v_ififo1_sum := v_ififo1_sum
-                            + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8)
-                            + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
+                        -- IFIFO1: stops 0..3
+                        if v_rise_en = '1' then
+                            v_ififo1_sum := v_ififo1_sum
+                                + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8);
+                        end if;
+                        if v_fall_en = '1' then
+                            v_ififo1_sum := v_ififo1_sum
+                                + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
+                        end if;
                     else
-                        -- IFIFO2: stops 4..7, rise + fall
-                        v_ififo2_sum := v_ififo2_sum
-                            + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8)
-                            + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
+                        -- IFIFO2: stops 4..7
+                        if v_rise_en = '1' then
+                            v_ififo2_sum := v_ififo2_sum
+                                + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8);
+                        end if;
+                        if v_fall_en = '1' then
+                            v_ififo2_sum := v_ififo2_sum
+                                + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
+                        end if;
                     end if;
                 end loop;
                 s_ififo1_expected_r <= v_ififo1_sum;
@@ -484,7 +526,7 @@ begin
             i_lsr_tvalid     => i_lsr_tvalid,
             i_lsr_tdata      => i_lsr_tdata,
             o_cfg            => s_cfg,
-            o_cfg_image      => s_cfg_image,
+            o_cfg_image      => s_cfg_image_raw,
             o_cmd_start      => s_cmd_start,
             o_cmd_stop       => s_cmd_stop,
             o_cmd_soft_reset => s_cmd_soft_reset,
@@ -710,7 +752,7 @@ begin
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
             i_bus_ticks        => s_cfg.bus_ticks,
-            i_bus_clk_div      => resize(s_cfg.bus_clk_div, 8),
+            i_bus_clk_div      => s_bus_clk_div_8,
             o_m_axis_tdata     => s_face_tdata,
             o_m_axis_tvalid    => s_face_tvalid,
             o_m_axis_tlast     => s_face_tlast,
@@ -739,7 +781,7 @@ begin
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
             i_bus_ticks        => s_cfg.bus_ticks,
-            i_bus_clk_div      => resize(s_cfg.bus_clk_div, 8),
+            i_bus_clk_div      => s_bus_clk_div_8,
             o_m_axis_tdata     => s_face_fall_tdata,
             o_m_axis_tvalid    => s_face_fall_tvalid,
             o_m_axis_tlast     => s_face_fall_tlast,

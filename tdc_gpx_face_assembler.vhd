@@ -99,6 +99,7 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_in_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_in_s_bundle : t_skid_data_array;  -- skid_buffer s_data input (tdata & tlast)
     signal s_in_bundle   : t_skid_data_array;  -- skid_buffer m_data output
 
     -- =========================================================================
@@ -191,6 +192,7 @@ begin
     -- Input skid buffers (×4): registered tready to cell_builders
     -- =========================================================================
     gen_in_skid : for i in 0 to c_N_CHIPS - 1 generate
+        s_in_s_bundle(i) <= i_s_axis_tdata(i) & i_s_axis_tlast(i);
         u_skid_in : entity work.tdc_gpx_skid_buffer
             generic map (g_DATA_WIDTH => c_SKID_WIDTH)
             port map (
@@ -199,7 +201,7 @@ begin
                 i_flush   => s_flush,
                 i_s_valid => i_s_axis_tvalid(i),
                 o_s_ready => o_s_axis_tready(i),
-                i_s_data  => i_s_axis_tdata(i) & i_s_axis_tlast(i),
+                i_s_data  => s_in_s_bundle(i),
                 o_m_valid => s_in_tvalid(i),
                 i_m_ready => s_in_tready(i),
                 o_m_data  => s_in_bundle(i)

@@ -119,6 +119,31 @@ package tdc_gpx_cfg_pkg is
     constant c_REG7_MTIMER_LO       : natural := 15;
 
     -- =========================================================================
+    -- cfg_image Reg0 bitfields (TDC-GPX Register 0: edge sensitivity)
+    --   [10:18] TRiseEn — bit10=TStart, bit11=TStop1 .. bit18=TStop8
+    --   [19:27] TFallEn — bit19=TStart, bit20=TStop1 .. bit27=TStop8
+    -- =========================================================================
+    constant c_REG0_TRISEEN_LO      : natural := 10;   -- TRiseEn[0]=TStart
+    constant c_REG0_TRISEEN_HI      : natural := 18;   -- TRiseEn[8]=TStop8
+    constant c_REG0_TFALLEN_LO      : natural := 19;   -- TFallEn[0]=TStart
+    constant c_REG0_TFALLEN_HI      : natural := 27;   -- TFallEn[8]=TStop8
+    -- Stop channel offset: TRiseEn[1]=TStop1 = bit 11, ..., TRiseEn[8]=TStop8 = bit 18
+    --                       TFallEn[1]=TStop1 = bit 20, ..., TFallEn[8]=TStop8 = bit 27
+    constant c_REG0_STOP_OFFSET     : natural := 1;    -- bit index offset: stop N = base + N
+
+    -- =========================================================================
+    -- cfg_image Reg5 bitfields (TDC-GPX Register 5: StartOff1 + control)
+    -- =========================================================================
+    constant c_REG5_STARTOFF1_HI    : natural := 17;
+    constant c_REG5_STARTOFF1_LO    : natural := 0;
+
+    -- =========================================================================
+    -- cfg_image Reg6 bitfields (TDC-GPX Register 6: FIFO threshold)
+    -- =========================================================================
+    constant c_REG6_LF_THRESH_HI    : natural := 7;
+    constant c_REG6_LF_THRESH_LO    : natural := 0;
+
+    -- =========================================================================
     -- cfg_image (R/W) : CTL5~CTL20 → 0x14 ~ 0x50  (Reg0..Reg15 x 32-bit)
     -- =========================================================================
     constant c_ADDR_CFG_IMAGE_BASE   : natural := 16#14#;

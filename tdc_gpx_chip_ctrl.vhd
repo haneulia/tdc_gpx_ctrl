@@ -47,6 +47,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 use work.tdc_gpx_pkg.all;
+use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_chip_ctrl is
     generic (
@@ -666,7 +667,8 @@ begin
                                 -- MTimer expired: IFIFO settled, safe to drain.
                                 -- Latch Fill value at drain entry (FF boundary
                                 -- for 200MHz timing — no live cfg_image in FSM body)
-                                s_fill_r      <= unsigned(i_cfg_image(6)(7 downto 0));
+                                s_fill_r      <= unsigned(i_cfg_image(6)(
+                                    c_REG6_LF_THRESH_HI downto c_REG6_LF_THRESH_LO));
                                 if i_cfg.drain_mode = '1' then
                                     s_oen_permanent_r <= '1';   -- burst: OEN stays low
                                 end if;
