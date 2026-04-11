@@ -156,6 +156,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
         ST_DRAIN_EF2,       -- Reading IFIFO2 (Reg9), waiting for response
         ST_DRAIN_BURST,     -- Burst reading: count-based (Fill reads, no LF/EF check)
         ST_DRAIN_FLUSH,     -- Post-burst: capture remaining response, wait bus idle
+        ST_DRAIN_SETTLE,    -- EF/LF flag settling wait (tS-EF ≤ 11.8ns → 3 clk @ 200MHz)
         ST_REG_ACCESS,      -- Individual register read/write (from IDLE)
         ST_ALU_PULSE,       -- AluTrigger high for g_ALU_PULSE_CLKS
         ST_ALU_RECOVERY     -- Post-AluTrigger recovery wait
@@ -169,6 +170,14 @@ architecture rtl of tdc_gpx_chip_ctrl is
     constant c_POWERUP_LAST   : unsigned(15 downto 0) := to_unsigned(g_POWERUP_CLKS - 1, 16);
     constant c_RECOVERY_LAST  : unsigned(15 downto 0) := to_unsigned(g_RECOVERY_CLKS - 1, 16);
     constant c_ALU_PULSE_LAST : unsigned(15 downto 0) := to_unsigned(g_ALU_PULSE_CLKS - 1, 16);
+
+    -- EF/LF flag settling guard after last read.
+    -- TDC-GPX datasheet: tS-EF (Empty Flag Set Time) ≤ 11.8 ns max.
+    -- LF has NO timing spec — datasheet states:
+    --   "The load-level flag is valid only if it is not read from this FIFO."
+    -- After bus idle (no reads), 3 clk × 5ns = 15ns > 11.8ns → EF/LF stable.
+    -- Plus 2-FF synchronizer adds 2 clk on top → total margin ≈ 25ns.
+    constant c_FLAG_SETTLE_LAST : unsigned(15 downto 0) := to_unsigned(2, 16);  -- 0,1,2 = 3 clocks
 
     -- =========================================================================
     -- Wait counter (shared across timed states)
@@ -701,7 +710,10 @@ begin
                                 s_raw_word_r  <= i_bus_rsp_rdata;
                                 s_raw_valid_r <= '1';
                                 s_drain_cnt_r <= s_drain_cnt_r + 1;
-                                s_state_r     <= ST_DRAIN_CHECK;
+                                -- Settle before re-checking EF/LF
+                                -- (tS-EF + 2-FF sync must complete)
+                                s_wait_cnt_r  <= (others => '0');
+                                s_state_r     <= ST_DRAIN_SETTLE;
                             end if;
 
                         when ST_DRAIN_EF2 =>
@@ -710,7 +722,9 @@ begin
                                 s_raw_word_r  <= i_bus_rsp_rdata;
                                 s_raw_valid_r <= '1';
                                 s_drain_cnt_r <= s_drain_cnt_r + 1;
-                                s_state_r     <= ST_DRAIN_CHECK;
+                                -- Settle before re-checking EF/LF
+                                s_wait_cnt_r  <= (others => '0');
+                                s_state_r     <= ST_DRAIN_SETTLE;
                             end if;
 
                         -- =================================================
@@ -769,9 +783,34 @@ begin
                                 s_raw_valid_r <= '1';
                                 s_drain_cnt_r <= s_drain_cnt_r + 1;
                             end if;
-                            -- When bus_phy returns to IDLE: re-evaluate drain
+                            -- When bus_phy returns to IDLE: enter settling wait
+                            -- (EF/LF need time to stabilize after last read)
                             if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
-                                s_state_r <= ST_DRAIN_CHECK;
+                                s_wait_cnt_r <= (others => '0');
+                                s_state_r    <= ST_DRAIN_SETTLE;
+                            end if;
+
+                        -- =================================================
+                        -- Flag settling guard (tS-EF ≤ 11.8ns + 2-FF sync)
+                        --
+                        -- After the last RDN↑, TDC-GPX updates EF/LF pins
+                        -- with propagation delay tS-EF (max 11.8ns).
+                        -- Then 2-FF synchronizer adds 2 clk (10ns @ 200MHz).
+                        -- This state waits 3 clk (15ns) after bus idle,
+                        -- ensuring EF/LF sync outputs are stable before
+                        -- ST_DRAIN_CHECK re-evaluates them.
+                        --
+                        -- Total settling budget:
+                        --   bus_phy hold phase (≥1 tick) + 3 clk + 2-FF
+                        --   = well over 11.8ns + 10ns requirement.
+                        -- =================================================
+
+                        when ST_DRAIN_SETTLE =>
+                            if s_wait_cnt_r = c_FLAG_SETTLE_LAST then
+                                s_wait_cnt_r <= (others => '0');
+                                s_state_r    <= ST_DRAIN_CHECK;
+                            else
+                                s_wait_cnt_r <= s_wait_cnt_r + 1;
                             end if;
 
                         -- =================================================
