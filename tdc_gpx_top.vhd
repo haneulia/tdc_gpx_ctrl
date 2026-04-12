@@ -300,6 +300,14 @@ architecture rtl of tdc_gpx_top is
     signal s_face_fall_tvalid  : std_logic;
     signal s_face_fall_tlast   : std_logic;
     signal s_face_fall_tready  : std_logic;
+
+    -- Buffered face → header (after sync FIFO)
+    signal s_face_buf_tdata      : std_logic_vector(c_TDATA_WIDTH downto 0);  -- tdata & tlast
+    signal s_face_buf_tvalid     : std_logic;
+    signal s_face_buf_tready     : std_logic;
+    signal s_face_fall_buf_tdata : std_logic_vector(c_TDATA_WIDTH downto 0);
+    signal s_face_fall_buf_tvalid: std_logic;
+    signal s_face_fall_buf_tready: std_logic;
     signal s_row_fall_done     : std_logic;
     signal s_chip_fall_error   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_shot_fall_overrun : std_logic;
@@ -987,6 +995,49 @@ begin
         );
 
     -- =========================================================================
+    -- [3.5] Sync FIFO: face_assembler → header_inserter (absorbs prefix stall)
+    -- =========================================================================
+    u_face_fifo : entity work.tdc_gpx_sync_fifo
+        generic map (
+            g_DATA_WIDTH => c_TDATA_WIDTH + 1,  -- tdata(31:0) & tlast(0) = 33 bits
+            g_DEPTH      => 16,
+            g_LOG2_DEPTH => 4,
+            g_IN_REG     => false,
+            g_OUT_REG    => false
+        )
+        port map (
+            i_clk     => i_axis_aclk,
+            i_rst_n   => i_axis_aresetn,
+            i_flush   => '0',
+            i_s_valid => s_face_tvalid,
+            o_s_ready => s_face_tready,
+            i_s_data  => s_face_tdata & s_face_tlast,
+            o_m_valid => s_face_buf_tvalid,
+            i_m_ready => s_face_buf_tready,
+            o_m_data  => s_face_buf_tdata
+        );
+
+    u_face_fall_fifo : entity work.tdc_gpx_sync_fifo
+        generic map (
+            g_DATA_WIDTH => c_TDATA_WIDTH + 1,
+            g_DEPTH      => 16,
+            g_LOG2_DEPTH => 4,
+            g_IN_REG     => false,
+            g_OUT_REG    => false
+        )
+        port map (
+            i_clk     => i_axis_aclk,
+            i_rst_n   => i_axis_aresetn,
+            i_flush   => '0',
+            i_s_valid => s_face_fall_tvalid,
+            o_s_ready => s_face_fall_tready,
+            i_s_data  => s_face_fall_tdata & s_face_fall_tlast,
+            o_m_valid => s_face_fall_buf_tvalid,
+            i_m_ready => s_face_fall_buf_tready,
+            o_m_data  => s_face_fall_buf_tdata
+        );
+
+    -- =========================================================================
     -- [4] Header inserter - RISING pipeline (header + SOF/EOL -> VDMA frame)
     -- =========================================================================
     u_header : entity work.tdc_gpx_header_inserter
@@ -1004,10 +1055,10 @@ begin
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             i_rows_per_face     => s_rows_per_face_r,
-            i_s_axis_tdata      => s_face_tdata,
-            i_s_axis_tvalid     => s_face_tvalid,
-            i_s_axis_tlast      => s_face_tlast,
-            o_s_axis_tready     => s_face_tready,
+            i_s_axis_tdata      => s_face_buf_tdata(c_TDATA_WIDTH downto 1),
+            i_s_axis_tvalid     => s_face_buf_tvalid,
+            i_s_axis_tlast      => s_face_buf_tdata(0),
+            o_s_axis_tready     => s_face_buf_tready,
             o_m_axis_tdata      => o_m_axis_tdata,
             o_m_axis_tvalid     => o_m_axis_tvalid,
             o_m_axis_tlast      => o_m_axis_tlast,
@@ -1036,10 +1087,10 @@ begin
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             i_rows_per_face     => s_rows_per_face_r,
-            i_s_axis_tdata      => s_face_fall_tdata,
-            i_s_axis_tvalid     => s_face_fall_tvalid,
-            i_s_axis_tlast      => s_face_fall_tlast,
-            o_s_axis_tready     => s_face_fall_tready,
+            i_s_axis_tdata      => s_face_fall_buf_tdata(c_TDATA_WIDTH downto 1),
+            i_s_axis_tvalid     => s_face_fall_buf_tvalid,
+            i_s_axis_tlast      => s_face_fall_buf_tdata(0),
+            o_s_axis_tready     => s_face_fall_buf_tready,
             o_m_axis_tdata      => o_m_axis_fall_tdata,
             o_m_axis_tvalid     => o_m_axis_fall_tvalid,
             o_m_axis_tlast      => o_m_axis_fall_tlast,

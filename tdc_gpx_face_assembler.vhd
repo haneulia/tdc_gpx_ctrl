@@ -196,10 +196,16 @@ begin
     -- =========================================================================
     -- Input skid buffers (×4): registered tready to cell_builders
     -- =========================================================================
-    gen_in_skid : for i in 0 to c_N_CHIPS - 1 generate
+    gen_in_fifo : for i in 0 to c_N_CHIPS - 1 generate
         s_in_s_bundle(i) <= i_s_axis_tdata(i) & i_s_axis_tlast(i);
-        u_skid_in : entity work.tdc_gpx_skid_buffer
-            generic map (g_DATA_WIDTH => c_SKID_WIDTH)
+        u_fifo_in : entity work.tdc_gpx_sync_fifo
+            generic map (
+                g_DATA_WIDTH => c_SKID_WIDTH,   -- 33 bits (tdata + tlast)
+                g_DEPTH      => 16,
+                g_LOG2_DEPTH => 4,
+                g_IN_REG     => false,          -- no extra skid, FIFO is enough
+                g_OUT_REG    => false
+            )
             port map (
                 i_clk     => i_clk,
                 i_rst_n   => i_rst_n,
@@ -214,7 +220,7 @@ begin
         -- Unbundle: tdata(31:0) & tlast(0)
         s_in_tdata(i) <= s_in_bundle(i)(c_SKID_WIDTH - 1 downto 1);
         s_in_tlast(i) <= s_in_bundle(i)(0);
-    end generate gen_in_skid;
+    end generate gen_in_fifo;
 
     -- =========================================================================
     -- Output skid buffer (×1): registered tready from downstream
