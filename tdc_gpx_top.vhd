@@ -401,12 +401,12 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     signal s_shot_overrun         : std_logic;
     signal s_shot_overrun_r       : std_logic := '0';
-    signal s_face_asm_closing     : std_logic;  -- rise assembler in ST_OVERRUN_CLOSE
-    signal s_face_asm_fall_closing: std_logic;  -- fall assembler in ST_OVERRUN_CLOSE
+    signal s_face_abort           : std_logic;  -- rise assembler face abort pulse
+    signal s_face_fall_abort      : std_logic;  -- fall assembler face abort pulse
     signal s_hdr_draining         : std_logic;  -- rise header in ST_DRAIN_LAST
     signal s_hdr_fall_draining    : std_logic;  -- fall header in ST_DRAIN_LAST
-    signal s_hdr_last_line        : std_logic;  -- rise header on last line
-    signal s_hdr_fall_last_line   : std_logic;  -- fall header on last line
+    signal s_face_shot_cnt_r      : unsigned(15 downto 0) := (others => '0');
+    signal s_all_shots_fired      : std_logic;  -- all shots for this face accepted
 
     -- =========================================================================
     -- Stop event stream: per-IFIFO expected drain counts
@@ -574,8 +574,6 @@ begin
                                 and (i_shot_start = '1' or s_shot_deferred_r = '1')
                                 and s_cmd_stop = '0'
                                 and s_cmd_soft_reset = '0'
-                                and s_face_asm_closing = '0'
-                                and s_face_asm_fall_closing = '0'
                             else '0';
 
     -- =========================================================================
@@ -627,9 +625,7 @@ begin
                     s_shot_deferred_r <= '0';
                 elsif i_shot_start = '1'
                       and s_face_state_r = ST_IN_FACE
-                      and (s_face_closing = '1'
-                           or s_face_asm_closing = '1'
-                           or s_face_asm_fall_closing = '1') then
+                      and s_face_closing = '1' then
                     -- Shot arrived during close window: defer it
                     s_shot_deferred_r <= '1';
                 end if;
@@ -640,15 +636,11 @@ begin
                 --   Mid-face   : face_active + not closing + not done + no stop
                 if (s_face_state_r = ST_WAIT_SHOT
                         and (i_shot_start = '1' or s_shot_deferred_r = '1')
-                        and s_cmd_stop = '0'
-                        and s_face_asm_closing = '0'
-                        and s_face_asm_fall_closing = '0')
+                        and s_cmd_stop = '0')
                    or (s_face_active_r = '1'
                         and s_frame_done_both = '0'
                         and s_face_closing = '0'
                         and s_cmd_stop = '0'
-                        and s_face_asm_closing = '0'
-                        and s_face_asm_fall_closing = '0'
                         and i_shot_start = '1') then
                     s_shot_pending_r <= '1';
                 else
@@ -670,8 +662,6 @@ begin
                           when s_face_closing = '0'
                                and s_cmd_stop = '0'
                                and s_cmd_soft_reset = '0'
-                               and s_face_asm_closing = '0'
-                               and s_face_asm_fall_closing = '0'
                           else '0';
 
     -- Gated face_start: suppresses orphan-face if cmd_stop or soft_reset
@@ -959,7 +949,7 @@ begin
             o_row_done         => s_row_done,
             o_chip_error_flags => s_chip_error_flags,
             o_shot_overrun     => s_shot_overrun,
-            o_closing          => s_face_asm_closing
+            o_face_abort       => s_face_abort
         );
 
     -- =========================================================================
@@ -987,7 +977,7 @@ begin
             o_row_done         => s_row_fall_done,
             o_chip_error_flags => s_chip_fall_error,
             o_shot_overrun     => s_shot_fall_overrun,
-            o_closing          => s_face_asm_fall_closing
+            o_face_abort       => s_face_fall_abort
         );
 
     -- =========================================================================
@@ -1019,7 +1009,7 @@ begin
             i_m_axis_tready     => i_m_axis_tready,
             o_frame_done        => s_frame_done,
             o_draining          => s_hdr_draining,
-            o_last_line         => s_hdr_last_line
+            o_last_line         => open
         );
 
     -- =========================================================================
@@ -1051,7 +1041,7 @@ begin
             i_m_axis_tready     => i_m_axis_fall_tready,
             o_frame_done        => s_frame_fall_done,
             o_draining          => s_hdr_fall_draining,
-            o_last_line         => s_hdr_fall_last_line
+            o_last_line         => open
         );
 
     -- =========================================================================
@@ -1116,10 +1106,10 @@ begin
                 s_frame_rise_done_r <= '0';
                 s_frame_fall_done_r <= '0';
             else
-                if s_frame_done = '1' then
+                if s_frame_done = '1' or s_face_abort = '1' then
                     s_frame_rise_done_r <= '1';
                 end if;
-                if s_frame_fall_done = '1' then
+                if s_frame_fall_done = '1' or s_face_fall_abort = '1' then
                     s_frame_fall_done_r <= '1';
                 end if;
             end if;
@@ -1127,18 +1117,23 @@ begin
     end process p_frame_done_both;
 
     -- Combinational: both done (could be same cycle or different cycles)
-    s_frame_done_both   <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1')
-                                    and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
+    s_frame_done_both   <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1' or s_face_abort = '1')
+                                    and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1' or s_face_fall_abort = '1')
                                 else '0';
 
-    -- '1' as soon as either pipeline is on its last line, draining, or
-    -- has already fired frame_done.  o_last_line closes the window where
-    -- the assembler output skid holds the final beat but header hasn't
-    -- consumed it yet (before ST_DRAIN_LAST / frame_done can fire).
-    s_face_closing      <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1'
-                                      or s_hdr_draining = '1' or s_hdr_last_line = '1')
+    -- '1' when all shots for this face have been accepted, OR either
+    -- pipeline has fired frame_done / is draining / aborted.
+    -- s_all_shots_fired closes the pre-drain window without blocking
+    -- the final shot itself (unlike the old o_last_line approach).
+    s_all_shots_fired   <= '1'  when s_face_shot_cnt_r >= s_cfg.cols_per_face
+                                     and s_cfg.cols_per_face /= 0
+                                else '0';
+
+    s_face_closing      <= '1'  when s_all_shots_fired = '1'
+                                      or (s_frame_rise_done_r = '1' or s_frame_done = '1'
+                                          or s_hdr_draining = '1' or s_face_abort = '1')
                                       or (s_frame_fall_done_r = '1' or s_frame_fall_done = '1'
-                                      or s_hdr_fall_draining = '1' or s_hdr_fall_last_line = '1')
+                                          or s_hdr_fall_draining = '1' or s_face_fall_abort = '1')
                                 else '0';
 
     -- =========================================================================
@@ -1230,6 +1225,28 @@ begin
             end if;
         end if;
     end process p_global_shot_seq;
+
+    -- =========================================================================
+    -- [6c] Per-face shot counter: tracks how many shots have been accepted
+    --   for the current face.  When it reaches cols_per_face, no more
+    --   mid-face shots are accepted (s_all_shots_fired → s_face_closing).
+    -- =========================================================================
+    p_face_shot_cnt : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or s_packet_start = '1' then
+                -- Reset at face boundary (packet_start starts a new face)
+                -- The first shot IS the packet_start, so start at 1.
+                s_face_shot_cnt_r <= to_unsigned(1, 16);
+            elsif s_shot_start_gated = '1' and s_face_active_r = '1' then
+                -- Mid-face shot accepted
+                s_face_shot_cnt_r <= s_face_shot_cnt_r + 1;
+            elsif s_frame_done_both = '1' then
+                -- Face done: reset for next face
+                s_face_shot_cnt_r <= (others => '0');
+            end if;
+        end if;
+    end process p_face_shot_cnt;
 
     -- =========================================================================
     -- [7] Timestamp counter (free-running, i_axis_aclk domain)
