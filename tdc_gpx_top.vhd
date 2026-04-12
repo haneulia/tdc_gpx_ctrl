@@ -35,11 +35,10 @@
 --
 --   cfg_image freeze: additionally, cfg_image registers MUST NOT be
 --   written while busy = '1'. In particular:
---     - Reg0 TRiseEn/TFallEn bits are read LIVE by p_stop_decode to
---       compute per-IFIFO expected drain counts. Changing these mid-shot
---       corrupts drain count matching and causes over/under-drain.
---     - Reg6 LF threshold (Fill) is latched at IrFlag edge, but Reg0
---       edge-enable bits are used combinationally each echo_receiver tvalid.
+--     - Reg0 TRiseEn/TFallEn bits affect echo_receiver's stop pulse
+--       counting upstream.  Changing mid-shot corrupts expected drain
+--       counts.
+--     - Reg6 LF threshold (Fill) is latched at IrFlag edge.
 --   General rule: ALL cfg_image writes (cmd_cfg_write, cmd_reg_write)
 --   require busy = '0'.
 --
@@ -345,6 +344,7 @@ architecture rtl of tdc_gpx_top is
     signal s_global_shot_seq_r   : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
     signal s_cmd_start_accepted  : std_logic := '0';  -- 1-clk pulse: start actually accepted
     signal s_shot_deferred_r     : std_logic := '0';  -- shot arrived during face-close window
+    signal s_shot_drop_cnt_r     : unsigned(15 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Timestamp (free-running cycle counter, i_axis_aclk domain)
@@ -418,6 +418,8 @@ architecture rtl of tdc_gpx_top is
     signal s_face_asm_fall_idle   : std_logic;  -- fall assembler idle
     signal s_hdr_draining         : std_logic;  -- rise header in ST_DRAIN_LAST
     signal s_hdr_fall_draining    : std_logic;  -- fall header in ST_DRAIN_LAST
+    signal s_hdr_abort            : std_logic;  -- unified header abort (overrun + stop + reset)
+    signal s_hdr_fall_abort       : std_logic;  -- same for fall pipeline
     signal s_hdr_idle             : std_logic;  -- rise header idle
     signal s_hdr_fall_idle        : std_logic;  -- fall header idle
     signal s_face_shot_cnt_r      : unsigned(15 downto 0) := (others => '0');
@@ -504,10 +506,13 @@ begin
 
     -- =========================================================================
     -- Per-chip stop decode: extract IFIFO1/2 expected counts from echo_receiver.
-    --   tdata[i*8+3 : i*8]   = chip i IFIFO1 rise count  (4 bits)
-    --   tdata[i*8+7 : i*8+4] = chip i IFIFO2 rise count  (4 bits)
-    --   tuser same layout for fall counts.
-    --   Expected = rise + fall for each IFIFO.
+    --   tdata/tuser 32-bit: [chip3(8b) | chip2(8b) | chip1(8b) | chip0(8b)]
+    --   Each 8-bit slice: [IFIFO2(4b) | IFIFO1(4b)]
+    --   tdata = rising edge counts, tuser = falling edge counts.
+    --   Per-chip IFIFO expected = rise_slice + fall_slice.
+    --   NOTE: edge-enable gating (TRiseEn/TFallEn) is handled upstream
+    --   by echo_receiver — p_stop_decode sees already-gated values.
+    --   i_stop_evt_tkeep: reserved for future multi-beat extensions.
     --   Cleared on shot_start (new measurement boundary).
     -- =========================================================================
     p_stop_decode : process(i_axis_aclk)
@@ -586,6 +591,7 @@ begin
                 s_face_active_r   <= '0';
                 s_shot_pending_r  <= '0';
                 s_shot_deferred_r <= '0';
+                s_shot_drop_cnt_r <= (others => '0');
             elsif s_cmd_stop = '1' then
                 s_face_start_r    <= '0';
                 s_face_active_r   <= '0';
@@ -604,14 +610,20 @@ begin
                 -- Deferred shot latch: captures a shot that arrives during
                 -- the face-close window.  Consumed by s_packet_start when
                 -- the sequencer returns to ST_WAIT_SHOT.
+                -- If a second shot arrives while deferred is already set,
+                -- it is dropped and s_shot_drop_cnt_r increments.
                 if s_packet_start = '1' then
                     -- Consumed: clear the latch
                     s_shot_deferred_r <= '0';
                 elsif i_shot_start = '1'
                       and s_face_state_r = ST_IN_FACE
                       and s_face_closing = '1' then
-                    -- Shot arrived during close window: defer it
-                    s_shot_deferred_r <= '1';
+                    if s_shot_deferred_r = '1' then
+                        -- Already deferred — this shot is dropped
+                        s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
+                    else
+                        s_shot_deferred_r <= '1';
+                    end if;
                 end if;
 
                 -- Registered shot acceptance:
@@ -654,6 +666,11 @@ begin
                           when s_cmd_stop = '0'
                                and s_cmd_soft_reset = '0'
                           else '0';
+
+    -- Unified header abort: assembler overrun OR cmd_stop OR cmd_soft_reset.
+    -- Ensures header exits ST_DATA even if upstream data stops mid-face.
+    s_hdr_abort      <= s_face_abort      or s_cmd_stop or s_cmd_soft_reset;
+    s_hdr_fall_abort <= s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset;
 
     -- Per-chip shot gating: inactive chips (per active_chip_mask) do not
     -- receive shot_start and therefore never enter CAPTURE/DRAIN.
@@ -1018,7 +1035,7 @@ begin
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
             i_face_start        => s_face_start_gated,
-            i_face_abort        => s_face_abort,
+            i_face_abort        => s_hdr_abort,     -- overrun + stop + reset
             i_cfg               => s_cfg_face_r,   -- face-start snapshot
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
@@ -1052,7 +1069,7 @@ begin
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
             i_face_start        => s_face_start_gated,
-            i_face_abort        => s_face_fall_abort,
+            i_face_abort        => s_hdr_fall_abort,  -- overrun + stop + reset
             i_cfg               => s_cfg_face_r,   -- face-start snapshot
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
@@ -1388,5 +1405,6 @@ begin
     s_status.shot_seq_current   <= s_global_shot_seq_r;
     s_status.vdma_frame_count   <= s_frame_id_r;
     s_status.error_count        <= s_error_count_r;
+    s_status.shot_drop_count    <= s_shot_drop_cnt_r;
 
 end architecture rtl;

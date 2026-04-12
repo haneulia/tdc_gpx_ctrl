@@ -480,13 +480,15 @@ begin
                 end if;
 
                 -- =============================================================
-                -- face_abort: assembler overrun → discard current face.
-                -- Goes directly to ST_IDLE.  Any partial output beat is
-                -- preserved (not cleared) — it will drain naturally or be
-                -- overwritten by the next face_start.
+                -- face_abort: overrun or cmd_stop/soft_reset → discard face.
+                -- Clears output register to prevent stale beat from
+                -- leaking into the next face.  Unlike face_start (which
+                -- preserves pending beats for normal transition), abort
+                -- is non-recoverable so all output must be dropped.
                 -- Higher priority than face_start (last-assignment wins).
                 -- =============================================================
                 if i_face_abort = '1' then
+                    s_out_tvalid_r <= '0';
                     s_state_r      <= ST_IDLE;
                 end if;
 
