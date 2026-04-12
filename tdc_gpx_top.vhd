@@ -590,15 +590,19 @@ begin
     -- =========================================================================
     -- [0c] Accepted shot_start gate.
     --   First shot: s_face_start_r (1-cycle delayed packet_start).
-    --   Mid-face shots (overrun): raw i_shot_start, ONLY when face_active_r='1'.
-    --     face_active_r is cleared on frame_done_both / cmd_stop, so shots
-    --     arriving on the same cycle as face-close are blocked.
+    --   Mid-face shots (overrun): raw i_shot_start, ONLY when face_active_r='1'
+    --     AND frame_done_both='0' AND cmd_stop='0'.
+    --     face_active_r is registered (old value on same edge as close event),
+    --     so we add combinational guards to prevent face-close race:
+    --     frame_done_both and cmd_stop are combinational and visible immediately.
     --   All other cases: '0' (no shot accepted).
     -- =========================================================================
     s_shot_start_gated <= s_face_start_r
                           when s_face_start_r = '1'
                           else i_shot_start
                                when s_face_active_r = '1'
+                                    and s_frame_done_both = '0'
+                                    and s_cmd_stop = '0'
                           else '0';
 
     -- =========================================================================

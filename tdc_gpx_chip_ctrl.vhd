@@ -347,7 +347,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- and reuse drain states for IFIFO cleanup.
     -- When purge_mode='1':
     --   - ST_DRAIN_EF1/EF2: read and discard (raw_valid NOT set)
-    --   - ST_DRAIN_CHECK: completion = both EF=1, then → ST_ALU_PULSE
+    --   - ST_DRAIN_CHECK: completion = both EF=1 (or cap), then → ST_ALU_PULSE
     --   - Burst drain skipped (no LF check during purge)
     -- =========================================================================
     signal s_purge_mode_r   : std_logic := '0';
@@ -750,12 +750,15 @@ begin
 
                         when ST_DRAIN_CHECK =>
                             -- ==============================================
-                            -- Per-IFIFO completion logic
+                            -- Per-IFIFO completion logic (EF-based)
                             -- Each IFIFO is independently "done" when:
-                            --   (a) expected reached (drain_cnt >= expected), OR
+                            --   (a) EF=1 (IFIFO empty), OR
                             --   (b) safety cap reached (n_drain_cap != 0 AND
-                            --       drain_cnt >= n_drain_cap × 4), OR
-                            --   (c) purge mode: EF=1 (empty)
+                            --       drain_cnt >= n_drain_cap × 4)
+                            -- Expected counts are NOT used for completion —
+                            -- they are shared across all 4 chips (not per-chip),
+                            -- so they cannot reliably terminate a per-chip drain.
+                            -- Expected counts are retained only for burst sizing.
                             -- Drain completes when ALL active IFIFOs are done.
                             -- ==============================================
                             -- v_cap: shared cap threshold (n_drain_cap × 4)
@@ -764,21 +767,16 @@ begin
                             v_cap := shift_left(resize(i_cfg.n_drain_cap, 8), 2);
 
                             -- Per-IFIFO done evaluation
-                            if s_purge_mode_r = '1' then
-                                -- Purge mode: done = EF=1 (empty)
-                                v_ififo1_done := (i_ef1_sync = '1');
-                                v_ififo2_done := (i_ef2_sync = '1');
-                            else
-                                -- Normal mode: done = expected reached OR cap reached
-                                v_ififo1_done := (s_expected_ififo1_r /= 0
-                                                  and s_drain_cnt_ififo1_r >= s_expected_ififo1_r)
-                                                 or (i_cfg.n_drain_cap /= "0000"
-                                                     and s_drain_cnt_ififo1_r >= v_cap);
-                                v_ififo2_done := (s_expected_ififo2_r /= 0
-                                                  and s_drain_cnt_ififo2_r >= s_expected_ififo2_r)
-                                                 or (i_cfg.n_drain_cap /= "0000"
-                                                     and s_drain_cnt_ififo2_r >= v_cap);
-                            end if;
+                            -- Both normal and purge modes use the same criterion:
+                            -- done = EF=1 OR cap reached (cap ignored in purge).
+                            v_ififo1_done := (i_ef1_sync = '1')
+                                             or (s_purge_mode_r = '0'
+                                                 and i_cfg.n_drain_cap /= "0000"
+                                                 and s_drain_cnt_ififo1_r >= v_cap);
+                            v_ififo2_done := (i_ef2_sync = '1')
+                                             or (s_purge_mode_r = '0'
+                                                 and i_cfg.n_drain_cap /= "0000"
+                                                 and s_drain_cnt_ififo2_r >= v_cap);
 
                             -- Can-read: not done AND EF=0 (has data)
                             -- In purge mode, cap is not checked (read until empty).
@@ -803,22 +801,6 @@ begin
                                     s_drain_done_r <= '1';
                                     s_state_r      <= ST_ALU_PULSE;
                                 end if;
-
-                            -- Normal drain also completes when both expected=0
-                            -- and both EF=1 (EF-fallback completion).
-                            -- When expected=0 and cap=0, v_ififo*_done=false,
-                            -- so both-done check above doesn't catch it.
-                            -- EF=1 fallback needs explicit handling:
-                            elsif s_purge_mode_r = '0'
-                                  and s_expected_ififo1_r = 0 and s_expected_ififo2_r = 0
-                                  and i_cfg.n_drain_cap = "0000"
-                                  and i_ef1_sync = '1' and i_ef2_sync = '1' then
-                                -- EF-fallback: no expected info, no cap, both empty
-                                s_oen_permanent_r <= '0';
-                                s_drain_done_r    <= '1';
-                                s_range_active_r  <= '0';
-                                s_wait_cnt_r      <= (others => '0');
-                                s_state_r         <= ST_ALU_PULSE;
 
                             -- ==============================================
                             -- LF burst (normal mode only, skip during purge)
@@ -1051,7 +1033,10 @@ begin
                         when ST_ALU_PULSE =>
                             s_alutrigger_r <= '1';
                             if s_wait_cnt_r = c_ALU_PULSE_LAST then
-                                s_alutrigger_r <= '0';
+                                -- Do NOT clear alutrigger here: the '0'
+                                -- would override the '1' above (last-assign wins),
+                                -- shortening the pulse by 1 cycle.
+                                -- ST_ALU_RECOVERY clears it on the next edge.
                                 s_wait_cnt_r   <= (others => '0');
                                 s_state_r      <= ST_ALU_RECOVERY;
                             else
