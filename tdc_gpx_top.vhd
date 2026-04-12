@@ -1228,7 +1228,9 @@ begin
     -- =========================================================================
     -- [9] Status aggregation (-> CSR -> STAT registers)
     -- =========================================================================
-    s_status.busy               <= '1'  when s_face_state_r /= ST_IDLE else '0';
+    s_status.busy               <= '1'  when s_face_state_r /= ST_IDLE
+                                            or s_chip_busy /= C_ZEROS_CHIPS
+                                        else '0';
     s_status.pipeline_overrun   <= '1'  when s_chip_error_flags /= C_ZEROS_CHIPS
                                             or s_chip_fall_error /= C_ZEROS_CHIPS
                                             or s_shot_overrun_r = '1'

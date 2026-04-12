@@ -348,7 +348,8 @@ architecture rtl of tdc_gpx_chip_ctrl is
     --   - ST_DRAIN_CHECK: completion = both EF=1 (or cap), then → ST_ALU_PULSE
     --   - Burst drain skipped (no LF check during purge)
     -- =========================================================================
-    signal s_purge_mode_r   : std_logic := '0';
+    signal s_purge_mode_r        : std_logic := '0';
+    signal s_overrun_deferred_r  : std_logic := '0';  -- overrun during ALU pulse/recovery
 
     -- =========================================================================
     -- Busy flag
@@ -479,6 +480,7 @@ begin
                 s_reg_rvalid_r      <= '0';
                 s_range_active_r    <= '0';
                 s_purge_mode_r      <= '0';
+                s_overrun_deferred_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r   <= '0';
@@ -502,8 +504,9 @@ begin
                     s_fill_r             <= (others => '0');
                     s_burst_cnt_r        <= (others => '0');
                     s_burst_limit_r      <= (others => '0');
-                    s_range_active_r    <= '0';
-                    s_purge_mode_r      <= '0';
+                    s_range_active_r     <= '0';
+                    s_purge_mode_r       <= '0';
+                    s_overrun_deferred_r <= '0';
                     s_wait_cnt_r        <= (others => '0');
                     s_cfg_idx_r         <= (others => '0');
                     s_init_mode_r       <= '1';
@@ -1029,9 +1032,28 @@ begin
                             s_alutrigger_r <= '0';
                             if s_wait_cnt_r = c_RECOVERY_LAST then
                                 s_wait_cnt_r <= (others => '0');
-                                s_shot_seq_r <= s_shot_seq_r + 1;
-                                s_busy_r     <= '0';
-                                s_state_r    <= ST_ARMED;
+                                if s_overrun_deferred_r = '1' then
+                                    -- Deferred overrun: ALU sequence completed
+                                    -- normally, now enter purge + re-ALU.
+                                    s_overrun_deferred_r <= '0';
+                                    s_raw_valid_r        <= '0';
+                                    s_range_active_r     <= '1';
+                                    s_drain_cnt_ififo1_r <= (others => '0');
+                                    s_drain_cnt_ififo2_r <= (others => '0');
+                                    s_drain_done_r       <= '0';
+                                    s_purge_mode_r       <= '1';
+                                    if i_cfg.drain_mode = '1' then
+                                        s_oen_permanent_r <= '1';
+                                    else
+                                        s_oen_permanent_r <= '0';
+                                    end if;
+                                    s_state_r <= ST_DRAIN_SETTLE;
+                                else
+                                    -- Normal completion
+                                    s_shot_seq_r <= s_shot_seq_r + 1;
+                                    s_busy_r     <= '0';
+                                    s_state_r    <= ST_ARMED;
+                                end if;
                             else
                                 s_wait_cnt_r <= s_wait_cnt_r + 1;
                             end if;
@@ -1130,23 +1152,11 @@ begin
                                 -- → OVERRUN_FLUSH → SETTLE → DRAIN_CHECK (purge) → ALU → ARMED
 
                             when ST_ALU_PULSE | ST_ALU_RECOVERY =>
-                                -- AluTrigger in progress → abort ALU, purge + restart ALU
-                                s_raw_valid_r        <= '0';
-                                s_alutrigger_r       <= '0';
-                                s_range_active_r     <= '1';
-                                s_drain_cnt_ififo1_r <= (others => '0');
-                                s_drain_cnt_ififo2_r <= (others => '0');
-                                s_drain_done_r       <= '0';
-                                -- Enter purge mode to drain old IFIFO data
-                                s_purge_mode_r       <= '1';
-                                if i_cfg.drain_mode = '1' then
-                                    s_oen_permanent_r <= '1';
-                                else
-                                    s_oen_permanent_r <= '0';
-                                end if;
-                                s_wait_cnt_r         <= (others => '0');
-                                s_state_r            <= ST_DRAIN_SETTLE;
-                                -- → SETTLE → DRAIN_CHECK (purge) → ALU → ARMED
+                                -- AluTrigger/recovery in progress: the TDC
+                                -- requires the full pulse width (>= 10 ns) and
+                                -- recovery time.  Defer the overrun cleanup
+                                -- until ST_ALU_RECOVERY completes normally.
+                                s_overrun_deferred_r <= '1';
 
                             when others =>
                                 null;  -- ST_ARMED handles shot_start in case

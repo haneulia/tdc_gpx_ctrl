@@ -222,7 +222,11 @@ begin
         port map (
             i_clk     => i_clk,
             i_rst_n   => i_rst_n,
-            i_flush   => s_flush,
+            i_flush   => '0',             -- NEVER flush output skid: it holds
+                                          -- the last beat(s) of a completed row
+                                          -- until downstream actually consumes
+                                          -- them.  Flushing here would lose data
+                                          -- under backpressure.
             i_s_valid => s_pipe_tvalid_r,
             o_s_ready => s_pipe_tready,
             i_s_data  => s_pipe_bundle,
