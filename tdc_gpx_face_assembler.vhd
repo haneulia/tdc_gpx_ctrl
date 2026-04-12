@@ -257,10 +257,12 @@ begin
     -- Flush input skid buffers on every shot_start
     s_flush <= i_shot_start;
 
-    -- Flush output skid ONLY on overrun (shot_start while not idle and not
-    -- completing a row on this edge).  Combinational so it acts on the SAME
-    -- edge as the overrun, preventing the 1-cycle stale-beat leak.
-    s_abort_flush <= i_shot_start when s_state_r /= ST_IDLE else '0';
+    -- Flush output skid on face_abort only (registered, 1-cycle after
+    -- overrun detection).  Uses s_face_abort_r which is only set in the
+    -- overrun override (guarded by not v_row_completing), so it never
+    -- fires on a normal row-completion edge.  The depth-16 FIFO between
+    -- assembler and header absorbs any 1-cycle delay window.
+    s_abort_flush <= s_face_abort_r;
 
     -- Pipe capacity: can FSM produce? (all inputs registered → ~0.5ns)
     s_can_produce <= '1' when (s_pipe_tvalid_r = '0')

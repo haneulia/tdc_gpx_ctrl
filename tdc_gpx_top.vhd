@@ -441,10 +441,11 @@ architecture rtl of tdc_gpx_top is
     -- IFIFO boundary: stops 0..IFIFO_SPLIT-1 = IFIFO1, IFIFO_SPLIT..7 = IFIFO2
     constant c_IFIFO_SPLIT : natural := c_MAX_STOPS_PER_CHIP / 2;  -- 4
 
-    -- Per-IFIFO expected drain counts (rise+fall combined)
-    -- Max per IFIFO = 4 stops x (2^W - 1) x 2 edges. Fits 8 bits for W<=4.
-    signal s_ififo1_expected_r : unsigned(7 downto 0) := (others => '0');
-    signal s_ififo2_expected_r : unsigned(7 downto 0) := (others => '0');
+    -- NOTE: s_ififo1_expected_r / s_ififo2_expected_r removed.
+    -- chip_ctrl burst drain now uses LF fill level only (per-chip accurate).
+    -- The old shared expected count was inaccurate across chips and has been
+    -- replaced.  p_stop_decode below is retained for future per-chip drain
+    -- optimization but currently has no consumers.
 
 begin
 
@@ -492,85 +493,12 @@ begin
         report "tdc_gpx_top: g_STOP_EVT_DWIDTH must be a multiple of 8"
         severity failure;
 
-    assert c_IFIFO_SPLIT * 2 * (2**g_STOP_CNT_WIDTH - 1) <= 255
-        report "tdc_gpx_top: per-IFIFO expected sum may overflow 8-bit counter; "
-             & "reduce g_STOP_CNT_WIDTH or c_IFIFO_SPLIT"
-        severity failure;
-
     -- =========================================================================
     -- Stop event AXI Stream slave: always accept
+    -- NOTE: p_stop_decode and s_ififo*_expected_r removed — chip_ctrl
+    -- burst drain uses LF fill level only (per-chip accurate).
     -- =========================================================================
     o_stop_evt_tready <= '1';
-
-    -- Decode per-stop counts from AXI-Stream and compute per-IFIFO expected
-    -- drain counts.  IFIFO1 = stops 0..IFIFO_SPLIT-1, IFIFO2 = IFIFO_SPLIT..7.
-    -- Each IFIFO expected = sum of enabled-edge counts per stop.
-    -- tdata = rise counts, tuser = fall counts, each g_STOP_CNT_WIDTH bits/stop.
-    --
-    -- Edge gating: cfg_image[0] Reg0 TRiseEn/TFallEn determines which edges
-    -- the TDC-GPX actually captures. Only count edges that are enabled:
-    --   TRiseEn[s+1]=1 → include rise count for stop s
-    --   TFallEn[s+1]=1 → include fall count for stop s
-    -- (bit offset +1 because index 0 = TStart, 1..8 = TStop1..TStop8)
-    -- Shot boundary clear: s_shot_start_gated resets expected counts to 0.
-    -- This prevents stale values from a previous shot being used when the
-    -- current shot has no stop events (no tvalid from echo_receiver).
-    -- Clear happens BEFORE tvalid accumulation (priority order matters):
-    --   shot_start → clear to 0 → subsequent tvalid updates accumulate.
-    p_stop_decode : process(i_axis_aclk)
-        variable v_ififo1_sum : unsigned(7 downto 0);
-        variable v_ififo2_sum : unsigned(7 downto 0);
-        variable v_lo         : natural;
-        variable v_hi         : natural;
-        variable v_rise_en    : std_logic;
-        variable v_fall_en    : std_logic;
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_ififo1_expected_r <= (others => '0');
-                s_ififo2_expected_r <= (others => '0');
-            elsif s_shot_start_gated = '1' then
-                -- Shot boundary: clear expected counts for new measurement.
-                -- If this shot has stop events, subsequent tvalid will update.
-                -- If no events (empty shot), counts stay 0 → EF-based drain.
-                s_ififo1_expected_r <= (others => '0');
-                s_ififo2_expected_r <= (others => '0');
-            elsif i_stop_evt_tvalid = '1' then
-                v_ififo1_sum := (others => '0');
-                v_ififo2_sum := (others => '0');
-                for s in 0 to c_MAX_STOPS_PER_CHIP - 1 loop
-                    v_lo := s * g_STOP_CNT_WIDTH;
-                    v_hi := v_lo + g_STOP_CNT_WIDTH - 1;
-                    -- Reg0: TRiseEn bit (11+s), TFallEn bit (20+s)
-                    v_rise_en := s_cfg_image(0)(c_REG0_TRISEEN_LO + c_REG0_STOP_OFFSET + s);
-                    v_fall_en := s_cfg_image(0)(c_REG0_TFALLEN_LO + c_REG0_STOP_OFFSET + s);
-                    if s < c_IFIFO_SPLIT then
-                        -- IFIFO1: stops 0..3
-                        if v_rise_en = '1' then
-                            v_ififo1_sum := v_ififo1_sum
-                                + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8);
-                        end if;
-                        if v_fall_en = '1' then
-                            v_ififo1_sum := v_ififo1_sum
-                                + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
-                        end if;
-                    else
-                        -- IFIFO2: stops 4..7
-                        if v_rise_en = '1' then
-                            v_ififo2_sum := v_ififo2_sum
-                                + resize(unsigned(i_stop_evt_tdata(v_hi downto v_lo)), 8);
-                        end if;
-                        if v_fall_en = '1' then
-                            v_ififo2_sum := v_ififo2_sum
-                                + resize(unsigned(i_stop_evt_tuser(v_hi downto v_lo)), 8);
-                        end if;
-                    end if;
-                end loop;
-                s_ififo1_expected_r <= v_ififo1_sum;
-                s_ififo2_expected_r <= v_ififo2_sum;
-            end if;
-        end if;
-    end process p_stop_decode;
 
     -- =========================================================================
     -- [0a] Combinational packet_start: accepted first-shot pulse.
@@ -1011,7 +939,7 @@ begin
         port map (
             i_clk     => i_axis_aclk,
             i_rst_n   => i_axis_aresetn,
-            i_flush   => '0',
+            i_flush   => s_face_abort,   -- flush stale data on overrun abort
             i_s_valid => s_face_tvalid,
             o_s_ready => s_face_tready,
             i_s_data  => s_face_tdata & s_face_tlast,
@@ -1031,7 +959,7 @@ begin
         port map (
             i_clk     => i_axis_aclk,
             i_rst_n   => i_axis_aresetn,
-            i_flush   => '0',
+            i_flush   => s_face_fall_abort,  -- flush stale data on overrun abort
             i_s_valid => s_face_fall_tvalid,
             o_s_ready => s_face_fall_tready,
             i_s_data  => s_face_fall_tdata & s_face_fall_tlast,
@@ -1152,6 +1080,7 @@ begin
                 s_face_active_mask_r    <= (others => '1');
                 s_face_cols_per_face_r  <= to_unsigned(1, 16);
                 s_face_n_faces_r        <= to_unsigned(1, 4);
+                s_cfg_face_r            <= s_cfg;   -- safe default (avoids X propagation)
             elsif s_packet_start = '1' then
                 s_face_stops_per_chip_r <= s_cfg.stops_per_chip;
                 s_face_active_mask_r    <= s_cfg.active_chip_mask;
@@ -1244,6 +1173,8 @@ begin
                            and s_hdr_fall_idle = '1'
                            and s_face_tvalid = '0'
                            and s_face_fall_tvalid = '0'
+                           and s_face_buf_tvalid = '0'
+                           and s_face_fall_buf_tvalid = '0'
                            and o_m_axis_tvalid = '0'
                            and o_m_axis_fall_tvalid = '0' then
                             s_face_id_r          <= (others => '0');
@@ -1336,7 +1267,12 @@ begin
     end process p_timestamp;
 
     -- =========================================================================
-    -- [8] Error counter (increments on error events, not level duration)
+    -- [8] Error counter: per-cycle any-error counter.
+    --   Increments by 1 for each clock cycle where ANY error source is
+    --   active.  Multiple simultaneous errors in the same cycle count as 1.
+    --   This is NOT a total error event count — it measures error-active
+    --   cycles.  SW should use per-chip sticky masks for individual errors.
+    --   Sources:
     --   - stop_id_error: 1-clk pulse from raw_event_builder
     --   - hit_dropped:   1-clk pulse from cell_builder
     --   - chip_error_merged: level → edge-detected (rising only)
@@ -1394,6 +1330,8 @@ begin
                                             or s_hdr_fall_idle = '0'
                                             or s_face_tvalid = '1'
                                             or s_face_fall_tvalid = '1'
+                                            or s_face_buf_tvalid = '1'
+                                            or s_face_fall_buf_tvalid = '1'
                                             or o_m_axis_tvalid = '1'
                                             or o_m_axis_fall_tvalid = '1'
                                         else '0';

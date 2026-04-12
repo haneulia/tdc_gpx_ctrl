@@ -406,7 +406,8 @@ begin
             stat9_in  => s_stat_out(4),
             stat10_in => s_stat_out(5),
             stat11_in => s_stat_out(6),  -- REG_RDATA: chip register readback
-            -- Interrupt
+            -- Interrupt: currently tied low (dead path).
+            -- Phase 2: connect error/frame-done interrupt sources.
             intrpt_src_in => "0",
             irq           => o_irq
         );
