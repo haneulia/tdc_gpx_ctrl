@@ -617,23 +617,26 @@ begin
                 if s_packet_start = '1' then
                     -- Consumed: clear the latch.
                     -- If this was a deferred-consume AND a new raw shot
-                    -- arrives on the same cycle, re-defer it (the consumed
-                    -- deferred was for this face, the new shot is for the
-                    -- next close window).
+                    -- arrives on the same cycle, re-defer it.
                     if s_shot_deferred_r = '1' and i_shot_start = '1' then
                         s_shot_deferred_r <= '1';  -- re-defer new shot
                     else
                         s_shot_deferred_r <= '0';
                     end if;
-                elsif i_shot_start = '1'
-                      and s_face_state_r = ST_IN_FACE
-                      and s_face_closing = '1' then
-                    if s_shot_deferred_r = '1' then
-                        -- Already deferred — this shot is dropped
-                        s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
-                    else
+                elsif i_shot_start = '1' and s_shot_deferred_r = '0' then
+                    -- Defer shot if:
+                    --   (a) mid-face and closing (normal close window), or
+                    --   (b) ST_WAIT_SHOT but packet_start blocked (e.g.
+                    --       header still in abort-drain, or assembler
+                    --       non-idle after overrun).
+                    if (s_face_state_r = ST_IN_FACE and s_face_closing = '1')
+                       or (s_face_state_r = ST_WAIT_SHOT
+                           and s_packet_start = '0') then
                         s_shot_deferred_r <= '1';
                     end if;
+                elsif i_shot_start = '1' and s_shot_deferred_r = '1' then
+                    -- Already deferred — this shot is dropped
+                    s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
                 end if;
 
                 -- Registered shot acceptance:
@@ -677,10 +680,13 @@ begin
                                and s_cmd_soft_reset = '0'
                           else '0';
 
-    -- Unified header abort: assembler overrun OR cmd_stop OR cmd_soft_reset.
-    -- Ensures header exits ST_DATA even if upstream data stops mid-face.
-    s_hdr_abort      <= s_face_abort      or s_cmd_stop or s_cmd_soft_reset;
-    s_hdr_fall_abort <= s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset;
+    -- Unified pipeline abort: either assembler overrun OR cmd_stop OR soft_reset.
+    -- Cross-pipeline: if EITHER assembler aborts, BOTH pipelines must abort
+    -- to keep face boundary consistent.  Otherwise the non-aborting side
+    -- continues processing while face_closing shuts down shot acceptance,
+    -- leaving it stuck mid-face.
+    s_hdr_abort      <= s_face_abort or s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset;
+    s_hdr_fall_abort <= s_face_abort or s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset;
 
     -- Per-chip shot gating: inactive chips (per active_chip_mask) do not
     -- receive shot_start and therefore never enter CAPTURE/DRAIN.
@@ -951,7 +957,7 @@ begin
             i_s_axis_tlast     => s_cell_tlast,
             o_s_axis_tready    => s_cell_tready,
             i_shot_start       => s_shot_start_gated,
-            i_abort            => s_cmd_stop or s_cmd_soft_reset,
+            i_abort            => s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
@@ -981,7 +987,7 @@ begin
             i_s_axis_tlast     => s_cell_fall_tlast,
             o_s_axis_tready    => s_cell_fall_tready,
             i_shot_start       => s_shot_start_gated,
-            i_abort            => s_cmd_stop or s_cmd_soft_reset,
+            i_abort            => s_face_abort or s_cmd_stop or s_cmd_soft_reset,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
