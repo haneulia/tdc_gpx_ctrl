@@ -64,9 +64,10 @@ entity tdc_gpx_face_assembler is
         -- Configuration (latched at packet_start)
         i_active_chip_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_stops_per_chip     : in  unsigned(3 downto 0);
-        i_max_range_clks     : in  unsigned(15 downto 0);   -- capture timeout (SW: 2*dist/c*fclk)
-        i_bus_ticks          : in  unsigned(2 downto 0);    -- capture timeout
-        i_bus_clk_div        : in  unsigned(7 downto 0);    -- capture timeout
+        -- Scan timeout: max clock cycles before declaring a chip's cell blank.
+        -- SW must bake in all margins (bus roundtrip + drain + ALU service).
+        -- 0 = disabled (no timeout, wait indefinitely for chip data).
+        i_max_range_clks     : in  unsigned(15 downto 0);
 
         -- AXI-Stream master (packed row output)
         o_m_axis_tdata       : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);

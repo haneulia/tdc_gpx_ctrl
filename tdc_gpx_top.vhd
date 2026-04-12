@@ -321,6 +321,7 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     signal s_shot_start_gated    : std_logic;
     signal s_shot_pending_r      : std_logic := '0';  -- registered accept decision
+    signal s_face_start_gated    : std_logic;          -- face_start_r killed by stop/reset
     signal s_shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_global_shot_seq_r   : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
 
@@ -554,6 +555,7 @@ begin
     s_packet_start  <= '1'  when s_face_state_r = ST_WAIT_SHOT
                                 and i_shot_start = '1'
                                 and s_cmd_stop = '0'
+                                and s_cmd_soft_reset = '0'
                             else '0';
 
     -- =========================================================================
@@ -577,7 +579,15 @@ begin
     p_face_start_delay : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
+            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
+                s_face_start_r   <= '0';
+                s_face_active_r  <= '0';
+                s_shot_pending_r <= '0';
+            elsif s_cmd_stop = '1' then
+                -- cmd_stop kills any pending face_start / shot acceptance
+                -- that was registered on the previous edge but hasn't
+                -- fired yet.  Prevents orphan-face (header opens a face
+                -- whose shot_start was suppressed).
                 s_face_start_r   <= '0';
                 s_face_active_r  <= '0';
                 s_shot_pending_r <= '0';
@@ -587,12 +597,12 @@ begin
                 -- face_active management
                 if s_packet_start = '1' then
                     s_face_active_r <= '1';
-                elsif s_frame_done_both = '1' or s_cmd_stop = '1' then
+                elsif s_frame_done_both = '1' then
                     s_face_active_r <= '0';
                 end if;
 
                 -- Registered shot acceptance:
-                --   First shot : ST_WAIT_SHOT + shot_start + no stop
+                --   First shot : ST_WAIT_SHOT + shot_start + no stop/reset
                 --   Mid-face   : face_active + not closing + not done + no stop
                 if (s_face_state_r = ST_WAIT_SHOT
                         and i_shot_start = '1'
@@ -621,6 +631,14 @@ begin
     s_shot_start_gated <= s_shot_pending_r
                           when s_face_closing = '0'
                                and s_cmd_stop = '0'
+                               and s_cmd_soft_reset = '0'
+                          else '0';
+
+    -- Gated face_start: suppresses orphan-face if cmd_stop or soft_reset
+    -- arrives on the same cycle that the registered s_face_start_r fires.
+    s_face_start_gated <= s_face_start_r
+                          when s_cmd_stop = '0'
+                               and s_cmd_soft_reset = '0'
                           else '0';
 
     -- Per-chip shot gating: inactive chips (per active_chip_mask) do not
@@ -766,8 +784,7 @@ begin
                 i_shot_start        => s_shot_start_per_chip(i),
                 i_max_range_clks    => s_cfg.max_range_clks,
                 i_stop_tdc          => i_stop_tdc,
-                i_expected_ififo1   => s_ififo1_expected_r,
-                i_expected_ififo2   => s_ififo2_expected_r,
+                -- i_expected_ififo1/2 removed: burst uses LF fill only
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),
@@ -895,8 +912,6 @@ begin
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
-            i_bus_ticks        => s_cfg.bus_ticks,
-            i_bus_clk_div      => s_bus_clk_div_8,
             o_m_axis_tdata     => s_face_tdata,
             o_m_axis_tvalid    => s_face_tvalid,
             o_m_axis_tlast     => s_face_tlast,
@@ -924,8 +939,6 @@ begin
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
-            i_bus_ticks        => s_cfg.bus_ticks,
-            i_bus_clk_div      => s_bus_clk_div_8,
             o_m_axis_tdata     => s_face_fall_tdata,
             o_m_axis_tvalid    => s_face_fall_tvalid,
             o_m_axis_tlast     => s_face_fall_tlast,
@@ -942,7 +955,7 @@ begin
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
-            i_face_start        => s_face_start_r,
+            i_face_start        => s_face_start_gated,
             i_cfg               => s_cfg,
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
@@ -972,7 +985,7 @@ begin
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
-            i_face_start        => s_face_start_r,
+            i_face_start        => s_face_start_gated,
             i_cfg               => s_cfg,
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,

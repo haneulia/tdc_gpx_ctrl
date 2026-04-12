@@ -126,8 +126,7 @@ entity tdc_gpx_chip_ctrl is
         --     By IrFlag time, MTimer has expired so all stop pulses are final.
         --   - Max per IFIFO = 4 stops x max_hits x 2 edges (rise+fall).
         --   - If both are 0 -> EF-based drain fallback (no count info).
-        i_expected_ififo1   : in  unsigned(7 downto 0);
-        i_expected_ififo2   : in  unsigned(7 downto 0);
+        -- i_expected_ififo1/2 removed: burst sizing now uses LF fill only.
 
         -- bus_phy request interface
         o_bus_req_valid     : out std_logic;
@@ -307,8 +306,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- n_drain_cap: per-IFIFO safety cap. 0=unlimited, 1~15: cap at n_drain_cap×4.
     --   Max cap = 15×4 = 60, covers 56 theoretical max.
     -- =========================================================================
-    signal s_expected_ififo1_r  : unsigned(7 downto 0) := (others => '0');
-    signal s_expected_ififo2_r  : unsigned(7 downto 0) := (others => '0');
+    -- s_expected_ififo1/2_r removed: burst sizing now uses LF fill only.
     signal s_drain_cnt_ififo1_r : unsigned(7 downto 0) := (others => '0');
     signal s_drain_cnt_ififo2_r : unsigned(7 downto 0) := (others => '0');
 
@@ -470,8 +468,7 @@ begin
                 s_busy_r            <= '0';
                 s_init_mode_r       <= '1';
                 s_oen_permanent_r   <= '0';
-                s_expected_ififo1_r  <= (others => '0');
-                s_expected_ififo2_r  <= (others => '0');
+                -- (expected_ififo cleared — removed)
                 s_drain_cnt_ififo1_r <= (others => '0');
                 s_drain_cnt_ififo2_r <= (others => '0');
                 s_req_burst_r       <= '0';
@@ -499,8 +496,6 @@ begin
                     s_req_valid_r       <= '0';
                     s_busy_r            <= '0';
                     s_oen_permanent_r   <= '0';
-                    s_expected_ififo1_r  <= (others => '0');
-                    s_expected_ififo2_r  <= (others => '0');
                     s_drain_cnt_ififo1_r <= (others => '0');
                     s_drain_cnt_ififo2_r <= (others => '0');
                     s_req_burst_r        <= '0';
@@ -652,8 +647,6 @@ begin
                             elsif i_shot_start = '1' then
                                 s_busy_r             <= '1';
                                 s_range_active_r     <= '1';
-                                s_expected_ififo1_r  <= (others => '0');
-                                s_expected_ififo2_r  <= (others => '0');
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_state_r            <= ST_CAPTURE;
@@ -716,9 +709,9 @@ begin
                                 end if;
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
-                                -- Go to ST_DRAIN_LATCH: 1-cycle wait to let
-                                -- i_expected_ififo* settle if the final
-                                -- stop_evt_tvalid arrived on this same edge.
+                                -- ST_DRAIN_LATCH: 1-cycle settling guard
+                                -- (expected_ififo removed; state kept as
+                                -- harmless pipeline stage).
                                 s_state_r     <= ST_DRAIN_LATCH;
                             end if;
 
@@ -738,8 +731,7 @@ begin
                             -- IFIFO1 = stops 0~3, IFIFO2 = stops 4~7.
                             -- Each is rise+fall sum from echo_receiver.
                             -- If both are 0 → EF-based drain fallback.
-                            s_expected_ififo1_r  <= i_expected_ififo1;
-                            s_expected_ififo2_r  <= i_expected_ififo2;
+                            -- (expected_ififo latch — removed)
                             s_state_r            <= ST_DRAIN_CHECK;
 
                         -- =================================================
@@ -804,29 +796,25 @@ begin
 
                             -- ==============================================
                             -- LF burst (normal mode only, skip during purge)
+                            --   Uses LF fill level only — no expected_ififo
+                            --   dependency.  LF is the ground truth for how
+                            --   many entries are safe to burst-read right now.
                             -- ==============================================
                             elsif s_purge_mode_r = '0'
                                   and i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
                                   and i_ef1_sync = '0' and i_lf1_sync = '1'
-                                  and v_ififo1_can_read
-                                  and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2 then
-                                -- IFIFO1 loaded + remaining >= 2: burst read Reg8
+                                  and v_ififo1_can_read then
+                                -- IFIFO1 loaded: burst read Reg8
                                 --
-                                -- burst_limit = min(fill, remaining) - 1
-                                -- The -1 accounts for the bus_phy pipeline overlap:
-                                -- at Phase H, bus_phy restarts the next read before
-                                -- chip_ctrl can deassert req_burst. ST_DRAIN_FLUSH
-                                -- captures this in-flight extra read.
-                                -- Total actual reads = burst_limit + 1 = min(fill, remaining).
-                                --
-                                -- remaining >= 2 guard ensures burst_limit >= 1.
-                                -- remaining = 1 falls through to EF single read.
-                                if s_fill_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r then
-                                    s_burst_limit_r <= s_fill_r - 1;
-                                else
-                                    s_burst_limit_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r - 1;
-                                end if;
+                                -- burst_limit = fill - 1
+                                -- The -1 accounts for the bus_phy pipeline
+                                -- overlap: at Phase H, bus_phy restarts the
+                                -- next read before chip_ctrl can deassert
+                                -- req_burst. ST_DRAIN_FLUSH captures this
+                                -- in-flight extra read.
+                                -- Total actual reads = fill.
+                                s_burst_limit_r <= s_fill_r - 1;
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
                                 s_req_burst_r   <= '1';
@@ -839,15 +827,9 @@ begin
                                   and i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
                                   and i_ef2_sync = '0' and i_lf2_sync = '1'
-                                  and v_ififo2_can_read
-                                  and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2 then
-                                -- IFIFO2 loaded + remaining >= 2: burst read Reg9
-                                -- (see IFIFO1 comment above for -1 rationale)
-                                if s_fill_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r then
-                                    s_burst_limit_r <= s_fill_r - 1;
-                                else
-                                    s_burst_limit_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r - 1;
-                                end if;
+                                  and v_ififo2_can_read then
+                                -- IFIFO2 loaded: burst read Reg9
+                                s_burst_limit_r <= s_fill_r - 1;
                                 s_burst_cnt_r   <= (others => '0');
                                 s_req_valid_r   <= '1';
                                 s_req_burst_r   <= '1';
@@ -1119,8 +1101,6 @@ begin
                                 s_req_burst_r        <= '0';
                                 s_raw_valid_r        <= '0';
                                 s_range_active_r     <= '1';
-                                s_expected_ififo1_r  <= (others => '0');
-                                s_expected_ififo2_r  <= (others => '0');
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_drain_done_r       <= '0';
@@ -1144,8 +1124,6 @@ begin
                                 s_oen_permanent_r    <= '0';
                                 s_drain_done_r       <= '0';
                                 s_range_active_r     <= '1';
-                                s_expected_ififo1_r  <= (others => '0');
-                                s_expected_ififo2_r  <= (others => '0');
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_state_r            <= ST_OVERRUN_FLUSH;
@@ -1156,8 +1134,6 @@ begin
                                 s_raw_valid_r        <= '0';
                                 s_alutrigger_r       <= '0';
                                 s_range_active_r     <= '1';
-                                s_expected_ififo1_r  <= (others => '0');
-                                s_expected_ififo2_r  <= (others => '0');
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_drain_done_r       <= '0';

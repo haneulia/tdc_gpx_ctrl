@@ -132,8 +132,6 @@ begin
             i_active_chip_mask => active_mask,
             i_stops_per_chip   => stops_per_chip,
             i_max_range_clks   => max_range_clks,
-            i_bus_ticks        => bus_ticks,
-            i_bus_clk_div      => bus_clk_div,
             o_m_axis_tdata     => face_tdata,
             o_m_axis_tvalid    => face_tvalid,
             o_m_axis_tlast     => face_tlast,
