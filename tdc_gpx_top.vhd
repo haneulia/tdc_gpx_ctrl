@@ -335,6 +335,7 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_global_shot_seq_r   : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
     signal s_cmd_start_accepted  : std_logic := '0';  -- 1-clk pulse: start actually accepted
+    signal s_shot_deferred_r     : std_logic := '0';  -- shot arrived during face-close window
 
     -- =========================================================================
     -- Timestamp (free-running cycle counter, i_axis_aclk domain)
@@ -570,7 +571,7 @@ begin
     --     waits for next shot_start cleanly.
     -- =========================================================================
     s_packet_start  <= '1'  when s_face_state_r = ST_WAIT_SHOT
-                                and i_shot_start = '1'
+                                and (i_shot_start = '1' or s_shot_deferred_r = '1')
                                 and s_cmd_stop = '0'
                                 and s_cmd_soft_reset = '0'
                                 and s_face_asm_closing = '0'
@@ -599,17 +600,15 @@ begin
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_face_start_r   <= '0';
-                s_face_active_r  <= '0';
-                s_shot_pending_r <= '0';
+                s_face_start_r    <= '0';
+                s_face_active_r   <= '0';
+                s_shot_pending_r  <= '0';
+                s_shot_deferred_r <= '0';
             elsif s_cmd_stop = '1' then
-                -- cmd_stop kills any pending face_start / shot acceptance
-                -- that was registered on the previous edge but hasn't
-                -- fired yet.  Prevents orphan-face (header opens a face
-                -- whose shot_start was suppressed).
-                s_face_start_r   <= '0';
-                s_face_active_r  <= '0';
-                s_shot_pending_r <= '0';
+                s_face_start_r    <= '0';
+                s_face_active_r   <= '0';
+                s_shot_pending_r  <= '0';
+                s_shot_deferred_r <= '0';
             else
                 s_face_start_r <= s_packet_start;
 
@@ -620,12 +619,27 @@ begin
                     s_face_active_r <= '0';
                 end if;
 
+                -- Deferred shot latch: captures a shot that arrives during
+                -- the face-close window.  Consumed by s_packet_start when
+                -- the sequencer returns to ST_WAIT_SHOT.
+                if s_packet_start = '1' then
+                    -- Consumed: clear the latch
+                    s_shot_deferred_r <= '0';
+                elsif i_shot_start = '1'
+                      and s_face_state_r = ST_IN_FACE
+                      and (s_face_closing = '1'
+                           or s_face_asm_closing = '1'
+                           or s_face_asm_fall_closing = '1') then
+                    -- Shot arrived during close window: defer it
+                    s_shot_deferred_r <= '1';
+                end if;
+
                 -- Registered shot acceptance:
-                --   First shot : ST_WAIT_SHOT + shot_start + no stop/reset
-                --                + neither assembler in overrun-close
+                --   First shot : ST_WAIT_SHOT + (shot_start or deferred)
+                --                + no stop/reset + assemblers not closing
                 --   Mid-face   : face_active + not closing + not done + no stop
                 if (s_face_state_r = ST_WAIT_SHOT
-                        and i_shot_start = '1'
+                        and (i_shot_start = '1' or s_shot_deferred_r = '1')
                         and s_cmd_stop = '0'
                         and s_face_asm_closing = '0'
                         and s_face_asm_fall_closing = '0')
@@ -1161,7 +1175,9 @@ begin
                         if s_cmd_start = '1'
                            and s_chip_busy = C_ZEROS_CHIPS
                            and s_face_tvalid = '0'
-                           and s_face_fall_tvalid = '0' then
+                           and s_face_fall_tvalid = '0'
+                           and o_m_axis_tvalid = '0'
+                           and o_m_axis_fall_tvalid = '0' then
                             s_face_id_r          <= (others => '0');
                             s_shot_overrun_r     <= '0';
                             s_cmd_start_accepted <= '1';

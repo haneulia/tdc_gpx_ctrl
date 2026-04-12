@@ -117,12 +117,14 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Synchronous flush for skid buffers (on shot_start)
     -- =========================================================================
-    signal s_flush : std_logic;
+    signal s_flush         : std_logic;  -- input skid flush (every shot_start)
+    signal s_overrun_flush : std_logic;  -- output skid flush (overrun only)
 
     -- =========================================================================
     -- FSM
     -- =========================================================================
-    type t_state is (ST_IDLE, ST_SCAN, ST_RESOLVE, ST_FORWARD, ST_OVERRUN_CLOSE);
+    type t_state is (ST_IDLE, ST_SCAN, ST_RESOLVE, ST_FORWARD,
+                      ST_OVERRUN_FILL);  -- blank-fill remaining row on overrun
     signal s_state_r : t_state := ST_IDLE;
 
     -- =========================================================================
@@ -223,11 +225,10 @@ begin
         port map (
             i_clk     => i_clk,
             i_rst_n   => i_rst_n,
-            i_flush   => '0',             -- NEVER flush output skid: it holds
-                                          -- the last beat(s) of a completed row
-                                          -- until downstream actually consumes
-                                          -- them.  Flushing here would lose data
-                                          -- under backpressure.
+            i_flush   => s_overrun_flush,  -- Flush output skid ONLY on overrun
+                                          -- (partial beats from aborted row).
+                                          -- Normal row completion: no flush,
+                                          -- last beat drains via backpressure.
             i_s_valid => s_pipe_tvalid_r,
             o_s_ready => s_pipe_tready,
             i_s_data  => s_pipe_bundle,
@@ -246,8 +247,14 @@ begin
     -- Timeout limit: max_range_clks only (drain/ALU margins TBD after bench)
     s_timeout_limit <= i_max_range_clks;
 
-    -- Flush all skid buffers on shot_start
+    -- Flush input skid buffers on every shot_start
     s_flush <= i_shot_start;
+
+    -- Flush output skid ONLY on overrun (shot_start while not idle).
+    -- Normal new-shot (ST_IDLE): output skid keeps last-row data intact.
+    s_overrun_flush <= i_shot_start when s_state_r /= ST_IDLE
+                                         and s_state_r /= ST_OVERRUN_FILL
+                       else '0';
 
     -- Pipe capacity: can FSM produce? (all inputs registered → ~0.5ns)
     s_can_produce <= '1' when (s_pipe_tvalid_r = '0')
@@ -493,38 +500,45 @@ begin
                     end if;  -- v_can_produce
 
                 -- ==============================================================
-                -- ST_OVERRUN_CLOSE: synthetic tlast beat is in the pipe
-                --   register.  Wait for the output skid to accept it,
-                --   then go to ST_IDLE ready for the next shot.
+                -- ST_OVERRUN_FILL: blank-fill ALL remaining undone chips
+                --   using the standard blank-fill path in ST_SCAN/RESOLVE/
+                --   FORWARD.  This ensures the row has the correct fixed
+                --   beat count before tlast, matching VDMA HSIZE.
+                --   We just redirect to ST_SCAN — undone active chips will
+                --   all timeout immediately (s_shot_cnt_r = 0xFFFF) and
+                --   be blank-filled with proper beat counts and tlast.
                 -- ==============================================================
-                when ST_OVERRUN_CLOSE =>
-                    if s_can_produce = '1' then
-                        -- The synthetic tlast was accepted → clear pipe
-                        s_pipe_tvalid_r <= '0';
-                        s_pipe_tlast_r  <= '0';
-                        s_row_done_r    <= '1';
-                        s_state_r       <= ST_IDLE;
-                    end if;
+                when ST_OVERRUN_FILL =>
+                    -- Redirect to ST_SCAN: all remaining chips will
+                    -- appear as timed-out and get blank-filled.
+                    s_shot_cnt_r      <= x"FFFF";              -- force immediate timeout
+                    s_timeout_limit_r <= to_unsigned(1, 16);   -- ensure timeout fires even if 0=disabled
+                    s_state_r         <= ST_SCAN;
 
                 end case;
 
                 -- =============================================================
-                -- shot_start override: close row then restart.
+                -- shot_start override: blank-fill remaining row.
                 -- Skid buffers are flushed via s_flush (concurrent signal).
                 -- =============================================================
                 if i_shot_start = '1' and s_state_r /= ST_IDLE
-                                       and s_state_r /= ST_OVERRUN_CLOSE then
-                    -- Row truncated: emit a synthetic tlast beat so that
-                    -- header_inserter sees a proper line boundary before
-                    -- the next shot's data arrives.
+                                       and s_state_r /= ST_OVERRUN_FILL then
+                    -- Row truncated: blank-fill ALL chips from scratch.
+                    -- We cannot safely reuse partial beats already in the
+                    -- output skid (no output flush), so we mark ALL chips
+                    -- as undone and error.  The blank-fill path produces
+                    -- a complete row of correct fixed size with proper tlast.
+                    -- The partial beats already emitted become extra data
+                    -- in the current line — but we prevent this by also
+                    -- clearing the output pipe register (any beat NOT yet
+                    -- accepted by the output skid is discarded).
                     s_chip_ready_r    <= (others => '0');
-                    s_chip_done_r     <= (others => '0');
-                    s_chip_error_r    <= (others => '0');
+                    s_chip_done_r     <= (others => '0');  -- restart ALL chips
+                    s_chip_error_r    <= s_active_mask_r;  -- error on all active
                     s_shot_overrun_r  <= '1';
-                    s_pipe_tdata_r    <= (others => '0');  -- blank padding
-                    s_pipe_tvalid_r   <= '1';
-                    s_pipe_tlast_r    <= '1';              -- synthetic EOL
-                    s_state_r         <= ST_OVERRUN_CLOSE;
+                    s_pipe_tvalid_r   <= '0';  -- discard in-progress beat
+                    s_pipe_tlast_r    <= '0';
+                    s_state_r         <= ST_OVERRUN_FILL;
                 end if;
             end if;
         end if;
@@ -536,6 +550,6 @@ begin
     o_row_done         <= s_row_done_r;
     o_chip_error_flags <= s_chip_error_r;
     o_shot_overrun     <= s_shot_overrun_r;
-    o_closing          <= '1' when s_state_r = ST_OVERRUN_CLOSE else '0';
+    o_closing          <= '1' when s_state_r = ST_OVERRUN_FILL else '0';
 
 end architecture rtl;
