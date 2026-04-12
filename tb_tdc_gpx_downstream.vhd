@@ -138,7 +138,8 @@ begin
             i_m_axis_tready    => face_tready,
             o_row_done         => row_done,
             o_chip_error_flags => chip_error,
-            o_shot_overrun     => shot_overrun
+            o_shot_overrun     => shot_overrun,
+            o_closing          => open
         );
 
     -- =========================================================================

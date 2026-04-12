@@ -78,7 +78,8 @@ entity tdc_gpx_face_assembler is
         -- Status
         o_row_done           : out std_logic;    -- 1-clk pulse: packed row complete
         o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_shot_overrun       : out std_logic     -- 1-clk pulse: shot truncated (was not idle)
+        o_shot_overrun       : out std_logic;    -- 1-clk pulse: shot truncated (was not idle)
+        o_closing            : out std_logic     -- '1' while closing overrun row (block new shots)
     );
 end entity tdc_gpx_face_assembler;
 
@@ -535,5 +536,6 @@ begin
     o_row_done         <= s_row_done_r;
     o_chip_error_flags <= s_chip_error_r;
     o_shot_overrun     <= s_shot_overrun_r;
+    o_closing          <= '1' when s_state_r = ST_OVERRUN_CLOSE else '0';
 
 end architecture rtl;

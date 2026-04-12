@@ -387,8 +387,10 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     -- Shot overrun: from face_assembler (real truncation), not face_seq
     -- =========================================================================
-    signal s_shot_overrun    : std_logic;
-    signal s_shot_overrun_r  : std_logic := '0';
+    signal s_shot_overrun         : std_logic;
+    signal s_shot_overrun_r       : std_logic := '0';
+    signal s_face_asm_closing     : std_logic;  -- rise assembler in ST_OVERRUN_CLOSE
+    signal s_face_asm_fall_closing: std_logic;  -- fall assembler in ST_OVERRUN_CLOSE
 
     -- =========================================================================
     -- Stop event stream: per-IFIFO expected drain counts
@@ -556,6 +558,8 @@ begin
                                 and i_shot_start = '1'
                                 and s_cmd_stop = '0'
                                 and s_cmd_soft_reset = '0'
+                                and s_face_asm_closing = '0'
+                                and s_face_asm_fall_closing = '0'
                             else '0';
 
     -- =========================================================================
@@ -603,14 +607,19 @@ begin
 
                 -- Registered shot acceptance:
                 --   First shot : ST_WAIT_SHOT + shot_start + no stop/reset
+                --                + neither assembler in overrun-close
                 --   Mid-face   : face_active + not closing + not done + no stop
                 if (s_face_state_r = ST_WAIT_SHOT
                         and i_shot_start = '1'
-                        and s_cmd_stop = '0')
+                        and s_cmd_stop = '0'
+                        and s_face_asm_closing = '0'
+                        and s_face_asm_fall_closing = '0')
                    or (s_face_active_r = '1'
                         and s_frame_done_both = '0'
                         and s_face_closing = '0'
                         and s_cmd_stop = '0'
+                        and s_face_asm_closing = '0'
+                        and s_face_asm_fall_closing = '0'
                         and i_shot_start = '1') then
                     s_shot_pending_r <= '1';
                 else
@@ -632,6 +641,8 @@ begin
                           when s_face_closing = '0'
                                and s_cmd_stop = '0'
                                and s_cmd_soft_reset = '0'
+                               and s_face_asm_closing = '0'
+                               and s_face_asm_fall_closing = '0'
                           else '0';
 
     -- Gated face_start: suppresses orphan-face if cmd_stop or soft_reset
@@ -918,7 +929,8 @@ begin
             i_m_axis_tready    => s_face_tready,
             o_row_done         => s_row_done,
             o_chip_error_flags => s_chip_error_flags,
-            o_shot_overrun     => s_shot_overrun
+            o_shot_overrun     => s_shot_overrun,
+            o_closing          => s_face_asm_closing
         );
 
     -- =========================================================================
@@ -945,7 +957,8 @@ begin
             i_m_axis_tready    => s_face_fall_tready,
             o_row_done         => s_row_fall_done,
             o_chip_error_flags => s_chip_fall_error,
-            o_shot_overrun     => s_shot_fall_overrun
+            o_shot_overrun     => s_shot_fall_overrun,
+            o_closing          => s_face_asm_fall_closing
         );
 
     -- =========================================================================
@@ -1232,6 +1245,8 @@ begin
                                             or s_chip_busy /= C_ZEROS_CHIPS
                                             or s_face_tvalid = '1'
                                             or s_face_fall_tvalid = '1'
+                                            or o_m_axis_tvalid = '1'
+                                            or o_m_axis_fall_tvalid = '1'
                                         else '0';
     s_status.pipeline_overrun   <= '1'  when s_chip_error_flags /= C_ZEROS_CHIPS
                                             or s_chip_fall_error /= C_ZEROS_CHIPS

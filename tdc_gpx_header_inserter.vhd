@@ -106,7 +106,7 @@ architecture rtl of tdc_gpx_header_inserter is
     -- =========================================================================
     -- FSM
     -- =========================================================================
-    type t_state is (ST_IDLE, ST_PREFIX, ST_DATA);
+    type t_state is (ST_IDLE, ST_PREFIX, ST_DATA, ST_DRAIN_LAST);
     signal s_state_r : t_state := ST_IDLE;
 
     -- =========================================================================
@@ -377,15 +377,28 @@ begin
                         -- Line complete (upstream EOL)
                         if i_s_axis_tlast = '1' then
                             if s_col_cnt_r = s_cols_per_face_m1_r then
-                                -- All lines sent: face done
-                                s_frame_done_r <= '1';
-                                s_state_r      <= ST_IDLE;
+                                -- All lines sent → wait for last beat to
+                                -- drain before reporting frame_done.
+                                s_state_r      <= ST_DRAIN_LAST;
                             else
                                 s_col_cnt_r    <= s_col_cnt_r + 1;
                                 s_first_line_r <= '0';
                                 s_state_r      <= ST_PREFIX;
                             end if;
                         end if;
+                    end if;
+
+                -- ==============================================================
+                -- ST_DRAIN_LAST: final beat is in output register; wait for
+                --   downstream to consume it before reporting frame_done.
+                --   This prevents a race where face_start arrives before the
+                --   last beat is handed off and clears the output register.
+                -- ==============================================================
+                when ST_DRAIN_LAST =>
+                    if s_out_tvalid_r = '0' or i_m_axis_tready = '1' then
+                        -- Last beat consumed (or was already consumed)
+                        s_frame_done_r <= '1';
+                        s_state_r      <= ST_IDLE;
                     end if;
 
                 end case;
@@ -438,11 +451,17 @@ begin
                     -- Line geometry (from top-level)
                     s_rows_per_face_r     <= i_rows_per_face;
 
-                    -- Start first line: header prefix
+                    -- Start first line: header prefix.
+                    -- Do NOT clear s_out_tvalid_r if the last beat from the
+                    -- previous face is still pending — let it drain naturally.
+                    -- ST_PREFIX emits header beats which will overwrite the
+                    -- output register only after the old beat is consumed.
                     s_prefix_idx_r <= (others => '0');
                     s_col_cnt_r    <= (others => '0');
                     s_first_line_r <= '1';
-                    s_out_tvalid_r <= '0';
+                    if s_out_tvalid_r = '0' or i_m_axis_tready = '1' then
+                        s_out_tvalid_r <= '0';
+                    end if;
                     s_out_tlast_r  <= '0';
                     s_out_tuser_r  <= '0';
                     s_state_r      <= ST_PREFIX;
