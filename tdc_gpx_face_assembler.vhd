@@ -366,7 +366,7 @@ begin
                         s_is_blank_r <= '0';
                         s_cur_chip_r <= v_cur_chip;
                         s_state_r    <= ST_RESOLVE;
-                    elsif s_shot_cnt_r >= s_timeout_limit_r then
+                    elsif s_timeout_limit_r /= 0 and s_shot_cnt_r >= s_timeout_limit_r then
                         -- Priority 2: timeout → pick any undone chip
                         for i in 0 to 3 loop
                             if s_active_mask_r(i) = '1'

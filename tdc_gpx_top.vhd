@@ -320,7 +320,9 @@ architecture rtl of tdc_gpx_top is
     -- cmd_start or after cmd_stop.
     -- =========================================================================
     signal s_shot_start_gated    : std_logic;
+    signal s_shot_pending_r      : std_logic := '0';  -- registered accept decision
     signal s_shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_global_shot_seq_r   : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Timestamp (free-running cycle counter, i_axis_aclk domain)
@@ -555,57 +557,70 @@ begin
                             else '0';
 
     -- =========================================================================
-    -- [0b] 1-cycle delayed face_start + face_active flag.
-    --   VHDL signal semantics: registers updated at edge N by p_geometry /
-    --   p_face_cfg_latch are visible at edge N+1. s_face_start_r fires at
-    --   N+1 so that header_inserter and face_assembler see stable values.
+    -- [0b] face_start delay + face_active flag + registered shot acceptance.
+    --
+    --   s_face_start_r: 1-cycle delayed packet_start, used by header_inserter
+    --     for config latching.  Timing: fires at N+1 so downstream sees stable
+    --     face config values from p_geometry / p_face_cfg_latch.
     --
     --   s_face_active_r: tracks the "accepted face" window.
-    --     Set when s_face_start_r fires (face truly started).
-    --     Cleared when face closes (frame_done_both or cmd_stop).
-    --     Mid-face shots only pass through when face_active_r='1'.
-    --     This prevents raw i_shot_start from leaking on face-close
-    --     boundaries (frame_done_both + shot_start same cycle, or
-    --     cmd_stop + shot_start same cycle in ST_IN_FACE).
+    --     Set on packet_start, cleared on frame_done_both or cmd_stop.
+    --
+    --   s_shot_pending_r: registered shot acceptance (1-clk pulse).
+    --     On edge N the acceptance conditions are sampled.  The pulse fires
+    --     at N+1.  On that next edge s_frame_done / s_face_closing from
+    --     header_inserter are already visible, so a combinational kill on
+    --     the output closes the same-edge race that a purely combinational
+    --     gate cannot prevent (VHDL signal semantics: registered outputs
+    --     from header_inserter are NOT visible on the edge they are set).
     -- =========================================================================
     p_face_start_delay : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_face_start_r  <= '0';
-                s_face_active_r <= '0';
+                s_face_start_r   <= '0';
+                s_face_active_r  <= '0';
+                s_shot_pending_r <= '0';
             else
                 s_face_start_r <= s_packet_start;
 
                 -- face_active management
                 if s_packet_start = '1' then
-                    -- Next cycle s_face_start_r will fire → face becomes active
                     s_face_active_r <= '1';
                 elsif s_frame_done_both = '1' or s_cmd_stop = '1' then
-                    -- Face closing → no more mid-face shots accepted
                     s_face_active_r <= '0';
+                end if;
+
+                -- Registered shot acceptance:
+                --   First shot : ST_WAIT_SHOT + shot_start + no stop
+                --   Mid-face   : face_active + not closing + not done + no stop
+                if (s_face_state_r = ST_WAIT_SHOT
+                        and i_shot_start = '1'
+                        and s_cmd_stop = '0')
+                   or (s_face_active_r = '1'
+                        and s_frame_done_both = '0'
+                        and s_face_closing = '0'
+                        and s_cmd_stop = '0'
+                        and i_shot_start = '1') then
+                    s_shot_pending_r <= '1';
+                else
+                    s_shot_pending_r <= '0';
                 end if;
             end if;
         end if;
     end process p_face_start_delay;
 
     -- =========================================================================
-    -- [0c] Accepted shot_start gate.
-    --   First shot: s_face_start_r (1-cycle delayed packet_start).
-    --   Mid-face shots (overrun): raw i_shot_start, ONLY when face_active_r='1'
-    --     AND frame_done_both='0' AND cmd_stop='0'.
-    --     face_active_r is registered (old value on same edge as close event),
-    --     so we add combinational guards to prevent face-close race:
-    --     frame_done_both and cmd_stop are combinational and visible immediately.
-    --   All other cases: '0' (no shot accepted).
+    -- [0c] Accepted shot_start output.
+    --   s_shot_pending_r fires at N+1 (one cycle after acceptance).
+    --   Combinational kill: if s_face_closing or s_cmd_stop went high between
+    --   the acceptance edge (N) and the delivery edge (N+1), suppress the
+    --   pulse.  At N+1 the registered frame_done from header_inserter IS
+    --   visible, so the kill is effective against the same-edge race.
     -- =========================================================================
-    s_shot_start_gated <= s_face_start_r
-                          when s_face_start_r = '1'
-                          else i_shot_start
-                               when s_face_active_r = '1'
-                                    and s_frame_done_both = '0'
-                                    and s_face_closing = '0'
-                                    and s_cmd_stop = '0'
+    s_shot_start_gated <= s_shot_pending_r
+                          when s_face_closing = '0'
+                               and s_cmd_stop = '0'
                           else '0';
 
     -- Per-chip shot gating: inactive chips (per active_chip_mask) do not
@@ -931,7 +946,7 @@ begin
             i_cfg               => s_cfg,
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
-            i_shot_seq_start    => s_chip_shot_seq(0),
+            i_shot_seq_start    => s_global_shot_seq_r,
             i_timestamp_ns      => s_timestamp_r,
             i_chip_error_mask   => s_chip_error_merged,
             i_chip_error_cnt    => std_logic_vector(s_error_count_r),
@@ -961,7 +976,7 @@ begin
             i_cfg               => s_cfg,
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
-            i_shot_seq_start    => s_chip_shot_seq(0),
+            i_shot_seq_start    => s_global_shot_seq_r,
             i_timestamp_ns      => s_timestamp_r,
             i_chip_error_mask   => s_chip_error_merged,
             i_chip_error_cnt    => std_logic_vector(s_error_count_r),
@@ -1119,6 +1134,22 @@ begin
     end process p_face_seq;
 
     -- =========================================================================
+    -- [6b] Global shot sequence counter (independent of per-chip counters).
+    --   Increments on every accepted shot pulse so that header/status always
+    --   reflect the true shot count regardless of which chips are active.
+    -- =========================================================================
+    p_global_shot_seq : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or s_cmd_start = '1' then
+                s_global_shot_seq_r <= (others => '0');
+            elsif s_shot_start_gated = '1' then
+                s_global_shot_seq_r <= s_global_shot_seq_r + 1;
+            end if;
+        end if;
+    end process p_global_shot_seq;
+
+    -- =========================================================================
     -- [7] Timestamp counter (free-running, i_axis_aclk domain)
     --   SW interprets as cycles; multiply by clock period for nanoseconds.
     -- =========================================================================
@@ -1186,13 +1217,14 @@ begin
     -- =========================================================================
     s_status.busy               <= '1'  when s_face_state_r /= ST_IDLE else '0';
     s_status.pipeline_overrun   <= '1'  when s_chip_error_flags /= C_ZEROS_CHIPS
+                                            or s_chip_fall_error /= C_ZEROS_CHIPS
                                             or s_shot_overrun_r = '1'
                                         else '0';
     s_status.bin_mismatch       <= '0';  -- Phase 2: calibration check
     s_status.chip_error_mask    <= s_chip_error_merged;
     s_status.drain_timeout_mask <= s_err_drain_to_sticky_r;
     s_status.sequence_error_mask<= s_err_seq_sticky_r;
-    s_status.shot_seq_current   <= s_chip_shot_seq(0);
+    s_status.shot_seq_current   <= s_global_shot_seq_r;
     s_status.vdma_frame_count   <= s_frame_id_r;
     s_status.error_count        <= s_error_count_r;
 
