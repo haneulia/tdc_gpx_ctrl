@@ -43,6 +43,16 @@
 --   General rule: ALL cfg_image writes (cmd_cfg_write, cmd_reg_write)
 --   require busy = '0'.
 --
+-- cmd_start: self-protecting — ignored while any chip_ctrl is busy or
+--   assembler/header output is still valid.  Side effects (shot_seq
+--   reset, sticky error clear) fire only on actual acceptance.
+--
+-- cmd_soft_reset: CONTROL-PLANE ONLY.  Resets the face sequencer,
+--   chip_ctrl instances (→ ST_POWERUP), and pending shot/face_start
+--   signals.  Does NOT abort face_assembler or header_inserter output
+--   pipelines — they drain naturally via AXI backpressure.  SW must
+--   wait for busy = '0' after soft_reset before issuing cmd_start.
+--
 -- Standard: VHDL-93 compatible
 -- =============================================================================
 
@@ -324,6 +334,7 @@ architecture rtl of tdc_gpx_top is
     signal s_face_start_gated    : std_logic;          -- face_start_r killed by stop/reset
     signal s_shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_global_shot_seq_r   : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
+    signal s_cmd_start_accepted  : std_logic := '0';  -- 1-clk pulse: start actually accepted
 
     -- =========================================================================
     -- Timestamp (free-running cycle counter, i_axis_aclk domain)
@@ -393,6 +404,8 @@ architecture rtl of tdc_gpx_top is
     signal s_face_asm_fall_closing: std_logic;  -- fall assembler in ST_OVERRUN_CLOSE
     signal s_hdr_draining         : std_logic;  -- rise header in ST_DRAIN_LAST
     signal s_hdr_fall_draining    : std_logic;  -- fall header in ST_DRAIN_LAST
+    signal s_hdr_last_line        : std_logic;  -- rise header on last line
+    signal s_hdr_fall_last_line   : std_logic;  -- fall header on last line
 
     -- =========================================================================
     -- Stop event stream: per-IFIFO expected drain counts
@@ -991,7 +1004,8 @@ begin
             o_m_axis_tuser      => o_m_axis_tuser,
             i_m_axis_tready     => i_m_axis_tready,
             o_frame_done        => s_frame_done,
-            o_draining          => s_hdr_draining
+            o_draining          => s_hdr_draining,
+            o_last_line         => s_hdr_last_line
         );
 
     -- =========================================================================
@@ -1022,7 +1036,8 @@ begin
             o_m_axis_tuser      => o_m_axis_fall_tuser,
             i_m_axis_tready     => i_m_axis_fall_tready,
             o_frame_done        => s_frame_fall_done,
-            o_draining          => s_hdr_fall_draining
+            o_draining          => s_hdr_fall_draining,
+            o_last_line         => s_hdr_fall_last_line
         );
 
     -- =========================================================================
@@ -1102,13 +1117,14 @@ begin
                                     and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
                                 else '0';
 
-    -- '1' as soon as either pipeline has fired frame_done OR is draining
-    -- the final beat (ST_DRAIN_LAST).  Blocks mid-face shot pass-through
-    -- during the drain window when frame_done hasn't fired yet.
+    -- '1' as soon as either pipeline is on its last line, draining, or
+    -- has already fired frame_done.  o_last_line closes the window where
+    -- the assembler output skid holds the final beat but header hasn't
+    -- consumed it yet (before ST_DRAIN_LAST / frame_done can fire).
     s_face_closing      <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1'
-                                      or s_hdr_draining = '1')
+                                      or s_hdr_draining = '1' or s_hdr_last_line = '1')
                                       or (s_frame_fall_done_r = '1' or s_frame_fall_done = '1'
-                                      or s_hdr_fall_draining = '1')
+                                      or s_hdr_fall_draining = '1' or s_hdr_fall_last_line = '1')
                                 else '0';
 
     -- =========================================================================
@@ -1121,11 +1137,15 @@ begin
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_face_state_r   <= ST_IDLE;
-                s_face_id_r      <= (others => '0');
-                s_frame_id_r     <= (others => '0');
-                s_shot_overrun_r <= '0';
+                s_face_state_r        <= ST_IDLE;
+                s_face_id_r           <= (others => '0');
+                s_frame_id_r          <= (others => '0');
+                s_shot_overrun_r      <= '0';
+                s_cmd_start_accepted  <= '0';
             else
+                -- Default: clear single-cycle pulse
+                s_cmd_start_accepted <= '0';
+
                 -- Shot overrun from face_assembler: sticky until cmd_start
                 if s_shot_overrun = '1' or s_shot_fall_overrun = '1' then
                     s_shot_overrun_r <= '1';
@@ -1136,15 +1156,16 @@ begin
                     when ST_IDLE =>
                         -- Accept cmd_start only when the entire pipeline
                         -- is idle: no chip_ctrl busy, no assembler/header
-                        -- data in flight.  This self-protects against SW
+                        -- data in flight.  Self-protects against SW
                         -- issuing cmd_start before previous output drains.
                         if s_cmd_start = '1'
                            and s_chip_busy = C_ZEROS_CHIPS
                            and s_face_tvalid = '0'
                            and s_face_fall_tvalid = '0' then
-                            s_face_id_r      <= (others => '0');
-                            s_shot_overrun_r <= '0';
-                            s_face_state_r   <= ST_WAIT_SHOT;
+                            s_face_id_r          <= (others => '0');
+                            s_shot_overrun_r     <= '0';
+                            s_cmd_start_accepted <= '1';
+                            s_face_state_r       <= ST_WAIT_SHOT;
                         end if;
 
                     when ST_WAIT_SHOT =>
@@ -1186,7 +1207,7 @@ begin
     p_global_shot_seq : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_start = '1' then
+            if i_axis_aresetn = '0' or s_cmd_start_accepted = '1' then
                 s_global_shot_seq_r <= (others => '0');
             elsif s_shot_start_gated = '1' then
                 s_global_shot_seq_r <= s_global_shot_seq_r + 1;
@@ -1247,7 +1268,7 @@ begin
     p_err_sticky : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_start = '1' then
+            if i_axis_aresetn = '0' or s_cmd_start_accepted = '1' then
                 s_err_drain_to_sticky_r <= (others => '0');
                 s_err_seq_sticky_r      <= (others => '0');
             else

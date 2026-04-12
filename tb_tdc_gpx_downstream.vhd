@@ -169,7 +169,9 @@ begin
             o_m_axis_tlast      => out_tlast,
             o_m_axis_tuser      => out_tuser,
             i_m_axis_tready     => out_tready,
-            o_frame_done        => frame_done
+            o_frame_done        => frame_done,
+            o_draining          => open,
+            o_last_line         => open
         );
 
     -- =========================================================================

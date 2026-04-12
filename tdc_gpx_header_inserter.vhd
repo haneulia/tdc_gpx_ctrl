@@ -98,7 +98,8 @@ entity tdc_gpx_header_inserter is
 
         -- Status
         o_frame_done        : out std_logic;    -- 1-clk pulse: face complete
-        o_draining          : out std_logic     -- '1' in ST_DRAIN_LAST (final beat pending)
+        o_draining          : out std_logic;    -- '1' in ST_DRAIN_LAST (final beat pending)
+        o_last_line         : out std_logic     -- '1' when processing last line of face
     );
 end entity tdc_gpx_header_inserter;
 
@@ -187,6 +188,12 @@ begin
     o_m_axis_tuser(0) <= s_out_tuser_r;
     o_frame_done      <= s_frame_done_r;
     o_draining        <= '1' when s_state_r = ST_DRAIN_LAST else '0';
+    -- '1' during the entire last line: from ST_PREFIX/ST_DATA on the last col
+    -- through ST_DRAIN_LAST.  Closes the window where assembler output skid
+    -- holds the final beat but header hasn't consumed it yet.
+    o_last_line       <= '1' when s_state_r /= ST_IDLE
+                                  and s_col_cnt_r = s_cols_per_face_m1_r
+                              else '0';
 
     -- =========================================================================
     -- Flow control
