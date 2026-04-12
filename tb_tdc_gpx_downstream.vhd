@@ -151,6 +151,7 @@ begin
             i_clk               => clk,
             i_rst_n             => rst_n,
             i_face_start        => face_start,
+            i_face_abort        => '0',
             i_cfg               => cfg,
             i_vdma_frame_id     => vdma_frame_id,
             i_face_id           => face_id_sig,
@@ -172,7 +173,8 @@ begin
             i_m_axis_tready     => out_tready,
             o_frame_done        => frame_done,
             o_draining          => open,
-            o_last_line         => open
+            o_last_line         => open,
+            o_idle              => open
         );
 
     -- =========================================================================

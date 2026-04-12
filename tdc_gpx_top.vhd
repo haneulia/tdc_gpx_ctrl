@@ -199,6 +199,7 @@ architecture rtl of tdc_gpx_top is
     -- CSR outputs (i_axis_aclk domain)
     -- =========================================================================
     signal s_cfg            : t_tdc_cfg;
+    signal s_cfg_face_r     : t_tdc_cfg;    -- snapshot at packet_start for header
     signal s_cfg_image_raw  : t_cfg_image;  -- raw from CSR
     signal s_cfg_image      : t_cfg_image;  -- effective (with overrides)
     signal s_bus_clk_div_8  : unsigned(7 downto 0);
@@ -417,6 +418,8 @@ architecture rtl of tdc_gpx_top is
     signal s_face_asm_fall_idle   : std_logic;  -- fall assembler idle
     signal s_hdr_draining         : std_logic;  -- rise header in ST_DRAIN_LAST
     signal s_hdr_fall_draining    : std_logic;  -- fall header in ST_DRAIN_LAST
+    signal s_hdr_idle             : std_logic;  -- rise header idle
+    signal s_hdr_fall_idle        : std_logic;  -- fall header idle
     signal s_face_shot_cnt_r      : unsigned(15 downto 0) := (others => '0');
     signal s_all_shots_fired      : std_logic;  -- all shots for this face accepted
 
@@ -1045,7 +1048,8 @@ begin
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
             i_face_start        => s_face_start_gated,
-            i_cfg               => s_cfg,
+            i_face_abort        => s_face_abort,
+            i_cfg               => s_cfg_face_r,   -- face-start snapshot
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
             i_shot_seq_start    => s_global_shot_seq_r,
@@ -1066,7 +1070,8 @@ begin
             i_m_axis_tready     => i_m_axis_tready,
             o_frame_done        => s_frame_done,
             o_draining          => s_hdr_draining,
-            o_last_line         => open
+            o_last_line         => open,
+            o_idle              => s_hdr_idle
         );
 
     -- =========================================================================
@@ -1077,7 +1082,8 @@ begin
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
             i_face_start        => s_face_start_gated,
-            i_cfg               => s_cfg,
+            i_face_abort        => s_face_fall_abort,
+            i_cfg               => s_cfg_face_r,   -- face-start snapshot
             i_vdma_frame_id     => s_frame_id_r,
             i_face_id           => s_face_id_r,
             i_shot_seq_start    => s_global_shot_seq_r,
@@ -1098,7 +1104,8 @@ begin
             i_m_axis_tready     => i_m_axis_fall_tready,
             o_frame_done        => s_frame_fall_done,
             o_draining          => s_hdr_fall_draining,
-            o_last_line         => open
+            o_last_line         => open,
+            o_idle              => s_hdr_fall_idle
         );
 
     -- =========================================================================
@@ -1150,6 +1157,7 @@ begin
                 s_face_active_mask_r    <= s_cfg.active_chip_mask;
                 s_face_cols_per_face_r  <= s_cfg.cols_per_face;
                 s_face_n_faces_r        <= s_cfg.n_faces;
+                s_cfg_face_r            <= s_cfg;  -- full config snapshot for header
             end if;
         end if;
     end process p_face_cfg_latch;
@@ -1232,6 +1240,8 @@ begin
                            and s_chip_busy = C_ZEROS_CHIPS
                            and s_face_asm_idle = '1'
                            and s_face_asm_fall_idle = '1'
+                           and s_hdr_idle = '1'
+                           and s_hdr_fall_idle = '1'
                            and s_face_tvalid = '0'
                            and s_face_fall_tvalid = '0'
                            and o_m_axis_tvalid = '0'
@@ -1380,6 +1390,8 @@ begin
                                             or s_chip_busy /= C_ZEROS_CHIPS
                                             or s_face_asm_idle = '0'
                                             or s_face_asm_fall_idle = '0'
+                                            or s_hdr_idle = '0'
+                                            or s_hdr_fall_idle = '0'
                                             or s_face_tvalid = '1'
                                             or s_face_fall_tvalid = '1'
                                             or o_m_axis_tvalid = '1'

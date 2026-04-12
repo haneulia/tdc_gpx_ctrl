@@ -172,6 +172,7 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_chip_error_r    : std_logic_vector(3 downto 0) := (others => '0');
     signal s_shot_overrun_r  : std_logic := '0';
     signal s_face_abort_r    : std_logic := '0';
+    signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
 
     -- =========================================================================
     -- Blank beat data: all zeros except metadata beat has error_fill + chip_id
@@ -313,6 +314,7 @@ begin
                 s_chip_error_r    <= (others => '0');
                 s_shot_overrun_r  <= '0';
                 s_face_abort_r   <= '0';
+                s_shot_pending_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_row_done_r     <= '0';
@@ -357,7 +359,8 @@ begin
                 -- ST_IDLE: wait for shot_start
                 -- ==============================================================
                 when ST_IDLE =>
-                    if i_shot_start = '1' then
+                    if i_shot_start = '1' or s_shot_pending_r = '1' then
+                        s_shot_pending_r <= '0';  -- consume pending
                         s_timeout_limit_r <= s_timeout_limit;
                         s_chip_ready_r    <= (others => '0');
                         s_chip_done_r     <= (others => '0');
@@ -470,6 +473,9 @@ begin
                                 if s_is_last_chip_r = '1' then
                                     s_row_done_r     <= '1';
                                     v_row_completing := true;
+                                    if i_shot_start = '1' then
+                                        s_shot_pending_r <= '1';
+                                    end if;
                                     s_state_r        <= ST_IDLE;
                                 else
                                     s_state_r    <= ST_SCAN;
@@ -499,6 +505,9 @@ begin
                                     if s_is_last_chip_r = '1' then
                                         s_row_done_r     <= '1';
                                         v_row_completing := true;
+                                        if i_shot_start = '1' then
+                                            s_shot_pending_r <= '1';
+                                        end if;
                                         s_state_r        <= ST_IDLE;
                                     else
                                         s_state_r    <= ST_SCAN;

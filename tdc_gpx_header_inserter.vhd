@@ -66,6 +66,7 @@ entity tdc_gpx_header_inserter is
 
         -- Face control
         i_face_start        : in  std_logic;    -- 1-clk pulse: new face
+        i_face_abort        : in  std_logic;    -- 1-clk pulse: abort current face (overrun)
 
         -- Configuration (from CSR, stable before face_start)
         i_cfg               : in  t_tdc_cfg;
@@ -99,7 +100,8 @@ entity tdc_gpx_header_inserter is
         -- Status
         o_frame_done        : out std_logic;    -- 1-clk pulse: face complete
         o_draining          : out std_logic;    -- '1' in ST_DRAIN_LAST (final beat pending)
-        o_last_line         : out std_logic     -- '1' when processing last line of face
+        o_last_line         : out std_logic;    -- '1' when processing last line of face
+        o_idle              : out std_logic     -- '1' when FSM is in ST_IDLE
     );
 end entity tdc_gpx_header_inserter;
 
@@ -188,6 +190,7 @@ begin
     o_m_axis_tuser(0) <= s_out_tuser_r;
     o_frame_done      <= s_frame_done_r;
     o_draining        <= '1' when s_state_r = ST_DRAIN_LAST else '0';
+    o_idle            <= '1' when s_state_r = ST_IDLE else '0';
     -- '1' during the entire last line: from ST_PREFIX/ST_DATA on the last col
     -- through ST_DRAIN_LAST.  Closes the window where assembler output skid
     -- holds the final beat but header hasn't consumed it yet.
@@ -474,6 +477,17 @@ begin
                     s_out_tlast_r  <= '0';
                     s_out_tuser_r  <= '0';
                     s_state_r      <= ST_PREFIX;
+                end if;
+
+                -- =============================================================
+                -- face_abort: assembler overrun → discard current face.
+                -- Goes directly to ST_IDLE.  Any partial output beat is
+                -- preserved (not cleared) — it will drain naturally or be
+                -- overwritten by the next face_start.
+                -- Higher priority than face_start (last-assignment wins).
+                -- =============================================================
+                if i_face_abort = '1' then
+                    s_state_r      <= ST_IDLE;
                 end if;
 
             end if;
