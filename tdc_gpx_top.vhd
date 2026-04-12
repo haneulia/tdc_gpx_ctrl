@@ -356,21 +356,28 @@ architecture rtl of tdc_gpx_top is
     -- Face boundary signals:
     --   s_packet_start    : combinational, fires ONLY when p_face_seq actually
     --                       accepts the shot (ST_WAIT_SHOT + shot_start + NOT
-    --                       cmd_stop). Guards against two race conditions:
-    --                       (1) cmd_stop + shot_start same cycle: stop wins
-    --                       (2) frame_done_both + shot_start: handled by
-    --                           sequencer priority (close face first)
-    --                       Used by p_geometry and p_face_cfg_latch to latch
-    --                       config into registers at this edge.
+    --                       cmd_stop). Used by p_geometry and p_face_cfg_latch
+    --                       to latch config at this edge.
     --   s_face_start_r    : 1-cycle delayed registered version of packet_start.
     --                       Used by header_inserter and face_assembler so they
     --                       see the STABLE latched values (VHDL signal semantics:
     --                       registers updated at edge N are visible at edge N+1).
-    --   s_shot_start_gated: first shot delayed by 1 cycle (via s_face_start_r),
-    --                       mid-face shots pass through immediately.
+    --   s_shot_start_gated: accepted-shot pulse. ALL downstream shot_start
+    --                       signals go through this single gate.
+    --                       First shot: delayed 1 cycle (s_face_start_r).
+    --                       Mid-face shots: gated by s_face_active_r (set 1 cycle
+    --                       after face_start, cleared on frame_done/cmd_stop).
+    --                       This prevents raw i_shot_start from leaking through
+    --                       on face-close boundaries (frame_done_both/cmd_stop
+    --                       + shot_start same cycle race).
+    --   s_face_active_r   : registered flag, '1' during accepted face period.
+    --                       Set at s_face_start_r (1 cycle after packet_start).
+    --                       Cleared on frame_done_both or cmd_stop.
+    --                       Mid-face shots only pass when this flag is '1'.
     -- =========================================================================
-    signal s_packet_start  : std_logic;
-    signal s_face_start_r  : std_logic := '0';
+    signal s_packet_start   : std_logic;
+    signal s_face_start_r   : std_logic := '0';
+    signal s_face_active_r  : std_logic := '0';
 
     -- =========================================================================
     -- Shot overrun: from face_assembler (real truncation), not face_seq
@@ -408,6 +415,13 @@ begin
     -- =========================================================================
     -- cfg_image override: enforce t_tdc_cfg → TDC-GPX register dependencies
     --   Reg5[17:0]  ← s_cfg.start_off1  (CTL3)
+    --   Reg5[23]    ← '1' (MasterAluTrig) — HARDWARE FORCED
+    --                  AluTrigger pin must trigger master reset to clear
+    --                  IFIFOs + ALU state between shots and after overrun.
+    --                  Without this, AluTrigger pulse has no effect and
+    --                  TDC-GPX internal state carries over to next shot.
+    --   Reg5[24]    ← '0' (PartialAluTrig) — HARDWARE FORCED
+    --                  Partial reset would leave IFIFOs dirty; must be off.
     --   Reg7[31:0]  ← s_cfg.cfg_reg7    (CTL4)
     -- Other registers pass through from CSR raw image unchanged.
     -- =========================================================================
@@ -418,6 +432,9 @@ begin
         -- Reg5: StartOff1 from CTL3
         v_img(5)(c_REG5_STARTOFF1_HI downto c_REG5_STARTOFF1_LO)
             := std_logic_vector(s_cfg.start_off1);
+        -- Reg5: force MasterAluTrig='1', PartialAluTrig='0'
+        v_img(5)(c_REG5_MASTER_ALU_TRIG)  := '1';
+        v_img(5)(c_REG5_PARTIAL_ALU_TRIG) := '0';
         -- Reg7: HSDiv/RefClkDiv/MTimer from CTL4
         v_img(7) := s_cfg.cfg_reg7;
         s_cfg_image <= v_img;
@@ -536,31 +553,52 @@ begin
                             else '0';
 
     -- =========================================================================
-    -- [0b] 1-cycle delayed face_start: downstream data-path trigger.
+    -- [0b] 1-cycle delayed face_start + face_active flag.
     --   VHDL signal semantics: registers updated at edge N by p_geometry /
     --   p_face_cfg_latch are visible at edge N+1. s_face_start_r fires at
     --   N+1 so that header_inserter and face_assembler see stable values.
+    --
+    --   s_face_active_r: tracks the "accepted face" window.
+    --     Set when s_face_start_r fires (face truly started).
+    --     Cleared when face closes (frame_done_both or cmd_stop).
+    --     Mid-face shots only pass through when face_active_r='1'.
+    --     This prevents raw i_shot_start from leaking on face-close
+    --     boundaries (frame_done_both + shot_start same cycle, or
+    --     cmd_stop + shot_start same cycle in ST_IN_FACE).
     -- =========================================================================
     p_face_start_delay : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_face_start_r <= '0';
+                s_face_start_r  <= '0';
+                s_face_active_r <= '0';
             else
                 s_face_start_r <= s_packet_start;
+
+                -- face_active management
+                if s_packet_start = '1' then
+                    -- Next cycle s_face_start_r will fire → face becomes active
+                    s_face_active_r <= '1';
+                elsif s_frame_done_both = '1' or s_cmd_stop = '1' then
+                    -- Face closing → no more mid-face shots accepted
+                    s_face_active_r <= '0';
+                end if;
             end if;
         end if;
     end process p_face_start_delay;
 
     -- =========================================================================
-    -- [0c] Gated shot_start: first shot delayed 1 cycle (via s_face_start_r)
-    --   so downstream modules latch stable face config; mid-face shots
-    --   (overrun) pass through immediately.
+    -- [0c] Accepted shot_start gate.
+    --   First shot: s_face_start_r (1-cycle delayed packet_start).
+    --   Mid-face shots (overrun): raw i_shot_start, ONLY when face_active_r='1'.
+    --     face_active_r is cleared on frame_done_both / cmd_stop, so shots
+    --     arriving on the same cycle as face-close are blocked.
+    --   All other cases: '0' (no shot accepted).
     -- =========================================================================
     s_shot_start_gated <= s_face_start_r
                           when s_face_start_r = '1'
                           else i_shot_start
-                               when s_face_state_r = ST_IN_FACE
+                               when s_face_active_r = '1'
                           else '0';
 
     -- =========================================================================

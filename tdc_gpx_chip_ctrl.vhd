@@ -6,7 +6,7 @@
 -- Purpose:
 --   Per-chip SINGLE_SHOT FSM that manages the complete measurement cycle:
 --     Powerup -> Init (StopDis, cfg_write, master_reset) -> Idle
---     Idle -> Armed -> Capture -> Drain -> AluTrigger -> Armed (repeat)
+--     Idle -> Armed -> Capture -> DrainLatch -> Drain -> AluTrigger -> Armed
 --
 --   Responsibilities:
 --     - Tick enable generation (clock divider from BUS_CLK_DIV)
@@ -50,6 +50,14 @@
 --       4. ST_ARMED: ready for next shot_start.
 --     Consistent with cell_builder (clear+restart) and face_assembler
 --     (truncate+overrun flag) behavior — prevents data corruption.
+--
+--     Overrun shot disposition: the overrun-triggering shot is DROPPED
+--     by chip_ctrl (no new measurement starts until purge+ALU completes
+--     and FSM reaches ST_ARMED for the NEXT shot_start). Downstream
+--     modules (cell_builder, face_assembler) treat it as a truncated/
+--     blank row with the overrun flag set. This is intentional: the
+--     overrun shot's START pulse was already consumed by the TDC-GPX
+--     during the previous measurement, so its timing data is invalid.
 --
 -- Invariants enforced:
 --   [INV-4] EF=1 (empty) -> never issue read to IFIFO
@@ -183,6 +191,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
         ST_IDLE,            -- Ready, waiting for start command
         ST_ARMED,           -- Waiting for shot_start pulse
         ST_CAPTURE,         -- Measurement in progress, waiting for IrFlag
+        ST_DRAIN_LATCH,     -- 1-cycle wait: let expected counts settle after IrFlag
         ST_DRAIN_CHECK,     -- Check EF1/EF2 to decide next read
         ST_DRAIN_EF1,       -- Reading IFIFO1 (Reg8), waiting for response
         ST_DRAIN_EF2,       -- Reading IFIFO2 (Reg9), waiting for response
@@ -705,17 +714,33 @@ begin
                                 if i_cfg.drain_mode = '1' then
                                     s_oen_permanent_r <= '1';   -- burst: OEN stays low
                                 end if;
-                                -- Capture per-IFIFO expected drain counts.
-                                -- IFIFO1 = stops 0~3, IFIFO2 = stops 4~7.
-                                -- Each is rise+fall sum from echo_receiver.
-                                -- If both are 0 → EF-based drain fallback.
-                                s_expected_ififo1_r  <= i_expected_ififo1;
-                                s_expected_ififo2_r  <= i_expected_ififo2;
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
-
-                                s_state_r     <= ST_DRAIN_CHECK;
+                                -- Go to ST_DRAIN_LATCH: 1-cycle wait to let
+                                -- i_expected_ififo* settle if the final
+                                -- stop_evt_tvalid arrived on this same edge.
+                                s_state_r     <= ST_DRAIN_LATCH;
                             end if;
+
+                        -- =================================================
+                        -- Expected count latch: 1-cycle settling guard.
+                        --
+                        -- If the final stop_evt_tvalid arrived on the same
+                        -- edge as IrFlag↑, i_expected_ififo* is still the
+                        -- OLD value (registered in p_stop_decode on that
+                        -- edge, visible next cycle). This state lets one
+                        -- extra cycle pass so the NEW expected counts
+                        -- propagate before chip_ctrl latches them.
+                        -- =================================================
+
+                        when ST_DRAIN_LATCH =>
+                            -- Capture per-IFIFO expected drain counts.
+                            -- IFIFO1 = stops 0~3, IFIFO2 = stops 4~7.
+                            -- Each is rise+fall sum from echo_receiver.
+                            -- If both are 0 → EF-based drain fallback.
+                            s_expected_ififo1_r  <= i_expected_ififo1;
+                            s_expected_ififo2_r  <= i_expected_ififo2;
+                            s_state_r            <= ST_DRAIN_CHECK;
 
                         -- =================================================
                         -- Drain: EF1-first round-robin (Phase 1)
@@ -1095,7 +1120,8 @@ begin
                     -- =====================================================
                     if i_shot_start = '1' then
                         case s_state_r is
-                            when ST_CAPTURE | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
+                            when ST_CAPTURE | ST_DRAIN_LATCH
+                               | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
                                 -- No bus transaction in flight → purge + ALU cleanup
                                 --
                                 -- CRITICAL: must clear req_valid and req_burst.

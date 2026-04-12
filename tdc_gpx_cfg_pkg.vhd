@@ -142,6 +142,12 @@ package tdc_gpx_cfg_pkg is
     -- =========================================================================
     constant c_REG5_STARTOFF1_HI    : natural := 17;
     constant c_REG5_STARTOFF1_LO    : natural := 0;
+    -- Reg5 bit23: MasterAluTrig — AluTrigger pin causes master reset
+    --   (clears IFIFOs + ALU state). Required for overrun/shot-boundary cleanup.
+    -- Reg5 bit24: PartialAluTrig — AluTrigger pin causes partial reset
+    --   (clears ALU state only, keeps IFIFOs). Not used by this controller.
+    constant c_REG5_MASTER_ALU_TRIG : natural := 23;
+    constant c_REG5_PARTIAL_ALU_TRIG : natural := 24;
 
     -- =========================================================================
     -- cfg_image Reg6 bitfields (TDC-GPX Register 6: FIFO threshold)
