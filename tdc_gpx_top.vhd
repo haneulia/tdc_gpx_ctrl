@@ -46,11 +46,11 @@
 --   assembler/header output is still valid.  Side effects (shot_seq
 --   reset, sticky error clear) fire only on actual acceptance.
 --
--- cmd_soft_reset: CONTROL-PLANE ONLY.  Resets the face sequencer,
---   chip_ctrl instances (→ ST_POWERUP), and pending shot/face_start
---   signals.  Does NOT abort face_assembler or header_inserter output
---   pipelines — they drain naturally via AXI backpressure.  SW must
---   wait for busy = '0' after soft_reset before issuing cmd_start.
+-- cmd_soft_reset: FULL PIPELINE RESET.  Resets the face sequencer,
+--   chip_ctrl instances (→ ST_POWERUP), pending shot/face_start,
+--   face_assembler (→ ST_IDLE + input/output flush), face FIFOs
+--   (flushed), and header_inserter (→ ST_IDLE or ST_ABORT_DRAIN if
+--   a beat is pending).  SW must wait for busy = '0' after soft_reset.
 --
 -- Standard: VHDL-93 compatible
 -- =============================================================================
@@ -613,8 +613,17 @@ begin
                 -- If a second shot arrives while deferred is already set,
                 -- it is dropped and s_shot_drop_cnt_r increments.
                 if s_packet_start = '1' then
-                    -- Consumed: clear the latch
-                    s_shot_deferred_r <= '0';
+                    -- Consumed: clear the latch.
+                    -- If a new raw shot arrives on the same cycle, re-defer
+                    -- it immediately (the consumed deferred was for this face,
+                    -- the new shot is for the NEXT close window).
+                    if i_shot_start = '1'
+                       and s_face_state_r = ST_IN_FACE
+                       and s_face_closing = '1' then
+                        s_shot_deferred_r <= '1';  -- re-defer new shot
+                    else
+                        s_shot_deferred_r <= '0';
+                    end if;
                 elsif i_shot_start = '1'
                       and s_face_state_r = ST_IN_FACE
                       and s_face_closing = '1' then
@@ -941,6 +950,7 @@ begin
             i_s_axis_tlast     => s_cell_tlast,
             o_s_axis_tready    => s_cell_tready,
             i_shot_start       => s_shot_start_gated,
+            i_abort            => s_cmd_stop or s_cmd_soft_reset,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
@@ -970,6 +980,7 @@ begin
             i_s_axis_tlast     => s_cell_fall_tlast,
             o_s_axis_tready    => s_cell_fall_tready,
             i_shot_start       => s_shot_start_gated,
+            i_abort            => s_cmd_stop or s_cmd_soft_reset,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
@@ -998,7 +1009,7 @@ begin
         port map (
             i_clk     => i_axis_aclk,
             i_rst_n   => i_axis_aresetn,
-            i_flush   => s_face_abort,   -- flush stale data on overrun abort
+            i_flush   => s_hdr_abort,    -- flush on overrun, stop, or soft_reset
             i_s_valid => s_face_tvalid,
             o_s_ready => s_face_tready,
             i_s_data  => s_face_tdata & s_face_tlast,
@@ -1018,7 +1029,7 @@ begin
         port map (
             i_clk     => i_axis_aclk,
             i_rst_n   => i_axis_aresetn,
-            i_flush   => s_face_fall_abort,  -- flush stale data on overrun abort
+            i_flush   => s_hdr_fall_abort,   -- flush on overrun, stop, or soft_reset
             i_s_valid => s_face_fall_tvalid,
             o_s_ready => s_face_fall_tready,
             i_s_data  => s_face_fall_tdata & s_face_fall_tlast,

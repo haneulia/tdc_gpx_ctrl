@@ -60,6 +60,7 @@ entity tdc_gpx_face_assembler is
 
         -- Shot control
         i_shot_start         : in  std_logic;
+        i_abort              : in  std_logic;    -- cmd_stop/soft_reset: flush + ST_IDLE
 
         -- Configuration (latched at packet_start)
         i_active_chip_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -254,15 +255,15 @@ begin
     -- Timeout limit: max_range_clks only (drain/ALU margins TBD after bench)
     s_timeout_limit <= i_max_range_clks;
 
-    -- Flush input skid buffers on every shot_start
-    s_flush <= i_shot_start;
+    -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset)
+    s_flush <= i_shot_start or i_abort;
 
     -- Flush output skid on face_abort only (registered, 1-cycle after
     -- overrun detection).  Uses s_face_abort_r which is only set in the
     -- overrun override (guarded by not v_row_completing), so it never
     -- fires on a normal row-completion edge.  The depth-16 FIFO between
     -- assembler and header absorbs any 1-cycle delay window.
-    s_abort_flush <= s_face_abort_r;
+    s_abort_flush <= s_face_abort_r or i_abort;
 
     -- Pipe capacity: can FSM produce? (all inputs registered → ~0.5ns)
     s_can_produce <= '1' when (s_pipe_tvalid_r = '0')
@@ -544,6 +545,20 @@ begin
                     s_face_abort_r    <= '1';
                     s_pipe_tvalid_r   <= '0';
                     s_pipe_tlast_r    <= '0';
+                    s_state_r         <= ST_IDLE;
+                end if;
+
+                -- =============================================================
+                -- External abort (cmd_stop / cmd_soft_reset from top).
+                -- Flush everything and go to ST_IDLE.  Highest priority.
+                -- =============================================================
+                if i_abort = '1' then
+                    s_chip_ready_r    <= (others => '0');
+                    s_chip_done_r     <= (others => '0');
+                    s_chip_error_r    <= (others => '0');
+                    s_pipe_tvalid_r   <= '0';
+                    s_pipe_tlast_r    <= '0';
+                    s_shot_pending_r  <= '0';
                     s_state_r         <= ST_IDLE;
                 end if;
             end if;

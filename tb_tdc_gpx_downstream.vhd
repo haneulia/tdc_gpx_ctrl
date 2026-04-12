@@ -129,6 +129,7 @@ begin
             i_s_axis_tlast     => cell_tlast,
             o_s_axis_tready    => cell_tready,
             i_shot_start       => shot_start,
+            i_abort            => '0',
             i_active_chip_mask => active_mask,
             i_stops_per_chip   => stops_per_chip,
             i_max_range_clks   => max_range_clks,

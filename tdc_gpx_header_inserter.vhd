@@ -110,7 +110,7 @@ architecture rtl of tdc_gpx_header_inserter is
     -- =========================================================================
     -- FSM
     -- =========================================================================
-    type t_state is (ST_IDLE, ST_PREFIX, ST_DATA, ST_DRAIN_LAST);
+    type t_state is (ST_IDLE, ST_PREFIX, ST_DATA, ST_DRAIN_LAST, ST_ABORT_DRAIN);
     signal s_state_r : t_state := ST_IDLE;
 
     -- =========================================================================
@@ -413,6 +413,16 @@ begin
                         s_state_r      <= ST_IDLE;
                     end if;
 
+                -- ==============================================================
+                -- ST_ABORT_DRAIN: wait for pending output beat to handshake,
+                --   then go to IDLE.  Prevents AXI-Stream tvalid withdrawal.
+                -- ==============================================================
+                when ST_ABORT_DRAIN =>
+                    if i_m_axis_tready = '1' then
+                        s_out_tvalid_r <= '0';
+                        s_state_r      <= ST_IDLE;
+                    end if;
+
                 end case;
 
                 -- =============================================================
@@ -481,15 +491,21 @@ begin
 
                 -- =============================================================
                 -- face_abort: overrun or cmd_stop/soft_reset → discard face.
-                -- Clears output register to prevent stale beat from
-                -- leaking into the next face.  Unlike face_start (which
-                -- preserves pending beats for normal transition), abort
-                -- is non-recoverable so all output must be dropped.
+                -- If no pending output beat, go directly to IDLE.
+                -- If a beat is pending (tvalid=1, tready=0), enter
+                -- ST_ABORT_DRAIN to let it handshake before clearing —
+                -- avoids AXI-Stream tvalid withdrawal violation.
                 -- Higher priority than face_start (last-assignment wins).
                 -- =============================================================
                 if i_face_abort = '1' then
-                    s_out_tvalid_r <= '0';
-                    s_state_r      <= ST_IDLE;
+                    if s_out_tvalid_r = '0' or i_m_axis_tready = '1' then
+                        -- No pending beat (or consumed this cycle)
+                        s_out_tvalid_r <= '0';
+                        s_state_r      <= ST_IDLE;
+                    else
+                        -- Beat pending: wait for downstream to accept it
+                        s_state_r      <= ST_ABORT_DRAIN;
+                    end if;
                 end if;
 
             end if;
