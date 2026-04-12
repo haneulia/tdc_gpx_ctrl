@@ -367,6 +367,8 @@ architecture rtl of tdc_gpx_top is
     -- that must see a stable config throughout the face.
     -- =========================================================================
     signal s_face_stops_per_chip_r : unsigned(3 downto 0) := to_unsigned(8, 4);
+    signal s_face_cols_per_face_r  : unsigned(15 downto 0) := to_unsigned(1, 16);
+    signal s_face_n_faces_r        : unsigned(3 downto 0)  := to_unsigned(1, 4);
     signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
 
     -- =========================================================================
@@ -1090,9 +1092,13 @@ begin
             if i_axis_aresetn = '0' then
                 s_face_stops_per_chip_r <= to_unsigned(8, 4);
                 s_face_active_mask_r    <= (others => '1');
+                s_face_cols_per_face_r  <= to_unsigned(1, 16);
+                s_face_n_faces_r        <= to_unsigned(1, 4);
             elsif s_packet_start = '1' then
                 s_face_stops_per_chip_r <= s_cfg.stops_per_chip;
                 s_face_active_mask_r    <= s_cfg.active_chip_mask;
+                s_face_cols_per_face_r  <= s_cfg.cols_per_face;
+                s_face_n_faces_r        <= s_cfg.n_faces;
             end if;
         end if;
     end process p_face_cfg_latch;
@@ -1129,8 +1135,8 @@ begin
     -- pipeline has fired frame_done / is draining / aborted.
     -- s_all_shots_fired closes the pre-drain window without blocking
     -- the final shot itself (unlike the old o_last_line approach).
-    s_all_shots_fired   <= '1'  when s_face_shot_cnt_r >= s_cfg.cols_per_face
-                                     and s_cfg.cols_per_face /= 0
+    s_all_shots_fired   <= '1'  when s_face_shot_cnt_r >= s_face_cols_per_face_r
+                                     and s_face_cols_per_face_r /= 0
                                 else '0';
 
     s_face_closing      <= '1'  when s_all_shots_fired = '1'
@@ -1202,7 +1208,7 @@ begin
                             s_face_state_r <= ST_IDLE;
                         elsif s_frame_done_both = '1' then
                             s_frame_id_r <= s_frame_id_r + 1;
-                            if s_face_id_r >= resize(s_cfg.n_faces, 8) - 1 then
+                            if s_face_id_r >= resize(s_face_n_faces_r, 8) - 1 then
                                 -- All faces done: wrap to face 0 (continuous)
                                 s_face_id_r    <= (others => '0');
                             else
@@ -1240,16 +1246,15 @@ begin
     p_face_shot_cnt : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_packet_start = '1' then
-                -- Reset at face boundary (packet_start starts a new face)
-                -- The first shot IS the packet_start, so start at 1.
-                s_face_shot_cnt_r <= to_unsigned(1, 16);
-            elsif s_shot_start_gated = '1' and s_face_active_r = '1' then
-                -- Mid-face shot accepted
-                s_face_shot_cnt_r <= s_face_shot_cnt_r + 1;
-            elsif s_frame_done_both = '1' then
-                -- Face done: reset for next face
+            if i_axis_aresetn = '0' or s_packet_start = '1'
+               or s_frame_done_both = '1' then
+                -- Reset at face boundary.  s_packet_start resets to 0;
+                -- the first shot's s_shot_start_gated fires 1 cycle later
+                -- and increments to 1 (no double-count).
                 s_face_shot_cnt_r <= (others => '0');
+            elsif s_shot_start_gated = '1' then
+                -- Count every accepted shot (first + mid-face)
+                s_face_shot_cnt_r <= s_face_shot_cnt_r + 1;
             end if;
         end if;
     end process p_face_shot_cnt;

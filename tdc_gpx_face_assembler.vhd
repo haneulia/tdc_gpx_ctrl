@@ -118,7 +118,8 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Synchronous flush for skid buffers (on shot_start)
     -- =========================================================================
-    signal s_flush : std_logic;
+    signal s_flush        : std_logic;  -- input skid flush (every shot_start)
+    signal s_abort_flush  : std_logic;  -- output skid flush (combinational, same edge as overrun)
 
     -- =========================================================================
     -- FSM
@@ -225,9 +226,9 @@ begin
         port map (
             i_clk     => i_clk,
             i_rst_n   => i_rst_n,
-            i_flush   => s_face_abort_r,   -- Flush output skid ONLY on overrun
-                                          -- (discard partial beats from aborted
-                                          -- row). Normal completion: no flush.
+            i_flush   => s_abort_flush,    -- Flush output skid on overrun
+                                          -- (combinational, same edge as overrun
+                                          -- detection — no 1-cycle leak window).
             i_s_valid => s_pipe_tvalid_r,
             o_s_ready => s_pipe_tready,
             i_s_data  => s_pipe_bundle,
@@ -248,6 +249,11 @@ begin
 
     -- Flush input skid buffers on every shot_start
     s_flush <= i_shot_start;
+
+    -- Flush output skid ONLY on overrun (shot_start while not idle and not
+    -- completing a row on this edge).  Combinational so it acts on the SAME
+    -- edge as the overrun, preventing the 1-cycle stale-beat leak.
+    s_abort_flush <= i_shot_start when s_state_r /= ST_IDLE else '0';
 
     -- Pipe capacity: can FSM produce? (all inputs registered → ~0.5ns)
     s_can_produce <= '1' when (s_pipe_tvalid_r = '0')
