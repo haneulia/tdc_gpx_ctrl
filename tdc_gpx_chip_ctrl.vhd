@@ -26,8 +26,10 @@
 --       Per-IFIFO drain counters track actual reads from each IFIFO.
 --     - oen_permanent control: drain_mode='1' → OEN held low during drain
 --       (bus_phy INV-7 blocks writes while oen_permanent='1')
---     - n_drain_cap enforcement: per-IFIFO safety cap, n_drain_cap × 4
+--     - n_drain_cap enforcement: per-IFIFO INDEPENDENT safety cap, n_drain_cap × 4
 --       (0 = unlimited, max 15×4=60, covers 56 theoretical max per IFIFO)
+--       Each IFIFO is independently "done" when its drain_cnt >= cap.
+--       Drain completes when ALL active IFIFOs are done (cap OR expected).
 --     - AluTrigger pulse generation
 --     - Shot sequence counter
 --
@@ -38,8 +40,14 @@
 --
 --   Shot overrun handling:
 --     If shot_start arrives during ST_CAPTURE..ST_DRAIN_SETTLE or ST_ALU*,
---     current shot is abandoned and FSM restarts for the new shot.
---     Bus in-flight transactions flushed via ST_OVERRUN_FLUSH.
+--     current shot is abandoned and FSM enters overrun recovery:
+--       1. ST_OVERRUN_FLUSH: wait for bus idle, discard in-flight responses.
+--       2. IFIFO purge (s_purge_mode_r='1'): reuse drain states to read and
+--          discard all remaining old data until both IFIFOs empty (EF=1).
+--          raw_valid is suppressed during purge to prevent old data forwarding.
+--       3. ST_ALU_PULSE + ST_ALU_RECOVERY: AluTrigger resets TDC-GPX internal
+--          ALU state, ensuring clean start for next measurement.
+--       4. ST_ARMED: ready for next shot_start.
 --     Consistent with cell_builder (clear+restart) and face_assembler
 --     (truncate+overrun flag) behavior — prevents data corruption.
 --
@@ -326,6 +334,16 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_err_sequence_r     : std_logic := '0';
 
     -- =========================================================================
+    -- Purge mode flag: set during overrun recovery to suppress raw_valid
+    -- and reuse drain states for IFIFO cleanup.
+    -- When purge_mode='1':
+    --   - ST_DRAIN_EF1/EF2: read and discard (raw_valid NOT set)
+    --   - ST_DRAIN_CHECK: completion = both EF=1, then → ST_ALU_PULSE
+    --   - Burst drain skipped (no LF check during purge)
+    -- =========================================================================
+    signal s_purge_mode_r   : std_logic := '0';
+
+    -- =========================================================================
     -- Busy flag
     -- =========================================================================
     signal s_busy_r         : std_logic := '0';
@@ -415,8 +433,13 @@ begin
     -- raw_valid and drain_done ARE default-cleared (1-clk pulses).
     -- =========================================================================
     p_fsm : process(i_clk)
-        variable v_reg_num : natural range 0 to 15;
-        variable v_wr_data : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        variable v_reg_num         : natural range 0 to 15;
+        variable v_wr_data         : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        variable v_cap             : unsigned(7 downto 0);
+        variable v_ififo1_done     : boolean;
+        variable v_ififo2_done     : boolean;
+        variable v_ififo1_can_read : boolean;
+        variable v_ififo2_can_read : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -449,6 +472,7 @@ begin
                 s_reg_rdata_r       <= (others => '0');
                 s_reg_rvalid_r      <= '0';
                 s_range_active_r    <= '0';
+                s_purge_mode_r      <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r   <= '0';
@@ -475,6 +499,7 @@ begin
                     s_burst_cnt_r        <= (others => '0');
                     s_burst_limit_r      <= (others => '0');
                     s_range_active_r    <= '0';
+                    s_purge_mode_r      <= '0';
                     s_wait_cnt_r        <= (others => '0');
                     s_cfg_idx_r         <= (others => '0');
                     s_init_mode_r       <= '1';
@@ -700,15 +725,70 @@ begin
 
                         when ST_DRAIN_CHECK =>
                             -- ==============================================
-                            -- Priority 1: Per-IFIFO safety cap (n_drain_cap × 4)
-                            -- Max = 15×4 = 60, covers 56 theoretical max.
+                            -- Per-IFIFO completion logic
+                            -- Each IFIFO is independently "done" when:
+                            --   (a) expected reached (drain_cnt >= expected), OR
+                            --   (b) safety cap reached (n_drain_cap != 0 AND
+                            --       drain_cnt >= n_drain_cap × 4), OR
+                            --   (c) purge mode: EF=1 (empty)
+                            -- Drain completes when ALL active IFIFOs are done.
                             -- ==============================================
-                            if i_cfg.n_drain_cap /= "0000"
-                               and s_drain_cnt_ififo1_r >= shift_left(
-                                   resize(i_cfg.n_drain_cap, 8), 2)
-                               and s_drain_cnt_ififo2_r >= shift_left(
-                                   resize(i_cfg.n_drain_cap, 8), 2) then
-                                -- Both IFIFOs hit safety cap: force drain complete
+                            -- v_cap: shared cap threshold (n_drain_cap × 4)
+                            -- v_ififo1_done/v_ififo2_done: per-IFIFO completion
+                            -- v_ififo1_can_read/v_ififo2_can_read: eligible for read
+                            v_cap := shift_left(resize(i_cfg.n_drain_cap, 8), 2);
+
+                            -- Per-IFIFO done evaluation
+                            if s_purge_mode_r = '1' then
+                                -- Purge mode: done = EF=1 (empty)
+                                v_ififo1_done := (i_ef1_sync = '1');
+                                v_ififo2_done := (i_ef2_sync = '1');
+                            else
+                                -- Normal mode: done = expected reached OR cap reached
+                                v_ififo1_done := (s_expected_ififo1_r /= 0
+                                                  and s_drain_cnt_ififo1_r >= s_expected_ififo1_r)
+                                                 or (i_cfg.n_drain_cap /= "0000"
+                                                     and s_drain_cnt_ififo1_r >= v_cap);
+                                v_ififo2_done := (s_expected_ififo2_r /= 0
+                                                  and s_drain_cnt_ififo2_r >= s_expected_ififo2_r)
+                                                 or (i_cfg.n_drain_cap /= "0000"
+                                                     and s_drain_cnt_ififo2_r >= v_cap);
+                            end if;
+
+                            -- Can-read: not done AND EF=0 (has data)
+                            -- In purge mode, cap is not checked (read until empty).
+                            -- In normal mode, cap also blocks further reads.
+                            v_ififo1_can_read := not v_ififo1_done and (i_ef1_sync = '0');
+                            v_ififo2_can_read := not v_ififo2_done and (i_ef2_sync = '0');
+
+                            -- ==============================================
+                            -- Completion check (both IFIFOs done)
+                            -- ==============================================
+                            if v_ififo1_done and v_ififo2_done then
+                                -- All IFIFOs drained/capped/purged
+                                s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
+                                s_wait_cnt_r      <= (others => '0');
+                                if s_purge_mode_r = '1' then
+                                    -- Purge complete: skip drain_done, go to ALU cleanup
+                                    s_purge_mode_r <= '0';
+                                    s_state_r      <= ST_ALU_PULSE;
+                                else
+                                    -- Normal drain complete
+                                    s_drain_done_r <= '1';
+                                    s_state_r      <= ST_ALU_PULSE;
+                                end if;
+
+                            -- Normal drain also completes when both expected=0
+                            -- and both EF=1 (EF-fallback completion).
+                            -- When expected=0 and cap=0, v_ififo*_done=false,
+                            -- so both-done check above doesn't catch it.
+                            -- EF=1 fallback needs explicit handling:
+                            elsif s_purge_mode_r = '0'
+                                  and s_expected_ififo1_r = 0 and s_expected_ififo2_r = 0
+                                  and i_cfg.n_drain_cap = "0000"
+                                  and i_ef1_sync = '1' and i_ef2_sync = '1' then
+                                -- EF-fallback: no expected info, no cap, both empty
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
                                 s_range_active_r  <= '0';
@@ -716,29 +796,13 @@ begin
                                 s_state_r         <= ST_ALU_PULSE;
 
                             -- ==============================================
-                            -- Priority 2: Per-IFIFO count-based completion
+                            -- LF burst (normal mode only, skip during purge)
                             -- ==============================================
-                            -- Both IFIFOs have expected info AND both drained.
-                            elsif (s_expected_ififo1_r /= 0 or s_expected_ififo2_r /= 0)
-                                  and s_drain_cnt_ififo1_r >= s_expected_ififo1_r
-                                  and s_drain_cnt_ififo2_r >= s_expected_ififo2_r then
-                                -- Per-IFIFO expected counts reached: drain complete
-                                s_oen_permanent_r <= '0';
-                                s_drain_done_r    <= '1';
-                                s_range_active_r  <= '0';
-                                s_wait_cnt_r      <= (others => '0');
-                                s_state_r         <= ST_ALU_PULSE;
-
-                            -- ==============================================
-                            -- Priority 3: LF burst with per-IFIFO remaining
-                            -- ==============================================
-                            -- LF='1' guarantees >= Fill entries in FIFO.
-                            -- Burst limit = min(Fill, remaining_ififo).
-                            -- remaining = 0 → skip that IFIFO.
-                            -- Fill < 2 → skip burst, use EF fallback.
-                            elsif i_cfg.drain_mode = '1'
+                            elsif s_purge_mode_r = '0'
+                                  and i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
                                   and i_ef1_sync = '0' and i_lf1_sync = '1'
+                                  and v_ififo1_can_read
                                   and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2 then
                                 -- IFIFO1 loaded + remaining >= 2: burst read Reg8
                                 --
@@ -750,7 +814,7 @@ begin
                                 -- Total actual reads = burst_limit + 1 = min(fill, remaining).
                                 --
                                 -- remaining >= 2 guard ensures burst_limit >= 1.
-                                -- remaining = 1 falls through to Priority 4 (EF single read).
+                                -- remaining = 1 falls through to EF single read.
                                 if s_fill_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r then
                                     s_burst_limit_r <= s_fill_r - 1;
                                 else
@@ -764,9 +828,11 @@ begin
                                 s_ififo_id_r    <= '0';
                                 s_state_r       <= ST_DRAIN_BURST;
 
-                            elsif i_cfg.drain_mode = '1'
+                            elsif s_purge_mode_r = '0'
+                                  and i_cfg.drain_mode = '1'
                                   and s_fill_r >= 2
                                   and i_ef2_sync = '0' and i_lf2_sync = '1'
+                                  and v_ififo2_can_read
                                   and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2 then
                                 -- IFIFO2 loaded + remaining >= 2: burst read Reg9
                                 -- (see IFIFO1 comment above for -1 rationale)
@@ -784,24 +850,18 @@ begin
                                 s_state_r       <= ST_DRAIN_BURST;
 
                             -- ==============================================
-                            -- Priority 4: EF-based read (remaining or fallback)
+                            -- EF-based single read (remaining or fallback/purge)
                             -- ==============================================
-                            -- Per-IFIFO remaining but LF not set yet, or
-                            -- no expected info (both=0) → legacy EF drain.
-                            elsif i_ef1_sync = '0'
-                                  and (s_expected_ififo1_r = 0
-                                       or s_drain_cnt_ififo1_r < s_expected_ififo1_r) then
-                                -- IFIFO1 has data -> read Reg8
+                            elsif v_ififo1_can_read then
+                                -- IFIFO1 has data and not done -> read Reg8
                                 s_req_valid_r <= '1';
                                 s_req_rw_r    <= '0';   -- READ
                                 s_req_addr_r  <= c_TDC_REG8_IFIFO1;
                                 s_ififo_id_r  <= '0';
                                 s_state_r     <= ST_DRAIN_EF1;
 
-                            elsif i_ef2_sync = '0'
-                                  and (s_expected_ififo2_r = 0
-                                       or s_drain_cnt_ififo2_r < s_expected_ififo2_r) then
-                                -- IFIFO2 has data -> read Reg9
+                            elsif v_ififo2_can_read then
+                                -- IFIFO2 has data and not done -> read Reg9
                                 s_req_valid_r <= '1';
                                 s_req_rw_r    <= '0';   -- READ
                                 s_req_addr_r  <= c_TDC_REG9_IFIFO2;
@@ -809,19 +869,29 @@ begin
                                 s_state_r     <= ST_DRAIN_EF2;
 
                             else
-                                -- Both FIFOs empty -> drain complete
+                                -- No IFIFO can be read and not all done yet:
+                                -- Per-IFIFO done (cap/expected) but EF still not empty,
+                                -- or all truly empty. Treat as drain complete.
                                 s_oen_permanent_r <= '0';
-                                s_drain_done_r    <= '1';
                                 s_range_active_r  <= '0';
                                 s_wait_cnt_r      <= (others => '0');
-                                s_state_r         <= ST_ALU_PULSE;
+                                if s_purge_mode_r = '1' then
+                                    s_purge_mode_r <= '0';
+                                    s_state_r      <= ST_ALU_PULSE;
+                                else
+                                    s_drain_done_r <= '1';
+                                    s_state_r      <= ST_ALU_PULSE;
+                                end if;
                             end if;
 
                         when ST_DRAIN_EF1 =>
                             if i_bus_rsp_valid = '1' then
                                 s_req_valid_r        <= '0';
                                 s_raw_word_r         <= i_bus_rsp_rdata;
-                                s_raw_valid_r        <= '1';
+                                -- Purge mode: discard data, don't forward
+                                if s_purge_mode_r = '0' then
+                                    s_raw_valid_r    <= '1';
+                                end if;
                                 s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                                 -- Settle before re-checking EF/LF
                                 -- (tS-EF + 2-FF sync must complete)
@@ -833,7 +903,10 @@ begin
                             if i_bus_rsp_valid = '1' then
                                 s_req_valid_r        <= '0';
                                 s_raw_word_r         <= i_bus_rsp_rdata;
-                                s_raw_valid_r        <= '1';
+                                -- Purge mode: discard data, don't forward
+                                if s_purge_mode_r = '0' then
+                                    s_raw_valid_r    <= '1';
+                                end if;
                                 s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                                 -- Settle before re-checking EF/LF
                                 s_wait_cnt_r  <= (others => '0');
@@ -973,16 +1046,27 @@ begin
 
                         -- =================================================
                         -- Shot overrun flush: wait for bus idle, discard
-                        -- any in-flight responses, then re-enter ST_CAPTURE
-                        -- for the new shot.
+                        -- any in-flight responses, then enter purge mode
+                        -- to drain old IFIFO data before ALU cleanup.
                         -- =================================================
 
                         when ST_OVERRUN_FLUSH =>
                             -- Discard any in-flight responses (don't forward)
                             s_raw_valid_r <= '0';
-                            -- Wait for bus to go idle
+                            -- Wait for bus to go idle, then enter purge mode
+                            -- to drain remaining old data from IFIFOs before
+                            -- AluTrigger cleanup.
                             if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
-                                s_state_r <= ST_CAPTURE;
+                                s_purge_mode_r       <= '1';
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
+                                if i_cfg.drain_mode = '1' then
+                                    s_oen_permanent_r <= '1';
+                                end if;
+                                s_wait_cnt_r  <= (others => '0');
+                                s_state_r     <= ST_DRAIN_SETTLE;
+                                -- → SETTLE → DRAIN_CHECK (purge mode: read until EF=1)
+                                -- → ALU_PULSE → ALU_RECOVERY → ARMED
                             end if;
 
                         when others =>
@@ -1012,19 +1096,29 @@ begin
                     if i_shot_start = '1' then
                         case s_state_r is
                             when ST_CAPTURE | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
-                                -- No bus transaction in flight → direct restart
+                                -- No bus transaction in flight → purge + ALU cleanup
+                                s_raw_valid_r        <= '0';
                                 s_range_active_r     <= '1';
                                 s_expected_ififo1_r  <= (others => '0');
                                 s_expected_ififo2_r  <= (others => '0');
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
-                                s_oen_permanent_r    <= '0';
                                 s_drain_done_r       <= '0';
-                                s_state_r            <= ST_CAPTURE;
+                                -- Enter purge mode to drain old IFIFO data
+                                s_purge_mode_r       <= '1';
+                                if i_cfg.drain_mode = '1' then
+                                    s_oen_permanent_r <= '1';
+                                else
+                                    s_oen_permanent_r <= '0';
+                                end if;
+                                s_wait_cnt_r         <= (others => '0');
+                                s_state_r            <= ST_DRAIN_SETTLE;
+                                -- → SETTLE → DRAIN_CHECK (purge) → ALU → ARMED
 
                             when ST_DRAIN_EF1 | ST_DRAIN_EF2
                                | ST_DRAIN_BURST | ST_DRAIN_FLUSH =>
-                                -- Bus transaction in flight → flush first
+                                -- Bus transaction in flight → flush first, then purge
+                                s_raw_valid_r        <= '0';
                                 s_req_burst_r        <= '0';
                                 s_req_valid_r        <= '0';
                                 s_oen_permanent_r    <= '0';
@@ -1035,17 +1129,28 @@ begin
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_state_r            <= ST_OVERRUN_FLUSH;
+                                -- → OVERRUN_FLUSH → SETTLE → DRAIN_CHECK (purge) → ALU → ARMED
 
                             when ST_ALU_PULSE | ST_ALU_RECOVERY =>
-                                -- AluTrigger in progress → abort and restart
+                                -- AluTrigger in progress → abort ALU, purge + restart ALU
+                                s_raw_valid_r        <= '0';
                                 s_alutrigger_r       <= '0';
                                 s_range_active_r     <= '1';
                                 s_expected_ififo1_r  <= (others => '0');
                                 s_expected_ififo2_r  <= (others => '0');
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
+                                s_drain_done_r       <= '0';
+                                -- Enter purge mode to drain old IFIFO data
+                                s_purge_mode_r       <= '1';
+                                if i_cfg.drain_mode = '1' then
+                                    s_oen_permanent_r <= '1';
+                                else
+                                    s_oen_permanent_r <= '0';
+                                end if;
                                 s_wait_cnt_r         <= (others => '0');
-                                s_state_r            <= ST_CAPTURE;
+                                s_state_r            <= ST_DRAIN_SETTLE;
+                                -- → SETTLE → DRAIN_CHECK (purge) → ALU → ARMED
 
                             when others =>
                                 null;  -- ST_ARMED handles shot_start in case

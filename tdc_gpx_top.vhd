@@ -33,6 +33,16 @@
 --   Violating this can corrupt bus timing mid-transaction or change
 --   drain policy mid-shot, leading to undefined behavior.
 --
+--   cfg_image freeze: additionally, cfg_image registers MUST NOT be
+--   written while busy = '1'. In particular:
+--     - Reg0 TRiseEn/TFallEn bits are read LIVE by p_stop_decode to
+--       compute per-IFIFO expected drain counts. Changing these mid-shot
+--       corrupts drain count matching and causes over/under-drain.
+--     - Reg6 LF threshold (Fill) is latched at IrFlag edge, but Reg0
+--       edge-enable bits are used combinationally each echo_receiver tvalid.
+--   General rule: ALL cfg_image writes (cmd_cfg_write, cmd_reg_write)
+--   require busy = '0'.
+--
 -- Standard: VHDL-93 compatible
 -- =============================================================================
 
