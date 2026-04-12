@@ -441,11 +441,15 @@ architecture rtl of tdc_gpx_top is
     -- IFIFO boundary: stops 0..IFIFO_SPLIT-1 = IFIFO1, IFIFO_SPLIT..7 = IFIFO2
     constant c_IFIFO_SPLIT : natural := c_MAX_STOPS_PER_CHIP / 2;  -- 4
 
-    -- NOTE: s_ififo1_expected_r / s_ififo2_expected_r removed.
-    -- chip_ctrl burst drain now uses LF fill level only (per-chip accurate).
-    -- The old shared expected count was inaccurate across chips and has been
-    -- replaced.  p_stop_decode below is retained for future per-chip drain
-    -- optimization but currently has no consumers.
+    -- Per-chip, per-IFIFO expected drain counts.
+    -- Decoded from echo_receiver stop event stream:
+    --   tdata/tuser 32-bit: [chip3(8b) | chip2(8b) | chip1(8b) | chip0(8b)]
+    --   Each 8-bit:         [IFIFO2(4b) | IFIFO1(4b)]
+    --   tdata = rising counts, tuser = falling counts.
+    -- Per-chip expected = rise_count + fall_count for that IFIFO.
+    type t_expected_array is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
+    signal s_expected_ififo1 : t_expected_array := (others => (others => '0'));
+    signal s_expected_ififo2 : t_expected_array := (others => (others => '0'));
 
 begin
 
@@ -495,10 +499,47 @@ begin
 
     -- =========================================================================
     -- Stop event AXI Stream slave: always accept
-    -- NOTE: p_stop_decode and s_ififo*_expected_r removed — chip_ctrl
-    -- burst drain uses LF fill level only (per-chip accurate).
     -- =========================================================================
     o_stop_evt_tready <= '1';
+
+    -- =========================================================================
+    -- Per-chip stop decode: extract IFIFO1/2 expected counts from echo_receiver.
+    --   tdata[i*8+3 : i*8]   = chip i IFIFO1 rise count  (4 bits)
+    --   tdata[i*8+7 : i*8+4] = chip i IFIFO2 rise count  (4 bits)
+    --   tuser same layout for fall counts.
+    --   Expected = rise + fall for each IFIFO.
+    --   Cleared on shot_start (new measurement boundary).
+    -- =========================================================================
+    p_stop_decode : process(i_axis_aclk)
+        variable v_lo : natural;
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                for i in 0 to c_N_CHIPS - 1 loop
+                    s_expected_ififo1(i) <= (others => '0');
+                    s_expected_ififo2(i) <= (others => '0');
+                end loop;
+            elsif s_shot_start_gated = '1' then
+                -- Shot boundary: clear for new measurement
+                for i in 0 to c_N_CHIPS - 1 loop
+                    s_expected_ififo1(i) <= (others => '0');
+                    s_expected_ififo2(i) <= (others => '0');
+                end loop;
+            elsif i_stop_evt_tvalid = '1' then
+                for i in 0 to c_N_CHIPS - 1 loop
+                    v_lo := i * 8;
+                    -- IFIFO1: lower 4 bits of each chip's 8-bit slice
+                    s_expected_ififo1(i) <=
+                        resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
+                      + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);
+                    -- IFIFO2: upper 4 bits of each chip's 8-bit slice
+                    s_expected_ififo2(i) <=
+                        resize(unsigned(i_stop_evt_tdata(v_lo + 7 downto v_lo + 4)), 8)
+                      + resize(unsigned(i_stop_evt_tuser(v_lo + 7 downto v_lo + 4)), 8);
+                end loop;
+            end if;
+        end if;
+    end process p_stop_decode;
 
     -- =========================================================================
     -- [0a] Combinational packet_start: accepted first-shot pulse.
@@ -757,7 +798,8 @@ begin
                 i_shot_start        => s_shot_start_per_chip(i),
                 i_max_range_clks    => s_cfg.max_range_clks,
                 i_stop_tdc          => i_stop_tdc,
-                -- i_expected_ififo1/2 removed: burst uses LF fill only
+                i_expected_ififo1   => s_expected_ififo1(i),
+                i_expected_ififo2   => s_expected_ififo2(i),
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),

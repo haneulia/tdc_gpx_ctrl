@@ -225,7 +225,8 @@ begin
             i_shot_start        => s_shot_start,
             i_max_range_clks    => s_cfg.max_range_clks,
             i_stop_tdc          => s_stop_tdc,
-            -- i_expected_ififo1/2 removed: burst uses LF fill only
+            i_expected_ififo1   => (others => '0'),  -- TB: 0 = EF-based fallback
+            i_expected_ififo2   => (others => '0'),
             o_bus_req_valid     => s_bus_req_valid,
             o_bus_req_rw        => s_bus_req_rw,
             o_bus_req_addr      => s_bus_req_addr,
