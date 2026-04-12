@@ -1216,7 +1216,7 @@ begin
                     s_range_cnt_r          <= (others => '0');
                     s_err_drain_to_fired_r <= '0';
                 elsif s_range_active_r = '1' then
-                    if s_range_cnt_r >= i_max_range_clks then
+                    if i_max_range_clks /= 0 and s_range_cnt_r >= i_max_range_clks then
                         -- Budget exhausted before drain_done — fire once only
                         if s_err_drain_to_fired_r = '0' then
                             s_err_drain_timeout_r  <= '1';

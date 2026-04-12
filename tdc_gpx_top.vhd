@@ -310,6 +310,7 @@ architecture rtl of tdc_gpx_top is
     signal s_frame_id_r      : unsigned(31 downto 0) := (others => '0');
     signal s_frame_done        : std_logic;  -- rising pipeline
     signal s_frame_done_both   : std_logic;  -- combined rise+fall
+    signal s_face_closing      : std_logic;  -- either pipeline done → block mid-face shots
     signal s_frame_rise_done_r : std_logic := '0';
     signal s_frame_fall_done_r : std_logic := '0';
 
@@ -318,7 +319,8 @@ architecture rtl of tdc_gpx_top is
     -- Prevents downstream FSMs from reacting to stray shot pulses before
     -- cmd_start or after cmd_stop.
     -- =========================================================================
-    signal s_shot_start_gated : std_logic;
+    signal s_shot_start_gated    : std_logic;
+    signal s_shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Timestamp (free-running cycle counter, i_axis_aclk domain)
@@ -602,13 +604,22 @@ begin
                           else i_shot_start
                                when s_face_active_r = '1'
                                     and s_frame_done_both = '0'
+                                    and s_face_closing = '0'
                                     and s_cmd_stop = '0'
                           else '0';
 
+    -- Per-chip shot gating: inactive chips (per active_chip_mask) do not
+    -- receive shot_start and therefore never enter CAPTURE/DRAIN.
+    gen_shot_mask : for i in 0 to c_N_CHIPS - 1 generate
+        s_shot_start_per_chip(i) <= s_shot_start_gated and s_face_active_mask_r(i);
+    end generate gen_shot_mask;
+
     -- =========================================================================
     -- [0b] Unified chip error mask: ErrFlag (physical) OR timeout (assembler)
+    --   Masked by active_chip_mask so inactive chips cannot pollute status.
     -- =========================================================================
-    s_chip_error_merged <= s_errflag_sync or s_chip_error_flags or s_chip_fall_error;
+    s_chip_error_merged <= (s_errflag_sync or s_chip_error_flags or s_chip_fall_error)
+                           and s_face_active_mask_r;
 
     -- =========================================================================
     -- [1] CSR instance (AXI-Lite + CDC)
@@ -737,7 +748,7 @@ begin
                 i_cmd_reg_wdata     => s_cmd_reg_wdata,
                 o_cmd_reg_rdata     => s_cmd_reg_rdata(i),
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
-                i_shot_start        => s_shot_start_gated,
+                i_shot_start        => s_shot_start_per_chip(i),
                 i_max_range_clks    => s_cfg.max_range_clks,
                 i_stop_tdc          => i_stop_tdc,
                 i_expected_ififo1   => s_ififo1_expected_r,
@@ -817,7 +828,7 @@ begin
                 i_rst_n           => i_axis_aresetn,
                 i_raw_event       => s_raw_event(i),
                 i_raw_event_valid => s_raw_evt_rise_valid(i),
-                i_shot_start      => s_shot_start_gated,
+                i_shot_start      => s_shot_start_per_chip(i),
                 i_drain_done      => s_drain_done(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
                 o_m_axis_tdata    => s_cell_tdata(i),
@@ -838,7 +849,7 @@ begin
                 i_rst_n           => i_axis_aresetn,
                 i_raw_event       => s_raw_event(i),
                 i_raw_event_valid => s_raw_evt_fall_valid(i),
-                i_shot_start      => s_shot_start_gated,
+                i_shot_start      => s_shot_start_per_chip(i),
                 i_drain_done      => s_drain_done(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
                 o_m_axis_tdata    => s_cell_fall_tdata(i),
@@ -1046,6 +1057,12 @@ begin
                                     and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
                                 else '0';
 
+    -- '1' as soon as either pipeline has fired frame_done (face is closing).
+    -- Blocks mid-face shot pass-through once any pipeline has finished.
+    s_face_closing      <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1')
+                                      or (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
+                                else '0';
+
     -- =========================================================================
     -- [6] Face sequencer
     --   ST_IDLE → cmd_start → ST_WAIT_SHOT
@@ -1138,8 +1155,8 @@ begin
                 if s_stop_id_error /= C_ZEROS_CHIPS or
                    s_hit_dropped /= C_ZEROS_CHIPS or
                    s_hit_fall_dropped /= C_ZEROS_CHIPS or
-                   s_err_drain_timeout /= C_ZEROS_CHIPS or
-                   s_err_sequence /= C_ZEROS_CHIPS or
+                   (s_err_drain_timeout and s_face_active_mask_r) /= C_ZEROS_CHIPS or
+                   (s_err_sequence and s_face_active_mask_r) /= C_ZEROS_CHIPS or
                    v_merged_rising /= C_ZEROS_CHIPS then
                     s_error_count_r <= s_error_count_r + 1;
                 end if;
@@ -1158,8 +1175,8 @@ begin
                 s_err_drain_to_sticky_r <= (others => '0');
                 s_err_seq_sticky_r      <= (others => '0');
             else
-                s_err_drain_to_sticky_r <= s_err_drain_to_sticky_r or s_err_drain_timeout;
-                s_err_seq_sticky_r      <= s_err_seq_sticky_r      or s_err_sequence;
+                s_err_drain_to_sticky_r <= s_err_drain_to_sticky_r or (s_err_drain_timeout and s_face_active_mask_r);
+                s_err_seq_sticky_r      <= s_err_seq_sticky_r      or (s_err_sequence and s_face_active_mask_r);
             end if;
         end if;
     end process p_err_sticky;
