@@ -1097,6 +1097,15 @@ begin
                         case s_state_r is
                             when ST_CAPTURE | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
                                 -- No bus transaction in flight → purge + ALU cleanup
+                                --
+                                -- CRITICAL: must clear req_valid and req_burst.
+                                -- If old state was ST_DRAIN_CHECK, the case body
+                                -- may have already set req_valid='1' / req_burst='1'
+                                -- on this same cycle (read/burst scheduling).
+                                -- Without clearing here, a "ghost read" or
+                                -- unmanaged burst escapes to bus_phy.
+                                s_req_valid_r        <= '0';
+                                s_req_burst_r        <= '0';
                                 s_raw_valid_r        <= '0';
                                 s_range_active_r     <= '1';
                                 s_expected_ififo1_r  <= (others => '0');

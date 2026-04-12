@@ -354,7 +354,12 @@ architecture rtl of tdc_gpx_top is
 
     -- =========================================================================
     -- Face boundary signals:
-    --   s_packet_start    : combinational, fires at ST_WAIT_SHOT + shot_start.
+    --   s_packet_start    : combinational, fires ONLY when p_face_seq actually
+    --                       accepts the shot (ST_WAIT_SHOT + shot_start + NOT
+    --                       cmd_stop). Guards against two race conditions:
+    --                       (1) cmd_stop + shot_start same cycle: stop wins
+    --                       (2) frame_done_both + shot_start: handled by
+    --                           sequencer priority (close face first)
     --                       Used by p_geometry and p_face_cfg_latch to latch
     --                       config into registers at this edge.
     --   s_face_start_r    : 1-cycle delayed registered version of packet_start.
@@ -452,6 +457,11 @@ begin
     --   TRiseEn[s+1]=1 → include rise count for stop s
     --   TFallEn[s+1]=1 → include fall count for stop s
     -- (bit offset +1 because index 0 = TStart, 1..8 = TStop1..TStop8)
+    -- Shot boundary clear: s_shot_start_gated resets expected counts to 0.
+    -- This prevents stale values from a previous shot being used when the
+    -- current shot has no stop events (no tvalid from echo_receiver).
+    -- Clear happens BEFORE tvalid accumulation (priority order matters):
+    --   shot_start → clear to 0 → subsequent tvalid updates accumulate.
     p_stop_decode : process(i_axis_aclk)
         variable v_ififo1_sum : unsigned(7 downto 0);
         variable v_ififo2_sum : unsigned(7 downto 0);
@@ -462,6 +472,12 @@ begin
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
+                s_ififo1_expected_r <= (others => '0');
+                s_ififo2_expected_r <= (others => '0');
+            elsif s_shot_start_gated = '1' then
+                -- Shot boundary: clear expected counts for new measurement.
+                -- If this shot has stop events, subsequent tvalid will update.
+                -- If no events (empty shot), counts stay 0 → EF-based drain.
                 s_ififo1_expected_r <= (others => '0');
                 s_ififo2_expected_r <= (others => '0');
             elsif i_stop_evt_tvalid = '1' then
@@ -502,11 +518,21 @@ begin
     end process p_stop_decode;
 
     -- =========================================================================
-    -- [0a] Combinational packet_start: first shot of a new face.
-    --   Triggers p_geometry and p_face_cfg_latch to latch config registers.
+    -- [0a] Combinational packet_start: accepted first-shot pulse.
+    --   Fires ONLY when p_face_seq actually accepts the transition:
+    --     ST_WAIT_SHOT + shot_start=1 + cmd_stop=0.
+    --   Guards against cmd_stop + shot_start same-cycle race:
+    --     p_face_seq gives cmd_stop priority → no ST_IN_FACE transition
+    --     → packet_start must NOT fire.
+    --   frame_done_both + shot_start same-cycle in ST_IN_FACE:
+    --     p_face_seq closes face → ST_WAIT_SHOT; shot is not accepted this
+    --     cycle (state is still ST_IN_FACE) → packet_start=0.
+    --     Next cycle in ST_WAIT_SHOT: shot_start is gone (1-clk pulse) →
+    --     waits for next shot_start cleanly.
     -- =========================================================================
     s_packet_start  <= '1'  when s_face_state_r = ST_WAIT_SHOT
                                 and i_shot_start = '1'
+                                and s_cmd_stop = '0'
                             else '0';
 
     -- =========================================================================
@@ -906,8 +932,8 @@ begin
     --   Computed from CSR config, shared with header_inserter and VDMA.
     --   rows_per_face = active_chips × stops_per_chip (clamp >= 2)
     --   hsize_bytes   = (data_beats + c_HDR_PREFIX_BEATS) × TDATA_BYTES
-    --   Latched at s_packet_start (combinational) so that the registered
-    --   values are stable by the time s_face_start_r fires (+1 cycle).
+    --   Latched at s_packet_start (combinational, guarded by cmd_stop)
+    --   so that the registered values are stable by s_face_start_r (+1 cycle).
     -- =========================================================================
     p_geometry : process(i_axis_aclk)
         variable v_active_cnt  : natural range 0 to c_N_CHIPS;
@@ -933,8 +959,8 @@ begin
 
     -- =========================================================================
     -- [5b] Face-start config latch: snapshot for downstream data-path modules
-    --   Latched at s_packet_start (combinational, edge N) so values are
-    --   stable by s_face_start_r (edge N+1). face_assembler reads these
+    --   Latched at s_packet_start (combinational, guarded, edge N) so values
+    --   are stable by s_face_start_r (edge N+1). face_assembler reads these
     --   at shot_start = s_face_start_r, seeing the correctly latched values.
     -- =========================================================================
     p_face_cfg_latch : process(i_axis_aclk)
