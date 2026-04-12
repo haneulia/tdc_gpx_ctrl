@@ -391,6 +391,8 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_overrun_r       : std_logic := '0';
     signal s_face_asm_closing     : std_logic;  -- rise assembler in ST_OVERRUN_CLOSE
     signal s_face_asm_fall_closing: std_logic;  -- fall assembler in ST_OVERRUN_CLOSE
+    signal s_hdr_draining         : std_logic;  -- rise header in ST_DRAIN_LAST
+    signal s_hdr_fall_draining    : std_logic;  -- fall header in ST_DRAIN_LAST
 
     -- =========================================================================
     -- Stop event stream: per-IFIFO expected drain counts
@@ -988,7 +990,8 @@ begin
             o_m_axis_tlast      => o_m_axis_tlast,
             o_m_axis_tuser      => o_m_axis_tuser,
             i_m_axis_tready     => i_m_axis_tready,
-            o_frame_done        => s_frame_done
+            o_frame_done        => s_frame_done,
+            o_draining          => s_hdr_draining
         );
 
     -- =========================================================================
@@ -1018,7 +1021,8 @@ begin
             o_m_axis_tlast      => o_m_axis_fall_tlast,
             o_m_axis_tuser      => o_m_axis_fall_tuser,
             i_m_axis_tready     => i_m_axis_fall_tready,
-            o_frame_done        => s_frame_fall_done
+            o_frame_done        => s_frame_fall_done,
+            o_draining          => s_hdr_fall_draining
         );
 
     -- =========================================================================
@@ -1098,10 +1102,13 @@ begin
                                     and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
                                 else '0';
 
-    -- '1' as soon as either pipeline has fired frame_done (face is closing).
-    -- Blocks mid-face shot pass-through once any pipeline has finished.
-    s_face_closing      <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1')
-                                      or (s_frame_fall_done_r = '1' or s_frame_fall_done = '1')
+    -- '1' as soon as either pipeline has fired frame_done OR is draining
+    -- the final beat (ST_DRAIN_LAST).  Blocks mid-face shot pass-through
+    -- during the drain window when frame_done hasn't fired yet.
+    s_face_closing      <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1'
+                                      or s_hdr_draining = '1')
+                                      or (s_frame_fall_done_r = '1' or s_frame_fall_done = '1'
+                                      or s_hdr_fall_draining = '1')
                                 else '0';
 
     -- =========================================================================
@@ -1127,7 +1134,14 @@ begin
                 case s_face_state_r is
 
                     when ST_IDLE =>
-                        if s_cmd_start = '1' then
+                        -- Accept cmd_start only when the entire pipeline
+                        -- is idle: no chip_ctrl busy, no assembler/header
+                        -- data in flight.  This self-protects against SW
+                        -- issuing cmd_start before previous output drains.
+                        if s_cmd_start = '1'
+                           and s_chip_busy = C_ZEROS_CHIPS
+                           and s_face_tvalid = '0'
+                           and s_face_fall_tvalid = '0' then
                             s_face_id_r      <= (others => '0');
                             s_shot_overrun_r <= '0';
                             s_face_state_r   <= ST_WAIT_SHOT;
@@ -1136,7 +1150,12 @@ begin
                     when ST_WAIT_SHOT =>
                         if s_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
-                        elsif i_shot_start = '1' then
+                        elsif s_packet_start = '1' then
+                            -- Use s_packet_start (not raw i_shot_start) so
+                            -- the sequencer accepts exactly when downstream
+                            -- control pulses (face_start, shot_start_gated)
+                            -- are also generated.  This ensures all modules
+                            -- see the same shot boundary.
                             s_face_state_r <= ST_IN_FACE;
                         end if;
 

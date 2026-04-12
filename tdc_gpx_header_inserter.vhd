@@ -97,7 +97,8 @@ entity tdc_gpx_header_inserter is
         i_m_axis_tready     : in  std_logic;
 
         -- Status
-        o_frame_done        : out std_logic     -- 1-clk pulse: face complete
+        o_frame_done        : out std_logic;    -- 1-clk pulse: face complete
+        o_draining          : out std_logic     -- '1' in ST_DRAIN_LAST (final beat pending)
     );
 end entity tdc_gpx_header_inserter;
 
@@ -185,6 +186,7 @@ begin
     o_m_axis_tlast    <= s_out_tlast_r;
     o_m_axis_tuser(0) <= s_out_tuser_r;
     o_frame_done      <= s_frame_done_r;
+    o_draining        <= '1' when s_state_r = ST_DRAIN_LAST else '0';
 
     -- =========================================================================
     -- Flow control
