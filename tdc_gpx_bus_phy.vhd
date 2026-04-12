@@ -467,11 +467,17 @@ begin
                                     -- stay in ST_READ, busy remains '1'
                                 else
                                     -- Normal completion: return to IDLE
+                                    -- busy is NOT cleared here: rsp_pending
+                                    -- is still '1', so the deferred rsp_valid
+                                    -- has not fired yet. ST_IDLE's default
+                                    -- s_busy_r <= '0' clears it on the next
+                                    -- cycle, coinciding with rsp_valid='1'.
+                                    -- This prevents chip_ctrl from seeing
+                                    -- busy=0 + rsp_valid=0 (premature exit).
                                     s_csn_r   <= '1';
                                     if i_oen_permanent = '0' then
                                         s_oen_r <= '1';
                                     end if;
-                                    s_busy_r  <= '0';
                                     s_tick_r  <= (others => '0');
                                     s_state_r <= ST_IDLE;
                                 end if;

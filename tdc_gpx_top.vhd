@@ -24,6 +24,15 @@
 --   i_axis_aclk  : TDC processing / AXI-Stream domain (~200 MHz)
 --   s_axi_aclk   : AXI4-Lite PS domain
 --
+-- SW contract — config freeze during busy:
+--   The following CSR fields are latched at face_start only for the
+--   data-path (active_chip_mask, stops_per_chip, rows_per_face).
+--   Other fields (bus_clk_div, bus_ticks, drain_mode, n_drain_cap,
+--   max_range_clks) are read LIVE by chip_ctrl / bus_phy.
+--   SW MUST NOT write these CTL registers while o_status.busy = '1'.
+--   Violating this can corrupt bus timing mid-transaction or change
+--   drain policy mid-shot, leading to undefined behavior.
+--
 -- Standard: VHDL-93 compatible
 -- =============================================================================
 

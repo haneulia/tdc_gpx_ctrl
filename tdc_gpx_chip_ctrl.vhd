@@ -871,9 +871,10 @@ begin
                                 end if;
 
                                 -- Count-based burst stop (deterministic):
-                                -- burst_limit = min(Fill, remaining_ififo).
-                                -- Read exactly burst_limit times, then re-evaluate
-                                -- via ST_DRAIN_FLUSH -> ST_DRAIN_CHECK.
+                                -- burst_limit = min(fill, remaining) - 1.
+                                -- After burst_limit responses here + 1 in FLUSH,
+                                -- total = min(fill, remaining). Re-evaluate
+                                -- via ST_DRAIN_FLUSH -> ST_DRAIN_SETTLE -> CHECK.
                                 if (s_burst_cnt_r + 1) >= s_burst_limit_r then
                                     -- Burst limit reached: stop burst
                                     s_req_burst_r <= '0';
