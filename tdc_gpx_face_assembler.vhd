@@ -121,7 +121,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- FSM
     -- =========================================================================
-    type t_state is (ST_IDLE, ST_SCAN, ST_RESOLVE, ST_FORWARD);
+    type t_state is (ST_IDLE, ST_SCAN, ST_RESOLVE, ST_FORWARD, ST_OVERRUN_CLOSE);
     signal s_state_r : t_state := ST_IDLE;
 
     -- =========================================================================
@@ -312,13 +312,17 @@ begin
                 -- Common logic for ST_SCAN / ST_FORWARD:
                 --   shot counter + tvalid latch (runs until back to ST_IDLE)
                 -- =============================================================
-                if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE
-                   or s_state_r = ST_FORWARD then
-                    -- Increment shot counter (saturate at max)
+                -- Timeout counter: chip-ready deadline only (excludes
+                -- forwarding/backpressure time in ST_FORWARD).
+                if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE then
                     if s_shot_cnt_r /= x"FFFF" then
                         s_shot_cnt_r <= s_shot_cnt_r + 1;
                     end if;
-                    -- Latch tvalid from input skid buffer outputs
+                end if;
+
+                -- Latch tvalid from input skid buffers (all active states)
+                if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE
+                   or s_state_r = ST_FORWARD then
                     for i in 0 to c_N_CHIPS - 1 loop
                         if s_active_mask_r(i) = '1'
                            and s_in_tvalid(i) = '1' then
@@ -487,22 +491,39 @@ begin
                         end if;  -- blank / real
                     end if;  -- v_can_produce
 
+                -- ==============================================================
+                -- ST_OVERRUN_CLOSE: synthetic tlast beat is in the pipe
+                --   register.  Wait for the output skid to accept it,
+                --   then go to ST_IDLE ready for the next shot.
+                -- ==============================================================
+                when ST_OVERRUN_CLOSE =>
+                    if s_can_produce = '1' then
+                        -- The synthetic tlast was accepted → clear pipe
+                        s_pipe_tvalid_r <= '0';
+                        s_pipe_tlast_r  <= '0';
+                        s_row_done_r    <= '1';
+                        s_state_r       <= ST_IDLE;
+                    end if;
+
                 end case;
 
                 -- =============================================================
-                -- shot_start override for ST_SCAN/ST_FORWARD only.
+                -- shot_start override: close row then restart.
                 -- Skid buffers are flushed via s_flush (concurrent signal).
                 -- =============================================================
-                if i_shot_start = '1' and s_state_r /= ST_IDLE then
-                    s_timeout_limit_r <= s_timeout_limit;
+                if i_shot_start = '1' and s_state_r /= ST_IDLE
+                                       and s_state_r /= ST_OVERRUN_CLOSE then
+                    -- Row truncated: emit a synthetic tlast beat so that
+                    -- header_inserter sees a proper line boundary before
+                    -- the next shot's data arrives.
                     s_chip_ready_r    <= (others => '0');
                     s_chip_done_r     <= (others => '0');
-                    s_shot_cnt_r      <= (others => '0');
                     s_chip_error_r    <= (others => '0');
-                    s_pipe_tvalid_r   <= '0';
-                    s_pipe_tlast_r    <= '0';
-                    s_shot_overrun_r  <= '1';   -- row truncated
-                    s_state_r         <= ST_SCAN;
+                    s_shot_overrun_r  <= '1';
+                    s_pipe_tdata_r    <= (others => '0');  -- blank padding
+                    s_pipe_tvalid_r   <= '1';
+                    s_pipe_tlast_r    <= '1';              -- synthetic EOL
+                    s_state_r         <= ST_OVERRUN_CLOSE;
                 end if;
             end if;
         end if;
