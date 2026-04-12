@@ -79,7 +79,8 @@ entity tdc_gpx_face_assembler is
         o_row_done           : out std_logic;    -- 1-clk pulse: packed row complete
         o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_shot_overrun       : out std_logic;    -- 1-clk pulse: shot truncated (was not idle)
-        o_face_abort         : out std_logic     -- 1-clk pulse: face aborted (overrun → ST_IDLE)
+        o_face_abort         : out std_logic;    -- 1-clk pulse: face aborted (overrun → ST_IDLE)
+        o_idle               : out std_logic     -- '1' when FSM is in ST_IDLE
     );
 end entity tdc_gpx_face_assembler;
 
@@ -278,6 +279,7 @@ begin
         variable v_blank_last     : boolean;
         variable v_done_after     : std_logic_vector(3 downto 0);
         variable v_chip_idx       : natural range 0 to 3;
+        variable v_row_completing : boolean;  -- row finishes on this edge
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -309,6 +311,8 @@ begin
                 if s_pipe_tvalid_r = '1' and s_pipe_tready = '1' then
                     s_pipe_tvalid_r <= '0';
                 end if;
+
+                v_row_completing := false;
 
                 -- =============================================================
                 -- Common logic for ST_SCAN / ST_FORWARD:
@@ -452,8 +456,9 @@ begin
                             if v_blank_last then
                                 s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
                                 if s_is_last_chip_r = '1' then
-                                    s_row_done_r <= '1';
-                                    s_state_r    <= ST_IDLE;
+                                    s_row_done_r     <= '1';
+                                    v_row_completing := true;
+                                    s_state_r        <= ST_IDLE;
                                 else
                                     s_state_r    <= ST_SCAN;
                                 end if;
@@ -480,8 +485,9 @@ begin
                                     -- Chip done: transition immediately
                                     s_chip_done_r(v_chip_idx) <= '1';
                                     if s_is_last_chip_r = '1' then
-                                        s_row_done_r <= '1';
-                                        s_state_r    <= ST_IDLE;
+                                        s_row_done_r     <= '1';
+                                        v_row_completing := true;
+                                        s_state_r        <= ST_IDLE;
                                     else
                                         s_state_r    <= ST_SCAN;
                                     end if;
@@ -506,7 +512,8 @@ begin
                 -- the frame_done_both combiner, closing the face.  SW uses
                 -- shot_overrun status to identify and discard corrupted frames.
                 -- =============================================================
-                if i_shot_start = '1' and s_state_r /= ST_IDLE then
+                if i_shot_start = '1' and s_state_r /= ST_IDLE
+                                       and not v_row_completing then
                     s_chip_ready_r    <= (others => '0');
                     s_chip_done_r     <= (others => '0');
                     s_chip_error_r    <= (others => '0');
@@ -527,5 +534,6 @@ begin
     o_chip_error_flags <= s_chip_error_r;
     o_shot_overrun     <= s_shot_overrun_r;
     o_face_abort       <= s_face_abort_r;
+    o_idle             <= '1' when s_state_r = ST_IDLE else '0';
 
 end architecture rtl;

@@ -139,7 +139,8 @@ begin
             o_row_done         => row_done,
             o_chip_error_flags => chip_error,
             o_shot_overrun     => shot_overrun,
-            o_face_abort       => open
+            o_face_abort       => open,
+            o_idle             => open
         );
 
     -- =========================================================================

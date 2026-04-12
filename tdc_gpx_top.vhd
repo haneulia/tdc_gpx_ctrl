@@ -403,6 +403,8 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_overrun_r       : std_logic := '0';
     signal s_face_abort           : std_logic;  -- rise assembler face abort pulse
     signal s_face_fall_abort      : std_logic;  -- fall assembler face abort pulse
+    signal s_face_asm_idle        : std_logic;  -- rise assembler idle
+    signal s_face_asm_fall_idle   : std_logic;  -- fall assembler idle
     signal s_hdr_draining         : std_logic;  -- rise header in ST_DRAIN_LAST
     signal s_hdr_fall_draining    : std_logic;  -- fall header in ST_DRAIN_LAST
     signal s_face_shot_cnt_r      : unsigned(15 downto 0) := (others => '0');
@@ -949,7 +951,8 @@ begin
             o_row_done         => s_row_done,
             o_chip_error_flags => s_chip_error_flags,
             o_shot_overrun     => s_shot_overrun,
-            o_face_abort       => s_face_abort
+            o_face_abort       => s_face_abort,
+            o_idle             => s_face_asm_idle
         );
 
     -- =========================================================================
@@ -977,7 +980,8 @@ begin
             o_row_done         => s_row_fall_done,
             o_chip_error_flags => s_chip_fall_error,
             o_shot_overrun     => s_shot_fall_overrun,
-            o_face_abort       => s_face_fall_abort
+            o_face_abort       => s_face_fall_abort,
+            o_idle             => s_face_asm_fall_idle
         );
 
     -- =========================================================================
@@ -1169,6 +1173,8 @@ begin
                         -- issuing cmd_start before previous output drains.
                         if s_cmd_start = '1'
                            and s_chip_busy = C_ZEROS_CHIPS
+                           and s_face_asm_idle = '1'
+                           and s_face_asm_fall_idle = '1'
                            and s_face_tvalid = '0'
                            and s_face_fall_tvalid = '0'
                            and o_m_axis_tvalid = '0'
@@ -1316,6 +1322,8 @@ begin
     -- =========================================================================
     s_status.busy               <= '1'  when s_face_state_r /= ST_IDLE
                                             or s_chip_busy /= C_ZEROS_CHIPS
+                                            or s_face_asm_idle = '0'
+                                            or s_face_asm_fall_idle = '0'
                                             or s_face_tvalid = '1'
                                             or s_face_fall_tvalid = '1'
                                             or o_m_axis_tvalid = '1'
