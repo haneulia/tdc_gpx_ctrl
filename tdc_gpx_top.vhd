@@ -13,8 +13,8 @@
 --
 --   Includes glue logic:
 --     cfg_image override (CTL3→Reg5 StartOff1, CTL4→Reg7 HSDiv/MTimer)
---     Stop decode with slope gating (Reg0 TRiseEn/TFallEn → per-IFIFO
---       expected drain counts, IFIFO1=stops 0~3, IFIFO2=stops 4~7)
+--     Per-chip stop decode (echo_receiver tdata/tuser → per-chip, per-IFIFO
+--       expected drain counts; edge-enable gating done upstream)
 --     Face sequencer (shot counting, face/frame ID management)
 --     Status aggregation (t_tdc_status assembly)
 --     Timestamp counter (free-running cycle counter)
@@ -563,6 +563,8 @@ begin
                                 and (i_shot_start = '1' or s_shot_deferred_r = '1')
                                 and s_cmd_stop = '0'
                                 and s_cmd_soft_reset = '0'
+                                and s_hdr_idle = '1'
+                                and s_hdr_fall_idle = '1'
                             else '0';
 
     -- =========================================================================
@@ -614,12 +616,11 @@ begin
                 -- it is dropped and s_shot_drop_cnt_r increments.
                 if s_packet_start = '1' then
                     -- Consumed: clear the latch.
-                    -- If a new raw shot arrives on the same cycle, re-defer
-                    -- it immediately (the consumed deferred was for this face,
-                    -- the new shot is for the NEXT close window).
-                    if i_shot_start = '1'
-                       and s_face_state_r = ST_IN_FACE
-                       and s_face_closing = '1' then
+                    -- If this was a deferred-consume AND a new raw shot
+                    -- arrives on the same cycle, re-defer it (the consumed
+                    -- deferred was for this face, the new shot is for the
+                    -- next close window).
+                    if s_shot_deferred_r = '1' and i_shot_start = '1' then
                         s_shot_deferred_r <= '1';  -- re-defer new shot
                     else
                         s_shot_deferred_r <= '0';
