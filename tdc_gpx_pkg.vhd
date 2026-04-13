@@ -227,6 +227,7 @@ package tdc_gpx_pkg is
         vdma_frame_count    : unsigned(31 downto 0);
         error_count         : unsigned(31 downto 0);
         shot_drop_count     : unsigned(15 downto 0);  -- deferred-shot overflow drops
+        frame_abort_count   : unsigned(15 downto 0);  -- frames discarded by abort
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -239,7 +240,8 @@ package tdc_gpx_pkg is
         shot_seq_current    => (others => '0'),
         vdma_frame_count    => (others => '0'),
         error_count         => (others => '0'),
-        shot_drop_count     => (others => '0')
+        shot_drop_count     => (others => '0'),
+        frame_abort_count   => (others => '0')
     );
 
     -- =========================================================================

@@ -345,6 +345,7 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_start_accepted  : std_logic := '0';  -- 1-clk pulse: start actually accepted
     signal s_shot_deferred_r     : std_logic := '0';  -- shot arrived during face-close window
     signal s_shot_drop_cnt_r     : unsigned(15 downto 0) := (others => '0');
+    signal s_frame_abort_cnt_r   : unsigned(15 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Timestamp (free-running cycle counter, i_axis_aclk domain)
@@ -1334,6 +1335,22 @@ begin
     end process p_global_shot_seq;
 
     -- =========================================================================
+    -- [6d] Frame abort counter: counts faces aborted by overrun/stop/reset.
+    --   SW uses this to know how many frames were discarded (corrupted).
+    --   Cleared on cmd_start_accepted (new measurement run).
+    -- =========================================================================
+    p_frame_abort_cnt : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or s_cmd_start_accepted = '1' then
+                s_frame_abort_cnt_r <= (others => '0');
+            elsif s_pipeline_abort = '1' and s_face_state_r = ST_IN_FACE then
+                s_frame_abort_cnt_r <= s_frame_abort_cnt_r + 1;
+            end if;
+        end if;
+    end process p_frame_abort_cnt;
+
+    -- =========================================================================
     -- [6c] Per-face shot counter: tracks how many shots have been accepted
     --   for the current face.  When it reaches cols_per_face, no more
     --   mid-face shots are accepted (s_all_shots_fired → s_face_closing).
@@ -1450,5 +1467,6 @@ begin
     s_status.vdma_frame_count   <= s_frame_id_r;
     s_status.error_count        <= s_error_count_r;
     s_status.shot_drop_count    <= s_shot_drop_cnt_r;
+    s_status.frame_abort_count  <= s_frame_abort_cnt_r;
 
 end architecture rtl;
