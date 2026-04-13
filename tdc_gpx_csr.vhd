@@ -737,8 +737,11 @@ begin
     end process p_reg_cmd_edge;
 
     -- Mutual exclusion: if both CTL1[31:30] rise simultaneously, write wins.
-    o_cmd_reg_read  <= s_reg_cmd_pulse_r(0) and (not s_reg_cmd_pulse_r(1));
-    o_cmd_reg_write <= s_reg_cmd_pulse_r(1);
+    -- CDC idle gating: ensures cfg_image data is stable before reg access.
+    o_cmd_reg_read  <= s_reg_cmd_pulse_r(0) and (not s_reg_cmd_pulse_r(1))
+                       and s_cdc_all_idle_ff(1);
+    o_cmd_reg_write <= s_reg_cmd_pulse_r(1)
+                       and s_cdc_all_idle_ff(1);
     o_cmd_reg_addr  <= s_ctl_out(1)(c_BT_REG_ADDR_HI downto c_BT_REG_ADDR_LO);
     o_cmd_reg_chip  <= unsigned(s_ctl_out(1)(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
 

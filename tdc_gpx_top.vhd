@@ -794,26 +794,26 @@ begin
     -- =========================================================================
     -- [1a] Per-chip reg access demux: route cmd to targeted chip only
     -- =========================================================================
-    -- 1-outstanding lock + start-suppression: prevents reg/cfg commands
-    -- from sneaking through on the same cycle as a start command.
+    -- 1-outstanding lock: gates reg commands on the SAME signals that
+    -- chip_ctrl actually receives (accepted/gated), not raw CSR pulses.
+    -- This eliminates timing asymmetry between demux and chip_ctrl.
     gen_reg_demux : for i in 0 to c_N_CHIPS - 1 generate
         s_cmd_reg_read_g(i)  <= s_cmd_reg_read
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
-                                 and s_cmd_start = '0'
-                                 and s_cmd_cfg_write = '0'
-                                 and s_cfg_write_top_pending_r = '0'
+                                 and s_cmd_start_accepted = '0'
+                                 and s_cmd_cfg_write_g = '0'
                                 else '0';
         s_cmd_reg_write_g(i) <= s_cmd_reg_write
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
-                                 and s_cmd_start = '0'
-                                 and s_cmd_cfg_write = '0'
-                                 and s_cfg_write_top_pending_r = '0'
+                                 and s_cmd_start_accepted = '0'
+                                 and s_cmd_cfg_write_g = '0'
                                 else '0';
     end generate gen_reg_demux;
 
     -- cfg_write pending + gating: hold until all chips idle and no start.
+    -- Uses s_cmd_start_accepted (not raw) for timing consistency.
     p_cfg_write_top_pending : process(i_axis_aclk)
         variable v_can_issue : boolean;
     begin
@@ -822,7 +822,7 @@ begin
                 s_cfg_write_top_pending_r <= '0';
             else
                 v_can_issue := s_chip_busy = C_ZEROS_CHIPS
-                           and s_cmd_start = '0';
+                           and s_cmd_start_accepted = '0';
                 if s_cmd_cfg_write = '1' and not v_can_issue then
                     s_cfg_write_top_pending_r <= '1';
                 elsif s_cfg_write_top_pending_r = '1' and v_can_issue then
@@ -834,7 +834,7 @@ begin
 
     s_cmd_cfg_write_g <= (s_cmd_cfg_write or s_cfg_write_top_pending_r)
                          when s_chip_busy = C_ZEROS_CHIPS
-                          and s_cmd_start = '0'
+                          and s_cmd_start_accepted = '0'
                          else '0';
 
     -- Latch target chip + manage 1-outstanding flag.
