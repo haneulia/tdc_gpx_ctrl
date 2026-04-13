@@ -33,6 +33,22 @@
 --     - AluTrigger pulse generation
 --     - Shot sequence counter
 --
+-- AXI-Stream interfaces:
+--   Slave (bus_phy response, via skid buffer):
+--     i_s_axis_tdata[31:0] = 28-bit read data (zero-padded), tuser[0]=rw
+--     o_s_axis_tready = '1' in response-waiting states only
+--   Master (raw word output, to decode_i via skid buffer):
+--     o_m_raw_axis_tdata[27:0] = raw IFIFO word, tuser[0]=ififo_id
+--     tuser[7] = drain_done control beat (no data, triggers downstream output)
+--
+-- Config snapshot at cmd_start:
+--   drain_mode, n_drain_cap, bus_clk_div, bus_ticks, max_range_clks
+--   are latched from i_cfg at cmd_start. Also refreshed on cfg_write/reg entry.
+--   stopdis_override: INTENTIONALLY LIVE (debug/emergency override).
+--
+-- cfg_image snapshot: s_cfg_image_snap_r latched at cfg_write acceptance.
+--   ST_CFG_WRITE and ST_MASTER_RESET read from snapshot (not live i_cfg_image).
+--
 --   Non-responsibilities:
 --     - Bus timing, IOBUF, 2-FF sync   -> bus_phy
 --     - Raw word decode                  -> decode_i
@@ -62,7 +78,7 @@
 -- Invariants enforced:
 --   [INV-4] EF=1 (empty) -> never issue read to IFIFO
 --
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;

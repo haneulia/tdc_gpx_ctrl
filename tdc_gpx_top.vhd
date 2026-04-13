@@ -5,16 +5,35 @@
 --
 -- Purpose:
 --   Instantiates and connects all TDC-GPX controller submodules:
---     CSR (AXI-Lite + CDC)
---     Per-chip pipeline x4: bus_phy → chip_ctrl → decode_i →
---                           raw_event_builder → cell_builder
---     face_assembler (4 chip inputs → packed row)
---     header_inserter (header + SOF/EOL → VDMA frame)
+--     CSR (AXI-Lite + CDC, pending latches, CDC idle gating)
+--     Per-chip pipeline x4:
+--       bus_phy → [skid] → chip_ctrl → [skid] → decode_i →
+--       [skid] → raw_event_builder → [skid] → cell_builder (ping-pong)
+--     face_assembler (4× xpm_fifo_axis inputs → packed row → xpm_fifo_axis)
+--     header_inserter (header ROM + SOF/EOL → VDMA frame)
+--
+-- Generics:
+--   g_OUTPUT_WIDTH : 32 or 64 (output AXI-Stream tdata width)
+--     32-bit: 8 beats/cell, 12 header beats
+--     64-bit: 4 beats/cell, 6 header beats (halves face_assembler latency)
+--
+-- Pipeline features:
+--   - Skid buffers (4 per chip, 16 total): registered tready at every
+--     AXI-Stream boundary for timing closure
+--   - drain_done propagated via tuser[7] through decode_i → event_bld → cell_bld
+--   - cell_builder ping-pong: collect(shot N+1) overlaps output(shot N)
+--
+-- Command arbitration:
+--   - Demux gates on both raw s_cmd_start AND s_cmd_start_accepted
+--   - Reg demux checks target chip busy + cfg_write collision
+--   - cfg_write gated on full pipeline idle (same as start accept)
+--   - CSR pending latches cleared on stop/soft_reset
+--   - i_cmd_start_accepted fed back to CSR for laser override clear
+--   - s_reg_outstanding_r included in status.busy
 --
 --   Includes glue logic:
 --     cfg_image override (CTL3→Reg5 StartOff1, CTL4→Reg7 HSDiv/MTimer)
---     Per-chip stop decode (echo_receiver tdata/tuser → per-chip, per-IFIFO
---       expected drain counts; edge-enable gating done upstream)
+--     Per-chip stop decode (echo_receiver → per-chip expected drain counts)
 --     Face sequencer (shot counting, face/frame ID management)
 --     Status aggregation (t_tdc_status assembly)
 --     Timestamp counter (free-running cycle counter)
@@ -25,13 +44,12 @@
 --   s_axi_aclk   : AXI4-Lite PS domain
 --
 -- SW contract — config freeze during busy:
---   The following CSR fields are latched at face_start only for the
---   data-path (active_chip_mask, stops_per_chip, rows_per_face).
---   Other fields (bus_clk_div, bus_ticks, drain_mode, n_drain_cap,
---   max_range_clks) are read LIVE by chip_ctrl / bus_phy.
---   SW MUST NOT write these CTL registers while o_status.busy = '1'.
---   Violating this can corrupt bus timing mid-transaction or change
---   drain policy mid-shot, leading to undefined behavior.
+--   chip_ctrl snapshots at cmd_start: drain_mode, n_drain_cap,
+--   bus_clk_div, bus_ticks, max_range_clks. Header snapshots at
+--   face_start. Only stopdis_override is INTENTIONALLY LIVE (debug).
+--   All commands (start, cfg_write, reg_read/write) are CDC idle gated
+--   in CSR and pipeline idle gated in top. cfg_write requires full
+--   pipeline idle (same conditions as start accept).
 --
 --   cfg_image freeze: additionally, cfg_image registers MUST NOT be
 --   written while busy = '1'. In particular:
@@ -52,7 +70,7 @@
 --   (flushed), and header_inserter (→ ST_IDLE or ST_ABORT_DRAIN if
 --   a beat is pending).  SW must wait for busy = '0' after soft_reset.
 --
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;

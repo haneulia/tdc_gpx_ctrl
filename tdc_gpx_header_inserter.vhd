@@ -4,14 +4,25 @@
 -- =============================================================================
 --
 -- Purpose:
---   Prepends a fixed-length header prefix to every VDMA line.
+--   Prepends a fixed-length header prefix (48 bytes) to every VDMA line.
 --   First line of each face contains actual header metadata;
 --   subsequent lines have zero-filled prefix.
 --
+-- Generics:
+--   g_TDATA_WIDTH : 32 or 64 (output bus width)
+--     32-bit: 12 beats × 4B = 48B header prefix
+--     64-bit:  6 beats × 8B = 48B header prefix (2 words packed per beat)
+--
+-- Header ROM pre-building:
+--   All 12 header words are pre-computed into s_hdr_rom_r at face_start.
+--   ST_PREFIX reads from this ROM by index (1 LUT depth), eliminating the
+--   12:1 case mux from the beat-generation critical path.
+--   64-bit mode: 2 consecutive 32-bit words packed per beat via for-loop.
+--
 --   Per-face flow:
---     1. face_start -> latch CSR snapshot + metadata -> ST_PREFIX
---     2. ST_PREFIX: generate c_G_HDR_PREFIX_BEATS (12) beats
---        - Line 0: header metadata (12 valid beats = 48 bytes)
+--     1. face_start -> latch snapshot + pre-build header ROM -> ST_PREFIX
+--     2. ST_PREFIX: generate c_G_HDR_PREFIX_BEATS beats from ROM
+--        - Line 0: header metadata (48 bytes)
 --        - Line 1+: zeros
 --        - Beat 0 of line 0: tuser(0)=1 (SOF for AXI-Stream Video)
 --     3. ST_DATA: passthrough data beats from face_assembler
@@ -50,7 +61,7 @@
 --     VSIZE  = cols_per_face
 --     STRIDE = HSIZE
 --
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;

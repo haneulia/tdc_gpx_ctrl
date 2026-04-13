@@ -4,8 +4,17 @@
 -- =============================================================================
 --
 -- Purpose:
---   Converts chip_ctrl req/rsp interface to TDC-GPX 28-bit async parallel bus.
+--   Converts chip_ctrl request interface to TDC-GPX 28-bit async parallel bus.
 --   Manages bus timing (Tick-Phase), IOBUF, 2-FF synchronizers, turnaround gaps.
+--
+-- Response interface:
+--   AXI-Stream master (32b tdata, 4b tkeep, 8b tuser) — sole response path.
+--   tdata[27:0]  = 28-bit read data (zero for writes), tdata[31:28] = 0
+--   tuser[0]     = '0' READ response, '1' WRITE ack
+--   tuser[4:1]   = target register address
+--   tkeep        = "1111" (all bytes valid)
+--   Handshake: tvalid held until tready='1'. One beat per transaction.
+--   chip_ctrl receives this via AXI-Stream slave (through skid buffer in top).
 --
 -- Bus Timing (per deep_analysis section 12.3):
 --   1 transaction = i_bus_ticks ticks (min 4, default 5)

@@ -8,39 +8,41 @@
 --   Inactive chips are skipped. Timed-out chips receive blank cells
 --   with error_fill=1.
 --
---   FCFS (First-Come First-Served: 먼저 준비된 chip부터 출력) scheduling:
+-- Generics:
+--   g_TDATA_WIDTH : 32 or 64 (output bus width, affects beats/cell)
+--
+-- Input FIFOs:
+--   4× xpm_fifo_axis (Xilinx XPM, 16-deep, distributed RAM).
+--   Standard AXI-Stream interface — no manual bundle/unbundle.
+--   Per-chip inputs via individual ports (i_s_axis_tdata_0..3).
+--
+-- Output FIFO:
+--   1× xpm_fifo_axis (16-deep) for backpressure decoupling.
+--
+--   FCFS (First-Come First-Served) scheduling:
 --     Ready chips are forwarded in arrival order (lowest index breaks ties).
---     While forwarding one chip, remaining chips continue accumulating
---     in their cell_builders, hiding drain latency.
---     Each cell carries a chip_id tag (beat 4, bits [9:8]) so downstream
+--     Each cell carries a chip_id tag in metadata beat so downstream
 --     can identify chip origin regardless of output order.
 --
 --   Per-shot flow:
 --     1. shot_start → ST_SCAN
 --     2. ST_SCAN: priority encode undone chip (ready first, timeout blank)
---     3. ST_RESOLVE: compute is_last_chip from registered result (1 clk)
---     4. ST_FORWARD: produce beats into output skid buffer
+--     3. ST_RESOLVE: compute is_last_chip (1 clk)
+--     4. ST_FORWARD: produce beats to output FIFO
 --     5. Chip done → mark s_chip_done_r, back to ST_SCAN
 --     6. All active chips done → row_done, ST_IDLE
 --
---   Packed Row: only active chips contribute rows. Chip order within
---   the row is non-deterministic (FCFS). SW uses chip_id tag to parse.
+-- All outputs are registered (module boundary = FF).
 --
---   Timing closure (200MHz+):
---     5 skid buffers (4 input + 1 output) provide fully registered
---     ready paths at all module boundaries.
---     ST_SCAN/ST_RESOLVE pipeline split: priority encoder (ST_SCAN) and
---     is_last_chip computation (ST_RESOLVE) run in separate clock cycles.
---     Pre-computed s_last_stop_r eliminates runtime subtraction.
---
---   All outputs are registered (module boundary = FF).
---
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+
+library xpm;
+use xpm.vcomponents.all;
 
 use work.tdc_gpx_pkg.all;
 
@@ -91,30 +93,26 @@ end entity tdc_gpx_face_assembler;
 
 architecture rtl of tdc_gpx_face_assembler is
 
-    -- Reconstruct internal tdata array from individual ports
+    -- Per-chip tdata array type
     type t_tdata_arr is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
-    signal s_in_tdata : t_tdata_arr;
+    -- Input port mapping (before FIFO)
+    signal s_in_tdata_src : t_tdata_arr;
+    -- FIFO output (after FIFO, to FSM)
+    signal s_in_tdata     : t_tdata_arr;
 
     -- =========================================================================
-    -- Skid buffer data width: tdata + tlast bundled
+    -- Derived constants
     -- =========================================================================
-    constant c_SKID_WIDTH      : natural := g_TDATA_WIDTH + 1;
     constant c_G_BEATS_PER_CELL : natural := fn_beats_per_cell(g_TDATA_WIDTH);
 
-    -- Bundle/unbundle types for input skid buffer array
-    type t_skid_data_array is array (0 to c_N_CHIPS - 1)
-        of std_logic_vector(c_SKID_WIDTH - 1 downto 0);
-
     -- =========================================================================
-    -- Input skid buffer interface signals (from skid_buffer outputs)
+    -- Input FIFO output signals (xpm_fifo_axis → FSM)
     -- =========================================================================
     -- s_in_tdata: defined above as t_tdata_arr (g_TDATA_WIDTH per chip)
     signal s_in_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_in_s_bundle : t_skid_data_array;  -- skid_buffer s_data input (tdata & tlast)
-    signal s_in_bundle   : t_skid_data_array;  -- skid_buffer m_data output
 
     -- =========================================================================
     -- Output pipe signals (FSM → output skid buffer)
@@ -122,15 +120,12 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_pipe_tdata_r  : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_pipe_tvalid_r : std_logic := '0';
     signal s_pipe_tlast_r  : std_logic := '0';
-    signal s_pipe_tready   : std_logic;  -- from output skid buffer (registered)
-    signal s_pipe_bundle   : std_logic_vector(c_SKID_WIDTH - 1 downto 0);
-    signal s_out_bundle    : std_logic_vector(c_SKID_WIDTH - 1 downto 0);
+    signal s_pipe_tready   : std_logic;  -- from output FIFO
 
     -- =========================================================================
-    -- Synchronous flush for skid buffers (on shot_start)
+    -- Synchronous flush for FIFOs (active-low aresetn pulse)
     -- =========================================================================
-    signal s_flush        : std_logic;  -- input skid flush (every shot_start)
-    signal s_abort_flush  : std_logic;  -- output skid flush (combinational, same edge as overrun)
+    signal s_flush        : std_logic;  -- input FIFO flush (every shot_start)
 
     -- =========================================================================
     -- FSM
@@ -206,63 +201,101 @@ architecture rtl of tdc_gpx_face_assembler is
 begin
 
     -- Map individual tdata ports to internal array
-    s_in_tdata(0) <= i_s_axis_tdata_0;
-    s_in_tdata(1) <= i_s_axis_tdata_1;
-    s_in_tdata(2) <= i_s_axis_tdata_2;
-    s_in_tdata(3) <= i_s_axis_tdata_3;
+    s_in_tdata_src(0) <= i_s_axis_tdata_0;
+    s_in_tdata_src(1) <= i_s_axis_tdata_1;
+    s_in_tdata_src(2) <= i_s_axis_tdata_2;
+    s_in_tdata_src(3) <= i_s_axis_tdata_3;
 
     -- =========================================================================
-    -- Input skid buffers (×4): registered tready to cell_builders
+    -- Input AXI-Stream FIFOs (×4): xpm_fifo_axis, 16-deep
+    -- Standard AXI-Stream interface — no manual bundle/unbundle.
     -- =========================================================================
     gen_in_fifo : for i in 0 to c_N_CHIPS - 1 generate
-        s_in_s_bundle(i) <= s_in_tdata(i) & i_s_axis_tlast(i);
-        u_fifo_in : entity work.tdc_gpx_sync_fifo
+        u_fifo_in : xpm_fifo_axis
             generic map (
-                g_DATA_WIDTH => c_SKID_WIDTH,   -- 33 bits (tdata + tlast)
-                g_DEPTH      => 16,
-                g_LOG2_DEPTH => 4,
-                g_IN_REG     => false,          -- no extra skid, FIFO is enough
-                g_OUT_REG    => false
+                CASCADE_HEIGHT    => 0,
+                CDC_SYNC_STAGES   => 2,
+                CLOCKING_MODE     => "common_clock",
+                ECC_MODE          => "no_ecc",
+                FIFO_DEPTH        => 16,
+                FIFO_MEMORY_TYPE  => "distributed",
+                PACKET_FIFO       => "false",
+                TDATA_WIDTH       => g_TDATA_WIDTH,
+                TDEST_WIDTH       => 1,
+                TID_WIDTH         => 1,
+                TUSER_WIDTH       => 1,
+                USE_ADV_FEATURES  => "0000"
             )
             port map (
-                i_clk     => i_clk,
-                i_rst_n   => i_rst_n,
-                i_flush   => s_flush,
-                i_s_valid => i_s_axis_tvalid(i),
-                o_s_ready => o_s_axis_tready(i),
-                i_s_data  => s_in_s_bundle(i),
-                o_m_valid => s_in_tvalid(i),
-                i_m_ready => s_in_tready(i),
-                o_m_data  => s_in_bundle(i)
+                s_aclk          => i_clk,
+                s_aresetn       => i_rst_n,
+                s_axis_tdata    => s_in_tdata_src(i),
+                s_axis_tvalid   => i_s_axis_tvalid(i),
+                s_axis_tready   => o_s_axis_tready(i),
+                s_axis_tlast    => i_s_axis_tlast(i),
+                s_axis_tkeep    => (others => '1'),
+                s_axis_tstrb    => (others => '1'),
+                s_axis_tuser    => "0",
+                s_axis_tid      => "0",
+                s_axis_tdest    => "0",
+                m_axis_tdata    => s_in_tdata(i),
+                m_axis_tvalid   => s_in_tvalid(i),
+                m_axis_tready   => s_in_tready(i),
+                m_axis_tlast    => s_in_tlast(i),
+                m_axis_tkeep    => open,
+                m_axis_tstrb    => open,
+                m_axis_tuser    => open,
+                m_axis_tid      => open,
+                m_axis_tdest    => open,
+                m_aclk          => '0',
+                injectsbiterr_axis => '0',
+                injectdbiterr_axis => '0'
             );
-        -- Unbundle: tdata(31:0) & tlast(0)
-        s_in_tdata(i) <= s_in_bundle(i)(c_SKID_WIDTH - 1 downto 1);
-        s_in_tlast(i) <= s_in_bundle(i)(0);
     end generate gen_in_fifo;
 
     -- =========================================================================
-    -- Output skid buffer (×1): registered tready from downstream
+    -- Output AXI-Stream FIFO (×1): xpm_fifo_axis, 16-deep
     -- =========================================================================
-    s_pipe_bundle <= s_pipe_tdata_r & s_pipe_tlast_r;
-
-    u_skid_out : entity work.tdc_gpx_skid_buffer
-        generic map (g_DATA_WIDTH => c_SKID_WIDTH)
+    u_fifo_out : xpm_fifo_axis
+        generic map (
+            CASCADE_HEIGHT    => 0,
+            CDC_SYNC_STAGES   => 2,
+            CLOCKING_MODE     => "common_clock",
+            ECC_MODE          => "no_ecc",
+            FIFO_DEPTH        => 16,
+            FIFO_MEMORY_TYPE  => "distributed",
+            PACKET_FIFO       => "false",
+            TDATA_WIDTH       => g_TDATA_WIDTH,
+            TDEST_WIDTH       => 1,
+            TID_WIDTH         => 1,
+            TUSER_WIDTH       => 1,
+            USE_ADV_FEATURES  => "0000"
+        )
         port map (
-            i_clk     => i_clk,
-            i_rst_n   => i_rst_n,
-            i_flush   => s_abort_flush,    -- Flush output skid on overrun
-                                          -- (combinational, same edge as overrun
-                                          -- detection — no 1-cycle leak window).
-            i_s_valid => s_pipe_tvalid_r,
-            o_s_ready => s_pipe_tready,
-            i_s_data  => s_pipe_bundle,
-            o_m_valid => o_m_axis_tvalid,
-            i_m_ready => i_m_axis_tready,
-            o_m_data  => s_out_bundle
+            s_aclk          => i_clk,
+            s_aresetn       => i_rst_n,
+            s_axis_tdata    => s_pipe_tdata_r,
+            s_axis_tvalid   => s_pipe_tvalid_r,
+            s_axis_tready   => s_pipe_tready,
+            s_axis_tlast    => s_pipe_tlast_r,
+            s_axis_tkeep    => (others => '1'),
+            s_axis_tstrb    => (others => '1'),
+            s_axis_tuser    => "0",
+            s_axis_tid      => "0",
+            s_axis_tdest    => "0",
+            m_axis_tdata    => o_m_axis_tdata,
+            m_axis_tvalid   => o_m_axis_tvalid,
+            m_axis_tready   => i_m_axis_tready,
+            m_axis_tlast    => o_m_axis_tlast,
+            m_axis_tkeep    => open,
+            m_axis_tstrb    => open,
+            m_axis_tuser    => open,
+            m_axis_tid      => open,
+            m_axis_tdest    => open,
+            m_aclk          => '0',
+            injectsbiterr_axis => '0',
+            injectdbiterr_axis => '0'
         );
-
-    o_m_axis_tdata <= s_out_bundle(c_SKID_WIDTH - 1 downto 1);
-    o_m_axis_tlast <= s_out_bundle(0);
 
     -- =========================================================================
     -- Concurrent signals
@@ -279,7 +312,7 @@ begin
     -- overrun override (guarded by not v_row_completing), so it never
     -- fires on a normal row-completion edge.  The depth-16 FIFO between
     -- assembler and header absorbs any 1-cycle delay window.
-    s_abort_flush <= s_face_abort_r or i_abort;
+    -- (output FIFO flush handled by s_aresetn in xpm_fifo_axis)
 
     -- Pipe capacity: can FSM produce? (all inputs registered → ~0.5ns)
     s_can_produce <= '1' when (s_pipe_tvalid_r = '0')

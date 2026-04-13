@@ -38,14 +38,28 @@
 -- CDC structure:
 --   CTL: 5 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for CTL0~4
 --        16 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for cfg_image CTL5~20
+--        1 x xpm_cdc_handshake for CTL21 (SCAN_TIMEOUT, dedicated)
 --   STAT: 7 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) for STAT5~11
---   Total: 27 CDC instances
+--   CDC idle flag: 2-FF sync of NOR(src_send_ctl, src_send_img, src_send_ctl21)
+--
+-- Command safety:
+--   All command outputs (start, cfg_write, reg_read, reg_write) are AND-gated
+--   with s_cdc_all_idle_ff (CDC idle synchronizer). Commands issued while CDC
+--   handshakes are in flight are either held (pending latch) or dropped.
+--
+--   Pending latches:
+--     s_start_pending_r     — holds cmd_start until CDC idle, then auto-releases
+--     s_cfg_write_pending_r — holds cmd_cfg_write until CDC idle
+--     Both cleared on stop/soft_reset to prevent stale commands after abort.
+--
+--   i_cmd_start_accepted: feedback from top (actual start acceptance).
+--     Used to clear laser_ctrl cols_per_face override (not raw o_cmd_start).
 --
 -- Clock domains:
 --   s_axi_aclk : AXI4-Lite domain (PS clock)
 --   i_axis_aclk : TDC processing / AXI-Stream domain (200 MHz)
 --
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;

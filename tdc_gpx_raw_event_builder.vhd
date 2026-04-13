@@ -5,15 +5,24 @@
 --
 -- Purpose:
 --   Enriches decoded IFIFO fields with context (chip_id, shot_seq) and
---   assigns per-stop hit_seq_local counter. Outputs t_raw_event record.
+--   assigns per-stop hit_seq_local counter (3-bit, 0..7 per slope).
+--   Registered pipeline with AXI-Stream slave input and master output.
 --
---   hit_seq_local: sequential index for hits on the same {chip, shot, stop}.
---   FIFO ordering guarantees time-sorted sequence within each stop channel.
---   Counter resets on drain_done (shot boundary).
+--   drain_done propagation: input tuser[7]='1' control beat resets hit
+--   counters and is forwarded on the output AXI-Stream as tuser[7]='1'.
 --
---   Range check: stop_id_local >= stops_per_chip => discard + error count.
+--   Range check: stop_id_local >= stops_per_chip => discard + error pulse.
 --
--- Standard: VHDL-93 compatible
+-- AXI-Stream slave (from decode_i):
+--   tdata[16:0] = raw_hit,  tuser[7] = drain_done
+--   tuser[0] = slope, [2:1] = cha_code, [5:3] = stop_id, [6] = ififo_id
+--
+-- AXI-Stream master (to cell_builder via skid buffer):
+--   tdata[16:0] = raw_hit
+--   tuser[0] = slope, [2:1] = chip_id, [5:3] = stop_id, [6] = ififo_id,
+--   tuser[7] = drain_done, [10:8] = hit_seq_local
+--
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;
