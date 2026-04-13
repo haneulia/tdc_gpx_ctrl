@@ -542,7 +542,7 @@ architecture rtl of tdc_gpx_top is
     --   Each 8-bit:         [IFIFO2(4b) | IFIFO1(4b)]
     --   tdata = rising counts, tuser = falling counts.
     -- Per-chip expected = rise_count + fall_count for that IFIFO.
-    type t_expected_array is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
+    -- t_expected_array: now in tdc_gpx_pkg
     signal s_expected_ififo1 : t_expected_array := (others => (others => '0'));
     signal s_expected_ififo2 : t_expected_array := (others => (others => '0'));
 
@@ -563,20 +563,25 @@ begin
     --   Reg7[31:0]  ← s_cfg.cfg_reg7    (CTL4)
     -- Other registers pass through from CSR raw image unchanged.
     -- =========================================================================
-    p_cfg_image_override : process(s_cfg_image_raw, s_cfg)
-        variable v_img : t_cfg_image;
-    begin
-        v_img := s_cfg_image_raw;
-        -- Reg5: StartOff1 from CTL3
-        v_img(5)(c_REG5_STARTOFF1_HI downto c_REG5_STARTOFF1_LO)
-            := std_logic_vector(s_cfg.start_off1);
-        -- Reg5: force MasterAluTrig='1', PartialAluTrig='0'
-        v_img(5)(c_REG5_MASTER_ALU_TRIG)  := '1';
-        v_img(5)(c_REG5_PARTIAL_ALU_TRIG) := '0';
-        -- Reg7: HSDiv/RefClkDiv/MTimer from CTL4
-        v_img(7) := s_cfg.cfg_reg7;
-        s_cfg_image <= v_img;
-    end process;
+    -- =========================================================================
+    -- [0] Stop decode + cfg_image override (extracted module)
+    -- =========================================================================
+    u_stop_decode : entity work.tdc_gpx_stop_decode
+        generic map (g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH)
+        port map (
+            i_clk              => i_axis_aclk,
+            i_rst_n            => i_axis_aresetn,
+            i_stop_evt_tvalid  => i_stop_evt_tvalid,
+            i_stop_evt_tdata   => i_stop_evt_tdata,
+            i_stop_evt_tuser   => i_stop_evt_tuser,
+            o_stop_evt_tready  => o_stop_evt_tready,
+            i_shot_start_gated => s_shot_start_gated,
+            o_expected_ififo1  => s_expected_ififo1,
+            o_expected_ififo2  => s_expected_ififo2,
+            i_cfg              => s_cfg,
+            i_cfg_image_raw    => s_cfg_image_raw,
+            o_cfg_image        => s_cfg_image
+        );
 
     -- =========================================================================
     -- Generic parameter validation (elaboration-time)
@@ -596,52 +601,15 @@ begin
         report "tdc_gpx_top: p_stop_decode hardcodes 4-bit per IFIFO count"
         severity failure;
 
-    -- =========================================================================
-    -- Stop event AXI Stream slave: always accept
-    -- =========================================================================
-    o_stop_evt_tready <= '1';
+    -- (stop decode + cfg_image override: moved to u_stop_decode above)
 
-    -- =========================================================================
-    -- Per-chip stop decode: extract IFIFO1/2 expected counts from echo_receiver.
-    --   tdata/tuser 32-bit: [chip3(8b) | chip2(8b) | chip1(8b) | chip0(8b)]
-    --   Each 8-bit slice: [IFIFO2(4b) | IFIFO1(4b)]
-    --   tdata = rising edge counts, tuser = falling edge counts.
-    --   Per-chip IFIFO expected = rise_slice + fall_slice.
-    --   NOTE: edge-enable gating (TRiseEn/TFallEn) is handled upstream
-    --   by echo_receiver — p_stop_decode sees already-gated values.
-    --   i_stop_evt_tkeep: reserved for future multi-beat extensions.
-    --   Cleared on shot_start (new measurement boundary).
-    -- =========================================================================
-    p_stop_decode : process(i_axis_aclk)
-        variable v_lo : natural;
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                for i in 0 to c_N_CHIPS - 1 loop
-                    s_expected_ififo1(i) <= (others => '0');
-                    s_expected_ififo2(i) <= (others => '0');
-                end loop;
-            elsif s_shot_start_gated = '1' then
-                -- Shot boundary: clear for new measurement
-                for i in 0 to c_N_CHIPS - 1 loop
-                    s_expected_ififo1(i) <= (others => '0');
-                    s_expected_ififo2(i) <= (others => '0');
-                end loop;
-            elsif i_stop_evt_tvalid = '1' then
-                for i in 0 to c_N_CHIPS - 1 loop
-                    v_lo := i * 8;
-                    -- IFIFO1: lower 4 bits of each chip's 8-bit slice
-                    s_expected_ififo1(i) <=
-                        resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
-                      + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);
-                    -- IFIFO2: upper 4 bits of each chip's 8-bit slice
-                    s_expected_ififo2(i) <=
-                        resize(unsigned(i_stop_evt_tdata(v_lo + 7 downto v_lo + 4)), 8)
-                      + resize(unsigned(i_stop_evt_tuser(v_lo + 7 downto v_lo + 4)), 8);
-                end loop;
-            end if;
-        end if;
-    end process p_stop_decode;
+    -- (packet_start, face_start_delay, shot gating, pipeline abort:
+    --  now generated by u_face_seq / u_shot_ctrl — see instances below)
+    -- NOTE: s_packet_start comes from face_seq; shot_ctrl uses it for
+    -- deferral. Currently face_seq generates both packet_start and
+    -- shot_start_gated. The shot deferral/drop logic from p_face_start_delay
+    -- is still inline below until shot_ctrl is fully integrated.
+    -- TODO: complete shot_ctrl integration in next iteration.
 
     -- =========================================================================
     -- [0a] Combinational packet_start: accepted first-shot pulse.
@@ -875,91 +843,32 @@ begin
         );
 
     -- =========================================================================
-    -- [1a] Per-chip reg access demux: route cmd to targeted chip only
+    -- [1a] Command arbitration (extracted module)
     -- =========================================================================
-    -- 1-outstanding lock + full command arbitration.
-    -- Block reg when: (a) raw start OR accepted start active (covers 1-clk gap),
-    -- (b) cfg_write gated or pending, (c) target chip busy.
-    gen_reg_demux : for i in 0 to c_N_CHIPS - 1 generate
-        s_cmd_reg_read_g(i)  <= s_cmd_reg_read
-                                when to_integer(s_cmd_reg_chip) = i
-                                 and s_reg_outstanding_r = '0'
-                                 and s_cmd_start = '0'
-                                 and s_cmd_start_accepted = '0'
-                                 and s_cmd_cfg_write_g = '0'
-                                 and s_cmd_cfg_write = '0'
-                                 and s_chip_busy(i) = '0'
-                                else '0';
-        s_cmd_reg_write_g(i) <= s_cmd_reg_write
-                                when to_integer(s_cmd_reg_chip) = i
-                                 and s_reg_outstanding_r = '0'
-                                 and s_cmd_start = '0'
-                                 and s_cmd_start_accepted = '0'
-                                 and s_cmd_cfg_write_g = '0'
-                                 and s_cmd_cfg_write = '0'
-                                 and s_chip_busy(i) = '0'
-                                else '0';
-    end generate gen_reg_demux;
-
-    -- cfg_write pending + gating: hold until full pipeline idle and no start.
-    -- Same idle conditions as cmd_start accept (face_seq, assembler, header).
-    p_cfg_write_top_pending : process(i_axis_aclk)
-        variable v_pipeline_idle : boolean;
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1'
-               or s_cmd_stop = '1' then
-                s_cfg_write_top_pending_r <= '0';
-            else
-                v_pipeline_idle := s_chip_busy = C_ZEROS_CHIPS
-                               and s_face_asm_idle = '1'
-                               and s_face_asm_fall_idle = '1'
-                               and s_hdr_idle = '1'
-                               and s_hdr_fall_idle = '1'
-                               and s_cmd_start = '0'
-                               and s_cmd_start_accepted = '0';
-                if s_cmd_cfg_write = '1' and not v_pipeline_idle then
-                    s_cfg_write_top_pending_r <= '1';
-                elsif s_cfg_write_top_pending_r = '1' and v_pipeline_idle then
-                    s_cfg_write_top_pending_r <= '0';
-                end if;
-            end if;
-        end if;
-    end process p_cfg_write_top_pending;
-
-    s_cmd_cfg_write_g <= (s_cmd_cfg_write or s_cfg_write_top_pending_r)
-                         when s_chip_busy = C_ZEROS_CHIPS
-                          and s_face_asm_idle = '1'
-                          and s_face_asm_fall_idle = '1'
-                          and s_hdr_idle = '1'
-                          and s_hdr_fall_idle = '1'
-                          and s_cmd_start = '0'
-                          and s_cmd_start_accepted = '0'
-                         else '0';
-
-    -- Latch target chip + manage 1-outstanding flag.
-    p_reg_chip_latch : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1'
-               or s_cmd_stop = '1' then
-                s_outstanding_reg_chip_r <= (others => '0');
-                s_reg_outstanding_r      <= '0';
-            else
-                -- Set on GATED reg access (only when pulse actually reaches chip_ctrl)
-                if (s_cmd_reg_read_g /= C_ZEROS_CHIPS
-                    or s_cmd_reg_write_g /= C_ZEROS_CHIPS) then
-                    s_outstanding_reg_chip_r <= s_cmd_reg_chip;
-                    s_reg_outstanding_r      <= '1';
-                end if;
-                -- Clear when targeted chip completes (reg_done pulse)
-                if s_reg_outstanding_r = '1'
-                   and s_cmd_reg_done(to_integer(s_outstanding_reg_chip_r)) = '1' then
-                    s_reg_outstanding_r <= '0';
-                end if;
-            end if;
-        end if;
-    end process p_reg_chip_latch;
+    u_cmd_arb : entity work.tdc_gpx_cmd_arb
+        port map (
+            i_clk                => i_axis_aclk,
+            i_rst_n              => i_axis_aresetn,
+            i_cmd_start          => s_cmd_start,
+            i_cmd_start_accepted => s_cmd_start_accepted,
+            i_cmd_stop           => s_cmd_stop,
+            i_cmd_soft_reset     => s_cmd_soft_reset,
+            i_cmd_cfg_write      => s_cmd_cfg_write,
+            i_cmd_reg_read       => s_cmd_reg_read,
+            i_cmd_reg_write      => s_cmd_reg_write,
+            i_cmd_reg_chip       => s_cmd_reg_chip,
+            i_chip_busy          => s_chip_busy,
+            i_face_asm_idle      => s_face_asm_idle,
+            i_face_asm_fall_idle => s_face_asm_fall_idle,
+            i_hdr_idle           => s_hdr_idle,
+            i_hdr_fall_idle      => s_hdr_fall_idle,
+            i_cmd_reg_done       => s_cmd_reg_done,
+            o_cmd_cfg_write_g    => s_cmd_cfg_write_g,
+            o_cmd_reg_read_g     => s_cmd_reg_read_g,
+            o_cmd_reg_write_g    => s_cmd_reg_write_g,
+            o_reg_outstanding    => s_reg_outstanding_r,
+            o_outstanding_chip   => s_outstanding_reg_chip_r
+        );
 
     -- Write data: from cfg_image indexed by target register address.
     -- SW contract: cfg_image CDC must be idle (all handshakes complete)
