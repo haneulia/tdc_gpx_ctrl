@@ -672,6 +672,8 @@ begin
     o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO)
                               when s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO) /= "0000"
                               else "0001";
+    -- HEADER-ONLY fields: embedded in frame header by header_inserter.
+    -- No effect on chip_ctrl, assembler, or builder datapath.
     o_cfg.packet_scope     <= s_ctl_out(0)(c_MC_PACKET_SCOPE);
     o_cfg.hit_store_mode   <= unsigned(s_ctl_out(0)(c_MC_HIT_STORE_HI downto c_MC_HIT_STORE_LO));
     o_cfg.dist_scale       <= unsigned(s_ctl_out(0)(c_MC_DIST_SCALE_HI downto c_MC_DIST_SCALE_LO));

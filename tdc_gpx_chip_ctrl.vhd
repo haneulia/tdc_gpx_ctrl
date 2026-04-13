@@ -100,7 +100,8 @@ entity tdc_gpx_chip_ctrl is
         i_cmd_reg_addr      : in  std_logic_vector(3 downto 0);
         i_cmd_reg_wdata     : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         o_cmd_reg_rdata     : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
-        o_cmd_reg_rvalid    : out std_logic;         -- 1-clk pulse with read data
+        o_cmd_reg_rvalid    : out std_logic;         -- 1-clk pulse with read data (read only)
+        o_cmd_reg_done      : out std_logic;         -- 1-clk pulse: reg access done (read or write)
 
         -- Shot start (from laser_ctrl, 1-clk pulse)
         i_shot_start        : in  std_logic;
@@ -240,6 +241,11 @@ architecture rtl of tdc_gpx_chip_ctrl is
 
     signal s_cfg_idx_r      : unsigned(3 downto 0) := (others => '0');
 
+    -- cfg_image snapshot: captured at cfg_write acceptance to ensure atomicity.
+    -- Without snapshot, live i_cfg_image may change mid-sequence if CDC
+    -- handshake for a different register completes during ST_CFG_WRITE.
+    signal s_cfg_image_snap_r : t_cfg_image := (others => (others => '0'));
+
     -- Init mode flag: '1' during powerup sequence, '0' for runtime cfg_write
     -- Powerup path: cfg_write -> MASTER_RESET -> RECOVERY -> STOPDIS_LOW
     -- Runtime path: cfg_write -> IDLE (no master reset)
@@ -334,6 +340,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- =========================================================================
     signal s_reg_rdata_r    : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_reg_rvalid_r   : std_logic := '0';
+    signal s_reg_done_r     : std_logic := '0';
     signal s_reg_is_read_r  : std_logic := '0';
 
     -- =========================================================================
@@ -491,6 +498,7 @@ begin
                 s_burst_limit_r     <= (others => '0');
                 s_reg_rdata_r       <= (others => '0');
                 s_reg_rvalid_r      <= '0';
+                s_reg_done_r        <= '0';
                 s_reg_is_read_r     <= '0';
                 s_range_active_r    <= '0';
                 s_purge_mode_r      <= '0';
@@ -501,6 +509,7 @@ begin
                 s_raw_valid_r   <= '0';
                 s_drain_done_r  <= '0';
                 s_reg_rvalid_r  <= '0';
+                s_reg_done_r    <= '0';
 
                 -- =========================================================
                 -- Soft reset: highest priority, returns to POWERUP
@@ -572,9 +581,10 @@ begin
                             end if;
 
                         when ST_STOPDIS_HIGH =>
-                            s_stopdis_r <= '1';         -- all stops disabled
-                            s_cfg_idx_r <= (others => '0');
-                            s_state_r   <= ST_CFG_WRITE;
+                            s_stopdis_r       <= '1';         -- all stops disabled
+                            s_cfg_idx_r       <= (others => '0');
+                            s_cfg_image_snap_r <= i_cfg_image; -- atomic snapshot
+                            s_state_r         <= ST_CFG_WRITE;
 
                         -- =================================================
                         -- Cfg write sequence
@@ -587,7 +597,7 @@ begin
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '1';       -- WRITE
                             s_req_addr_r  <= std_logic_vector(to_unsigned(v_reg_num, 4));
-                            s_req_wdata_r <= i_cfg_image(v_reg_num)(g_BUS_DATA_WIDTH - 1 downto 0);
+                            s_req_wdata_r <= s_cfg_image_snap_r(v_reg_num)(g_BUS_DATA_WIDTH - 1 downto 0);
                             s_state_r     <= ST_CFG_WR_WAIT;
 
                         when ST_CFG_WR_WAIT =>
@@ -613,7 +623,7 @@ begin
                         -- =================================================
 
                         when ST_MASTER_RESET =>
-                            v_wr_data     := i_cfg_image(4)(g_BUS_DATA_WIDTH - 1 downto 0);
+                            v_wr_data     := s_cfg_image_snap_r(4)(g_BUS_DATA_WIDTH - 1 downto 0);
                             v_wr_data(22) := '1';       -- MasterReset bit
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '1';       -- WRITE
@@ -652,10 +662,11 @@ begin
                                 s_stopdis_r   <= '0';   -- clear stop-disable for new cycle
                                 s_state_r     <= ST_ARMED;
                             elsif i_cmd_cfg_write = '1' then
-                                s_cfg_idx_r   <= (others => '0');
-                                s_init_mode_r <= '0';   -- runtime: no master reset
-                                s_busy_r      <= '1';
-                                s_state_r     <= ST_CFG_WRITE;
+                                s_cfg_idx_r        <= (others => '0');
+                                s_init_mode_r      <= '0';   -- runtime: no master reset
+                                s_cfg_image_snap_r <= i_cfg_image; -- atomic snapshot
+                                s_busy_r           <= '1';
+                                s_state_r          <= ST_CFG_WRITE;
                             elsif i_cmd_reg_read = '1' then
                                 -- Individual register read
                                 s_req_valid_r  <= '1';
@@ -734,10 +745,25 @@ begin
                             --      does NOT mean "no more data coming."
                             --
                             if i_cmd_stop = '1' then
-                                s_stopdis_r      <= '1';
-                                s_busy_r         <= '0';
-                                s_range_active_r <= '0';
-                                s_state_r        <= ST_IDLE;
+                                -- Stop during capture: TDC may have partially filled
+                                -- IFIFOs. Purge + ALU cleanup before returning to IDLE.
+                                s_stopdis_r          <= '1';
+                                s_stop_pending_r     <= '1';
+                                s_range_active_r     <= '0';
+                                s_raw_valid_r        <= '0';
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_expected_ififo1_r  <= (others => '0');
+                                s_expected_ififo2_r  <= (others => '0');
+                                s_drain_done_r       <= '0';
+                                s_purge_mode_r       <= '1';
+                                if i_cfg.drain_mode = '1' then
+                                    s_oen_permanent_r <= '1';
+                                else
+                                    s_oen_permanent_r <= '0';
+                                end if;
+                                s_wait_cnt_r         <= (others => '0');
+                                s_state_r            <= ST_DRAIN_SETTLE;
 
                             elsif i_irflag_sync = '1' and s_irflag_prev_r = '0' then
                                 -- MTimer expired: IFIFO settled, safe to drain.
@@ -1058,13 +1084,14 @@ begin
                             if i_bus_rsp_valid = '1' then
                                 s_req_valid_r <= '0';
                                 s_busy_r      <= '0';
+                                s_reg_done_r  <= '1';   -- completion pulse (read or write)
                                 s_state_r     <= ST_IDLE;
                                 if s_reg_is_read_r = '1' then
                                     s_reg_rdata_r  <= i_bus_rsp_rdata;
                                     s_reg_rvalid_r <= '1';
                                 end if;
-                                -- Write completion: busy clears, but rvalid
-                                -- stays low to prevent stale data in STAT11.
+                                -- Write completion: rvalid stays low (STAT11 protection),
+                                -- but reg_done pulses to release top-level outstanding lock.
                             end if;
 
                         -- =================================================
@@ -1320,6 +1347,7 @@ begin
 
     o_cmd_reg_rdata  <= s_reg_rdata_r;
     o_cmd_reg_rvalid <= s_reg_rvalid_r;
+    o_cmd_reg_done   <= s_reg_done_r;
 
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;

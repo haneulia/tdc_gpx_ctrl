@@ -58,7 +58,7 @@ package tdc_gpx_pkg is
 
     -- Stop event AXI-Stream constants
     constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
-    constant c_STOP_CNT_WIDTH       : natural := 4;     -- bits per stop channel count
+    constant c_STOP_CNT_WIDTH       : natural := 4;     -- FIXED: p_stop_decode hardcodes 4-bit
     -- Layout: per-chip packed [chip3(8b)|chip2(8b)|chip1(8b)|chip0(8b)]
     --   Each 8-bit chip slice: [IFIFO2(4b) | IFIFO1(4b)]
     -- tkeep: reserved (always "1111", not consumed by p_stop_decode)
@@ -174,11 +174,11 @@ package tdc_gpx_pkg is
     type t_tdc_cfg is record
         -- CTL0: MAIN_CTRL packed fields
         active_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);     -- CTL0[3:0]
-        packet_scope        : std_logic;                                    -- CTL0[4]
-        hit_store_mode      : unsigned(1 downto 0);                         -- CTL0[6:5]
-        dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]
+        packet_scope        : std_logic;                                    -- CTL0[4]    HEADER-ONLY
+        hit_store_mode      : unsigned(1 downto 0);                         -- CTL0[6:5]  HEADER-ONLY
+        dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]  HEADER-ONLY
         drain_mode          : std_logic;                                    -- CTL0[10]
-        pipeline_en         : std_logic;                                    -- CTL0[11]
+        pipeline_en         : std_logic;                                    -- CTL0[11]   HEADER-ONLY
         n_faces             : unsigned(2 downto 0);                         -- CTL0[14:12]
         stops_per_chip      : unsigned(3 downto 0);                         -- CTL0[18:15]
         n_drain_cap         : unsigned(3 downto 0);                         -- CTL0[22:19]

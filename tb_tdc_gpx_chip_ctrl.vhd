@@ -228,6 +228,7 @@ begin
             i_cmd_reg_wdata     => s_cmd_reg_wdata,
             o_cmd_reg_rdata     => s_cmd_reg_rdata,
             o_cmd_reg_rvalid    => s_cmd_reg_rvalid,
+            o_cmd_reg_done      => open,
             i_shot_start        => s_shot_start,
             i_max_range_clks    => s_cfg.max_range_clks,
             i_stop_tdc          => s_stop_tdc,
@@ -1115,6 +1116,72 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- Stop again cleanly
+        pulse(s_cmd_stop);
+        wait_clk(10);
+
+        -- =============================================================
+        -- [13] Issue 3 check: cmd_stop during ST_CAPTURE -> purge+ALU cleanup
+        -- =============================================================
+        pr_info("[13] cmd_stop in ST_CAPTURE -> purge + ALU + recovery -> IDLE");
+
+        -- Fill FIFOs so there's data to purge after capture-stop
+        fill_fifos(8, 4);
+        wait_clk(5);
+
+        -- ARM
+        pulse(s_cmd_start);
+        wait_clk(2);
+
+        -- Shot (enters ST_CAPTURE, but IrFlag NOT asserted yet)
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        -- Issue cmd_stop DURING ST_CAPTURE (before IrFlag/drain)
+        -- FSM should enter purge path: DRAIN_SETTLE -> DRAIN_CHECK -> ALU -> IDLE
+        pulse(s_cmd_stop);
+
+        -- Wait for FSM to complete purge + ALU + recovery.
+        -- Purge drain reads all 12 words (bus_ticks ~5 each) + settle + ALU + recovery.
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[13] capture-stop cleanup timeout", v_fail);
+        end if;
+
+        -- After cleanup: busy='0', StopDis='1' (FSM in IDLE)
+        if s_ctrl_busy = '0' then
+            pr_pass("[13] busy='0' after capture-stop cleanup");
+        else
+            pr_fail("[13] busy should be '0' after capture-stop cleanup", v_fail);
+        end if;
+
+        if s_stopdis = '1' then
+            pr_pass("[13] StopDis='1' (FSM in IDLE after purge)");
+        else
+            pr_fail("[13] StopDis should be '1' after capture-stop", v_fail);
+        end if;
+
+        -- Verify restart works (FSM really is in IDLE)
+        fill_fifos(4, 4);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_cnt_snap := sv_raw_word_cnt;
+        wait_drain_done(c_TIMEOUT, v_found);
+        if v_found then
+            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            pr_pass("[13] Post-capture-stop restart: drain_done, words=" & nat_img(v_drain_words));
+        else
+            pr_fail("[13] Post-capture-stop restart: drain_done timeout", v_fail);
+        end if;
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- Stop cleanly
         pulse(s_cmd_stop);
         wait_clk(10);
 

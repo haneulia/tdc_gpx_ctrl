@@ -57,13 +57,13 @@ package tdc_gpx_cfg_pkg is
     -- CTL0 bitfield positions
     constant c_MC_ACTIVE_MASK_HI     : natural := 3;    -- [3:0]   active_chip_mask
     constant c_MC_ACTIVE_MASK_LO     : natural := 0;
-    constant c_MC_PACKET_SCOPE       : natural := 4;    -- [4]     packet_scope
-    constant c_MC_HIT_STORE_HI       : natural := 6;    -- [6:5]   hit_store_mode
+    constant c_MC_PACKET_SCOPE       : natural := 4;    -- [4]     packet_scope   (HEADER-ONLY)
+    constant c_MC_HIT_STORE_HI       : natural := 6;    -- [6:5]   hit_store_mode (HEADER-ONLY)
     constant c_MC_HIT_STORE_LO       : natural := 5;
-    constant c_MC_DIST_SCALE_HI      : natural := 9;    -- [9:7]   dist_scale
+    constant c_MC_DIST_SCALE_HI      : natural := 9;    -- [9:7]   dist_scale     (HEADER-ONLY)
     constant c_MC_DIST_SCALE_LO      : natural := 7;
     constant c_MC_DRAIN_MODE         : natural := 10;   -- [10]    drain_mode
-    constant c_MC_PIPELINE_EN        : natural := 11;   -- [11]    pipeline_en
+    constant c_MC_PIPELINE_EN        : natural := 11;   -- [11]    pipeline_en    (HEADER-ONLY)
     constant c_MC_N_FACES_HI         : natural := 14;   -- [14:12] n_faces
     constant c_MC_N_FACES_LO         : natural := 12;
     constant c_MC_STOPS_HI           : natural := 18;   -- [18:15] stops_per_chip

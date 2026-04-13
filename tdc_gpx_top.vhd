@@ -69,8 +69,11 @@ entity tdc_gpx_top is
         g_RECOVERY_CLKS   : natural := 8;
         g_ALU_PULSE_CLKS  : natural := 4;
         -- Stop event AXI-Stream interface parameters
-        g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;       -- bits per stop count (default 4)
-        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH   -- AXI-Stream tdata width (default 32)
+        -- FIXED FORMAT: p_stop_decode assumes exactly 4 chips x 8-bit slices
+        -- (4b IFIFO2 | 4b IFIFO1). These generics exist for AXI-Stream width
+        -- validation only; changing them does NOT make the decode generic.
+        g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;       -- FIXED at 4
+        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH   -- FIXED at 32
     );
     port (
         -- Processing / AXI-Stream clock and reset
@@ -215,10 +218,12 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_reg_chip     : unsigned(1 downto 0);  -- target chip for reg access
     signal s_cmd_reg_rdata    : t_slv28_array;
     signal s_cmd_reg_rvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_done     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Per-chip gated reg access commands (chip demux)
     signal s_cmd_reg_read_g   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_write_g  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_outstanding_reg_chip_r : unsigned(1 downto 0) := (others => '0');
+    signal s_reg_outstanding_r      : std_logic := '0';
     signal s_status           : t_tdc_status := c_TDC_STATUS_INIT;
 
     -- =========================================================================
@@ -502,6 +507,10 @@ begin
         report "tdc_gpx_top: g_STOP_EVT_DWIDTH must be a multiple of 8"
         severity failure;
 
+    assert g_STOP_CNT_WIDTH = 4
+        report "tdc_gpx_top: p_stop_decode hardcodes 4-bit per IFIFO count"
+        severity failure;
+
     -- =========================================================================
     -- Stop event AXI Stream slave: always accept
     -- =========================================================================
@@ -782,19 +791,37 @@ begin
     -- =========================================================================
     -- [1a] Per-chip reg access demux: route cmd to targeted chip only
     -- =========================================================================
+    -- 1-outstanding lock: blocks new reg access while one is in flight.
     gen_reg_demux : for i in 0 to c_N_CHIPS - 1 generate
-        s_cmd_reg_read_g(i)  <= s_cmd_reg_read  when to_integer(s_cmd_reg_chip) = i else '0';
-        s_cmd_reg_write_g(i) <= s_cmd_reg_write when to_integer(s_cmd_reg_chip) = i else '0';
+        s_cmd_reg_read_g(i)  <= s_cmd_reg_read
+                                when to_integer(s_cmd_reg_chip) = i
+                                 and s_reg_outstanding_r = '0'
+                                else '0';
+        s_cmd_reg_write_g(i) <= s_cmd_reg_write
+                                when to_integer(s_cmd_reg_chip) = i
+                                 and s_reg_outstanding_r = '0'
+                                else '0';
     end generate gen_reg_demux;
 
-    -- Latch target chip at request time for response mux stability.
+    -- Latch target chip + manage 1-outstanding flag.
     p_reg_chip_latch : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
+            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
                 s_outstanding_reg_chip_r <= (others => '0');
-            elsif s_cmd_reg_read = '1' or s_cmd_reg_write = '1' then
-                s_outstanding_reg_chip_r <= s_cmd_reg_chip;
+                s_reg_outstanding_r      <= '0';
+            else
+                -- Set on accepted reg access
+                if (s_cmd_reg_read = '1' or s_cmd_reg_write = '1')
+                   and s_reg_outstanding_r = '0' then
+                    s_outstanding_reg_chip_r <= s_cmd_reg_chip;
+                    s_reg_outstanding_r      <= '1';
+                end if;
+                -- Clear when targeted chip completes (reg_done pulse)
+                if s_reg_outstanding_r = '1'
+                   and s_cmd_reg_done(to_integer(s_outstanding_reg_chip_r)) = '1' then
+                    s_reg_outstanding_r <= '0';
+                end if;
             end if;
         end if;
     end process p_reg_chip_latch;
@@ -867,6 +894,7 @@ begin
                 i_cmd_reg_wdata     => s_cmd_reg_wdata,
                 o_cmd_reg_rdata     => s_cmd_reg_rdata(i),
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
+                o_cmd_reg_done      => s_cmd_reg_done(i),
                 i_shot_start        => s_shot_start_per_chip(i),
                 i_max_range_clks    => s_cfg.max_range_clks,
                 i_stop_tdc          => i_stop_tdc,
