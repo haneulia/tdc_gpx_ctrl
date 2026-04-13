@@ -71,6 +71,7 @@ entity tdc_gpx_face_assembler is
         -- Configuration (latched at packet_start)
         i_active_chip_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_stops_per_chip     : in  unsigned(3 downto 0);
+        i_max_hits_cfg       : in  unsigned(2 downto 0);   -- runtime max_hits (1~7)
         -- Scan timeout: max clock cycles before declaring a chip's cell blank.
         -- SW must bake in all margins (bus roundtrip + drain + ALU service).
         -- 0 = disabled (no timeout, wait indefinitely for chip data).
@@ -160,6 +161,7 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_blank_stop_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
     signal s_blank_beat_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
     signal s_last_stop_r     : unsigned(2 downto 0) := (others => '0');  -- pre-computed: stops-1
+    signal s_rt_last_beat_r  : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
 
     -- Latched config: snapshot at shot_start to prevent mid-frame changes
     -- from corrupting priority encoder / is_last_chip computation.
@@ -186,13 +188,15 @@ architecture rtl of tdc_gpx_face_assembler is
     -- Metadata beat index = c_META_BEAT_IDX (auto-derived from c_MAX_HITS_PER_STOP)
     -- =========================================================================
     function fn_blank_beat(
-        beat_idx : unsigned(2 downto 0);
-        chip_id  : unsigned(1 downto 0)
+        beat_idx  : unsigned(2 downto 0);
+        last_beat : unsigned(2 downto 0);
+        chip_id   : unsigned(1 downto 0)
     ) return std_logic_vector is
         variable v_result : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
     begin
         v_result := (others => '0');
-        if to_integer(beat_idx) = c_META_BEAT_IDX then
+        -- Metadata on last beat (matches cell_builder fn_cell_beat convention)
+        if beat_idx = last_beat then
             v_result(10)          := '1';   -- error_fill
             v_result(9 downto 8)  := std_logic_vector(chip_id);
         end if;
@@ -422,6 +426,16 @@ begin
                         s_chip_error_r    <= (others => '0');
                         s_active_mask_r   <= i_active_chip_mask;    -- latch config
                         s_last_stop_r     <= i_stops_per_chip(2 downto 0) - 1;
+                        -- Runtime beats/cell for blank generation
+                        case i_max_hits_cfg is
+                            when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
+                            when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
+                            when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
+                            when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
+                            when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
+                            when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
+                            when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
+                        end case;
                         s_state_r         <= ST_SCAN;
                     end if;
 
@@ -499,13 +513,13 @@ begin
                             -- --------------------------------------------------
                             -- Blank chip: generate beat data
                             -- --------------------------------------------------
-                            s_pipe_tdata_r  <= fn_blank_beat(s_blank_beat_r, s_cur_chip_r);
+                            s_pipe_tdata_r  <= fn_blank_beat(s_blank_beat_r, s_rt_last_beat_r, s_cur_chip_r);
                             s_pipe_tvalid_r <= '1';
 
                             -- Check if this is the last blank beat (s_last_stop_r pre-computed)
                             v_blank_last :=
                                 (s_blank_stop_r = s_last_stop_r)
-                                and (s_blank_beat_r = c_G_BEATS_PER_CELL - 1);
+                                and (s_blank_beat_r = s_rt_last_beat_r);
 
                             if v_blank_last and s_is_last_chip_r = '1' then
                                 s_pipe_tlast_r <= '1';  -- row tlast
@@ -514,7 +528,7 @@ begin
                             end if;
 
                             -- Advance blank counters
-                            if s_blank_beat_r = c_G_BEATS_PER_CELL - 1 then
+                            if s_blank_beat_r = s_rt_last_beat_r then
                                 s_blank_beat_r <= (others => '0');
                                 s_blank_stop_r <= s_blank_stop_r + 1;
                             else
