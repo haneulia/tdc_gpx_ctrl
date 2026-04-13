@@ -193,9 +193,14 @@ architecture rtl of tdc_gpx_cell_builder is
     --   Beat 2:   metadata in lower 32b, upper 32b = 0
     --   Beat 3:   padding (zeros)
     -- =========================================================================
+    -- fn_cell_beat: serialize cell to beat.
+    -- last_beat_idx: runtime last beat index (from max_hits_cfg).
+    -- Metadata is placed at last_beat_idx (not fixed compile-time position).
+    -- Hit-data beats fill indices 0..last_beat_idx-1.
     function fn_cell_beat(
-        cell     : t_cell;
-        beat_idx : unsigned(2 downto 0)
+        cell          : t_cell;
+        beat_idx      : unsigned(2 downto 0);
+        last_beat_idx : unsigned(2 downto 0)
     ) return std_logic_vector is
         variable v_result   : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         variable v_beat     : natural range 0 to 7;
@@ -205,19 +210,8 @@ architecture rtl of tdc_gpx_cell_builder is
         v_beat   := to_integer(beat_idx);
         v_result := (others => '0');
 
-        if v_beat < c_G_HIT_DATA_BEATS then
-            -- Hit-data beat: pack c_G_SLOTS_PER_BEAT slots per beat
-            for sl in 0 to c_G_SLOTS_PER_BEAT - 1 loop
-                v_slot_idx := v_beat * c_G_SLOTS_PER_BEAT + sl;
-                if v_slot_idx < c_MAX_HITS_PER_STOP then
-                    v_lo := sl * c_HIT_SLOT_DATA_WIDTH;
-                    v_result(v_lo + c_HIT_SLOT_DATA_WIDTH - 1 downto v_lo)
-                        := std_logic_vector(cell.hit_slot(v_slot_idx));
-                end if;
-            end loop;
-
-        elsif v_beat = c_G_META_BEAT_IDX then
-            -- Metadata beat: hit_valid | slope_vec | hit_count | flags | chip_id
+        if beat_idx = last_beat_idx then
+            -- Last beat = metadata (always, regardless of max_hits_cfg)
             v_result(31 downto 32 - c_MAX_HITS_PER_STOP)
                 := cell.hit_valid;
             v_result(31 - c_MAX_HITS_PER_STOP downto 32 - 2*c_MAX_HITS_PER_STOP)
@@ -227,10 +221,16 @@ architecture rtl of tdc_gpx_cell_builder is
             v_result(10)           := cell.error_fill;
             v_result(9 downto 8)   := std_logic_vector(to_unsigned(g_CHIP_ID, 2));
             v_result(7 downto 0)   := (others => '0');
-
         else
-            -- Padding beats: zeros
-            v_result := (others => '0');
+            -- Hit-data beat: pack SLOTS_PER_BEAT slots
+            for sl in 0 to c_G_SLOTS_PER_BEAT - 1 loop
+                v_slot_idx := v_beat * c_G_SLOTS_PER_BEAT + sl;
+                if v_slot_idx < c_MAX_HITS_PER_STOP then
+                    v_lo := sl * c_HIT_SLOT_DATA_WIDTH;
+                    v_result(v_lo + c_HIT_SLOT_DATA_WIDTH - 1 downto v_lo)
+                        := std_logic_vector(cell.hit_slot(v_slot_idx));
+                end if;
+            end loop;
         end if;
 
         return v_result;
@@ -381,7 +381,7 @@ begin
 
                     when ST_O_LOAD =>
                         -- Beat MUX from pipeline register (1-clk bubble)
-                        s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r);
+                        s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r, s_rt_last_beat_r);
                         s_tvalid_r <= '1';
                         if s_stop_idx_r = s_last_stop_r
                            and s_beat_idx_r = s_rt_last_beat_r then
@@ -425,7 +425,7 @@ begin
                                 -- Same cell: beat MUX
                                 v_nxt_beat   := s_beat_idx_r + 1;
                                 s_beat_idx_r <= v_nxt_beat;
-                                s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat);
+                                s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat, s_rt_last_beat_r);
                                 if s_stop_idx_r = s_last_stop_r
                                    and v_nxt_beat = s_rt_last_beat_r then
                                     s_tlast_r <= '1';

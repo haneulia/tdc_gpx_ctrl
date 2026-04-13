@@ -84,10 +84,11 @@ begin
                 if s_tvalid_r = '0' or i_m_axis_tready = '1' then
                     if i_s_axis_tvalid = '1' then
                         if i_s_axis_tuser(7) = '1' then
-                            -- drain_done control beat: pass through, no decode
-                            s_tdata_r  <= (others => '0');
-                            s_tuser_r  <= (others => '0');
-                            s_tuser_r(7) <= '1';          -- drain_done flag
+                            -- drain_done control beat: pass through with ififo_id
+                            s_tdata_r    <= (others => '0');
+                            s_tuser_r    <= (others => '0');
+                            s_tuser_r(7) <= '1';                  -- drain_done flag
+                            s_tuser_r(6) <= i_s_axis_tuser(0);    -- ififo_id passthrough
                         else
                             -- Normal data beat: decode raw word
                             v_raw      := i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);

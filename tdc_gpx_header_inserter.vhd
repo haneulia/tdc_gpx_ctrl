@@ -130,6 +130,11 @@ architecture rtl of tdc_gpx_header_inserter is
     -- Generic-derived constants
     constant c_G_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(g_TDATA_WIDTH);
 
+    -- Header ROM build: deferred by 1 cycle after face_start so that
+    -- s_*_r signals are valid (VHDL signal semantics: same-edge latch
+    -- not visible until next delta/edge).
+    signal s_hdr_rom_pending_r : std_logic := '0';
+
     -- =========================================================================
     -- Latched header fields (captured at face_start)
     -- =========================================================================
@@ -336,7 +341,14 @@ begin
                 --   Line 1+ (first_line=0): zeros
                 -- ==============================================================
                 when ST_PREFIX =>
-                    if s_can_accept = '1' then
+                    -- ROM build cycle: 1-clk delay after face_start
+                    if s_hdr_rom_pending_r = '1' then
+                        s_hdr_rom_pending_r <= '0';
+                        for wi in 0 to 11 loop
+                            get_hdr_word(wi, v_word);
+                            s_hdr_rom_r(wi) <= v_word;
+                        end loop;
+                    elsif s_can_accept = '1' then
                         v_beat    := to_integer(s_prefix_idx_r);
                         v_hdr_data := (others => '0');
 
@@ -477,12 +489,8 @@ begin
                     -- Line geometry (from top-level)
                     s_rows_per_face_r     <= i_rows_per_face;
 
-                    -- Pre-build header word ROM: all 12 words computed once,
-                    -- eliminates 12:1 case mux from ST_PREFIX critical path.
-                    for wi in 0 to 11 loop
-                        get_hdr_word(wi, v_word);
-                        s_hdr_rom_r(wi) <= v_word;
-                    end loop;
+                    -- Defer ROM build to next cycle (s_*_r not yet updated this edge)
+                    s_hdr_rom_pending_r <= '1';
 
                     s_prefix_idx_r <= (others => '0');
                     s_col_cnt_r    <= (others => '0');

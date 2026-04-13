@@ -462,8 +462,13 @@ package body tdc_gpx_pkg is
     end function;
 
     function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural is
+        variable v_beats : natural;
     begin
-        return fn_cell_size_rt(max_hits) / (tdata_width / 8);
+        v_beats := fn_cell_size_rt(max_hits) / (tdata_width / 8);
+        if v_beats < 1 then
+            v_beats := 1;  -- minimum 1 beat per cell
+        end if;
+        return v_beats;
     end function;
 
 end package body tdc_gpx_pkg;

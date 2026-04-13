@@ -126,6 +126,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- Synchronous flush for FIFOs (active-low aresetn pulse)
     -- =========================================================================
     signal s_flush        : std_logic;  -- input FIFO flush (every shot_start)
+    signal s_fifo_rst_n   : std_logic;  -- active-low reset to xpm_fifo_axis
 
     -- =========================================================================
     -- FSM
@@ -228,7 +229,7 @@ begin
             )
             port map (
                 s_aclk          => i_clk,
-                s_aresetn       => i_rst_n,
+                s_aresetn       => s_fifo_rst_n,
                 s_axis_tdata    => s_in_tdata_src(i),
                 s_axis_tvalid   => i_s_axis_tvalid(i),
                 s_axis_tready   => o_s_axis_tready(i),
@@ -305,7 +306,8 @@ begin
     s_timeout_limit <= i_max_scan_clks;
 
     -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset)
-    s_flush <= i_shot_start or i_abort;
+    s_flush      <= i_shot_start or i_abort;
+    s_fifo_rst_n <= i_rst_n and (not s_flush);
 
     -- Flush output skid on face_abort only (registered, 1-cycle after
     -- overrun detection).  Uses s_face_abort_r which is only set in the
