@@ -20,7 +20,8 @@
 --   CTL3  (0x0C) START_OFF1    [17:0]
 --   CTL4  (0x10) CFG_REG7      [31:0]
 --   CTL5..20 (0x14~0x50) CFG_IMAGE[0..15] [31:0] each
---   CTL21..31 reserved
+--   CTL21 (0x54) SCAN_TIMEOUT   [15:0] max_scan_clks, [18:16] max_hits_cfg (1~7, 0→7)
+--   CTL22..31 reserved
 --
 --   STAT0  (0x80) HW_VERSION       [31:0] (constant)
 --   STAT1  (0x84) HW_CONFIG        packed generics (constant)
@@ -38,7 +39,7 @@
 -- CDC structure:
 --   CTL: 5 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for CTL0~4
 --        16 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for cfg_image CTL5~20
---        1 x xpm_cdc_handshake for CTL21 (SCAN_TIMEOUT, dedicated)
+--        1 x xpm_cdc_handshake for CTL21 (SCAN_TIMEOUT + MAX_HITS, dedicated)
 --   STAT: 7 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) for STAT5~11
 --   CDC idle flag: 2-FF sync of NOR(src_send_ctl, src_send_img, src_send_ctl21)
 --
@@ -908,6 +909,11 @@ begin
 
     -- CTL21: SCAN_TIMEOUT
     o_cfg.max_scan_clks    <= unsigned(s_ctl21_out(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO));
+
+    -- max_hits_cfg: 0 = default 7, 1~7 = literal
+    o_cfg.max_hits_cfg     <= to_unsigned(c_MAX_HITS_PER_STOP, 3)
+                              when unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO)) = 0
+                              else unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO));
 
     -- =========================================================================
     -- [10] CSR output: t_cfg_image (i_axis_aclk domain)

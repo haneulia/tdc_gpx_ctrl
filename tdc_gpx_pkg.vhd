@@ -65,6 +65,10 @@ package tdc_gpx_pkg is
     function fn_beats_per_cell(tdata_width : natural) return natural;
     function fn_hdr_prefix_beats(tdata_width : natural) return natural;
 
+    -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
+    function fn_cell_size_rt(max_hits : natural) return natural;
+    function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
+
     -- Stop event AXI-Stream constants
     constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
     constant c_STOP_CNT_WIDTH       : natural := 4;     -- FIXED: p_stop_decode hardcodes 4-bit
@@ -202,8 +206,9 @@ package tdc_gpx_pkg is
         start_off1          : unsigned(17 downto 0);                        -- CTL3[17:0]
         -- CTL4: CFG_REG7
         cfg_reg7            : std_logic_vector(31 downto 0);                -- CTL4[31:0]
-        -- CTL21: SCAN_TIMEOUT
+        -- CTL21: SCAN_TIMEOUT + MAX_HITS
         max_scan_clks       : unsigned(15 downto 0);                        -- CTL21[15:0]
+        max_hits_cfg        : unsigned(2 downto 0);                         -- CTL21[18:16] (1~7, 0→7)
     end record;
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
@@ -223,7 +228,8 @@ package tdc_gpx_pkg is
         cols_per_face       => to_unsigned(2400, 16),
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
-        max_scan_clks       => to_unsigned(0, 16)           -- 0 = disabled (no timeout)
+        max_scan_clks       => to_unsigned(0, 16),          -- 0 = disabled (no timeout)
+        max_hits_cfg        => to_unsigned(7, 3)            -- default: 7 (full capacity)
     );
 
     -- =========================================================================
@@ -447,6 +453,17 @@ package body tdc_gpx_pkg is
     function fn_hdr_prefix_beats(tdata_width : natural) return natural is
     begin
         return c_HDR_PREFIX_BYTES / (tdata_width / 8);
+    end function;
+
+    -- Runtime cell size: same algorithm as fn_cell_size_bytes but with variable max_hits
+    function fn_cell_size_rt(max_hits : natural) return natural is
+    begin
+        return fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, max_hits);
+    end function;
+
+    function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural is
+    begin
+        return fn_cell_size_rt(max_hits) / (tdata_width / 8);
     end function;
 
 end package body tdc_gpx_pkg;

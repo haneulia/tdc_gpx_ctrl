@@ -122,6 +122,8 @@ package tdc_gpx_cfg_pkg is
     constant c_ADDR_SCAN_TIMEOUT     : natural := 16#54#;   -- CTL21
     constant c_ST_MAX_SCAN_HI        : natural := 15;   -- [15:0] max_scan_clks
     constant c_ST_MAX_SCAN_LO        : natural := 0;
+    constant c_ST_MAX_HITS_HI        : natural := 18;   -- [18:16] max_hits_cfg (1~7, 0=default 7)
+    constant c_ST_MAX_HITS_LO        : natural := 16;
 
     -- CFG_REG7 bitfields
     constant c_REG7_HSDIV_HI        : natural := 7;

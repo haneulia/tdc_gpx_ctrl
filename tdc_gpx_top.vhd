@@ -16,6 +16,31 @@
 --   g_OUTPUT_WIDTH : 32 or 64 (output AXI-Stream tdata width)
 --     32-bit: 8 beats/cell, 12 header beats
 --     64-bit: 4 beats/cell, 6 header beats (halves face_assembler latency)
+--   max_hits_cfg (CTL21[18:16], runtime, 1~7):
+--     Dynamically reduces beats/cell for distance-adaptive throughput.
+--     Buffer always MAX=7; output beat count truncated at runtime.
+--
+-- Performance (64-bit mode, 2 chips, 8 stops, @200MHz, bus_ticks=5):
+--
+--   Throughput (face_assembler row processing):
+--   Distance | max_hits | beats/cell | face_asm/row | shot period | margin
+--   ---------|----------|-----------|-------------|------------|-------
+--    100m    |    1     |     1     |  0.095 μs   |   1.0 μs   |  90%
+--    500m    |    3     |     1     |  0.095 μs   |   3.33 μs  |  97%
+--    700m    |    5     |     2     |  0.185 μs   |   4.67 μs  |  96%
+--   1000m    |    7     |     4     |  0.365 μs   |   6.67 μs  |  95%
+--
+--   First-data latency (bus_phy read → VDMA first beat):
+--     = IFIFO1_drain + pipeline_overhead(21 clk)
+--     IFIFO1_drain = 4_stops × max_hits × bus_ticks
+--   Distance | IFIFO1 drain | total latency
+--   ---------|-------------|---------------
+--    100m    |  20 clk     |  41 clk = 0.205 μs
+--    500m    |  60 clk     |  81 clk = 0.405 μs
+--    700m    | 100 clk     | 121 clk = 0.605 μs
+--   1000m    | 140 clk     | 161 clk = 0.805 μs
+--
+--   Peak throughput: 1 beat/clk = 800 MB/s @32b, 1.6 GB/s @64b
 --
 -- Pipeline features:
 --   - Skid buffers (4 per chip, 16 total): registered tready at every
@@ -1169,6 +1194,7 @@ begin
                 o_s_axis_tready   => open,
                 i_shot_start      => s_shot_start_per_chip(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
+                i_max_hits_cfg    => s_cfg.max_hits_cfg,
                 o_m_axis_tdata    => s_cell_tdata(i),
                 o_m_axis_tvalid   => s_cell_tvalid(i),
                 o_m_axis_tlast    => s_cell_tlast(i),
@@ -1192,6 +1218,7 @@ begin
                 o_s_axis_tready   => open,
                 i_shot_start      => s_shot_start_per_chip(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
+                i_max_hits_cfg    => s_cfg.max_hits_cfg,
                 o_m_axis_tdata    => s_cell_fall_tdata(i),
                 o_m_axis_tvalid   => s_cell_fall_tvalid(i),
                 o_m_axis_tlast    => s_cell_fall_tlast(i),

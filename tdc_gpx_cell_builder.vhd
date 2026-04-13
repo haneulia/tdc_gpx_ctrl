@@ -15,12 +15,27 @@
 --     On drain_done (tuser[7] control beat): swaps buffer roles and signals
 --     p_output to begin serialization.  Immediately ready for next shot.
 --
---   p_output (ST_O_IDLE / ST_O_LOAD / ST_O_ACTIVE):
+--   p_output (ST_O_IDLE / ST_O_LOAD / ST_O_ACTIVE / ST_O_WAIT_IFIFO2):
 --     Reads from the READ buffer and serializes beats to AXI-Stream master.
 --     Pipeline: cell MUX (ST_O_LOAD, 1-clk bubble) → beat MUX (ST_O_ACTIVE).
+--     Per-IFIFO early output: starts stops 0~3 on ififo1_done (tuser[7]=1,
+--     tuser[6]=0), stalls at stop 3→4 boundary in ST_O_WAIT_IFIFO2 until
+--     final drain_done (tuser[6]=1) signals stops 4~7 ready.
 --
 --   Dual-buffer benefit: collect(shot N+1) overlaps with output(shot N),
 --   reducing effective per-shot latency to max(drain_time, output_time).
+--
+-- Runtime max_hits_cfg (i_max_hits_cfg, 1~7):
+--   Controls output beats/cell dynamically. Buffer always allocated for MAX=7.
+--   s_rt_last_beat_r is latched from elaboration-safe case lookup at output start.
+--   Hit overflow guard uses runtime max_hits_cfg, not compile-time constant.
+--   Enables distance-adaptive throughput:
+--     max_hits | cell_size | beats @32b | beats @64b
+--     ---------|-----------|-----------|----------
+--        1     |    4B     |     1     |     1
+--        3     |    8B     |     2     |     1
+--        5     |   16B     |     4     |     2
+--        7     |   32B     |     8     |     4
 --
 -- Overrun:
 --   If p_output is still active when the next drain_done arrives,
@@ -36,11 +51,12 @@
 --   tdata         = g_TDATA_WIDTH bits (32 or 64)
 --   tlast         = last beat of chip slice
 --
--- Beat layout (auto-calculated from MAX_HITS / g_TDATA_WIDTH):
+-- Beat layout (compile-time MAX=7, runtime truncated by max_hits_cfg):
 --   Beats 0..HIT_DATA_BEATS-1: hit_slot pairs (SLOTS_PER_BEAT per beat)
 --   Beat META_BEAT_IDX:        metadata (hit_valid, slope_vec, hit_count, flags)
 --   Remaining beats:           padding (zeros)
---   32-bit: 8 beats/cell, 64-bit: 4 beats/cell.
+--   Runtime beats/cell: fn_beats_per_cell_rt(max_hits_cfg, g_TDATA_WIDTH)
+--   Examples @64b: max_hits=7→4, max_hits=3→1, max_hits=1→1
 --
 -- Signal ownership (no multi-driver):
 --   p_collect WRITES: s_cell_buf_r, s_wr_buf_r, s_cstate_r, s_output_req_r
@@ -88,6 +104,7 @@ entity tdc_gpx_cell_builder is
 
         -- Configuration (latched at packet_start)
         i_stops_per_chip    : in  unsigned(3 downto 0);
+        i_max_hits_cfg      : in  unsigned(2 downto 0);   -- 1~7, runtime MAX_HITS
 
         -- AXI-Stream master (chip slice output)
         o_m_axis_tdata      : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
@@ -143,12 +160,17 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_beat_idx_r  : unsigned(2 downto 0) := (others => '0');
     signal s_last_stop_r : unsigned(2 downto 0) := (others => '0');
 
-    -- Generic-derived beat layout constants
+    -- Generic-derived beat layout constants (compile-time, MAX=7)
     constant c_G_SLOTS_PER_BEAT  : natural := fn_slots_per_beat(g_TDATA_WIDTH);
     constant c_G_HIT_DATA_BEATS  : natural := fn_hit_data_beats(g_TDATA_WIDTH);
     constant c_G_META_BEAT_IDX   : natural := fn_meta_beat_idx(g_TDATA_WIDTH);
     constant c_G_BEATS_PER_CELL  : natural := fn_beats_per_cell(g_TDATA_WIDTH);
-    constant c_LAST_BEAT : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
+
+    -- Runtime beats/cell: latched from i_max_hits_cfg at output start.
+    -- fn_cell_beat still uses compile-time constants for slot packing;
+    -- the runtime limit only controls HOW MANY beats are emitted.
+    signal s_rt_last_beat_r : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
+    signal s_rt_max_hits_r  : unsigned(2 downto 0) := to_unsigned(c_MAX_HITS_PER_STOP, 3);
 
     -- Registered outputs
     signal s_tdata_r     : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
@@ -258,7 +280,7 @@ begin
                         if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '0' then
                             v_stop := to_integer(unsigned(i_s_axis_tuser(5 downto 3)));
 
-                            if s_cell_buf_r(v_wr)(v_stop).hit_count_actual < c_MAX_HITS_PER_STOP then
+                            if s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
                                 v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
                                 s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
                                 s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq) <= '1';
@@ -339,11 +361,22 @@ begin
                             -- Latch read buffer, load first cell
                             s_rd_buf_r    <= s_rd_buf_idx_r;
                             v_rd          := fn_buf_idx(s_rd_buf_idx_r);
-                            s_cell_sel_r  <= s_cell_buf_r(v_rd)(0);
-                            s_stop_idx_r  <= (others => '0');
-                            s_beat_idx_r  <= (others => '0');
-                            s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
-                            s_ostate_r    <= ST_O_LOAD;
+                            s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
+                            s_stop_idx_r    <= (others => '0');
+                            s_beat_idx_r    <= (others => '0');
+                            s_last_stop_r   <= i_stops_per_chip(2 downto 0) - 1;
+                            -- Runtime beats/cell lookup (elaboration-safe)
+                            case i_max_hits_cfg is
+                                when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
+                                when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
+                                when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
+                                when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
+                                when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
+                                when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
+                                when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
+                            end case;
+                            s_rt_max_hits_r  <= i_max_hits_cfg;
+                            s_ostate_r       <= ST_O_LOAD;
                         end if;
 
                     when ST_O_LOAD =>
@@ -351,7 +384,7 @@ begin
                         s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r);
                         s_tvalid_r <= '1';
                         if s_stop_idx_r = s_last_stop_r
-                           and s_beat_idx_r = c_LAST_BEAT then
+                           and s_beat_idx_r = s_rt_last_beat_r then
                             s_tlast_r <= '1';
                         else
                             s_tlast_r <= '0';
@@ -363,14 +396,14 @@ begin
                             v_rd := fn_buf_idx(s_rd_buf_r);
 
                             if s_stop_idx_r = s_last_stop_r
-                               and s_beat_idx_r = c_LAST_BEAT then
+                               and s_beat_idx_r = s_rt_last_beat_r then
                                 -- Chip slice complete
                                 s_tvalid_r     <= '0';
                                 s_tlast_r      <= '0';
                                 s_slice_done_r <= '1';
                                 s_ostate_r     <= ST_O_IDLE;
 
-                            elsif s_beat_idx_r = c_LAST_BEAT then
+                            elsif s_beat_idx_r = s_rt_last_beat_r then
                                 -- Cell boundary: check IFIFO1/2 split point (stop 3→4)
                                 v_nxt_stop := s_stop_idx_r + 1;
                                 if s_stop_idx_r = "011" and s_output_full_r = '0' then
@@ -394,7 +427,7 @@ begin
                                 s_beat_idx_r <= v_nxt_beat;
                                 s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat);
                                 if s_stop_idx_r = s_last_stop_r
-                                   and v_nxt_beat = c_LAST_BEAT then
+                                   and v_nxt_beat = s_rt_last_beat_r then
                                     s_tlast_r <= '1';
                                 else
                                     s_tlast_r <= '0';

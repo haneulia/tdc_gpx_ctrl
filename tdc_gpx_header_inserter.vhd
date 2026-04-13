@@ -143,6 +143,7 @@ architecture rtl of tdc_gpx_header_inserter is
     signal s_rows_per_face_r     : unsigned(15 downto 0) := (others => '0');
     signal s_cols_per_face_r     : unsigned(15 downto 0) := (others => '0');
     signal s_stops_per_chip_r    : unsigned(3 downto 0)  := (others => '0');
+    signal s_max_hits_cfg_r      : unsigned(2 downto 0)  := to_unsigned(7, 3);
     signal s_hit_store_mode_r    : unsigned(1 downto 0)  := (others => '0');
 
     -- Measurement
@@ -259,7 +260,7 @@ begin
                     word(15 downto 0)  := std_logic_vector(s_rows_per_face_r);
                     word(31 downto 16) := std_logic_vector(s_cols_per_face_r);
                 when 5  =>
-                    word(7 downto 0)   := std_logic_vector(to_unsigned(c_MAX_HITS_PER_STOP, 8));
+                    word(7 downto 0)   := "00000" & std_logic_vector(s_max_hits_cfg_r);
                     word(15 downto 8)  := std_logic_vector(to_unsigned(c_CELL_SIZE_BYTES, 8));
                     word(23 downto 16) := std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 8));
                     word(27 downto 24) := std_logic_vector(to_unsigned(c_N_CHIPS, 4));
@@ -449,6 +450,7 @@ begin
                     s_cols_per_face_r     <= i_cfg.cols_per_face;
                     s_cols_per_face_m1_r  <= i_cfg.cols_per_face - 1;
                     s_stops_per_chip_r    <= i_cfg.stops_per_chip;
+                    s_max_hits_cfg_r      <= i_cfg.max_hits_cfg;
                     s_hit_store_mode_r    <= i_cfg.hit_store_mode;
 
                     -- Measurement
