@@ -559,7 +559,12 @@ begin
                     s_pipe_tvalid_r   <= '0';
                     s_pipe_tlast_r    <= '0';
                     s_shot_pending_r  <= '0';
-                    s_face_abort_r    <= '1';   -- signal to top for frame_done_both
+                    -- NOTE: do NOT set s_face_abort_r here.
+                    -- o_face_abort is only for self-overrun notification.
+                    -- External abort (i_abort) comes from top's s_pipeline_abort
+                    -- which top already uses directly for frame_done_both.
+                    -- Setting face_abort_r here would create a feedback loop:
+                    -- A.o_face_abort → top → B.i_abort → B.o_face_abort → top → A.i_abort → ...
                     s_state_r         <= ST_IDLE;
                 end if;
             end if;

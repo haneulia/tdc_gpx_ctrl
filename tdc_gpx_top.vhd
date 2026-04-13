@@ -418,8 +418,9 @@ architecture rtl of tdc_gpx_top is
     signal s_face_asm_fall_idle   : std_logic;  -- fall assembler idle
     signal s_hdr_draining         : std_logic;  -- rise header in ST_DRAIN_LAST
     signal s_hdr_fall_draining    : std_logic;  -- fall header in ST_DRAIN_LAST
-    signal s_hdr_abort            : std_logic;  -- unified header abort (overrun + stop + reset)
-    signal s_hdr_fall_abort       : std_logic;  -- same for fall pipeline
+    signal s_pipeline_abort       : std_logic;  -- one-shot: any overrun + stop + reset
+    signal s_hdr_abort            : std_logic;  -- alias for readability (= s_pipeline_abort)
+    signal s_hdr_fall_abort       : std_logic;  -- alias for readability (= s_pipeline_abort)
     signal s_hdr_idle             : std_logic;  -- rise header idle
     signal s_hdr_fall_idle        : std_logic;  -- fall header idle
     signal s_face_shot_cnt_r      : unsigned(15 downto 0) := (others => '0');
@@ -680,13 +681,17 @@ begin
                                and s_cmd_soft_reset = '0'
                           else '0';
 
-    -- Unified pipeline abort: either assembler overrun OR cmd_stop OR soft_reset.
-    -- Cross-pipeline: if EITHER assembler aborts, BOTH pipelines must abort
-    -- to keep face boundary consistent.  Otherwise the non-aborting side
-    -- continues processing while face_closing shuts down shot acceptance,
-    -- leaving it stuck mid-face.
-    s_hdr_abort      <= s_face_abort or s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset;
-    s_hdr_fall_abort <= s_face_abort or s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset;
+    -- Pipeline-wide abort one-shot:
+    --   ANY assembler self-overrun OR cmd_stop OR cmd_soft_reset.
+    --   Sent to BOTH assemblers (i_abort), BOTH headers (i_face_abort),
+    --   BOTH face FIFOs (i_flush), and frame_done_both combiner.
+    --   No feedback loop: assembler i_abort handler does NOT emit
+    --   o_face_abort (only self-overrun does), so the signal dies
+    --   after the originating pulse ends.
+    s_pipeline_abort <= s_face_abort or s_face_fall_abort
+                        or s_cmd_stop or s_cmd_soft_reset;
+    s_hdr_abort      <= s_pipeline_abort;
+    s_hdr_fall_abort <= s_pipeline_abort;
 
     -- Per-chip shot gating: inactive chips (per active_chip_mask) do not
     -- receive shot_start and therefore never enter CAPTURE/DRAIN.
@@ -957,7 +962,7 @@ begin
             i_s_axis_tlast     => s_cell_tlast,
             o_s_axis_tready    => s_cell_tready,
             i_shot_start       => s_shot_start_gated,
-            i_abort            => s_face_fall_abort or s_cmd_stop or s_cmd_soft_reset,
+            i_abort            => s_pipeline_abort,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
@@ -987,7 +992,7 @@ begin
             i_s_axis_tlast     => s_cell_fall_tlast,
             o_s_axis_tready    => s_cell_fall_tready,
             i_shot_start       => s_shot_start_gated,
-            i_abort            => s_face_abort or s_cmd_stop or s_cmd_soft_reset,
+            i_abort            => s_pipeline_abort,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_range_clks   => s_cfg.max_range_clks,
@@ -1181,10 +1186,10 @@ begin
                 s_frame_rise_done_r <= '0';
                 s_frame_fall_done_r <= '0';
             else
-                if s_frame_done = '1' or s_face_abort = '1' then
+                if s_frame_done = '1' or s_pipeline_abort = '1' then
                     s_frame_rise_done_r <= '1';
                 end if;
-                if s_frame_fall_done = '1' or s_face_fall_abort = '1' then
+                if s_frame_fall_done = '1' or s_pipeline_abort = '1' then
                     s_frame_fall_done_r <= '1';
                 end if;
             end if;
@@ -1192,8 +1197,8 @@ begin
     end process p_frame_done_both;
 
     -- Combinational: both done (could be same cycle or different cycles)
-    s_frame_done_both   <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1' or s_face_abort = '1')
-                                    and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1' or s_face_fall_abort = '1')
+    s_frame_done_both   <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1' or s_pipeline_abort = '1')
+                                    and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1' or s_pipeline_abort = '1')
                                 else '0';
 
     -- '1' when all shots for this face have been accepted, OR either
@@ -1205,10 +1210,11 @@ begin
                                 else '0';
 
     s_face_closing      <= '1'  when s_all_shots_fired = '1'
+                                      or s_pipeline_abort = '1'
                                       or (s_frame_rise_done_r = '1' or s_frame_done = '1'
-                                          or s_hdr_draining = '1' or s_face_abort = '1')
+                                          or s_hdr_draining = '1')
                                       or (s_frame_fall_done_r = '1' or s_frame_fall_done = '1'
-                                          or s_hdr_fall_draining = '1' or s_face_fall_abort = '1')
+                                          or s_hdr_fall_draining = '1')
                                 else '0';
 
     -- =========================================================================
