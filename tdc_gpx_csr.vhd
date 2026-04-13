@@ -304,6 +304,7 @@ architecture rtl of tdc_gpx_csr is
 
     -- cfg_write pending latch (i_axis_aclk domain)
     signal s_cfg_write_pending_r : std_logic := '0';
+    signal s_start_pending_r     : std_logic := '0';
 
     -- CDC-idle flag: '1' when all CTL + cfg_image handshakes are quiescent.
     -- Source (s_axi_aclk), synced to i_axis_aclk via 2-FF chain.
@@ -638,7 +639,8 @@ begin
             if s_axi_aresetn = '0' then
                 s_cdc_all_idle_src <= '1';
             elsif s_src_send_img = (s_src_send_img'range => '0')
-              and s_src_send_ctl = (s_src_send_ctl'range => '0') then
+              and s_src_send_ctl = (s_src_send_ctl'range => '0')
+              and s_src_send_ctl21 = '0' then
                 s_cdc_all_idle_src <= '1';
             else
                 s_cdc_all_idle_src <= '0';
@@ -676,7 +678,23 @@ begin
         end if;
     end process p_cmd_edge;
 
-    o_cmd_start      <= s_cmd_pulse_r(0) and s_cdc_all_idle_ff(1);  -- gated on CDC idle
+    -- start pending latch: hold pulse until CDC is idle, then release.
+    -- Prevents cmd_start loss when CDC handshakes are still in flight.
+    p_start_pending : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_start_pending_r <= '0';
+            elsif s_cmd_pulse_r(0) = '1' and s_cdc_all_idle_ff(1) = '0' then
+                s_start_pending_r <= '1';
+            elsif s_start_pending_r = '1' and s_cdc_all_idle_ff(1) = '1' then
+                s_start_pending_r <= '0';
+            end if;
+        end if;
+    end process p_start_pending;
+
+    o_cmd_start      <= (s_cmd_pulse_r(0) and s_cdc_all_idle_ff(1))
+                     or (s_start_pending_r and s_cdc_all_idle_ff(1));
     o_cmd_stop       <= s_cmd_pulse_r(1);   -- CTL0[29]
     o_cmd_soft_reset <= s_cmd_pulse_r(2);   -- CTL0[30]
 
@@ -718,8 +736,9 @@ begin
         end if;
     end process p_reg_cmd_edge;
 
-    o_cmd_reg_read  <= s_reg_cmd_pulse_r(0);    -- CTL1[30]
-    o_cmd_reg_write <= s_reg_cmd_pulse_r(1);    -- CTL1[31]
+    -- Mutual exclusion: if both CTL1[31:30] rise simultaneously, write wins.
+    o_cmd_reg_read  <= s_reg_cmd_pulse_r(0) and (not s_reg_cmd_pulse_r(1));
+    o_cmd_reg_write <= s_reg_cmd_pulse_r(1);
     o_cmd_reg_addr  <= s_ctl_out(1)(c_BT_REG_ADDR_HI downto c_BT_REG_ADDR_LO);
     o_cmd_reg_chip  <= unsigned(s_ctl_out(1)(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
 
@@ -752,6 +771,12 @@ begin
                 s_lsr_cols_r  <= (others => '0');
                 s_lsr_valid_r <= '0';
             else
+                -- Clear override on cmd_start: SW regains CTL2 control.
+                -- laser_ctrl can re-override on next tvalid.
+                if o_cmd_start = '1' then
+                    s_lsr_valid_r <= '0';
+                end if;
+                -- Set override on laser_ctrl input
                 if i_lsr_tvalid = '1' then
                     s_lsr_cols_r  <= unsigned(i_lsr_tdata(15 downto 0));
                     s_lsr_valid_r <= '1';

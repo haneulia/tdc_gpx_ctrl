@@ -802,12 +802,14 @@ begin
                                  and s_reg_outstanding_r = '0'
                                  and s_cmd_start = '0'
                                  and s_cmd_cfg_write = '0'
+                                 and s_cfg_write_top_pending_r = '0'
                                 else '0';
         s_cmd_reg_write_g(i) <= s_cmd_reg_write
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
                                  and s_cmd_start = '0'
                                  and s_cmd_cfg_write = '0'
+                                 and s_cfg_write_top_pending_r = '0'
                                 else '0';
     end generate gen_reg_demux;
 
@@ -859,7 +861,11 @@ begin
         end if;
     end process p_reg_chip_latch;
 
-    -- Write data: from cfg_image indexed by target register address
+    -- Write data: from cfg_image indexed by target register address.
+    -- SW contract: cfg_image CDC must be idle (all handshakes complete)
+    -- before reg_write is triggered.  This is guaranteed when SW follows
+    -- the "busy='0' required" rule, since busy includes chip_busy which
+    -- only goes to '0' after cfg_write completes.
     s_cmd_reg_wdata <= s_cfg_image(to_integer(unsigned(s_cmd_reg_addr)))(c_TDC_BUS_WIDTH - 1 downto 0);
 
     -- =========================================================================
