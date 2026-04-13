@@ -123,14 +123,15 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_cstate_r     : t_collect_state := ST_C_IDLE;
     signal s_wr_buf_r     : std_logic := '0';       -- which buffer is write target
 
-    -- Handshake: p_collect → p_output (1-clk pulse)
-    signal s_output_req_r : std_logic := '0';
-    signal s_rd_buf_idx_r : std_logic := '0';       -- which buffer p_output should read
+    -- Handshake: p_collect → p_output
+    signal s_output_req_r : std_logic := '0';        -- 1-clk: start output (ififo1_done or full)
+    signal s_output_full_r : std_logic := '0';       -- 1-clk: all IFIFOs done (output stops 4~7)
+    signal s_rd_buf_idx_r : std_logic := '0';        -- which buffer p_output should read
 
     -- =========================================================================
     -- Output FSM (p_output)
     -- =========================================================================
-    type t_output_state is (ST_O_IDLE, ST_O_LOAD, ST_O_ACTIVE);
+    type t_output_state is (ST_O_IDLE, ST_O_LOAD, ST_O_ACTIVE, ST_O_WAIT_IFIFO2);
     signal s_ostate_r     : t_output_state := ST_O_IDLE;
     signal s_rd_buf_r     : std_logic := '0';       -- latched read buffer index
 
@@ -232,12 +233,14 @@ begin
                 s_cell_buf_r   <= (others => (others => c_CELL_INIT));
                 s_cstate_r     <= ST_C_IDLE;
                 s_wr_buf_r     <= '0';
-                s_output_req_r <= '0';
-                s_rd_buf_idx_r <= '0';
+                s_output_req_r  <= '0';
+                s_output_full_r <= '0';
+                s_rd_buf_idx_r  <= '0';
                 s_hit_dropped_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r  <= '0';
+                s_output_full_r <= '0';
                 s_hit_dropped_r <= '0';
 
                 v_wr := fn_buf_idx(s_wr_buf_r);
@@ -267,18 +270,27 @@ begin
                             end if;
                         end if;
 
-                        -- drain_done: request output, swap buffer
+                        -- drain_done control beats:
+                        --   tuser[7]=1, tuser[6]=0: ififo1_done → start output stops 0~3
+                        --   tuser[7]=1, tuser[6]=1: final done  → output stops 4~7 + swap
                         if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
-                            if s_ostate_r = ST_O_IDLE then
-                                -- Output idle: safe to swap
-                                s_rd_buf_idx_r <= s_wr_buf_r;    -- tell output which to read
-                                s_output_req_r <= '1';           -- trigger output FSM
-                                s_wr_buf_r     <= not s_wr_buf_r; -- swap write target
-                                -- Clear new write buffer for next shot
+                            if i_s_axis_tuser(6) = '0' then
+                                -- IFIFO1 done: trigger early output of stops 0~3
+                                if s_ostate_r = ST_O_IDLE then
+                                    s_rd_buf_idx_r <= s_wr_buf_r;
+                                    s_output_req_r <= '1';
+                                end if;
+                            else
+                                -- Final drain_done: trigger stops 4~7, swap buffer
+                                s_output_full_r <= '1';
+                                if s_ostate_r = ST_O_IDLE and s_output_req_r = '0' then
+                                    -- No ififo1_done was sent (both done simultaneously)
+                                    s_rd_buf_idx_r <= s_wr_buf_r;
+                                    s_output_req_r <= '1';
+                                end if;
+                                s_wr_buf_r <= not s_wr_buf_r;
                                 s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
                             end if;
-                            -- If output busy: overrun — data stays in write buf,
-                            -- will be overwritten by next shot. No swap.
                         end if;
 
                         -- shot_start override: clear write buffer, stay active
@@ -359,14 +371,22 @@ begin
                                 s_ostate_r     <= ST_O_IDLE;
 
                             elsif s_beat_idx_r = c_LAST_BEAT then
-                                -- Cell boundary: load next cell
-                                v_nxt_stop   := s_stop_idx_r + 1;
-                                s_stop_idx_r <= v_nxt_stop;
-                                s_beat_idx_r <= (others => '0');
-                                s_cell_sel_r <= s_cell_buf_r(v_rd)(to_integer(v_nxt_stop));
-                                s_tvalid_r   <= '0';
-                                s_tlast_r    <= '0';
-                                s_ostate_r   <= ST_O_LOAD;
+                                -- Cell boundary: check IFIFO1/2 split point (stop 3→4)
+                                v_nxt_stop := s_stop_idx_r + 1;
+                                if s_stop_idx_r = "011" and s_output_full_r = '0' then
+                                    -- IFIFO1 stops done, IFIFO2 not ready: wait
+                                    s_tvalid_r <= '0';
+                                    s_tlast_r  <= '0';
+                                    s_ostate_r <= ST_O_WAIT_IFIFO2;
+                                else
+                                    -- Normal cell boundary: load next cell
+                                    s_stop_idx_r <= v_nxt_stop;
+                                    s_beat_idx_r <= (others => '0');
+                                    s_cell_sel_r <= s_cell_buf_r(v_rd)(to_integer(v_nxt_stop));
+                                    s_tvalid_r   <= '0';
+                                    s_tlast_r    <= '0';
+                                    s_ostate_r   <= ST_O_LOAD;
+                                end if;
 
                             else
                                 -- Same cell: beat MUX
@@ -380,6 +400,17 @@ begin
                                     s_tlast_r <= '0';
                                 end if;
                             end if;
+                        end if;
+
+                    when ST_O_WAIT_IFIFO2 =>
+                        -- Stall: stops 0~3 output done, waiting for IFIFO2 data.
+                        -- Resume when s_output_full_r is asserted by p_collect.
+                        if s_output_full_r = '1' then
+                            v_rd := fn_buf_idx(s_rd_buf_r);
+                            s_stop_idx_r <= "100";    -- stop 4
+                            s_beat_idx_r <= (others => '0');
+                            s_cell_sel_r <= s_cell_buf_r(v_rd)(4);
+                            s_ostate_r   <= ST_O_LOAD;
                         end if;
 
                 end case;

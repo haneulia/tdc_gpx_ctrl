@@ -409,6 +409,12 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_bus_ticks_snap_r   : unsigned(2 downto 0) := to_unsigned(5, 3);
     signal s_max_range_snap_r   : unsigned(15 downto 0) := (others => '0');
 
+    -- Per-IFIFO early drain_done: emit intermediate control beat when
+    -- IFIFO1 completes while IFIFO2 is still draining.
+    -- tuser[7]=1, ififo_id=0 → downstream starts outputting stops 0~3.
+    signal s_ififo1_done_sent_r : std_logic := '0';
+    signal s_ififo1_done_beat_r : std_logic := '0';  -- 1-clk: ififo1 early drain beat
+
 begin
 
     -- =========================================================================
@@ -546,11 +552,14 @@ begin
                 s_bus_clk_div_snap_r <= to_unsigned(1, 6);
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_max_range_snap_r   <= (others => '0');
+                s_ififo1_done_sent_r <= '0';
+                s_ififo1_done_beat_r <= '0';
             else
                 -- Default: clear single-cycle pulses
-                s_raw_valid_r   <= '0';
-                s_drain_done_r  <= '0';
-                s_reg_rvalid_r  <= '0';
+                s_raw_valid_r        <= '0';
+                s_drain_done_r       <= '0';
+                s_ififo1_done_beat_r <= '0';
+                s_reg_rvalid_r       <= '0';
                 s_reg_done_r    <= '0';
 
                 -- =========================================================
@@ -707,6 +716,7 @@ begin
                                 s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
                                 s_bus_ticks_snap_r   <= i_cfg.bus_ticks;
                                 s_max_range_snap_r   <= i_max_range_clks;
+                                s_ififo1_done_sent_r <= '0';
                                 s_state_r            <= ST_ARMED;
                             elsif i_cmd_cfg_write = '1' then
                                 s_cfg_idx_r          <= (others => '0');
@@ -896,6 +906,19 @@ begin
                             v_ififo2_can_read := not v_ififo2_done and (i_ef2_sync = '0');
 
                             -- ==============================================
+                            -- Early IFIFO1 drain_done: emit control beat
+                            -- so downstream can start outputting stops 0~3.
+                            -- tuser[7]=1 (drain_done), ififo_id=0.
+                            -- ==============================================
+                            if v_ififo1_done and not v_ififo2_done
+                               and s_ififo1_done_sent_r = '0'
+                               and s_purge_mode_r = '0' then
+                                s_ififo1_done_beat_r <= '1';     -- intermediate beat (NOT drain_done)
+                                s_ififo_id_r         <= '0';     -- IFIFO1 marker
+                                s_ififo1_done_sent_r <= '1';
+                            end if;
+
+                            -- ==============================================
                             -- Completion check (both IFIFOs done)
                             -- ==============================================
                             if v_ififo1_done and v_ififo2_done then
@@ -908,8 +931,9 @@ begin
                                     s_purge_mode_r <= '0';
                                     s_state_r      <= ST_ALU_PULSE;
                                 else
-                                    -- Normal drain complete
+                                    -- Normal drain complete (final: ififo_id=1)
                                     s_drain_done_r <= '1';
+                                    s_ififo_id_r   <= '1';
                                     s_state_r      <= ST_ALU_PULSE;
                                 end if;
 
@@ -1001,6 +1025,7 @@ begin
                                     s_state_r      <= ST_ALU_PULSE;
                                 else
                                     s_drain_done_r <= '1';
+                                    s_ififo_id_r   <= '1';   -- final drain_done
                                     s_state_r      <= ST_ALU_PULSE;
                                 end if;
                             end if;
@@ -1388,14 +1413,15 @@ begin
     o_alutrigger     <= s_alutrigger_r;
     o_puresn         <= s_puresn_r;
 
-    -- AXI-Stream: raw word beat OR drain_done control beat
-    o_m_raw_axis_tvalid            <= s_raw_valid_r or s_drain_done_r;
+    -- AXI-Stream: raw word beat OR control beat (drain_done / ififo1_done)
+    o_m_raw_axis_tvalid            <= s_raw_valid_r or s_drain_done_r or s_ififo1_done_beat_r;
     o_m_raw_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0) <= s_raw_word_r
                                                           when s_raw_valid_r = '1'
                                                           else (others => '0');
     o_m_raw_axis_tdata(31 downto g_BUS_DATA_WIDTH)     <= (others => '0');
-    o_m_raw_axis_tuser             <= s_drain_done_r & "000000" & s_ififo_id_r;
-    o_drain_done                   <= s_drain_done_r;
+    o_m_raw_axis_tuser             <= (s_drain_done_r or s_ififo1_done_beat_r)
+                                      & "000000" & s_ififo_id_r;
+    o_drain_done                   <= s_drain_done_r;  -- final only (NOT ififo1_done)
 
     o_shot_seq       <= s_shot_seq_r;
     o_busy           <= s_busy_r;

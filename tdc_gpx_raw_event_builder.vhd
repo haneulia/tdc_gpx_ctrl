@@ -114,11 +114,16 @@ begin
                 s_stop_id_error_r <= '0';
 
                 if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
-                    -- drain_done control beat: reset hit counters + forward
-                    s_hit_cnt_r   <= (others => (others => '0'));
+                    -- drain_done control beat: forward with ififo_id preserved.
+                    -- ififo_id=0 (ififo1_done): do NOT reset counters (IFIFO2 active)
+                    -- ififo_id=1 (final done):  reset ALL hit counters (shot boundary)
+                    if i_s_axis_tuser(6) = '1' then
+                        s_hit_cnt_r <= (others => (others => '0'));
+                    end if;
                     s_tdata_r     <= (others => '0');
                     s_tuser_r     <= (others => '0');
                     s_tuser_r(7)  <= '1';   -- drain_done flag
+                    s_tuser_r(6)  <= i_s_axis_tuser(6);  -- preserve ififo_id
                     s_tvalid_r    <= '1';
                 elsif i_s_axis_tvalid = '1' then
                     -- Unpack input AXI-Stream sideband
