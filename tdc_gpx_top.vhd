@@ -1162,7 +1162,7 @@ begin
                 s_face_stops_per_chip_r <= s_cfg.stops_per_chip;
                 s_face_active_mask_r    <= s_cfg.active_chip_mask;
                 s_face_cols_per_face_r  <= s_cfg.cols_per_face;
-                s_face_n_faces_r        <= s_cfg.n_faces;
+                s_face_n_faces_r        <= resize(s_cfg.n_faces, 4);
                 s_cfg_face_r            <= s_cfg;  -- full config snapshot for header
             end if;
         end if;
