@@ -334,6 +334,7 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- =========================================================================
     signal s_reg_rdata_r    : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_reg_rvalid_r   : std_logic := '0';
+    signal s_reg_is_read_r  : std_logic := '0';
 
     -- =========================================================================
     -- Shot range counter: counts clocks from shot_start.
@@ -361,6 +362,10 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- Busy flag
     -- =========================================================================
     signal s_busy_r         : std_logic := '0';
+
+    -- Deferred stop: latched when cmd_stop arrives during drain/ALU states.
+    -- Acted upon at ST_ALU_RECOVERY completion.
+    signal s_stop_pending_r  : std_logic := '0';
 
 begin
 
@@ -486,9 +491,11 @@ begin
                 s_burst_limit_r     <= (others => '0');
                 s_reg_rdata_r       <= (others => '0');
                 s_reg_rvalid_r      <= '0';
+                s_reg_is_read_r     <= '0';
                 s_range_active_r    <= '0';
                 s_purge_mode_r      <= '0';
                 s_overrun_deferred_r <= '0';
+                s_stop_pending_r    <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r   <= '0';
@@ -517,11 +524,27 @@ begin
                     s_range_active_r     <= '0';
                     s_purge_mode_r       <= '0';
                     s_overrun_deferred_r <= '0';
+                    s_stop_pending_r    <= '0';
                     s_wait_cnt_r        <= (others => '0');
                     s_cfg_idx_r         <= (others => '0');
                     s_init_mode_r       <= '1';
                     s_shot_seq_r        <= (others => '0');
                 else
+                    -- Latch cmd_stop during drain/ALU (cannot abort mid-drain).
+                    -- Deferred to ST_ALU_RECOVERY completion.
+                    if i_cmd_stop = '1' then
+                        case s_state_r is
+                            when ST_DRAIN_LATCH | ST_DRAIN_CHECK
+                               | ST_DRAIN_EF1   | ST_DRAIN_EF2
+                               | ST_DRAIN_BURST | ST_DRAIN_FLUSH
+                               | ST_DRAIN_SETTLE
+                               | ST_ALU_PULSE   | ST_ALU_RECOVERY =>
+                                s_stop_pending_r <= '1';
+                            when others =>
+                                null;
+                        end case;
+                    end if;
+
                     case s_state_r is
 
                         -- =================================================
@@ -623,7 +646,8 @@ begin
                         -- =================================================
 
                         when ST_IDLE =>
-                            s_busy_r <= '0';
+                            s_busy_r         <= '0';
+                            s_stop_pending_r <= '0';
                             if i_cmd_start = '1' then
                                 s_stopdis_r   <= '0';   -- clear stop-disable for new cycle
                                 s_state_r     <= ST_ARMED;
@@ -634,19 +658,21 @@ begin
                                 s_state_r     <= ST_CFG_WRITE;
                             elsif i_cmd_reg_read = '1' then
                                 -- Individual register read
-                                s_req_valid_r <= '1';
-                                s_req_rw_r    <= '0';   -- READ
-                                s_req_addr_r  <= i_cmd_reg_addr;
-                                s_busy_r      <= '1';
-                                s_state_r     <= ST_REG_ACCESS;
+                                s_req_valid_r  <= '1';
+                                s_req_rw_r     <= '0';   -- READ
+                                s_req_addr_r   <= i_cmd_reg_addr;
+                                s_reg_is_read_r <= '1';
+                                s_busy_r       <= '1';
+                                s_state_r      <= ST_REG_ACCESS;
                             elsif i_cmd_reg_write = '1' then
                                 -- Individual register write
-                                s_req_valid_r <= '1';
-                                s_req_rw_r    <= '1';   -- WRITE
-                                s_req_addr_r  <= i_cmd_reg_addr;
-                                s_req_wdata_r <= i_cmd_reg_wdata;
-                                s_busy_r      <= '1';
-                                s_state_r     <= ST_REG_ACCESS;
+                                s_req_valid_r  <= '1';
+                                s_req_rw_r     <= '1';   -- WRITE
+                                s_req_addr_r   <= i_cmd_reg_addr;
+                                s_req_wdata_r  <= i_cmd_reg_wdata;
+                                s_reg_is_read_r <= '0';
+                                s_busy_r       <= '1';
+                                s_state_r      <= ST_REG_ACCESS;
                             end if;
 
                         -- =================================================
@@ -1030,11 +1056,15 @@ begin
 
                         when ST_REG_ACCESS =>
                             if i_bus_rsp_valid = '1' then
-                                s_req_valid_r  <= '0';
-                                s_reg_rdata_r  <= i_bus_rsp_rdata;
-                                s_reg_rvalid_r <= '1';  -- 1-clk pulse (also for writes as ack)
-                                s_busy_r       <= '0';
-                                s_state_r      <= ST_IDLE;
+                                s_req_valid_r <= '0';
+                                s_busy_r      <= '0';
+                                s_state_r     <= ST_IDLE;
+                                if s_reg_is_read_r = '1' then
+                                    s_reg_rdata_r  <= i_bus_rsp_rdata;
+                                    s_reg_rvalid_r <= '1';
+                                end if;
+                                -- Write completion: busy clears, but rvalid
+                                -- stays low to prevent stale data in STAT11.
                             end if;
 
                         -- =================================================
@@ -1076,6 +1106,12 @@ begin
                                         s_oen_permanent_r <= '0';
                                     end if;
                                     s_state_r <= ST_DRAIN_SETTLE;
+                                elsif s_stop_pending_r = '1' then
+                                    -- Deferred cmd_stop: return to IDLE, not ARMED
+                                    s_stop_pending_r <= '0';
+                                    s_stopdis_r      <= '1';
+                                    s_busy_r         <= '0';
+                                    s_state_r        <= ST_IDLE;
                                 else
                                     -- Normal completion
                                     s_shot_seq_r <= s_shot_seq_r + 1;

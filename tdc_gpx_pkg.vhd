@@ -59,8 +59,9 @@ package tdc_gpx_pkg is
     -- Stop event AXI-Stream constants
     constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
     constant c_STOP_CNT_WIDTH       : natural := 4;     -- bits per stop channel count
-    -- Layout: 8 stops × 4 bits = 32 bits contiguous in tdata[31:0]
-    -- tkeep = "1111" (all 4 bytes active, full utilization)
+    -- Layout: per-chip packed [chip3(8b)|chip2(8b)|chip1(8b)|chip0(8b)]
+    --   Each 8-bit chip slice: [IFIFO2(4b) | IFIFO1(4b)]
+    -- tkeep: reserved (always "1111", not consumed by p_stop_decode)
 
     constant c_SHOT_SEQ_WIDTH       : natural := 16;
     constant c_TDC_BUS_WIDTH        : natural := 28;

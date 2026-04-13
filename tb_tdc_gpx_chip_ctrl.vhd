@@ -84,6 +84,12 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_cmd_stop           : std_logic := '0';
     signal s_cmd_soft_reset     : std_logic := '0';
     signal s_cmd_cfg_write      : std_logic := '0';
+    signal s_cmd_reg_read       : std_logic := '0';
+    signal s_cmd_reg_write      : std_logic := '0';
+    signal s_cmd_reg_addr       : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_cmd_reg_wdata      : std_logic_vector(c_DATA_W - 1 downto 0) := (others => '0');
+    signal s_cmd_reg_rdata      : std_logic_vector(c_DATA_W - 1 downto 0);
+    signal s_cmd_reg_rvalid     : std_logic;
 
     -- =========================================================================
     -- Shot trigger
@@ -216,12 +222,12 @@ begin
             i_cmd_stop          => s_cmd_stop,
             i_cmd_soft_reset    => s_cmd_soft_reset,
             i_cmd_cfg_write     => s_cmd_cfg_write,
-            i_cmd_reg_read      => '0',
-            i_cmd_reg_write     => '0',
-            i_cmd_reg_addr      => (others => '0'),
-            i_cmd_reg_wdata     => (others => '0'),
-            o_cmd_reg_rdata     => open,
-            o_cmd_reg_rvalid    => open,
+            i_cmd_reg_read      => s_cmd_reg_read,
+            i_cmd_reg_write     => s_cmd_reg_write,
+            i_cmd_reg_addr      => s_cmd_reg_addr,
+            i_cmd_reg_wdata     => s_cmd_reg_wdata,
+            o_cmd_reg_rdata     => s_cmd_reg_rdata,
+            o_cmd_reg_rvalid    => s_cmd_reg_rvalid,
             i_shot_start        => s_shot_start,
             i_max_range_clks    => s_cfg.max_range_clks,
             i_stop_tdc          => s_stop_tdc,
@@ -993,6 +999,123 @@ begin
                     & nat_img(to_integer(s_shot_seq)), v_fail);
         end if;
 
+        wait_clk(10);
+
+        -- =============================================================
+        -- [11] Bug 5 check: reg read asserts rvalid, reg write does NOT
+        -- =============================================================
+        pr_info("[11] Reg read -> rvalid=1; Reg write -> rvalid stays 0");
+
+        -- Return to IDLE first (test [10] leaves FSM in ARMED)
+        pulse(s_cmd_stop);
+        wait_clk(5);
+
+        -- First: individual reg read (addr 0x08 = read-only status reg)
+        s_cmd_reg_addr  <= x"8";
+        pulse(s_cmd_reg_read);
+        -- Wait for rvalid
+        tb_wait_sig_value(s_clk, s_cmd_reg_rvalid, '1', c_TIMEOUT, v_found);
+        if v_found then
+            pr_pass("[11a] Reg READ -> rvalid asserted");
+        else
+            pr_fail("[11a] Reg READ -> rvalid timeout", v_fail);
+        end if;
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        wait_clk(5);
+
+        -- Second: individual reg write (addr 0x00)
+        s_cmd_reg_addr  <= x"0";
+        s_cmd_reg_wdata <= s_cfg_image(0)(c_DATA_W - 1 downto 0);
+        pulse(s_cmd_reg_write);
+        -- Wait for idle (write completes)
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[11b] Reg WRITE -> busy timeout", v_fail);
+        else
+            -- rvalid should NOT have pulsed during the write
+            -- (we check it's '0' now; it was default-cleared each cycle)
+            if s_cmd_reg_rvalid = '0' then
+                pr_pass("[11b] Reg WRITE -> rvalid stays 0 (no STAT11 pollution)");
+            else
+                pr_fail("[11b] Reg WRITE -> rvalid unexpectedly asserted", v_fail);
+            end if;
+        end if;
+        wait_clk(10);
+
+        -- =============================================================
+        -- [12] Bug 2 check: cmd_stop during drain -> returns to IDLE
+        -- =============================================================
+        pr_info("[12] cmd_stop during drain -> deferred stop, FSM to IDLE");
+
+        fill_fifos(16, 8);
+        wait_clk(5);
+
+        -- ARM
+        pulse(s_cmd_start);
+        wait_clk(2);
+
+        -- Shot
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        -- Assert IrFlag to trigger drain
+        s_irflag_pin <= '1';
+        wait_clk(10);  -- let drain start
+
+        -- Issue cmd_stop DURING drain (FSM should be in ST_DRAIN_*)
+        pulse(s_cmd_stop);
+
+        -- drain_done should still arrive (drain finishes normally)
+        wait_drain_done(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[12] drain_done timeout (stop during drain)", v_fail);
+        else
+            pr_pass("[12] drain_done received despite mid-drain cmd_stop");
+        end if;
+
+        s_irflag_pin <= '0';
+
+        -- Wait for ALU pulse + recovery to complete
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 20);
+
+        -- After deferred stop: FSM should be IDLE (busy='0'),
+        -- and a new cmd_start should work (proving it's not stuck in ARMED)
+        if s_ctrl_busy = '0' then
+            pr_pass("[12] busy='0' after deferred stop");
+        else
+            pr_fail("[12] busy should be '0' after deferred stop", v_fail);
+        end if;
+
+        -- StopDis should be '1' (stop-disable asserted by deferred stop)
+        if s_stopdis = '1' then
+            pr_pass("[12] StopDis='1' (FSM in IDLE, not ARMED)");
+        else
+            pr_fail("[12] StopDis should be '1' if FSM returned to IDLE", v_fail);
+        end if;
+
+        -- Verify we can start a new cycle (proves FSM is in IDLE, not ARMED)
+        fill_fifos(4, 4);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_cnt_snap := sv_raw_word_cnt;
+        wait_drain_done(c_TIMEOUT, v_found);
+        if v_found then
+            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            pr_pass("[12] Post-stop restart: drain_done, words=" & nat_img(v_drain_words));
+        else
+            pr_fail("[12] Post-stop restart: drain_done timeout", v_fail);
+        end if;
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- Stop again cleanly
+        pulse(s_cmd_stop);
         wait_clk(10);
 
         -- =============================================================
