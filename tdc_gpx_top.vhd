@@ -503,6 +503,7 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     signal s_shot_overrun         : std_logic;
     signal s_shot_overrun_r       : std_logic := '0';
+    signal s_face_state_idle      : std_logic;
     signal s_face_abort           : std_logic;  -- rise assembler face abort pulse
     signal s_face_fall_abort      : std_logic;  -- fall assembler face abort pulse
     signal s_face_asm_idle        : std_logic;  -- rise assembler idle
@@ -1418,328 +1419,102 @@ begin
     --   Latched at s_packet_start (combinational, guarded by cmd_stop)
     --   so that the registered values are stable by s_face_start_r (+1 cycle).
     -- =========================================================================
-    p_geometry : process(i_axis_aclk)
-        variable v_active_cnt  : natural range 0 to c_N_CHIPS;
-        variable v_rows        : natural range 0 to c_MAX_ROWS_PER_FACE;
-        variable v_data_beats  : natural range 0 to c_DATA_BEATS_MAX;
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
-                s_hsize_bytes_r   <= to_unsigned(c_HSIZE_MAX, 16);
-            elsif s_packet_start = '1' then
-                v_active_cnt := fn_count_ones(s_cfg.active_chip_mask);
-                v_rows := v_active_cnt * to_integer(s_cfg.stops_per_chip);
-                if v_rows < 2 then
-                    v_rows := 2;
-                end if;
-                s_rows_per_face_r <= to_unsigned(v_rows, 16);
-                v_data_beats := v_rows * c_BEATS_PER_CELL;
-                s_hsize_bytes_r <= to_unsigned((v_data_beats + c_HDR_PREFIX_BEATS) * c_TDATA_BYTES, 16);
-            end if;
-        end if;
-    end process p_geometry;
+    -- =========================================================================
+    -- [5-6] Face sequencer (extracted module)
+    -- =========================================================================
+    u_face_seq : entity work.tdc_gpx_face_seq
+        port map (
+            i_clk                  => i_axis_aclk,
+            i_rst_n                => i_axis_aresetn,
+            i_cmd_start            => s_cmd_start,
+            i_cmd_stop             => s_cmd_stop,
+            i_cmd_soft_reset       => s_cmd_soft_reset,
+            i_chip_busy            => s_chip_busy,
+            i_reg_outstanding      => s_reg_outstanding_r,
+            i_face_asm_idle        => s_face_asm_idle,
+            i_face_asm_fall_idle   => s_face_asm_fall_idle,
+            i_hdr_idle             => s_hdr_idle,
+            i_hdr_fall_idle        => s_hdr_fall_idle,
+            i_face_tvalid          => s_face_tvalid,
+            i_face_fall_tvalid     => s_face_fall_tvalid,
+            i_face_buf_tvalid      => s_face_buf_tvalid,
+            i_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
+            i_m_axis_tvalid        => o_m_axis_tvalid,
+            i_m_axis_fall_tvalid   => o_m_axis_fall_tvalid,
+            i_shot_start_raw       => i_shot_start,
+            i_frame_done           => s_frame_done,
+            i_frame_fall_done      => s_frame_fall_done,
+            i_pipeline_abort       => s_pipeline_abort,
+            i_shot_overrun         => s_shot_overrun,
+            i_shot_fall_overrun    => s_shot_fall_overrun,
+            i_hdr_draining         => s_hdr_draining,
+            i_hdr_fall_draining    => s_hdr_fall_draining,
+            i_cfg                  => s_cfg,
+            o_cmd_start_accepted   => s_cmd_start_accepted,
+            o_face_state_idle      => s_face_state_idle,
+            o_packet_start         => s_packet_start,
+            o_shot_start_gated     => s_shot_start_gated,
+            o_face_closing         => s_face_closing,
+            o_face_id              => s_face_id_r,
+            o_frame_id             => s_frame_id_r,
+            o_global_shot_seq      => s_global_shot_seq_r,
+            o_frame_abort_cnt      => s_frame_abort_cnt_r,
+            o_frame_done_both      => s_frame_done_both,
+            o_face_active_mask     => s_face_active_mask_r,
+            o_face_stops_per_chip  => s_face_stops_per_chip_r,
+            o_face_cols_per_face   => s_face_cols_per_face_r,
+            o_face_n_faces         => s_face_n_faces_r,
+            o_rows_per_face        => s_rows_per_face_r,
+            o_hsize_bytes          => s_hsize_bytes_r,
+            o_cfg_face             => s_cfg_face_r
+        );
 
     -- =========================================================================
-    -- [5b] Face-start config latch: snapshot for downstream data-path modules
-    --   Latched at s_packet_start (combinational, guarded, edge N) so values
-    --   are stable by s_face_start_r (edge N+1). face_assembler reads these
-    --   at shot_start = s_face_start_r, seeing the correctly latched values.
+    -- [7-9] Status aggregation (extracted module)
     -- =========================================================================
-    p_face_cfg_latch : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_face_stops_per_chip_r <= to_unsigned(8, 4);
-                s_face_active_mask_r    <= (others => '1');
-                s_face_cols_per_face_r  <= to_unsigned(1, 16);
-                s_face_n_faces_r        <= to_unsigned(1, 4);
-                s_cfg_face_r            <= s_cfg;   -- safe default (avoids X propagation)
-            elsif s_packet_start = '1' then
-                s_face_stops_per_chip_r <= s_cfg.stops_per_chip;
-                s_face_active_mask_r    <= s_cfg.active_chip_mask;
-                s_face_cols_per_face_r  <= s_cfg.cols_per_face;
-                s_face_n_faces_r        <= resize(s_cfg.n_faces, 4);
-                s_cfg_face_r            <= s_cfg;  -- full config snapshot for header
-            end if;
-        end if;
-    end process p_face_cfg_latch;
+    u_status_agg : entity work.tdc_gpx_status_agg
+        port map (
+            i_clk                  => i_axis_aclk,
+            i_rst_n                => i_axis_aresetn,
+            i_cmd_soft_reset       => s_cmd_soft_reset,
+            i_cmd_start_accepted   => s_cmd_start_accepted,
+            i_face_state_idle      => s_face_state_idle,
+            i_chip_busy            => s_chip_busy,
+            i_reg_outstanding      => s_reg_outstanding_r,
+            i_face_asm_idle        => s_face_asm_idle,
+            i_face_asm_fall_idle   => s_face_asm_fall_idle,
+            i_hdr_idle             => s_hdr_idle,
+            i_hdr_fall_idle        => s_hdr_fall_idle,
+            i_face_tvalid          => s_face_tvalid,
+            i_face_fall_tvalid     => s_face_fall_tvalid,
+            i_face_buf_tvalid      => s_face_buf_tvalid,
+            i_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
+            i_m_axis_tvalid        => o_m_axis_tvalid,
+            i_m_axis_fall_tvalid   => o_m_axis_fall_tvalid,
+            i_stop_id_error        => s_stop_id_error,
+            i_hit_dropped          => s_hit_dropped,
+            i_hit_fall_dropped     => s_hit_fall_dropped,
+            i_err_drain_timeout    => s_err_drain_timeout,
+            i_err_sequence         => s_err_sequence,
+            i_chip_error_merged    => s_chip_error_merged,
+            i_face_active_mask     => s_face_active_mask_r,
+            i_shot_overrun         => s_shot_overrun_r,
+            o_status               => s_status,
+            o_timestamp            => s_timestamp_r,
+            o_error_count          => s_error_count_r,
+            o_err_drain_sticky     => s_err_drain_to_sticky_r,
+            o_err_seq_sticky       => s_err_seq_sticky_r
+        );
 
-    -- =========================================================================
-    -- [5c] Frame-done combiner: both rise and fall pipelines must complete.
-    --   Each pipeline's frame_done is a 1-clk pulse.  We latch each one and
-    --   generate s_frame_done_both when both have fired.  Cleared at the
-    --   next packet_start (= next face).
-    -- =========================================================================
-    p_frame_done_both : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_packet_start = '1' then
-                s_frame_rise_done_r <= '0';
-                s_frame_fall_done_r <= '0';
-            else
-                if s_frame_done = '1' or s_pipeline_abort = '1' then
-                    s_frame_rise_done_r <= '1';
-                end if;
-                if s_frame_fall_done = '1' or s_pipeline_abort = '1' then
-                    s_frame_fall_done_r <= '1';
-                end if;
-            end if;
-        end if;
-    end process p_frame_done_both;
-
-    -- Combinational: both done (could be same cycle or different cycles)
-    s_frame_done_both   <= '1'  when (s_frame_rise_done_r = '1' or s_frame_done = '1' or s_pipeline_abort = '1')
-                                    and (s_frame_fall_done_r = '1' or s_frame_fall_done = '1' or s_pipeline_abort = '1')
-                                else '0';
-
-    -- '1' when all shots for this face have been accepted, OR either
-    -- pipeline has fired frame_done / is draining / aborted.
-    -- s_all_shots_fired closes the pre-drain window without blocking
-    -- the final shot itself (unlike the old o_last_line approach).
-    s_all_shots_fired   <= '1'  when s_face_shot_cnt_r >= s_face_cols_per_face_r
-                                     and s_face_cols_per_face_r /= 0
-                                else '0';
-
-    s_face_closing      <= '1'  when s_all_shots_fired = '1'
-                                      or s_pipeline_abort = '1'
-                                      or (s_frame_rise_done_r = '1' or s_frame_done = '1'
-                                          or s_hdr_draining = '1')
-                                      or (s_frame_fall_done_r = '1' or s_frame_fall_done = '1'
-                                          or s_hdr_fall_draining = '1')
-                                else '0';
-
-    -- =========================================================================
-    -- [6] Face sequencer
-    --   ST_IDLE → cmd_start → ST_WAIT_SHOT
-    --   ST_WAIT_SHOT → shot_start → face_start pulse → ST_IN_FACE
-    --   ST_IN_FACE → frame_done → advance face_id → ST_WAIT_SHOT (or wrap)
-    -- =========================================================================
-    p_face_seq : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_face_state_r        <= ST_IDLE;
-                s_face_id_r           <= (others => '0');
-                s_frame_id_r          <= (others => '0');
-                s_shot_overrun_r      <= '0';
-                s_cmd_start_accepted  <= '0';
-            else
-                -- Default: clear single-cycle pulse
-                s_cmd_start_accepted <= '0';
-
-                -- Shot overrun from face_assembler: sticky until cmd_start
-                if s_shot_overrun = '1' or s_shot_fall_overrun = '1' then
-                    s_shot_overrun_r <= '1';
-                end if;
-
-                case s_face_state_r is
-
-                    when ST_IDLE =>
-                        -- Accept cmd_start only when the entire pipeline
-                        -- is idle: no chip_ctrl busy, no assembler/header
-                        -- data in flight.  Self-protects against SW
-                        -- issuing cmd_start before previous output drains.
-                        if s_cmd_start = '1'
-                           and s_chip_busy = C_ZEROS_CHIPS
-                           and s_reg_outstanding_r = '0'
-                           and s_face_asm_idle = '1'
-                           and s_face_asm_fall_idle = '1'
-                           and s_hdr_idle = '1'
-                           and s_hdr_fall_idle = '1'
-                           and s_face_tvalid = '0'
-                           and s_face_fall_tvalid = '0'
-                           and s_face_buf_tvalid = '0'
-                           and s_face_fall_buf_tvalid = '0'
-                           and o_m_axis_tvalid = '0'
-                           and o_m_axis_fall_tvalid = '0' then
-                            s_face_id_r          <= (others => '0');
-                            s_shot_overrun_r     <= '0';
-                            s_cmd_start_accepted <= '1';
-                            s_face_state_r       <= ST_WAIT_SHOT;
-                        end if;
-
-                    when ST_WAIT_SHOT =>
-                        if s_cmd_stop = '1' then
-                            s_face_state_r <= ST_IDLE;
-                        elsif s_packet_start = '1' then
-                            -- Use s_packet_start (not raw i_shot_start) so
-                            -- the sequencer accepts exactly when downstream
-                            -- control pulses (face_start, shot_start_gated)
-                            -- are also generated.  This ensures all modules
-                            -- see the same shot boundary.
-                            s_face_state_r <= ST_IN_FACE;
-                        end if;
-
-                    when ST_IN_FACE =>
-                        if s_cmd_stop = '1' then
-                            s_face_state_r <= ST_IDLE;
-                        elsif s_frame_done_both = '1' then
-                            s_frame_id_r <= s_frame_id_r + 1;
-                            if s_face_id_r >= resize(s_face_n_faces_r, 8) - 1 then
-                                -- All faces done: wrap to face 0 (continuous)
-                                s_face_id_r    <= (others => '0');
-                            else
-                                s_face_id_r <= s_face_id_r + 1;
-                            end if;
-                            s_face_state_r <= ST_WAIT_SHOT;
-                        end if;
-
-                end case;
-            end if;
-        end if;
-    end process p_face_seq;
-
-    -- =========================================================================
-    -- [6b] Global shot sequence counter (independent of per-chip counters).
-    --   Increments on every accepted shot pulse so that header/status always
-    --   reflect the true shot count regardless of which chips are active.
-    -- =========================================================================
-    p_global_shot_seq : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_start_accepted = '1' then
-                s_global_shot_seq_r <= (others => '0');
-            elsif s_shot_start_gated = '1' then
-                s_global_shot_seq_r <= s_global_shot_seq_r + 1;
-            end if;
-        end if;
-    end process p_global_shot_seq;
-
-    -- =========================================================================
-    -- [6d] Frame abort counter: counts faces aborted by overrun/stop/reset.
-    --   SW uses this to know how many frames were discarded (corrupted).
-    --   Cleared on cmd_start_accepted (new measurement run).
-    -- =========================================================================
-    p_frame_abort_cnt : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_start_accepted = '1' then
-                s_frame_abort_cnt_r <= (others => '0');
-            elsif s_pipeline_abort = '1' and s_face_state_r = ST_IN_FACE then
-                s_frame_abort_cnt_r <= s_frame_abort_cnt_r + 1;
-            end if;
-        end if;
-    end process p_frame_abort_cnt;
-
-    -- =========================================================================
-    -- [6c] Per-face shot counter: tracks how many shots have been accepted
-    --   for the current face.  When it reaches cols_per_face, no more
-    --   mid-face shots are accepted (s_all_shots_fired → s_face_closing).
-    -- =========================================================================
-    p_face_shot_cnt : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_packet_start = '1'
-               or s_frame_done_both = '1' then
-                -- Reset at face boundary.  s_packet_start resets to 0;
-                -- the first shot's s_shot_start_gated fires 1 cycle later
-                -- and increments to 1 (no double-count).
-                s_face_shot_cnt_r <= (others => '0');
-            elsif s_shot_start_gated = '1' then
-                -- Count every accepted shot (first + mid-face)
-                s_face_shot_cnt_r <= s_face_shot_cnt_r + 1;
-            end if;
-        end if;
-    end process p_face_shot_cnt;
-
-    -- =========================================================================
-    -- [7] Timestamp counter (free-running, i_axis_aclk domain)
-    --   SW interprets as cycles; multiply by clock period for nanoseconds.
-    -- =========================================================================
-    p_timestamp : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_timestamp_r <= (others => '0');
-            else
-                s_timestamp_r <= s_timestamp_r + 1;
-            end if;
-        end if;
-    end process p_timestamp;
-
-    -- =========================================================================
-    -- [8] Error counter: per-cycle any-error counter.
-    --   Increments by 1 for each clock cycle where ANY error source is
-    --   active.  Multiple simultaneous errors in the same cycle count as 1.
-    --   This is NOT a total error event count — it measures error-active
-    --   cycles.  SW should use per-chip sticky masks for individual errors.
-    --   Sources:
-    --   - stop_id_error: 1-clk pulse from raw_event_builder
-    --   - hit_dropped:   1-clk pulse from cell_builder
-    --   - chip_error_merged: level → edge-detected (rising only)
-    -- =========================================================================
-    p_error_cnt : process(i_axis_aclk)
-        variable v_merged_rising : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_error_count_r     <= (others => '0');
-                s_chip_error_prev_r <= (others => '0');
-            else
-                -- Edge detect: new bits that just went high
-                v_merged_rising := s_chip_error_merged
-                                   and (not s_chip_error_prev_r);
-                s_chip_error_prev_r <= s_chip_error_merged;
-
-                if s_stop_id_error /= C_ZEROS_CHIPS or
-                   s_hit_dropped /= C_ZEROS_CHIPS or
-                   s_hit_fall_dropped /= C_ZEROS_CHIPS or
-                   (s_err_drain_timeout and s_face_active_mask_r) /= C_ZEROS_CHIPS or
-                   (s_err_sequence and s_face_active_mask_r) /= C_ZEROS_CHIPS or
-                   v_merged_rising /= C_ZEROS_CHIPS then
-                    s_error_count_r <= s_error_count_r + 1;
-                end if;
-            end if;
-        end if;
-    end process p_error_cnt;
-
-    -- =========================================================================
-    -- [8b] Sticky error latch: drain_timeout and sequence_error per chip
-    --   Pulses from chip_ctrl → sticky until cmd_start clears them.
-    -- =========================================================================
-    p_err_sticky : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_start_accepted = '1' then
-                s_err_drain_to_sticky_r <= (others => '0');
-                s_err_seq_sticky_r      <= (others => '0');
-            else
-                s_err_drain_to_sticky_r <= s_err_drain_to_sticky_r or (s_err_drain_timeout and s_face_active_mask_r);
-                s_err_seq_sticky_r      <= s_err_seq_sticky_r      or (s_err_sequence and s_face_active_mask_r);
-            end if;
-        end if;
-    end process p_err_sticky;
-
-    -- =========================================================================
-    -- [9] Status aggregation (-> CSR -> STAT registers)
-    -- =========================================================================
-    s_status.busy               <= '1'  when s_face_state_r /= ST_IDLE
-                                            or s_chip_busy /= C_ZEROS_CHIPS
-                                            or s_face_asm_idle = '0'
-                                            or s_face_asm_fall_idle = '0'
-                                            or s_hdr_idle = '0'
-                                            or s_hdr_fall_idle = '0'
-                                            or s_face_tvalid = '1'
-                                            or s_face_fall_tvalid = '1'
-                                            or s_face_buf_tvalid = '1'
-                                            or s_face_fall_buf_tvalid = '1'
-                                            or o_m_axis_tvalid = '1'
-                                            or o_m_axis_fall_tvalid = '1'
-                                            or s_reg_outstanding_r = '1'
-                                        else '0';
-    s_status.pipeline_overrun   <= '1'  when s_chip_error_flags /= C_ZEROS_CHIPS
-                                            or s_chip_fall_error /= C_ZEROS_CHIPS
-                                            or s_shot_overrun_r = '1'
-                                        else '0';
-    s_status.bin_mismatch       <= '0';  -- Phase 2: calibration check
-    s_status.chip_error_mask    <= s_chip_error_merged;
-    s_status.drain_timeout_mask <= s_err_drain_to_sticky_r;
-    s_status.sequence_error_mask<= s_err_seq_sticky_r;
-    s_status.shot_seq_current   <= s_global_shot_seq_r;
-    s_status.vdma_frame_count   <= s_frame_id_r;
-    s_status.error_count        <= s_error_count_r;
-    s_status.shot_drop_count    <= s_shot_drop_cnt_r;
-    s_status.frame_abort_count  <= s_frame_abort_cnt_r;
+    -- Remaining status fields not in status_agg
+    s_status.bin_mismatch        <= '0';
+    s_status.chip_error_mask     <= s_chip_error_merged;
+    s_status.drain_timeout_mask  <= s_err_drain_to_sticky_r;
+    s_status.sequence_error_mask <= s_err_seq_sticky_r;
+    s_status.shot_seq_current    <= s_global_shot_seq_r;
+    s_status.vdma_frame_count    <= s_frame_id_r;
+    s_status.error_count         <= s_error_count_r;
+    s_status.shot_drop_count     <= s_shot_drop_cnt_r;
+    s_status.frame_abort_count   <= s_frame_abort_cnt_r;
 
 end architecture rtl;
