@@ -46,14 +46,18 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_face_assembler is
     generic (
-        g_ALU_PULSE_CLKS     : natural := 4
+        g_ALU_PULSE_CLKS     : natural := 4;
+        g_TDATA_WIDTH        : natural := c_TDATA_WIDTH   -- 32 or 64
     );
     port (
         i_clk                : in  std_logic;
         i_rst_n              : in  std_logic;
 
-        -- 4 chip cell AXI-Stream inputs (from cell_builders)
-        i_s_axis_tdata       : in  t_axis_tdata_array;
+        -- 4 chip cell AXI-Stream inputs (from cell_builders, g_TDATA_WIDTH per chip)
+        i_s_axis_tdata_0     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata_1     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata_2     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata_3     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         i_s_axis_tvalid      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_s_axis_tlast       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_s_axis_tready      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -71,7 +75,7 @@ entity tdc_gpx_face_assembler is
         i_max_scan_clks     : in  unsigned(15 downto 0);
 
         -- AXI-Stream master (packed row output)
-        o_m_axis_tdata       : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tdata       : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         o_m_axis_tvalid      : out std_logic;
         o_m_axis_tlast       : out std_logic;
         i_m_axis_tready      : in  std_logic;
@@ -87,10 +91,16 @@ end entity tdc_gpx_face_assembler;
 
 architecture rtl of tdc_gpx_face_assembler is
 
+    -- Reconstruct internal tdata array from individual ports
+    type t_tdata_arr is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+    signal s_in_tdata : t_tdata_arr;
+
     -- =========================================================================
     -- Skid buffer data width: tdata + tlast bundled
     -- =========================================================================
-    constant c_SKID_WIDTH : natural := c_TDATA_WIDTH + 1;
+    constant c_SKID_WIDTH      : natural := g_TDATA_WIDTH + 1;
+    constant c_G_BEATS_PER_CELL : natural := fn_beats_per_cell(g_TDATA_WIDTH);
 
     -- Bundle/unbundle types for input skid buffer array
     type t_skid_data_array is array (0 to c_N_CHIPS - 1)
@@ -99,7 +109,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Input skid buffer interface signals (from skid_buffer outputs)
     -- =========================================================================
-    signal s_in_tdata    : t_axis_tdata_array;
+    -- s_in_tdata: defined above as t_tdata_arr (g_TDATA_WIDTH per chip)
     signal s_in_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -109,7 +119,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Output pipe signals (FSM → output skid buffer)
     -- =========================================================================
-    signal s_pipe_tdata_r  : std_logic_vector(c_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_pipe_tdata_r  : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_pipe_tvalid_r : std_logic := '0';
     signal s_pipe_tlast_r  : std_logic := '0';
     signal s_pipe_tready   : std_logic;  -- from output skid buffer (registered)
@@ -183,7 +193,7 @@ architecture rtl of tdc_gpx_face_assembler is
         beat_idx : unsigned(2 downto 0);
         chip_id  : unsigned(1 downto 0)
     ) return std_logic_vector is
-        variable v_result : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        variable v_result : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
     begin
         v_result := (others => '0');
         if to_integer(beat_idx) = c_META_BEAT_IDX then
@@ -195,11 +205,17 @@ architecture rtl of tdc_gpx_face_assembler is
 
 begin
 
+    -- Map individual tdata ports to internal array
+    s_in_tdata(0) <= i_s_axis_tdata_0;
+    s_in_tdata(1) <= i_s_axis_tdata_1;
+    s_in_tdata(2) <= i_s_axis_tdata_2;
+    s_in_tdata(3) <= i_s_axis_tdata_3;
+
     -- =========================================================================
     -- Input skid buffers (×4): registered tready to cell_builders
     -- =========================================================================
     gen_in_fifo : for i in 0 to c_N_CHIPS - 1 generate
-        s_in_s_bundle(i) <= i_s_axis_tdata(i) & i_s_axis_tlast(i);
+        s_in_s_bundle(i) <= s_in_tdata(i) & i_s_axis_tlast(i);
         u_fifo_in : entity work.tdc_gpx_sync_fifo
             generic map (
                 g_DATA_WIDTH => c_SKID_WIDTH,   -- 33 bits (tdata + tlast)
@@ -454,7 +470,7 @@ begin
                             -- Check if this is the last blank beat (s_last_stop_r pre-computed)
                             v_blank_last :=
                                 (s_blank_stop_r = s_last_stop_r)
-                                and (s_blank_beat_r = c_BEATS_PER_CELL - 1);
+                                and (s_blank_beat_r = c_G_BEATS_PER_CELL - 1);
 
                             if v_blank_last and s_is_last_chip_r = '1' then
                                 s_pipe_tlast_r <= '1';  -- row tlast
@@ -463,7 +479,7 @@ begin
                             end if;
 
                             -- Advance blank counters
-                            if s_blank_beat_r = c_BEATS_PER_CELL - 1 then
+                            if s_blank_beat_r = c_G_BEATS_PER_CELL - 1 then
                                 s_blank_beat_r <= (others => '0');
                                 s_blank_stop_r <= s_blank_stop_r + 1;
                             else

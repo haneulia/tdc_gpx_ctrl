@@ -143,9 +143,14 @@ entity tdc_gpx_chip_ctrl is
         o_bus_req_burst     : out std_logic;          -- '1' = back-to-back burst read
         o_bus_ticks_snap    : out unsigned(2 downto 0);  -- bus_ticks snapshot for bus_phy
 
-        -- bus_phy response interface
-        i_bus_rsp_valid     : in  std_logic;
-        i_bus_rsp_rdata     : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        -- bus_phy AXI-Stream slave (response): 32-bit tdata, 8-bit tuser
+        --   tdata[27:0]  = read data (28-bit), tdata[31:28] = 0
+        --   tuser[0]     = '0' READ, '1' WRITE
+        --   tuser[4:1]   = register address
+        i_s_axis_tvalid     : in  std_logic;
+        i_s_axis_tdata      : in  std_logic_vector(31 downto 0);
+        i_s_axis_tuser      : in  std_logic_vector(7 downto 0);
+        o_s_axis_tready     : out std_logic;
         i_bus_busy          : in  std_logic;
 
         -- bus_phy synchronized status inputs
@@ -163,11 +168,17 @@ entity tdc_gpx_chip_ctrl is
         o_alutrigger        : out std_logic;
         o_puresn            : out std_logic;          -- '0' = chip in reset
 
-        -- Data outputs (to decode_i, next pipeline stage)
-        o_raw_word          : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
-        o_raw_word_valid    : out std_logic;           -- 1-clk pulse per word
-        o_ififo_id          : out std_logic;           -- '0'=IFIFO1, '1'=IFIFO2
-        o_drain_done        : out std_logic;           -- 1-clk pulse at drain end
+        -- AXI-Stream master: raw word output (to decode_i)
+        --   tdata[27:0]  = 28-bit raw IFIFO word (0 for drain_done beat)
+        --   tdata[31:28] = 0 (zero-padded to 32-bit)
+        --   tuser[0]     = ififo_id ('0'=IFIFO1, '1'=IFIFO2)
+        --   tuser[6:1]   = 0 (reserved)
+        --   tuser[7]     = drain_done flag ('1' = control-only beat, no data)
+        o_m_raw_axis_tvalid : out std_logic;
+        o_m_raw_axis_tdata  : out std_logic_vector(31 downto 0);
+        o_m_raw_axis_tuser  : out std_logic_vector(7 downto 0);
+        i_m_raw_axis_tready : in  std_logic;
+        o_drain_done        : out std_logic;           -- 1-clk pulse (for cell_builder)
 
         -- Status
         o_shot_seq          : out unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
@@ -462,7 +473,7 @@ begin
     -- Bus transaction pattern:
     --   SETUP state:  assert s_req_valid_r='1' with addr/rw/wdata,
     --                 transition to WAIT state
-    --   WAIT state:   hold request until i_bus_rsp_valid='1',
+    --   WAIT state:   hold request until i_s_axis_tvalid='1',
     --                 clear s_req_valid_r, advance
     --
     -- req_valid is NOT default-cleared (holds its value across clocks).
@@ -616,7 +627,7 @@ begin
                             s_state_r     <= ST_CFG_WR_WAIT;
 
                         when ST_CFG_WR_WAIT =>
-                            if i_bus_rsp_valid = '1' then
+                            if i_s_axis_tvalid = '1' then
                                 s_req_valid_r <= '0';
                                 if s_cfg_idx_r = c_CFG_WRITE_LAST then
                                     -- Init: full sequence (master reset + recovery)
@@ -647,7 +658,7 @@ begin
                             s_state_r     <= ST_MR_WAIT;
 
                         when ST_MR_WAIT =>
-                            if i_bus_rsp_valid = '1' then
+                            if i_s_axis_tvalid = '1' then
                                 s_req_valid_r <= '0';
                                 s_wait_cnt_r  <= (others => '0');
                                 s_state_r     <= ST_RECOVERY;
@@ -979,9 +990,9 @@ begin
                             end if;
 
                         when ST_DRAIN_EF1 =>
-                            if i_bus_rsp_valid = '1' then
+                            if i_s_axis_tvalid = '1' then
                                 s_req_valid_r        <= '0';
-                                s_raw_word_r         <= i_bus_rsp_rdata;
+                                s_raw_word_r         <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
                                 -- Purge mode: discard data, don't forward
                                 if s_purge_mode_r = '0' then
                                     s_raw_valid_r    <= '1';
@@ -994,9 +1005,9 @@ begin
                             end if;
 
                         when ST_DRAIN_EF2 =>
-                            if i_bus_rsp_valid = '1' then
+                            if i_s_axis_tvalid = '1' then
                                 s_req_valid_r        <= '0';
-                                s_raw_word_r         <= i_bus_rsp_rdata;
+                                s_raw_word_r         <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
                                 -- Purge mode: discard data, don't forward
                                 if s_purge_mode_r = '0' then
                                     s_raw_valid_r    <= '1';
@@ -1024,9 +1035,9 @@ begin
                         -- =================================================
 
                         when ST_DRAIN_BURST =>
-                            if i_bus_rsp_valid = '1' then
+                            if i_s_axis_tvalid = '1' then
                                 -- Capture read data
-                                s_raw_word_r  <= i_bus_rsp_rdata;
+                                s_raw_word_r  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
                                 s_raw_valid_r <= '1';
                                 s_burst_cnt_r <= s_burst_cnt_r + 1;
 
@@ -1059,8 +1070,8 @@ begin
 
                         when ST_DRAIN_FLUSH =>
                             -- Capture any remaining in-flight response
-                            if i_bus_rsp_valid = '1' then
-                                s_raw_word_r  <= i_bus_rsp_rdata;
+                            if i_s_axis_tvalid = '1' then
+                                s_raw_word_r  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
                                 s_raw_valid_r <= '1';
                                 if s_ififo_id_r = '0' then
                                     s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
@@ -1070,7 +1081,7 @@ begin
                             end if;
                             -- When bus_phy returns to IDLE: enter settling wait
                             -- (EF/LF need time to stabilize after last read)
-                            if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
+                            if i_bus_busy = '0' and i_s_axis_tvalid = '0' then
                                 s_wait_cnt_r <= (others => '0');
                                 s_state_r    <= ST_DRAIN_SETTLE;
                             end if;
@@ -1105,13 +1116,13 @@ begin
                         -- =================================================
 
                         when ST_REG_ACCESS =>
-                            if i_bus_rsp_valid = '1' then
+                            if i_s_axis_tvalid = '1' then
                                 s_req_valid_r <= '0';
                                 s_busy_r      <= '0';
                                 s_reg_done_r  <= '1';   -- completion pulse (read or write)
                                 s_state_r     <= ST_IDLE;
                                 if s_reg_is_read_r = '1' then
-                                    s_reg_rdata_r  <= i_bus_rsp_rdata;
+                                    s_reg_rdata_r  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
                                     s_reg_rvalid_r <= '1';
                                 end if;
                                 -- Write completion: rvalid stays low (STAT11 protection),
@@ -1185,7 +1196,7 @@ begin
                             -- Wait for bus to go idle, then enter purge mode
                             -- to drain remaining old data from IFIFOs before
                             -- AluTrigger cleanup.
-                            if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
+                            if i_bus_busy = '0' and i_s_axis_tvalid = '0' then
                                 s_purge_mode_r       <= '1';
                                 s_drain_cnt_ififo1_r <= (others => '0');
                                 s_drain_cnt_ififo2_r <= (others => '0');
@@ -1361,10 +1372,14 @@ begin
     o_alutrigger     <= s_alutrigger_r;
     o_puresn         <= s_puresn_r;
 
-    o_raw_word       <= s_raw_word_r;
-    o_raw_word_valid <= s_raw_valid_r;
-    o_ififo_id       <= s_ififo_id_r;
-    o_drain_done     <= s_drain_done_r;
+    -- AXI-Stream: raw word beat OR drain_done control beat
+    o_m_raw_axis_tvalid            <= s_raw_valid_r or s_drain_done_r;
+    o_m_raw_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0) <= s_raw_word_r
+                                                          when s_raw_valid_r = '1'
+                                                          else (others => '0');
+    o_m_raw_axis_tdata(31 downto g_BUS_DATA_WIDTH)     <= (others => '0');
+    o_m_raw_axis_tuser             <= s_drain_done_r & "000000" & s_ififo_id_r;
+    o_drain_done                   <= s_drain_done_r;
 
     o_shot_seq       <= s_shot_seq_r;
     o_busy           <= s_busy_r;
@@ -1373,6 +1388,17 @@ begin
     o_cmd_reg_rvalid <= s_reg_rvalid_r;
     o_cmd_reg_done   <= s_reg_done_r;
     o_bus_ticks_snap <= s_bus_ticks_snap_r;
+
+    -- AXI-Stream slave tready: accept bus response in states that wait for it.
+    o_s_axis_tready <= '1' when s_state_r = ST_CFG_WR_WAIT
+                             or s_state_r = ST_MR_WAIT
+                             or s_state_r = ST_DRAIN_EF1
+                             or s_state_r = ST_DRAIN_EF2
+                             or s_state_r = ST_DRAIN_BURST
+                             or s_state_r = ST_DRAIN_FLUSH
+                             or s_state_r = ST_OVERRUN_FLUSH
+                             or s_state_r = ST_REG_ACCESS
+                  else '0';
 
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;

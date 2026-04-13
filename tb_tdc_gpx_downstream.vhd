@@ -124,7 +124,10 @@ begin
         port map (
             i_clk              => clk,
             i_rst_n            => rst_n,
-            i_s_axis_tdata     => cell_tdata,
+            i_s_axis_tdata_0   => cell_tdata(0),
+            i_s_axis_tdata_1   => cell_tdata(1),
+            i_s_axis_tdata_2   => cell_tdata(2),
+            i_s_axis_tdata_3   => cell_tdata(3),
             i_s_axis_tvalid    => cell_tvalid,
             i_s_axis_tlast     => cell_tlast,
             o_s_axis_tready    => cell_tready,

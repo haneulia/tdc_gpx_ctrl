@@ -46,15 +46,24 @@ package tdc_gpx_pkg is
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
     constant c_MAX_HITS_PER_STOP    : natural := 7;
     constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;   -- Zynq-7000 (17 for MPSoC)
-    constant c_TDATA_WIDTH          : natural := 32;
-    constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;   -- bytes per beat
+    constant c_TDATA_WIDTH          : natural := 32;    -- default, overridden by g_TDATA_WIDTH
+    constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
 
     -- Derived cell layout constants (auto-calculated from MAX_HITS / TDATA_WIDTH)
+    -- These use c_TDATA_WIDTH=32 defaults. Modules with g_TDATA_WIDTH generic
+    -- should use fn_slots_per_beat/fn_beats_per_cell instead.
     constant c_SLOTS_PER_BEAT       : natural := c_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH;  -- 2
     constant c_HIT_DATA_BEATS       : natural := fn_ceil_div(c_MAX_HITS_PER_STOP,
                                                               c_SLOTS_PER_BEAT);          -- 4
     constant c_META_BEAT_IDX        : natural := c_HIT_DATA_BEATS;                        -- 4
+
+    -- Generic-width helper functions (for modules with g_TDATA_WIDTH)
+    function fn_slots_per_beat(tdata_width : natural) return natural;
+    function fn_hit_data_beats(tdata_width : natural) return natural;
+    function fn_meta_beat_idx(tdata_width : natural) return natural;
+    function fn_beats_per_cell(tdata_width : natural) return natural;
+    function fn_hdr_prefix_beats(tdata_width : natural) return natural;
 
     -- Stop event AXI-Stream constants
     constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
@@ -136,9 +145,9 @@ package tdc_gpx_pkg is
     constant c_HSIZE_BEATS_MAX      : natural;
     constant c_HSIZE_MAX            : natural;
 
-    -- Header prefix (embedded in each VDMA line)
-    constant c_HDR_PREFIX_BEATS     : natural := 12;    -- 12 beats x 4B = 48 bytes
-    constant c_HDR_PREFIX_BYTES     : natural := c_HDR_PREFIX_BEATS * (c_TDATA_WIDTH / 8);  -- 48
+    -- Header prefix (embedded in each VDMA line, 48 bytes fixed)
+    constant c_HDR_PREFIX_BYTES     : natural := 48;
+    constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_TDATA_BYTES;  -- 12@32b, 6@64b
 
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
@@ -260,7 +269,7 @@ package tdc_gpx_pkg is
         slope               : std_logic;
         raw_hit             : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);       -- 17-bit (truncation at cell_builder)
         shot_seq            : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
-        hit_seq_local       : unsigned(3 downto 0);         -- 0..15 (>=8 means overflow)
+        hit_seq_local       : unsigned(2 downto 0);         -- 0..7 (per slope, MAX_HITS=7)
     end record;
 
     constant c_RAW_EVENT_INIT : t_raw_event := (
@@ -410,6 +419,34 @@ package body tdc_gpx_pkg is
             end if;
         end loop;
         return mask;
+    end function;
+
+    -- =========================================================================
+    -- Generic-width helper functions (32/64-bit output bus support)
+    -- =========================================================================
+    function fn_slots_per_beat(tdata_width : natural) return natural is
+    begin
+        return tdata_width / c_HIT_SLOT_DATA_WIDTH;
+    end function;
+
+    function fn_hit_data_beats(tdata_width : natural) return natural is
+    begin
+        return fn_ceil_div(c_MAX_HITS_PER_STOP, fn_slots_per_beat(tdata_width));
+    end function;
+
+    function fn_meta_beat_idx(tdata_width : natural) return natural is
+    begin
+        return fn_hit_data_beats(tdata_width);
+    end function;
+
+    function fn_beats_per_cell(tdata_width : natural) return natural is
+    begin
+        return c_CELL_SIZE_BYTES / (tdata_width / 8);
+    end function;
+
+    function fn_hdr_prefix_beats(tdata_width : natural) return natural is
+    begin
+        return c_HDR_PREFIX_BYTES / (tdata_width / 8);
     end function;
 
 end package body tdc_gpx_pkg;

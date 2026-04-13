@@ -71,10 +71,16 @@ architecture sim of tb_tdc_gpx_bus_phy is
     signal s_oen_permanent  : std_logic := '0';
     signal s_req_burst      : std_logic := '0';
 
-    -- Response interface
+    -- Response: AXI-Stream + busy
+    signal s_axis_tvalid    : std_logic;
+    signal s_axis_tdata     : std_logic_vector(31 downto 0);
+    signal s_axis_tkeep     : std_logic_vector(3 downto 0);
+    signal s_axis_tuser     : std_logic_vector(7 downto 0);
+    signal s_axis_tready    : std_logic := '1';
+    signal s_busy           : std_logic;
+    -- Convenience aliases
     signal s_rsp_valid      : std_logic;
     signal s_rsp_rdata      : std_logic_vector(c_DATA_W - 1 downto 0);
-    signal s_busy           : std_logic;
 
     -- Physical pins
     signal s_adr            : std_logic_vector(3 downto 0);
@@ -141,6 +147,10 @@ architecture sim of tb_tdc_gpx_bus_phy is
 
 begin
 
+    -- Convenience aliases: extract rsp from AXI-Stream for existing test code
+    s_rsp_valid <= s_axis_tvalid;
+    s_rsp_rdata <= s_axis_tdata(c_DATA_W - 1 downto 0);
+
     -- =========================================================================
     -- Clock generation (stops when simulation done)
     -- =========================================================================
@@ -183,9 +193,12 @@ begin
             i_req_wdata     => s_req_wdata,
             i_oen_permanent => s_oen_permanent,
             i_req_burst     => s_req_burst,
-            o_rsp_valid     => s_rsp_valid,
-            o_rsp_rdata     => s_rsp_rdata,
             o_busy          => s_busy,
+            o_m_axis_tvalid => s_axis_tvalid,
+            o_m_axis_tdata  => s_axis_tdata,
+            o_m_axis_tkeep  => s_axis_tkeep,
+            o_m_axis_tuser  => s_axis_tuser,
+            i_m_axis_tready => s_axis_tready,
             o_adr           => s_adr,
             o_csn           => s_csn,
             o_rdn           => s_rdn,

@@ -1,11 +1,26 @@
 -- =============================================================================
 -- tdc_gpx_decode_i.vhd
--- TDC-GPX Controller - Raw 28-bit Word Decoder (Pure Combinational)
+-- TDC-GPX Controller - Raw 28-bit Word Decoder (Registered, AXI-Stream)
 -- =============================================================================
 --
 -- Purpose:
 --   Extracts structured fields from TDC-GPX I-Mode 28-bit IFIFO raw word.
---   Pure combinational logic — no clock, no state.
+--   Single-stage registered pipeline with AXI-Stream input and output.
+--
+--   Input AXI-Stream (from chip_ctrl):
+--     tdata[27:0]  = 28-bit raw IFIFO word (0 for drain_done beat)
+--     tdata[31:28] = 0 (reserved)
+--     tuser[0]     = ififo_id ('0'=IFIFO1, '1'=IFIFO2)
+--     tuser[7]     = drain_done flag ('1' = control beat, no data)
+--
+--   Output AXI-Stream (to raw_event_builder):
+--     tdata[16:0]  = raw_hit (17-bit, 0 for drain_done beat)
+--     tdata[31:17] = 0 (reserved)
+--     tuser[0]     = slope (edge direction)
+--     tuser[2:1]   = cha_code_raw (2-bit channel within IFIFO)
+--     tuser[5:3]   = stop_id_local (0..7, reconstructed from ififo_id + cha_code)
+--     tuser[6]     = ififo_id (pass-through)
+--     tuser[7]     = drain_done (pass-through from input)
 --
 --   Field mapping (I-Mode, SINGLE_SHOT):
 --     [27:26] ChaCode   (2-bit, channel within IFIFO)
@@ -13,11 +28,7 @@
 --     [17]    Slope     (1-bit, edge direction)
 --     [16:0]  Hit       (17-bit, Stop-Start time in BIN units)
 --
---   stop_id_local reconstruction:
---     stop_id_local = {ififo_id, cha_code} = ififo_id * 4 + cha_code
---     IFIFO1 (Reg8): stops 0~3,  IFIFO2 (Reg9): stops 4~7
---
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;
@@ -31,38 +42,78 @@ entity tdc_gpx_decode_i is
         g_BUS_DATA_WIDTH : natural := c_TDC_BUS_WIDTH       -- 28
     );
     port (
-        -- Input (from chip_ctrl)
-        i_raw_word       : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
-        i_raw_word_valid : in  std_logic;
-        i_ififo_id       : in  std_logic;
+        i_clk             : in  std_logic;
+        i_rst_n           : in  std_logic;
 
-        -- Output (decoded fields, purely combinational)
-        o_raw_hit        : out unsigned(c_RAW_HIT_WIDTH - 1 downto 0);  -- 17-bit
-        o_slope          : out std_logic;
-        o_cha_code_raw   : out unsigned(1 downto 0);
-        o_stop_id_local  : out unsigned(2 downto 0);                     -- 0..7
-        o_decoded_valid  : out std_logic
+        -- AXI-Stream slave (from chip_ctrl)
+        i_s_axis_tvalid   : in  std_logic;
+        i_s_axis_tdata    : in  std_logic_vector(31 downto 0);
+        i_s_axis_tuser    : in  std_logic_vector(7 downto 0);
+        o_s_axis_tready   : out std_logic;
+
+        -- AXI-Stream master (to raw_event_builder)
+        o_m_axis_tvalid   : out std_logic;
+        o_m_axis_tdata    : out std_logic_vector(31 downto 0);
+        o_m_axis_tuser    : out std_logic_vector(7 downto 0);
+        i_m_axis_tready   : in  std_logic
     );
 end entity tdc_gpx_decode_i;
 
 architecture rtl of tdc_gpx_decode_i is
+
+    signal s_tvalid_r : std_logic := '0';
+    signal s_tdata_r  : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_tuser_r  : std_logic_vector(7 downto 0)  := (others => '0');
+
 begin
 
-    -- Hit data: bits [16:0], 17-bit raw time measurement
-    o_raw_hit <= unsigned(i_raw_word(c_RAW_HIT_HI downto c_RAW_HIT_LO));
+    -- Always ready to accept (single-stage pipe, downstream is always-accept)
+    o_s_axis_tready <= i_m_axis_tready or (not s_tvalid_r);
 
-    -- Slope: bit [17], edge direction
-    o_slope <= i_raw_word(c_RAW_SLOPE_BIT);
+    p_decode : process(i_clk)
+        variable v_raw      : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        variable v_ififo_id : std_logic;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_tvalid_r <= '0';
+                s_tdata_r  <= (others => '0');
+                s_tuser_r  <= (others => '0');
+            else
+                -- Handshake: advance when output consumed or empty
+                if s_tvalid_r = '0' or i_m_axis_tready = '1' then
+                    if i_s_axis_tvalid = '1' then
+                        if i_s_axis_tuser(7) = '1' then
+                            -- drain_done control beat: pass through, no decode
+                            s_tdata_r  <= (others => '0');
+                            s_tuser_r  <= (others => '0');
+                            s_tuser_r(7) <= '1';          -- drain_done flag
+                        else
+                            -- Normal data beat: decode raw word
+                            v_raw      := i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
+                            v_ififo_id := i_s_axis_tuser(0);
 
-    -- Channel code: bits [27:26], 2-bit channel within IFIFO
-    o_cha_code_raw <= unsigned(i_raw_word(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO));
+                            s_tdata_r(c_RAW_HIT_WIDTH - 1 downto 0)  <= v_raw(c_RAW_HIT_HI downto c_RAW_HIT_LO);
+                            s_tdata_r(31 downto c_RAW_HIT_WIDTH)      <= (others => '0');
 
-    -- Stop ID reconstruction: {ififo_id, cha_code[1:0]}
-    -- IFIFO1 (id=0): stop 0~3,  IFIFO2 (id=1): stop 4~7
-    o_stop_id_local <= unsigned(i_ififo_id
-                                & i_raw_word(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO));
+                            s_tuser_r(0)          <= v_raw(c_RAW_SLOPE_BIT);
+                            s_tuser_r(2 downto 1) <= v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO);
+                            s_tuser_r(5 downto 3) <= v_ififo_id
+                                                     & v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO);
+                            s_tuser_r(6)          <= v_ififo_id;
+                            s_tuser_r(7)          <= '0';
+                        end if;
+                        s_tvalid_r <= '1';
+                    else
+                        s_tvalid_r <= '0';
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_decode;
 
-    -- Valid passthrough
-    o_decoded_valid <= i_raw_word_valid;
+    o_m_axis_tvalid <= s_tvalid_r;
+    o_m_axis_tdata  <= s_tdata_r;
+    o_m_axis_tuser  <= s_tuser_r;
 
 end architecture rtl;

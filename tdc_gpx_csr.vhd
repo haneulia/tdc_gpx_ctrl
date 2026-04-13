@@ -103,6 +103,7 @@ entity tdc_gpx_csr is
 
         -- Command pulses (i_axis_aclk domain, 1-clk, rising-edge detect)
         o_cmd_start         : out std_logic;
+        i_cmd_start_accepted : in  std_logic;  -- feedback from top: start was actually accepted
         o_cmd_stop          : out std_logic;
         o_cmd_soft_reset    : out std_logic;
         o_cmd_cfg_write     : out std_logic;
@@ -683,7 +684,9 @@ begin
     p_start_pending : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
+            if i_axis_aresetn = '0'
+               or s_cmd_pulse_r(1) = '1'      -- stop clears pending
+               or s_cmd_pulse_r(2) = '1' then  -- soft_reset clears pending
                 s_start_pending_r <= '0';
             elsif s_cmd_pulse_r(0) = '1' and s_cdc_all_idle_ff(1) = '0' then
                 s_start_pending_r <= '1';
@@ -703,7 +706,9 @@ begin
     p_cfg_write_pending : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
+            if i_axis_aresetn = '0'
+               or s_cmd_pulse_r(1) = '1'
+               or s_cmd_pulse_r(2) = '1' then
                 s_cfg_write_pending_r <= '0';
             elsif s_cmd_pulse_r(3) = '1' and s_cdc_all_idle_ff(1) = '0' then
                 -- CDC busy: latch the request
@@ -774,9 +779,9 @@ begin
                 s_lsr_cols_r  <= (others => '0');
                 s_lsr_valid_r <= '0';
             else
-                -- Clear override on cmd_start: SW regains CTL2 control.
-                -- laser_ctrl can re-override on next tvalid.
-                if o_cmd_start = '1' then
+                -- Clear override only on ACCEPTED start (not raw pulse).
+                -- Prevents unaccepted start from prematurely clearing override.
+                if i_cmd_start_accepted = '1' then
                     s_lsr_valid_r <= '0';
                 end if;
                 -- Set override on laser_ctrl input

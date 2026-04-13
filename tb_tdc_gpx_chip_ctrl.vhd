@@ -105,10 +105,15 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_bus_req_wdata      : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_bus_oen_perm       : std_logic;
     signal s_bus_req_burst      : std_logic;
-    signal s_bus_rsp_valid      : std_logic;
-    signal s_bus_rsp_rdata      : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_bus_busy           : std_logic;
     signal s_tick_en            : std_logic;
+
+    -- bus_phy → chip_ctrl AXI-Stream (response)
+    signal s_brsp_axis_tvalid   : std_logic;
+    signal s_brsp_axis_tdata    : std_logic_vector(31 downto 0);
+    signal s_brsp_axis_tkeep    : std_logic_vector(3 downto 0);
+    signal s_brsp_axis_tuser    : std_logic_vector(7 downto 0);
+    signal s_brsp_axis_tready   : std_logic;
 
     -- =========================================================================
     -- bus_phy physical pins
@@ -142,9 +147,11 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_stopdis            : std_logic;
     signal s_alutrigger         : std_logic;
     signal s_puresn             : std_logic;
-    signal s_raw_word           : std_logic_vector(c_DATA_W - 1 downto 0);
-    signal s_raw_word_valid     : std_logic;
-    signal s_ififo_id           : std_logic;
+    -- chip_ctrl raw AXI-Stream outputs
+    signal s_raw_axis_tvalid    : std_logic;
+    signal s_raw_axis_tdata     : std_logic_vector(31 downto 0);
+    signal s_raw_axis_tuser     : std_logic_vector(7 downto 0);
+    signal s_raw_axis_tready    : std_logic := '1';
     signal s_drain_done         : std_logic;
     signal s_shot_seq           : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal s_ctrl_busy          : std_logic;
@@ -241,8 +248,10 @@ begin
             o_bus_oen_permanent => s_bus_oen_perm,
             o_bus_req_burst     => s_bus_req_burst,
             o_bus_ticks_snap    => open,
-            i_bus_rsp_valid     => s_bus_rsp_valid,
-            i_bus_rsp_rdata     => s_bus_rsp_rdata,
+            i_s_axis_tvalid     => s_brsp_axis_tvalid,
+            i_s_axis_tdata      => s_brsp_axis_tdata,
+            i_s_axis_tuser      => s_brsp_axis_tuser,
+            o_s_axis_tready     => s_brsp_axis_tready,
             i_bus_busy          => s_bus_busy,
             i_ef1_sync          => s_ef1_sync,
             i_ef2_sync          => s_ef2_sync,
@@ -253,9 +262,10 @@ begin
             o_stopdis           => s_stopdis,
             o_alutrigger        => s_alutrigger,
             o_puresn            => s_puresn,
-            o_raw_word          => s_raw_word,
-            o_raw_word_valid    => s_raw_word_valid,
-            o_ififo_id          => s_ififo_id,
+            o_m_raw_axis_tvalid => s_raw_axis_tvalid,
+            o_m_raw_axis_tdata  => s_raw_axis_tdata,
+            o_m_raw_axis_tuser  => s_raw_axis_tuser,
+            i_m_raw_axis_tready => s_raw_axis_tready,
             o_drain_done        => s_drain_done,
             o_shot_seq          => s_shot_seq,
             o_busy              => s_ctrl_busy,
@@ -278,8 +288,11 @@ begin
             i_req_wdata     => s_bus_req_wdata,
             i_oen_permanent => s_bus_oen_perm,
             i_req_burst     => s_bus_req_burst,
-            o_rsp_valid     => s_bus_rsp_valid,
-            o_rsp_rdata     => s_bus_rsp_rdata,
+            o_m_axis_tvalid => s_brsp_axis_tvalid,
+            o_m_axis_tdata  => s_brsp_axis_tdata,
+            o_m_axis_tkeep  => s_brsp_axis_tkeep,
+            o_m_axis_tuser  => s_brsp_axis_tuser,
+            i_m_axis_tready => s_brsp_axis_tready,
             o_busy          => s_bus_busy,
             o_adr           => s_adr,
             o_csn           => s_csn,
@@ -396,11 +409,11 @@ begin
         if rising_edge(s_clk) then
             v_clk_cnt := v_clk_cnt + 1;
 
-            if s_raw_word_valid = '1' then
+            if s_raw_axis_tvalid = '1' then
                 sv_raw_word_cnt <= sv_raw_word_cnt + 1;
                 pr_info("  @" & nat_img(v_clk_cnt)
-                        & " raw_word=0x" & hex_img(s_raw_word)
-                        & " ififo=" & sl_chr(s_ififo_id));
+                        & " raw_word=0x" & hex_img(s_raw_axis_tdata(c_DATA_W - 1 downto 0))
+                        & " ififo=" & sl_chr(s_raw_axis_tuser(0)));
             end if;
 
             if s_drain_done = '1' then

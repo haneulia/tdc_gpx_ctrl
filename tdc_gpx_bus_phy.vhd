@@ -84,9 +84,7 @@ entity tdc_gpx_bus_phy is
         i_oen_permanent : in  std_logic;                    -- '1' = drain burst
         i_req_burst     : in  std_logic;                    -- '1' = back-to-back read
 
-        -- Response interface (to chip_ctrl)
-        o_rsp_valid     : out std_logic;
-        o_rsp_rdata     : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        -- Response: busy flag (active during transaction)
         o_busy          : out std_logic;
 
         -- TDC-GPX physical pins
@@ -104,6 +102,26 @@ entity tdc_gpx_bus_phy is
         i_lf2_pin       : in  std_logic;
         i_irflag_pin    : in  std_logic;
         i_errflag_pin   : in  std_logic;
+
+        -- AXI-Stream master: bus response mirror (read data + write ack)
+        -- ---------------------------------------------------------------
+        -- Standard AXI4-Stream, 32-bit tdata, 8-bit tuser.
+        --
+        -- tdata[27:0]  = bus read data (28-bit TDC-GPX data, valid for reads)
+        -- tdata[31:28] = 0 (reserved, zero-padded to 32-bit boundary)
+        -- tuser[0]     = '0' READ response, '1' WRITE ack
+        -- tuser[4:1]   = target register address [3:0]
+        -- tuser[7:5]   = 0 (reserved)
+        -- tkeep         = "1111" (all 4 bytes always valid)
+        --
+        -- Handshake: tvalid asserted on transaction completion, held
+        --            until tready='1'. One beat per bus transaction.
+        -- ---------------------------------------------------------------
+        o_m_axis_tvalid : out std_logic;
+        o_m_axis_tdata  : out std_logic_vector(31 downto 0);
+        o_m_axis_tkeep  : out std_logic_vector(3 downto 0);
+        o_m_axis_tuser  : out std_logic_vector(7 downto 0);
+        i_m_axis_tready : in  std_logic;
 
         -- Synchronized outputs (2-FF, active HIGH)
         o_ef1_sync      : out std_logic;
@@ -164,6 +182,13 @@ architecture rtl of tdc_gpx_bus_phy is
     signal s_rsp_rdata_r     : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_rsp_pending_r   : std_logic := '0';    -- read response deferred by 1 tick
     signal s_busy_r          : std_logic := '0';
+
+    -- AXI-Stream master: bus response mirror (32-bit tdata, 8-bit tuser)
+    signal s_axis_tvalid_r   : std_logic := '0';
+    signal s_axis_tdata_r    : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_axis_tuser_r    : std_logic_vector(7 downto 0) := (others => '0');
+    signal s_axis_rw_r       : std_logic := '0';    -- '0'=read, '1'=write (latched at txn entry)
+    signal s_axis_addr_r     : std_logic_vector(3 downto 0) := (others => '0');  -- latched addr
 
     -- Latched bus_ticks: snapshot at transaction entry to prevent
     -- mid-transaction changes from corrupting tick counter comparisons.
@@ -277,10 +302,20 @@ begin
                 s_req_wdata_r       <= (others => '0');
                 s_turn_to_write_r   <= '0';
                 s_bus_ticks_r       <= "101";            -- default 5
+                s_axis_tvalid_r     <= '0';
+                s_axis_tdata_r      <= (others => '0');
+                s_axis_tuser_r      <= (others => '0');
+                s_axis_rw_r         <= '0';
+                s_axis_addr_r       <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_rsp_valid_r <= '0';
                 s_sample_en   <= '0';
+
+                -- AXI-Stream handshake: clear tvalid when tready accepted
+                if s_axis_tvalid_r = '1' and i_m_axis_tready = '1' then
+                    s_axis_tvalid_r <= '0';
+                end if;
 
                 -- ==========================================================
                 -- Deferred read response: emit rsp_valid one tick after
@@ -296,6 +331,11 @@ begin
                     s_rsp_valid_r   <= '1';
                     s_rsp_rdata_r   <= s_d_in_ff_r;
                     s_rsp_pending_r <= '0';
+                    -- AXI-Stream: read response (zero-pad 28→32 bit)
+                    s_axis_tvalid_r             <= '1';
+                    s_axis_tdata_r(27 downto 0) <= s_d_in_ff_r;
+                    s_axis_tdata_r(31 downto 28)<= (others => '0');
+                    s_axis_tuser_r              <= "000" & s_axis_addr_r & '0';
                 end if;
 
                 case s_state_r is
@@ -342,7 +382,9 @@ begin
                                     s_req_wdata_r     <= i_req_wdata;
                                     s_oen_r           <= '1';
                                     s_turn_to_write_r <= '1';
-                                    s_bus_ticks_r     <= i_bus_ticks;   -- latch config
+                                    s_bus_ticks_r     <= i_bus_ticks;
+                                    s_axis_rw_r       <= '1';
+                                    s_axis_addr_r     <= i_req_addr;
                                     s_state_r         <= ST_TURNAROUND;
 
                                 else
@@ -354,6 +396,8 @@ begin
                                     s_d_tri_r     <= '0';           -- drive D-bus
                                     s_wrn_r       <= '1';           -- high during Phase A
                                     s_bus_ticks_r <= i_bus_ticks;   -- latch config
+                                    s_axis_rw_r   <= '1';           -- WRITE
+                                    s_axis_addr_r <= i_req_addr;
                                     s_tick_r      <= to_unsigned(1, 3);
                                     s_state_r     <= ST_WRITE;
                                 end if;
@@ -364,7 +408,9 @@ begin
                                     -- [INV-5] Need turnaround
                                     s_req_addr_r      <= i_req_addr;
                                     s_turn_to_write_r <= '0';
-                                    s_bus_ticks_r     <= i_bus_ticks;   -- latch config
+                                    s_bus_ticks_r     <= i_bus_ticks;
+                                    s_axis_rw_r       <= '0';
+                                    s_axis_addr_r     <= i_req_addr;
                                     s_state_r         <= ST_TURNAROUND;
 
                                 else
@@ -375,6 +421,8 @@ begin
                                     s_d_tri_r     <= '1';           -- FPGA Hi-Z [INV-2]
                                     s_rdn_r       <= '1';           -- high during Phase A
                                     s_bus_ticks_r <= i_bus_ticks;   -- latch config
+                                    s_axis_rw_r   <= '0';           -- READ
+                                    s_axis_addr_r <= i_req_addr;
                                     s_tick_r      <= to_unsigned(1, 3);
                                     s_state_r     <= ST_READ;
                                 end if;
@@ -515,6 +563,10 @@ begin
                                 s_busy_r           <= '0';
                                 s_tick_r           <= (others => '0');
                                 s_state_r          <= ST_IDLE;
+                                -- AXI-Stream: write ack (tdata=0)
+                                s_axis_tvalid_r    <= '1';
+                                s_axis_tdata_r     <= (others => '0');
+                                s_axis_tuser_r     <= "000" & s_axis_addr_r & '1';
                             else
                                 s_tick_r <= s_tick_r + 1;
                             end if;
@@ -538,9 +590,12 @@ begin
     o_wrn       <= s_wrn_r;
     o_oen       <= s_oen_r;
 
-    o_rsp_valid <= s_rsp_valid_r;
-    o_rsp_rdata <= s_rsp_rdata_r;
     o_busy      <= s_busy_r;
+
+    o_m_axis_tvalid <= s_axis_tvalid_r;
+    o_m_axis_tdata  <= s_axis_tdata_r;
+    o_m_axis_tkeep  <= "1111";
+    o_m_axis_tuser  <= s_axis_tuser_r;
 
     -- =========================================================================
     -- 2-FF Synchronizers (free-running, not gated by tick_en)

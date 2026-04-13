@@ -65,6 +65,7 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_top is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
+        g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32 or 64)
         g_POWERUP_CLKS    : natural := 48;
         g_RECOVERY_CLKS   : natural := 8;
         g_ALU_PULSE_CLKS  : natural := 4;
@@ -149,14 +150,14 @@ entity tdc_gpx_top is
         i_tdc_errflag    : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
 
         -- AXI-Stream master output: RISING pipeline (to CDC FIFO / VDMA)
-        o_m_axis_tdata   : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tdata   : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         o_m_axis_tvalid  : out std_logic;
         o_m_axis_tlast   : out std_logic;
         o_m_axis_tuser   : out std_logic_vector(0 downto 0);
         i_m_axis_tready  : in  std_logic;
 
         -- AXI-Stream master output: FALLING pipeline (to CDC FIFO / VDMA)
-        o_m_axis_fall_tdata  : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_fall_tdata  : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         o_m_axis_fall_tvalid : out std_logic;
         o_m_axis_fall_tlast  : out std_logic;
         o_m_axis_fall_tuser  : out std_logic_vector(0 downto 0);
@@ -238,9 +239,18 @@ architecture rtl of tdc_gpx_top is
     signal s_bus_oen_perm    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_ticks_snap  : t_u3_array;
-    signal s_bus_rsp_valid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_rsp_rdata   : t_slv28_array;
     signal s_bus_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- Per-chip: bus_phy → chip_ctrl AXI-Stream (response)
+    type t_slv32_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(31 downto 0);
+    type t_slv8_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(7 downto 0);
+    signal s_brsp_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_brsp_axis_tdata  : t_slv32_array;
+    signal s_brsp_axis_tkeep  : t_slv4_array;
+    signal s_brsp_axis_tuser  : t_slv8_array;
+    signal s_brsp_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy synchronized status
     signal s_ef1_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -250,25 +260,49 @@ architecture rtl of tdc_gpx_top is
     signal s_irflag_sync     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_errflag_sync    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-    -- Per-chip: chip_ctrl -> decode_i
-    signal s_raw_word        : t_slv28_array;
-    signal s_raw_word_valid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_ififo_id        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Per-chip: chip_ctrl -> decode_i (AXI-Stream, 32b tdata + 8b tuser)
+    signal s_raw_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_axis_tdata  : t_slv32_array;
+    signal s_raw_axis_tuser  : t_slv8_array;
+    signal s_raw_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_drain_done      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_shot_seq   : t_shot_seq_array;
     signal s_chip_busy       : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_tick_en         : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-    -- Per-chip: decode_i -> raw_event_builder (combinational)
-    signal s_dec_raw_hit     : t_raw_hit_array;
-    signal s_dec_slope       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_dec_cha_code    : t_u2_array;
-    signal s_dec_stop_id     : t_u3_array;
-    signal s_dec_valid       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Per-chip: skid buffer outputs (bus_phy → chip_ctrl)
+    signal s_brsp_sk_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_brsp_sk_tdata   : t_slv32_array;
+    signal s_brsp_sk_tuser   : t_slv8_array;
+    signal s_brsp_sk_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-    -- Per-chip: raw_event_builder -> slope demux -> cell_builders
-    signal s_raw_event       : t_raw_event_array;
-    signal s_raw_event_valid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Per-chip: skid buffer outputs (chip_ctrl → decode_i)
+    signal s_raw_sk_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_sk_tdata    : t_slv32_array;
+    signal s_raw_sk_tuser    : t_slv8_array;
+    signal s_raw_sk_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- Per-chip: skid buffer outputs (decode_i → raw_event_builder)
+    signal s_dec_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_dec_axis_tdata  : t_slv32_array;
+    signal s_dec_axis_tuser  : t_slv8_array;
+    signal s_dec_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_dec_sk_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_dec_sk_tdata    : t_slv32_array;
+    signal s_dec_sk_tuser    : t_slv8_array;
+    signal s_dec_sk_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- Per-chip: skid buffer outputs (raw_event_builder → cell_builder)
+    type t_slv16_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(15 downto 0);
+    signal s_evt_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_evt_axis_tdata  : t_slv32_array;
+    signal s_evt_axis_tuser  : t_slv16_array;
+    signal s_evt_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_evt_sk_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_evt_sk_tdata    : t_slv32_array;
+    signal s_evt_sk_tuser    : t_slv16_array;
+    signal s_evt_sk_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_stop_id_error   : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Slope demux: split raw_event_valid by slope bit
@@ -276,8 +310,12 @@ architecture rtl of tdc_gpx_top is
     signal s_raw_evt_rise_valid : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_raw_evt_fall_valid : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+    -- Output-width cell data array type
+    type t_out_tdata_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+
     -- Per-chip: cell_builder (rising) -> face_assembler (AXI-Stream)
-    signal s_cell_tdata      : t_axis_tdata_array;
+    signal s_cell_tdata      : t_out_tdata_array;
     signal s_cell_tvalid     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cell_tlast      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cell_tready     : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -285,7 +323,7 @@ architecture rtl of tdc_gpx_top is
     signal s_hit_dropped     : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: cell_builder (falling) -> face_assembler_fall (AXI-Stream)
-    signal s_cell_fall_tdata   : t_axis_tdata_array;
+    signal s_cell_fall_tdata   : t_out_tdata_array;
     signal s_cell_fall_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cell_fall_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cell_fall_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -295,7 +333,7 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     -- face_assembler (rising) -> header_inserter (AXI-Stream)
     -- =========================================================================
-    signal s_face_tdata      : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+    signal s_face_tdata      : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_face_tvalid     : std_logic;
     signal s_face_tlast      : std_logic;
     signal s_face_tready     : std_logic;
@@ -305,16 +343,16 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     -- face_assembler_fall (falling) -> header_inserter_fall (AXI-Stream)
     -- =========================================================================
-    signal s_face_fall_tdata   : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+    signal s_face_fall_tdata   : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_face_fall_tvalid  : std_logic;
     signal s_face_fall_tlast   : std_logic;
     signal s_face_fall_tready  : std_logic;
 
     -- Buffered face → header (after sync FIFO)
-    signal s_face_buf_tdata      : std_logic_vector(c_TDATA_WIDTH downto 0);  -- tdata & tlast
+    signal s_face_buf_tdata      : std_logic_vector(g_OUTPUT_WIDTH downto 0);  -- tdata & tlast
     signal s_face_buf_tvalid     : std_logic;
     signal s_face_buf_tready     : std_logic;
-    signal s_face_fall_buf_tdata : std_logic_vector(c_TDATA_WIDTH downto 0);
+    signal s_face_fall_buf_tdata : std_logic_vector(g_OUTPUT_WIDTH downto 0);
     signal s_face_fall_buf_tvalid: std_logic;
     signal s_face_fall_buf_tready: std_logic;
     signal s_row_fall_done     : std_logic;
@@ -776,6 +814,7 @@ begin
             o_cfg            => s_cfg,
             o_cfg_image      => s_cfg_image_raw,
             o_cmd_start      => s_cmd_start,
+            i_cmd_start_accepted => s_cmd_start_accepted,
             o_cmd_stop       => s_cmd_stop,
             o_cmd_soft_reset => s_cmd_soft_reset,
             o_cmd_cfg_write  => s_cmd_cfg_write,
@@ -794,38 +833,50 @@ begin
     -- =========================================================================
     -- [1a] Per-chip reg access demux: route cmd to targeted chip only
     -- =========================================================================
-    -- 1-outstanding lock: gates reg commands on the SAME signals that
-    -- chip_ctrl actually receives (accepted/gated), not raw CSR pulses.
-    -- This eliminates timing asymmetry between demux and chip_ctrl.
+    -- 1-outstanding lock + full command arbitration.
+    -- Block reg when: (a) raw start OR accepted start active (covers 1-clk gap),
+    -- (b) cfg_write gated or pending, (c) target chip busy.
     gen_reg_demux : for i in 0 to c_N_CHIPS - 1 generate
         s_cmd_reg_read_g(i)  <= s_cmd_reg_read
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
+                                 and s_cmd_start = '0'
                                  and s_cmd_start_accepted = '0'
                                  and s_cmd_cfg_write_g = '0'
+                                 and s_cmd_cfg_write = '0'
+                                 and s_chip_busy(i) = '0'
                                 else '0';
         s_cmd_reg_write_g(i) <= s_cmd_reg_write
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
+                                 and s_cmd_start = '0'
                                  and s_cmd_start_accepted = '0'
                                  and s_cmd_cfg_write_g = '0'
+                                 and s_cmd_cfg_write = '0'
+                                 and s_chip_busy(i) = '0'
                                 else '0';
     end generate gen_reg_demux;
 
-    -- cfg_write pending + gating: hold until all chips idle and no start.
-    -- Uses s_cmd_start_accepted (not raw) for timing consistency.
+    -- cfg_write pending + gating: hold until full pipeline idle and no start.
+    -- Same idle conditions as cmd_start accept (face_seq, assembler, header).
     p_cfg_write_top_pending : process(i_axis_aclk)
-        variable v_can_issue : boolean;
+        variable v_pipeline_idle : boolean;
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
+            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1'
+               or s_cmd_stop = '1' then
                 s_cfg_write_top_pending_r <= '0';
             else
-                v_can_issue := s_chip_busy = C_ZEROS_CHIPS
-                           and s_cmd_start_accepted = '0';
-                if s_cmd_cfg_write = '1' and not v_can_issue then
+                v_pipeline_idle := s_chip_busy = C_ZEROS_CHIPS
+                               and s_face_asm_idle = '1'
+                               and s_face_asm_fall_idle = '1'
+                               and s_hdr_idle = '1'
+                               and s_hdr_fall_idle = '1'
+                               and s_cmd_start = '0'
+                               and s_cmd_start_accepted = '0';
+                if s_cmd_cfg_write = '1' and not v_pipeline_idle then
                     s_cfg_write_top_pending_r <= '1';
-                elsif s_cfg_write_top_pending_r = '1' and v_can_issue then
+                elsif s_cfg_write_top_pending_r = '1' and v_pipeline_idle then
                     s_cfg_write_top_pending_r <= '0';
                 end if;
             end if;
@@ -834,6 +885,11 @@ begin
 
     s_cmd_cfg_write_g <= (s_cmd_cfg_write or s_cfg_write_top_pending_r)
                          when s_chip_busy = C_ZEROS_CHIPS
+                          and s_face_asm_idle = '1'
+                          and s_face_asm_fall_idle = '1'
+                          and s_hdr_idle = '1'
+                          and s_hdr_fall_idle = '1'
+                          and s_cmd_start = '0'
                           and s_cmd_start_accepted = '0'
                          else '0';
 
@@ -887,9 +943,12 @@ begin
                 i_req_wdata     => s_bus_req_wdata(i),
                 i_oen_permanent => s_bus_oen_perm(i),
                 i_req_burst     => s_bus_req_burst(i),
-                o_rsp_valid     => s_bus_rsp_valid(i),
-                o_rsp_rdata     => s_bus_rsp_rdata(i),
                 o_busy          => s_bus_busy(i),
+                o_m_axis_tvalid => s_brsp_axis_tvalid(i),
+                o_m_axis_tdata  => s_brsp_axis_tdata(i),
+                o_m_axis_tkeep  => s_brsp_axis_tkeep(i),
+                o_m_axis_tuser  => s_brsp_axis_tuser(i),
+                i_m_axis_tready => s_brsp_axis_tready(i),  -- from skid
                 o_adr           => o_tdc_adr(i),
                 o_csn           => o_tdc_csn(i),
                 o_rdn           => o_tdc_rdn(i),
@@ -908,6 +967,22 @@ begin
                 o_lf2_sync      => s_lf2_sync(i),
                 o_irflag_sync   => s_irflag_sync(i),
                 o_errflag_sync  => s_errflag_sync(i)
+            );
+
+        -- ----- skid buffer: bus_phy → chip_ctrl (32b tdata + 8b tuser = 40b) -----
+        u_sk_brsp : entity work.tdc_gpx_skid_buffer
+            generic map (g_DATA_WIDTH => 40)
+            port map (
+                i_clk    => i_axis_aclk,
+                i_rst_n  => i_axis_aresetn,
+                i_flush  => '0',
+                i_s_valid => s_brsp_axis_tvalid(i),
+                o_s_ready => s_brsp_axis_tready(i),
+                i_s_data  => s_brsp_axis_tdata(i) & s_brsp_axis_tuser(i),
+                o_m_valid => s_brsp_sk_tvalid(i),
+                i_m_ready => s_brsp_sk_tready(i),
+                o_m_data(39 downto 8) => s_brsp_sk_tdata(i),
+                o_m_data(7 downto 0)  => s_brsp_sk_tuser(i)
             );
 
         -- ----- chip_ctrl: single-shot FSM (powerup/cfg/arm/capture/drain) -----
@@ -946,8 +1021,10 @@ begin
                 o_bus_oen_permanent => s_bus_oen_perm(i),
                 o_bus_req_burst     => s_bus_req_burst(i),
                 o_bus_ticks_snap    => s_bus_ticks_snap(i),
-                i_bus_rsp_valid     => s_bus_rsp_valid(i),
-                i_bus_rsp_rdata     => s_bus_rsp_rdata(i),
+                i_s_axis_tvalid     => s_brsp_sk_tvalid(i),
+                i_s_axis_tdata      => s_brsp_sk_tdata(i),
+                i_s_axis_tuser      => s_brsp_sk_tuser(i),
+                o_s_axis_tready     => s_brsp_sk_tready(i),
                 i_bus_busy          => s_bus_busy(i),
                 i_ef1_sync          => s_ef1_sync(i),
                 i_ef2_sync          => s_ef2_sync(i),
@@ -958,9 +1035,10 @@ begin
                 o_stopdis           => o_tdc_stopdis(i),
                 o_alutrigger        => o_tdc_alutrigger(i),
                 o_puresn            => o_tdc_puresn(i),
-                o_raw_word          => s_raw_word(i),
-                o_raw_word_valid    => s_raw_word_valid(i),
-                o_ififo_id          => s_ififo_id(i),
+                o_m_raw_axis_tvalid => s_raw_axis_tvalid(i),
+                o_m_raw_axis_tdata  => s_raw_axis_tdata(i),
+                o_m_raw_axis_tuser  => s_raw_axis_tuser(i),
+                i_m_raw_axis_tready => s_raw_axis_tready(i),
                 o_drain_done        => s_drain_done(i),
                 o_shot_seq          => s_chip_shot_seq(i),
                 o_busy              => s_chip_busy(i),
@@ -968,17 +1046,51 @@ begin
                 o_err_sequence      => s_err_sequence(i)
             );
 
-        -- ----- decode_i: combinational 28-bit I-Mode field extraction -----
+        -- ----- skid buffer: chip_ctrl → decode_i (32b + 8b = 40b) -----
+        u_sk_raw : entity work.tdc_gpx_skid_buffer
+            generic map (g_DATA_WIDTH => 40)
+            port map (
+                i_clk    => i_axis_aclk,
+                i_rst_n  => i_axis_aresetn,
+                i_flush  => '0',
+                i_s_valid => s_raw_axis_tvalid(i),
+                o_s_ready => s_raw_axis_tready(i),
+                i_s_data  => s_raw_axis_tdata(i) & s_raw_axis_tuser(i),
+                o_m_valid => s_raw_sk_tvalid(i),
+                i_m_ready => s_raw_sk_tready(i),
+                o_m_data(39 downto 8) => s_raw_sk_tdata(i),
+                o_m_data(7 downto 0)  => s_raw_sk_tuser(i)
+            );
+
+        -- ----- decode_i: registered 28-bit I-Mode field extraction -----
         u_decode : entity work.tdc_gpx_decode_i
             port map (
-                i_raw_word       => s_raw_word(i),
-                i_raw_word_valid => s_raw_word_valid(i),
-                i_ififo_id       => s_ififo_id(i),
-                o_raw_hit        => s_dec_raw_hit(i),
-                o_slope          => s_dec_slope(i),
-                o_cha_code_raw   => s_dec_cha_code(i),
-                o_stop_id_local  => s_dec_stop_id(i),
-                o_decoded_valid  => s_dec_valid(i)
+                i_clk             => i_axis_aclk,
+                i_rst_n           => i_axis_aresetn,
+                i_s_axis_tvalid   => s_raw_sk_tvalid(i),
+                i_s_axis_tdata    => s_raw_sk_tdata(i),
+                i_s_axis_tuser    => s_raw_sk_tuser(i),
+                o_s_axis_tready   => s_raw_sk_tready(i),
+                o_m_axis_tvalid   => s_dec_axis_tvalid(i),
+                o_m_axis_tdata    => s_dec_axis_tdata(i),
+                o_m_axis_tuser    => s_dec_axis_tuser(i),
+                i_m_axis_tready   => s_dec_axis_tready(i)
+            );
+
+        -- ----- skid buffer: decode_i → raw_event_builder (32b + 8b = 40b) -----
+        u_sk_dec : entity work.tdc_gpx_skid_buffer
+            generic map (g_DATA_WIDTH => 40)
+            port map (
+                i_clk    => i_axis_aclk,
+                i_rst_n  => i_axis_aresetn,
+                i_flush  => '0',
+                i_s_valid => s_dec_axis_tvalid(i),
+                o_s_ready => s_dec_axis_tready(i),
+                i_s_data  => s_dec_axis_tdata(i) & s_dec_axis_tuser(i),
+                o_m_valid => s_dec_sk_tvalid(i),
+                i_m_ready => s_dec_sk_tready(i),
+                o_m_data(39 downto 8) => s_dec_sk_tdata(i),
+                o_m_data(7 downto 0)  => s_dec_sk_tuser(i)
             );
 
         -- ----- raw_event_builder: enrich with chip/shot context -----
@@ -986,37 +1098,58 @@ begin
             port map (
                 i_clk             => i_axis_aclk,
                 i_rst_n           => i_axis_aresetn,
-                i_raw_hit         => s_dec_raw_hit(i),
-                i_slope           => s_dec_slope(i),
-                i_cha_code_raw    => s_dec_cha_code(i),
-                i_stop_id_local   => s_dec_stop_id(i),
-                i_decoded_valid   => s_dec_valid(i),
-                i_ififo_id        => s_ififo_id(i),
+                i_s_axis_tvalid   => s_dec_sk_tvalid(i),
+                i_s_axis_tdata    => s_dec_sk_tdata(i),
+                i_s_axis_tuser    => s_dec_sk_tuser(i),
+                o_s_axis_tready   => s_dec_sk_tready(i),
                 i_chip_id         => to_unsigned(i, 2),
                 i_shot_seq        => s_chip_shot_seq(i),
-                i_drain_done      => s_drain_done(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
-                o_raw_event       => s_raw_event(i),
-                o_raw_event_valid => s_raw_event_valid(i),
+                o_m_axis_tvalid   => s_evt_axis_tvalid(i),
+                o_m_axis_tdata    => s_evt_axis_tdata(i),
+                o_m_axis_tuser    => s_evt_axis_tuser(i),
+                i_m_axis_tready   => s_evt_axis_tready(i),
                 o_stop_id_error   => s_stop_id_error(i)
             );
 
-        -- ----- slope demux: split raw_event_valid by slope bit -----
-        s_raw_evt_rise_valid(i) <= s_raw_event_valid(i) and     s_raw_event(i).slope;
-        s_raw_evt_fall_valid(i) <= s_raw_event_valid(i) and not s_raw_event(i).slope;
+        -- ----- skid buffer: raw_event_builder → cell_builder (32b + 16b = 48b) -----
+        u_sk_evt : entity work.tdc_gpx_skid_buffer
+            generic map (g_DATA_WIDTH => 48)
+            port map (
+                i_clk    => i_axis_aclk,
+                i_rst_n  => i_axis_aresetn,
+                i_flush  => '0',
+                i_s_valid => s_evt_axis_tvalid(i),
+                o_s_ready => s_evt_axis_tready(i),
+                i_s_data  => s_evt_axis_tdata(i) & s_evt_axis_tuser(i),
+                o_m_valid => s_evt_sk_tvalid(i),
+                i_m_ready => '1',   -- cell_builder always accepts in ST_COLLECT
+                o_m_data(47 downto 16) => s_evt_sk_tdata(i),
+                o_m_data(15 downto 0)  => s_evt_sk_tuser(i)
+            );
+
+        -- ----- slope demux: split tvalid by slope bit (tuser[0]) -----
+        -- drain_done (tuser[7]) control beat goes to BOTH pipelines
+        -- Uses skid buffer output (s_evt_sk_*)
+        s_raw_evt_rise_valid(i) <= s_evt_sk_tvalid(i)
+                                   and (s_evt_sk_tuser(i)(0) or s_evt_sk_tuser(i)(7));
+        s_raw_evt_fall_valid(i) <= s_evt_sk_tvalid(i)
+                                   and (not s_evt_sk_tuser(i)(0) or s_evt_sk_tuser(i)(7));
 
         -- ----- cell_builder (rising): sparse events -> dense cell -> AXI-Stream -----
         u_cell_bld : entity work.tdc_gpx_cell_builder
             generic map (
-                g_CHIP_ID => i
+                g_CHIP_ID     => i,
+                g_TDATA_WIDTH => g_OUTPUT_WIDTH
             )
             port map (
                 i_clk             => i_axis_aclk,
                 i_rst_n           => i_axis_aresetn,
-                i_raw_event       => s_raw_event(i),
-                i_raw_event_valid => s_raw_evt_rise_valid(i),
+                i_s_axis_tvalid   => s_raw_evt_rise_valid(i),
+                i_s_axis_tdata    => s_evt_sk_tdata(i),
+                i_s_axis_tuser    => s_evt_sk_tuser(i),
+                o_s_axis_tready   => open,
                 i_shot_start      => s_shot_start_per_chip(i),
-                i_drain_done      => s_drain_done(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
                 o_m_axis_tdata    => s_cell_tdata(i),
                 o_m_axis_tvalid   => s_cell_tvalid(i),
@@ -1029,15 +1162,17 @@ begin
         -- ----- cell_builder (falling): same raw_event, fall-filtered valid -----
         u_cell_bld_fall : entity work.tdc_gpx_cell_builder
             generic map (
-                g_CHIP_ID => i
+                g_CHIP_ID     => i,
+                g_TDATA_WIDTH => g_OUTPUT_WIDTH
             )
             port map (
                 i_clk             => i_axis_aclk,
                 i_rst_n           => i_axis_aresetn,
-                i_raw_event       => s_raw_event(i),
-                i_raw_event_valid => s_raw_evt_fall_valid(i),
+                i_s_axis_tvalid   => s_raw_evt_fall_valid(i),
+                i_s_axis_tdata    => s_evt_sk_tdata(i),
+                i_s_axis_tuser    => s_evt_sk_tuser(i),
+                o_s_axis_tready   => open,
                 i_shot_start      => s_shot_start_per_chip(i),
-                i_drain_done      => s_drain_done(i),
                 i_stops_per_chip  => s_face_stops_per_chip_r,
                 o_m_axis_tdata    => s_cell_fall_tdata(i),
                 o_m_axis_tvalid   => s_cell_fall_tvalid(i),
@@ -1054,12 +1189,16 @@ begin
     -- =========================================================================
     u_face_asm : entity work.tdc_gpx_face_assembler
         generic map (
-            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS,
+            g_TDATA_WIDTH    => g_OUTPUT_WIDTH
         )
         port map (
             i_clk              => i_axis_aclk,
             i_rst_n            => i_axis_aresetn,
-            i_s_axis_tdata     => s_cell_tdata,
+            i_s_axis_tdata_0   => s_cell_tdata(0),
+            i_s_axis_tdata_1   => s_cell_tdata(1),
+            i_s_axis_tdata_2   => s_cell_tdata(2),
+            i_s_axis_tdata_3   => s_cell_tdata(3),
             i_s_axis_tvalid    => s_cell_tvalid,
             i_s_axis_tlast     => s_cell_tlast,
             o_s_axis_tready    => s_cell_tready,
@@ -1084,12 +1223,16 @@ begin
     -- =========================================================================
     u_face_asm_fall : entity work.tdc_gpx_face_assembler
         generic map (
-            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS,
+            g_TDATA_WIDTH    => g_OUTPUT_WIDTH
         )
         port map (
             i_clk              => i_axis_aclk,
             i_rst_n            => i_axis_aresetn,
-            i_s_axis_tdata     => s_cell_fall_tdata,
+            i_s_axis_tdata_0   => s_cell_fall_tdata(0),
+            i_s_axis_tdata_1   => s_cell_fall_tdata(1),
+            i_s_axis_tdata_2   => s_cell_fall_tdata(2),
+            i_s_axis_tdata_3   => s_cell_fall_tdata(3),
             i_s_axis_tvalid    => s_cell_fall_tvalid,
             i_s_axis_tlast     => s_cell_fall_tlast,
             o_s_axis_tready    => s_cell_fall_tready,
@@ -1114,7 +1257,7 @@ begin
     -- =========================================================================
     u_face_fifo : entity work.tdc_gpx_sync_fifo
         generic map (
-            g_DATA_WIDTH => c_TDATA_WIDTH + 1,  -- tdata(31:0) & tlast(0) = 33 bits
+            g_DATA_WIDTH => g_OUTPUT_WIDTH + 1,  -- tdata(31:0) & tlast(0) = 33 bits
             g_DEPTH      => 16,
             g_LOG2_DEPTH => 4,
             g_IN_REG     => false,
@@ -1134,7 +1277,7 @@ begin
 
     u_face_fall_fifo : entity work.tdc_gpx_sync_fifo
         generic map (
-            g_DATA_WIDTH => c_TDATA_WIDTH + 1,
+            g_DATA_WIDTH => g_OUTPUT_WIDTH + 1,
             g_DEPTH      => 16,
             g_LOG2_DEPTH => 4,
             g_IN_REG     => false,
@@ -1156,6 +1299,7 @@ begin
     -- [4] Header inserter - RISING pipeline (header + SOF/EOL -> VDMA frame)
     -- =========================================================================
     u_header : entity work.tdc_gpx_header_inserter
+        generic map (g_TDATA_WIDTH => g_OUTPUT_WIDTH)
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
@@ -1171,7 +1315,7 @@ begin
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             i_rows_per_face     => s_rows_per_face_r,
-            i_s_axis_tdata      => s_face_buf_tdata(c_TDATA_WIDTH downto 1),
+            i_s_axis_tdata      => s_face_buf_tdata(g_OUTPUT_WIDTH downto 1),
             i_s_axis_tvalid     => s_face_buf_tvalid,
             i_s_axis_tlast      => s_face_buf_tdata(0),
             o_s_axis_tready     => s_face_buf_tready,
@@ -1190,6 +1334,7 @@ begin
     -- [4f] Header inserter - FALLING pipeline (header + SOF/EOL -> VDMA frame)
     -- =========================================================================
     u_header_fall : entity work.tdc_gpx_header_inserter
+        generic map (g_TDATA_WIDTH => g_OUTPUT_WIDTH)
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
@@ -1205,7 +1350,7 @@ begin
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             i_rows_per_face     => s_rows_per_face_r,
-            i_s_axis_tdata      => s_face_fall_buf_tdata(c_TDATA_WIDTH downto 1),
+            i_s_axis_tdata      => s_face_fall_buf_tdata(g_OUTPUT_WIDTH downto 1),
             i_s_axis_tvalid     => s_face_fall_buf_tvalid,
             i_s_axis_tlast      => s_face_fall_buf_tdata(0),
             o_s_axis_tready     => s_face_fall_buf_tready,
@@ -1352,6 +1497,7 @@ begin
                         -- issuing cmd_start before previous output drains.
                         if s_cmd_start = '1'
                            and s_chip_busy = C_ZEROS_CHIPS
+                           and s_reg_outstanding_r = '0'
                            and s_face_asm_idle = '1'
                            and s_face_asm_fall_idle = '1'
                            and s_hdr_idle = '1'

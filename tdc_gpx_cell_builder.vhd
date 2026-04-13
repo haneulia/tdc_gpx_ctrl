@@ -51,25 +51,37 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_cell_builder is
     generic (
-        g_CHIP_ID           : natural range 0 to 3 := 0
+        g_CHIP_ID           : natural range 0 to 3 := 0;
+        g_TDATA_WIDTH       : natural := c_TDATA_WIDTH    -- 32 or 64
     );
     port (
         i_clk               : in  std_logic;
         i_rst_n             : in  std_logic;
 
-        -- Raw event input (from raw_event_builder)
-        i_raw_event         : in  t_raw_event;
-        i_raw_event_valid   : in  std_logic;
+        -- AXI-Stream slave: raw event input (from raw_event_builder / slope demux)
+        --   tdata[16:0]  = raw_hit (17-bit, lower 16 stored)
+        --   tdata[31:17] = 0
+        --   tuser[0]     = slope
+        --   tuser[2:1]   = chip_id
+        --   tuser[5:3]   = stop_id_local (0..7)
+        --   tuser[6]     = ififo_id
+        --   tuser[7]     = drain_done (control beat: begin output phase)
+        --   tuser[10:8]  = hit_seq_local (0..7)
+        --   tuser[15:11] = 0
+        i_s_axis_tvalid     : in  std_logic;
+        i_s_axis_tdata      : in  std_logic_vector(31 downto 0);
+        i_s_axis_tuser      : in  std_logic_vector(15 downto 0);
+        o_s_axis_tready     : out std_logic;
 
         -- Control (from chip_ctrl)
         i_shot_start        : in  std_logic;   -- new shot: clear cell buffers
-        i_drain_done        : in  std_logic;   -- drain complete: begin output
+        -- drain_done is received via i_s_axis_tuser(7) control beat
 
         -- Configuration (latched at packet_start)
         i_stops_per_chip    : in  unsigned(3 downto 0);
 
         -- AXI-Stream master (chip slice output)
-        o_m_axis_tdata      : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tdata      : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         o_m_axis_tvalid     : out std_logic;
         o_m_axis_tlast      : out std_logic;
         i_m_axis_tready     : in  std_logic;
@@ -103,11 +115,15 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_beat_idx_r  : unsigned(2 downto 0) := (others => '0');  -- 0..BEATS_PER_CELL-1
     signal s_last_stop_r : unsigned(2 downto 0) := (others => '0'); -- pre-computed: stops_per_chip-1
 
-    -- Last beat index constant (for tlast comparison)
-    constant c_LAST_BEAT : unsigned(2 downto 0) := to_unsigned(c_BEATS_PER_CELL - 1, 3);
+    -- Generic-derived beat layout constants
+    constant c_G_SLOTS_PER_BEAT  : natural := fn_slots_per_beat(g_TDATA_WIDTH);
+    constant c_G_HIT_DATA_BEATS  : natural := fn_hit_data_beats(g_TDATA_WIDTH);
+    constant c_G_META_BEAT_IDX   : natural := fn_meta_beat_idx(g_TDATA_WIDTH);
+    constant c_G_BEATS_PER_CELL  : natural := fn_beats_per_cell(g_TDATA_WIDTH);
+    constant c_LAST_BEAT : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
 
     -- Registered outputs
-    signal s_tdata_r     : std_logic_vector(c_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_tdata_r     : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_tvalid_r    : std_logic := '0';
     signal s_tlast_r     : std_logic := '0';
     signal s_slice_done_r    : std_logic := '0';
@@ -137,7 +153,7 @@ architecture rtl of tdc_gpx_cell_builder is
         cell     : t_cell;
         beat_idx : unsigned(2 downto 0)
     ) return std_logic_vector is
-        variable v_result   : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        variable v_result   : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         variable v_beat     : natural range 0 to 7;
         variable v_slot_idx : natural;
         variable v_lo       : natural;
@@ -145,21 +161,19 @@ architecture rtl of tdc_gpx_cell_builder is
         v_beat   := to_integer(beat_idx);
         v_result := (others => '0');
 
-        if v_beat < c_HIT_DATA_BEATS then                           -- 4
-            -- Hit-data beat: pack c_SLOTS_PER_BEAT slots per beat
-            for sl in 0 to c_SLOTS_PER_BEAT - 1 loop                -- 2
-                v_slot_idx := v_beat * c_SLOTS_PER_BEAT + sl;
-                if v_slot_idx < c_MAX_HITS_PER_STOP then            -- 7
-                    v_lo := sl * c_HIT_SLOT_DATA_WIDTH;             -- 0, 16
+        if v_beat < c_G_HIT_DATA_BEATS then
+            -- Hit-data beat: pack c_G_SLOTS_PER_BEAT slots per beat
+            for sl in 0 to c_G_SLOTS_PER_BEAT - 1 loop
+                v_slot_idx := v_beat * c_G_SLOTS_PER_BEAT + sl;
+                if v_slot_idx < c_MAX_HITS_PER_STOP then
+                    v_lo := sl * c_HIT_SLOT_DATA_WIDTH;
                     v_result(v_lo + c_HIT_SLOT_DATA_WIDTH - 1 downto v_lo)
                         := std_logic_vector(cell.hit_slot(v_slot_idx));
                 end if;
-                -- slots beyond MAX_HITS stay zero
             end loop;
 
-        elsif v_beat = c_META_BEAT_IDX then
+        elsif v_beat = c_G_META_BEAT_IDX then
             -- Metadata beat: hit_valid | slope_vec | hit_count | flags | chip_id
-            -- Pack from MSB: hit_valid at top, then slope_vec, etc.
             v_result(31 downto 32 - c_MAX_HITS_PER_STOP)
                 := cell.hit_valid;
             v_result(31 - c_MAX_HITS_PER_STOP downto 32 - 2*c_MAX_HITS_PER_STOP)
@@ -168,7 +182,7 @@ architecture rtl of tdc_gpx_cell_builder is
             v_result(11)           := cell.hit_dropped;
             v_result(10)           := cell.error_fill;
             v_result(9 downto 8)   := std_logic_vector(to_unsigned(g_CHIP_ID, 2));
-            v_result(7 downto 0)   := (others => '0');  -- reserved
+            v_result(7 downto 0)   := (others => '0');
 
         else
             -- Padding beats: zeros
@@ -179,6 +193,9 @@ architecture rtl of tdc_gpx_cell_builder is
     end function;
 
 begin
+
+    -- AXI-Stream slave: always accept during collect phase (no backpressure)
+    o_s_axis_tready <= '1' when s_state_r = ST_COLLECT else '0';
 
     -- =========================================================================
     -- Main process
@@ -225,15 +242,15 @@ begin
                     -- ST_COLLECT: accumulate raw_events into cell_buffer
                     -- ==========================================================
                     when ST_COLLECT =>
-                        if i_raw_event_valid = '1' then
-                            v_stop := to_integer(i_raw_event.stop_id_local);
+                        if i_s_axis_tvalid = '1' then
+                            v_stop := to_integer(unsigned(i_s_axis_tuser(5 downto 3)));
 
                             -- Use hit_count_actual (4-bit) as slot index + overflow guard
                             if s_cell_buf_r(v_stop).hit_count_actual < c_MAX_HITS_PER_STOP then
                                 v_seq := to_integer(s_cell_buf_r(v_stop).hit_count_actual(2 downto 0));
-                                s_cell_buf_r(v_stop).hit_slot(v_seq)  <= i_raw_event.raw_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
+                                s_cell_buf_r(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
                                 s_cell_buf_r(v_stop).hit_valid(v_seq) <= '1';
-                                s_cell_buf_r(v_stop).slope_vec(v_seq) <= i_raw_event.slope;
+                                s_cell_buf_r(v_stop).slope_vec(v_seq) <= i_s_axis_tuser(0);
                                 s_cell_buf_r(v_stop).hit_count_actual <= s_cell_buf_r(v_stop).hit_count_actual + 1;
                             else
                                 -- (MAX+1)th+ hit: overflow, do not overwrite slot
@@ -260,7 +277,7 @@ begin
                         --   burst path: ≥5 clk) because ST_DRAIN_SETTLE (3 clk)
                         --   + raw_event_builder (1 clk pipeline) ensures
                         --   raw_event_valid arrives well before drain_done.
-                        if i_drain_done = '1' then
+                        if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
                             s_cell_sel_r  <= s_cell_buf_r(0);  -- cell MUX only
                             s_stop_idx_r  <= (others => '0');
                             s_beat_idx_r  <= (others => '0');
