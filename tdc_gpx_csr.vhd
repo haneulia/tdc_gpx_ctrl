@@ -270,6 +270,13 @@ architecture rtl of tdc_gpx_csr is
     signal s_dest_req_ctl : std_logic_vector(c_NUM_CTL_CDC - 1 downto 0);
     signal s_ctl_d1       : t_cdc_data_array(0 to c_NUM_CTL_CDC - 1) := (others => (others => '1'));
 
+    -- CTL21 (SCAN_TIMEOUT) dedicated CDC — outside gen_ctl_cdc loop
+    signal s_ctl21_out       : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_src_send_ctl21  : std_logic := '0';
+    signal s_src_rcv_ctl21   : std_logic;
+    signal s_dest_req_ctl21  : std_logic;
+    signal s_ctl21_d1        : std_logic_vector(31 downto 0) := (others => '1');
+
     -- cfg_image CDC handshake (CTL5~20, per-register)
     signal s_src_send_img : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0) := (others => '0');
     signal s_src_rcv_img  : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
@@ -294,6 +301,11 @@ architecture rtl of tdc_gpx_csr is
     -- Command edge detect (i_axis_aclk domain)
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_pulse_r : std_logic_vector(3 downto 0) := (others => '0');
+
+    -- CDC-idle flag: '1' when all CTL + cfg_image handshakes are quiescent.
+    -- Source (s_axi_aclk), synced to i_axis_aclk via 2-FF chain.
+    signal s_cdc_all_idle_src  : std_logic := '1';
+    signal s_cdc_all_idle_ff   : std_logic_vector(1 downto 0) := "11";
 
     -- Reg access edge detect: CTL1[31:30] (i_axis_aclk domain)
     signal s_reg_cmd_prev_r  : std_logic_vector(1 downto 0) := (others => '0');
@@ -530,6 +542,46 @@ begin
     end generate gen_ctl_cdc;
 
     -- =========================================================================
+    -- [5b] CTL21 CDC: s_axi_aclk -> i_axis_aclk (SCAN_TIMEOUT, dedicated)
+    -- =========================================================================
+    u_cdc_ctl21 : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK   => 1,
+            DEST_SYNC_FF   => 4,
+            INIT_SYNC_FF   => 0,
+            SIM_ASSERT_CHK => 0,
+            SRC_SYNC_FF    => 4,
+            WIDTH          => 32
+        )
+        port map (
+            src_clk   => s_axi_aclk,
+            src_in    => s_ctl_src(21),
+            src_send  => s_src_send_ctl21,
+            src_rcv   => s_src_rcv_ctl21,
+            dest_clk  => i_axis_aclk,
+            dest_req  => s_dest_req_ctl21,
+            dest_ack  => s_dest_req_ctl21,
+            dest_out  => s_ctl21_out
+        );
+
+    p_send_ctl21 : process(s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' then
+                s_src_send_ctl21 <= '0';
+                s_ctl21_d1       <= (others => '1');
+            else
+                if s_src_send_ctl21 = '0' and s_ctl_src(21) /= s_ctl21_d1 then
+                    s_src_send_ctl21 <= '1';
+                    s_ctl21_d1       <= s_ctl_src(21);
+                elsif s_src_rcv_ctl21 = '1' then
+                    s_src_send_ctl21 <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_send_ctl21;
+
+    -- =========================================================================
     -- [6] cfg_image CDC: s_axi_aclk -> i_axis_aclk (CTL5~20, per-register)
     -- =========================================================================
     gen_img_cdc : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
@@ -572,6 +624,38 @@ begin
     end generate gen_img_cdc;
 
     -- =========================================================================
+    -- [6a] CDC-idle flag: all CTL + img handshakes quiescent
+    --   Source in s_axi_aclk, synchronized to i_axis_aclk via 2-FF.
+    --   Used to gate cfg_write: ensures all config data has arrived
+    --   before chip_ctrl starts writing registers to TDC hardware.
+    -- =========================================================================
+    p_cdc_idle_src : process(s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' then
+                s_cdc_all_idle_src <= '1';
+            elsif s_src_send_img = (s_src_send_img'range => '0')
+              and s_src_send_ctl = (s_src_send_ctl'range => '0') then
+                s_cdc_all_idle_src <= '1';
+            else
+                s_cdc_all_idle_src <= '0';
+            end if;
+        end if;
+    end process p_cdc_idle_src;
+
+    p_cdc_idle_sync : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_cdc_all_idle_ff <= "11";
+            else
+                s_cdc_all_idle_ff(0) <= s_cdc_all_idle_src;
+                s_cdc_all_idle_ff(1) <= s_cdc_all_idle_ff(0);
+            end if;
+        end if;
+    end process p_cdc_idle_sync;
+
+    -- =========================================================================
     -- [7] Command edge detect (i_axis_aclk domain)
     --   CTL0[31:28] = {cfg_write, soft_reset, stop, start}
     --   Rising edge in i_axis_aclk domain → 1-clk pulse
@@ -592,7 +676,7 @@ begin
     o_cmd_start      <= s_cmd_pulse_r(0);   -- CTL0[28]
     o_cmd_stop       <= s_cmd_pulse_r(1);   -- CTL0[29]
     o_cmd_soft_reset <= s_cmd_pulse_r(2);   -- CTL0[30]
-    o_cmd_cfg_write  <= s_cmd_pulse_r(3);   -- CTL0[31]
+    o_cmd_cfg_write  <= s_cmd_pulse_r(3) and s_cdc_all_idle_ff(1);  -- gated on CDC idle
 
     -- =========================================================================
     -- [7a] Reg access edge detect (i_axis_aclk domain)
@@ -752,6 +836,9 @@ begin
 
     -- CTL4: CFG_REG7
     o_cfg.cfg_reg7         <= s_ctl_out(4);
+
+    -- CTL21: SCAN_TIMEOUT
+    o_cfg.max_scan_clks    <= unsigned(s_ctl21_out(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO));
 
     -- =========================================================================
     -- [10] CSR output: t_cfg_image (i_axis_aclk domain)

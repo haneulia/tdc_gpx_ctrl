@@ -193,6 +193,8 @@ package tdc_gpx_pkg is
         start_off1          : unsigned(17 downto 0);                        -- CTL3[17:0]
         -- CTL4: CFG_REG7
         cfg_reg7            : std_logic_vector(31 downto 0);                -- CTL4[31:0]
+        -- CTL21: SCAN_TIMEOUT
+        max_scan_clks       : unsigned(15 downto 0);                        -- CTL21[15:0]
     end record;
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
@@ -211,7 +213,8 @@ package tdc_gpx_pkg is
         max_range_clks      => to_unsigned(267, 16),    -- ~200m @200MHz
         cols_per_face       => to_unsigned(2400, 16),
         start_off1          => (others => '0'),
-        cfg_reg7            => (others => '0')
+        cfg_reg7            => (others => '0'),
+        max_scan_clks       => to_unsigned(0, 16)           -- 0 = disabled (no timeout)
     );
 
     -- =========================================================================

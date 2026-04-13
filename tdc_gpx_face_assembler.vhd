@@ -68,7 +68,7 @@ entity tdc_gpx_face_assembler is
         -- Scan timeout: max clock cycles before declaring a chip's cell blank.
         -- SW must bake in all margins (bus roundtrip + drain + ALU service).
         -- 0 = disabled (no timeout, wait indefinitely for chip data).
-        i_max_range_clks     : in  unsigned(15 downto 0);
+        i_max_scan_clks     : in  unsigned(15 downto 0);
 
         -- AXI-Stream master (packed row output)
         o_m_axis_tdata       : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
@@ -253,7 +253,7 @@ begin
     -- =========================================================================
 
     -- Timeout limit: max_range_clks only (drain/ALU margins TBD after bench)
-    s_timeout_limit <= i_max_range_clks;
+    s_timeout_limit <= i_max_scan_clks;
 
     -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset)
     s_flush <= i_shot_start or i_abort;

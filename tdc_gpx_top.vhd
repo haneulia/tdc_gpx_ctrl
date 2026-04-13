@@ -209,6 +209,7 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_stop       : std_logic;
     signal s_cmd_soft_reset : std_logic;
     signal s_cmd_cfg_write  : std_logic;
+    signal s_cmd_cfg_write_g : std_logic;  -- gated: all chips idle + no start
 
     -- Individual register access (CSR -> chip_ctrl, per-chip)
     signal s_cmd_reg_read     : std_logic;
@@ -791,29 +792,40 @@ begin
     -- =========================================================================
     -- [1a] Per-chip reg access demux: route cmd to targeted chip only
     -- =========================================================================
-    -- 1-outstanding lock: blocks new reg access while one is in flight.
+    -- 1-outstanding lock + start-suppression: prevents reg/cfg commands
+    -- from sneaking through on the same cycle as a start command.
     gen_reg_demux : for i in 0 to c_N_CHIPS - 1 generate
         s_cmd_reg_read_g(i)  <= s_cmd_reg_read
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
+                                 and s_cmd_start = '0'
                                 else '0';
         s_cmd_reg_write_g(i) <= s_cmd_reg_write
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
+                                 and s_cmd_start = '0'
                                 else '0';
     end generate gen_reg_demux;
+
+    -- cfg_write gating: only when all chips idle and no simultaneous start.
+    s_cmd_cfg_write_g <= s_cmd_cfg_write
+                         when s_chip_busy = C_ZEROS_CHIPS
+                          and s_cmd_start = '0'
+                         else '0';
 
     -- Latch target chip + manage 1-outstanding flag.
     p_reg_chip_latch : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
+            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1'
+               or s_cmd_stop = '1' then
                 s_outstanding_reg_chip_r <= (others => '0');
                 s_reg_outstanding_r      <= '0';
             else
-                -- Set on accepted reg access
+                -- Set on accepted reg access (suppressed during start)
                 if (s_cmd_reg_read = '1' or s_cmd_reg_write = '1')
-                   and s_reg_outstanding_r = '0' then
+                   and s_reg_outstanding_r = '0'
+                   and s_cmd_start = '0' then
                     s_outstanding_reg_chip_r <= s_cmd_reg_chip;
                     s_reg_outstanding_r      <= '1';
                 end if;
@@ -887,7 +899,7 @@ begin
                 i_cmd_start         => s_cmd_start_accepted,
                 i_cmd_stop          => s_cmd_stop,
                 i_cmd_soft_reset    => s_cmd_soft_reset,
-                i_cmd_cfg_write     => s_cmd_cfg_write,
+                i_cmd_cfg_write     => s_cmd_cfg_write_g,
                 i_cmd_reg_read      => s_cmd_reg_read_g(i),
                 i_cmd_reg_write     => s_cmd_reg_write_g(i),
                 i_cmd_reg_addr      => s_cmd_reg_addr,
@@ -1027,7 +1039,7 @@ begin
             i_abort            => s_pipeline_abort,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
-            i_max_range_clks   => s_cfg.max_range_clks,
+            i_max_scan_clks    => s_cfg.max_scan_clks,
             o_m_axis_tdata     => s_face_tdata,
             o_m_axis_tvalid    => s_face_tvalid,
             o_m_axis_tlast     => s_face_tlast,
@@ -1057,7 +1069,7 @@ begin
             i_abort            => s_pipeline_abort,
             i_active_chip_mask => s_face_active_mask_r,
             i_stops_per_chip   => s_face_stops_per_chip_r,
-            i_max_range_clks   => s_cfg.max_range_clks,
+            i_max_scan_clks    => s_cfg.max_scan_clks,
             o_m_axis_tdata     => s_face_fall_tdata,
             o_m_axis_tvalid    => s_face_fall_tvalid,
             o_m_axis_tlast     => s_face_fall_tlast,

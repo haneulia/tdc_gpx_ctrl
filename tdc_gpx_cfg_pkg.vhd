@@ -116,6 +116,13 @@ package tdc_gpx_cfg_pkg is
     -- =========================================================================
     constant c_ADDR_CFG_REG7         : natural := 16#10#;   -- CTL4 [31:0]
 
+    -- =========================================================================
+    -- CTL21: SCAN_TIMEOUT
+    -- =========================================================================
+    constant c_ADDR_SCAN_TIMEOUT     : natural := 16#54#;   -- CTL21
+    constant c_ST_MAX_SCAN_HI        : natural := 15;   -- [15:0] max_scan_clks
+    constant c_ST_MAX_SCAN_LO        : natural := 0;
+
     -- CFG_REG7 bitfields
     constant c_REG7_HSDIV_HI        : natural := 7;
     constant c_REG7_HSDIV_LO        : natural := 0;

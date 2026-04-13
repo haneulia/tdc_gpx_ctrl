@@ -374,6 +374,11 @@ architecture rtl of tdc_gpx_chip_ctrl is
     -- Acted upon at ST_ALU_RECOVERY completion.
     signal s_stop_pending_r  : std_logic := '0';
 
+    -- Run-time config snapshot: frozen at cmd_start to prevent mid-run changes.
+    signal s_drain_mode_snap_r  : std_logic := '0';
+    signal s_n_drain_cap_snap_r : unsigned(3 downto 0) := (others => '0');
+    signal s_bus_clk_div_snap_r : unsigned(5 downto 0) := to_unsigned(1, 6);
+
 begin
 
     -- =========================================================================
@@ -398,8 +403,8 @@ begin
                 s_div_cnt_r <= (others => '0');
                 s_tick_en_r <= '0';
             else
-                if i_cfg.bus_clk_div = 0
-                   or s_div_cnt_r = i_cfg.bus_clk_div - 1 then
+                if s_bus_clk_div_snap_r = 0
+                   or s_div_cnt_r = s_bus_clk_div_snap_r - 1 then
                     s_div_cnt_r <= (others => '0');
                     s_tick_en_r <= '1';
                 else
@@ -504,6 +509,9 @@ begin
                 s_purge_mode_r      <= '0';
                 s_overrun_deferred_r <= '0';
                 s_stop_pending_r    <= '0';
+                s_drain_mode_snap_r  <= '0';
+                s_n_drain_cap_snap_r <= (others => '0');
+                s_bus_clk_div_snap_r <= to_unsigned(1, 6);
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r   <= '0';
@@ -659,8 +667,11 @@ begin
                             s_busy_r         <= '0';
                             s_stop_pending_r <= '0';
                             if i_cmd_start = '1' then
-                                s_stopdis_r   <= '0';   -- clear stop-disable for new cycle
-                                s_state_r     <= ST_ARMED;
+                                s_stopdis_r          <= '0';
+                                s_drain_mode_snap_r  <= i_cfg.drain_mode;
+                                s_n_drain_cap_snap_r <= i_cfg.n_drain_cap;
+                                s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
+                                s_state_r            <= ST_ARMED;
                             elsif i_cmd_cfg_write = '1' then
                                 s_cfg_idx_r        <= (others => '0');
                                 s_init_mode_r      <= '0';   -- runtime: no master reset
@@ -757,7 +768,7 @@ begin
                                 s_expected_ififo2_r  <= (others => '0');
                                 s_drain_done_r       <= '0';
                                 s_purge_mode_r       <= '1';
-                                if i_cfg.drain_mode = '1' then
+                                if s_drain_mode_snap_r = '1' then
                                     s_oen_permanent_r <= '1';
                                 else
                                     s_oen_permanent_r <= '0';
@@ -771,7 +782,7 @@ begin
                                 -- for 200MHz timing — no live cfg_image in FSM body)
                                 s_fill_r      <= unsigned(i_cfg_image(6)(
                                     c_REG6_LF_THRESH_HI downto c_REG6_LF_THRESH_LO));
-                                if i_cfg.drain_mode = '1' then
+                                if s_drain_mode_snap_r = '1' then
                                     s_oen_permanent_r <= '1';   -- burst: OEN stays low
                                 end if;
                                 s_drain_cnt_ififo1_r <= (others => '0');
@@ -824,18 +835,18 @@ begin
                             -- v_cap: shared cap threshold (n_drain_cap × 4)
                             -- v_ififo1_done/v_ififo2_done: per-IFIFO completion
                             -- v_ififo1_can_read/v_ififo2_can_read: eligible for read
-                            v_cap := shift_left(resize(i_cfg.n_drain_cap, 8), 2);
+                            v_cap := shift_left(resize(s_n_drain_cap_snap_r, 8), 2);
 
                             -- Per-IFIFO done evaluation
                             -- Both normal and purge modes use the same criterion:
                             -- done = EF=1 OR cap reached (cap ignored in purge).
                             v_ififo1_done := (i_ef1_sync = '1')
                                              or (s_purge_mode_r = '0'
-                                                 and i_cfg.n_drain_cap /= "0000"
+                                                 and s_n_drain_cap_snap_r /= "0000"
                                                  and s_drain_cnt_ififo1_r >= v_cap);
                             v_ififo2_done := (i_ef2_sync = '1')
                                              or (s_purge_mode_r = '0'
-                                                 and i_cfg.n_drain_cap /= "0000"
+                                                 and s_n_drain_cap_snap_r /= "0000"
                                                  and s_drain_cnt_ififo2_r >= v_cap);
 
                             -- Can-read: not done AND EF=0 (has data)
@@ -872,7 +883,7 @@ begin
                             --   remaining = 1 falls through to EF single read.
                             -- ==============================================
                             elsif s_purge_mode_r = '0'
-                                  and i_cfg.drain_mode = '1'
+                                  and s_drain_mode_snap_r = '1'
                                   and s_fill_r >= 2
                                   and i_ef1_sync = '0' and i_lf1_sync = '1'
                                   and v_ififo1_can_read
@@ -900,7 +911,7 @@ begin
                                 s_state_r       <= ST_DRAIN_BURST;
 
                             elsif s_purge_mode_r = '0'
-                                  and i_cfg.drain_mode = '1'
+                                  and s_drain_mode_snap_r = '1'
                                   and s_fill_r >= 2
                                   and i_ef2_sync = '0' and i_lf2_sync = '1'
                                   and v_ififo2_can_read
@@ -1127,7 +1138,7 @@ begin
                                     s_expected_ififo2_r  <= (others => '0');
                                     s_drain_done_r       <= '0';
                                     s_purge_mode_r       <= '1';
-                                    if i_cfg.drain_mode = '1' then
+                                    if s_drain_mode_snap_r = '1' then
                                         s_oen_permanent_r <= '1';
                                     else
                                         s_oen_permanent_r <= '0';
@@ -1167,7 +1178,7 @@ begin
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_expected_ififo1_r  <= (others => '0');
                                 s_expected_ififo2_r  <= (others => '0');
-                                if i_cfg.drain_mode = '1' then
+                                if s_drain_mode_snap_r = '1' then
                                     s_oen_permanent_r <= '1';
                                 end if;
                                 s_wait_cnt_r  <= (others => '0');
@@ -1223,7 +1234,7 @@ begin
                                 s_drain_done_r       <= '0';
                                 -- Enter purge mode to drain old IFIFO data
                                 s_purge_mode_r       <= '1';
-                                if i_cfg.drain_mode = '1' then
+                                if s_drain_mode_snap_r = '1' then
                                     s_oen_permanent_r <= '1';
                                 else
                                     s_oen_permanent_r <= '0';

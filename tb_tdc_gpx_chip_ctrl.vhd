@@ -635,6 +635,13 @@ begin
 
         s_cfg.drain_mode  <= '1';
         s_cfg.n_drain_cap <= to_unsigned(2, 4);  -- 2 × 8 = 16 max reads
+
+        -- Re-arm with new config (snapshot taken at cmd_start)
+        pulse(s_cmd_stop);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+
         fill_fifos(16, 16);
         wait_clk(5);
 
