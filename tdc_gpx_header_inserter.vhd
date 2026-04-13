@@ -495,6 +495,11 @@ begin
                 -- If a beat is pending (tvalid=1, tready=0), enter
                 -- ST_ABORT_DRAIN to let it handshake before clearing —
                 -- avoids AXI-Stream tvalid withdrawal violation.
+                -- NOTE: abort does NOT emit synthetic tlast. The aborted
+                -- face produces a truncated line (no EOL marker). This is
+                -- intentional: the corrupted data should NOT look like a
+                -- valid line to VDMA.  SW detects this via shot_overrun
+                -- status and discards the affected frame.
                 -- Higher priority than face_start (last-assignment wins).
                 -- =============================================================
                 if i_face_abort = '1' then

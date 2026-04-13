@@ -640,9 +640,24 @@ begin
                     s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
                 end if;
 
+                -- Auto-defer: if pending was set last cycle but got killed
+                -- at s_shot_start_gated (closing/abort went high between
+                -- acceptance and delivery), save it to deferred.
+                if s_shot_pending_r = '1' and s_shot_start_gated = '0'
+                   and s_cmd_stop = '0' and s_cmd_soft_reset = '0'
+                   and s_pipeline_abort = '0' then
+                    -- Shot was legitimately accepted but killed by closing.
+                    -- Defer it for the next face.
+                    if s_shot_deferred_r = '0' then
+                        s_shot_deferred_r <= '1';
+                    else
+                        s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
+                    end if;
+                end if;
+
                 -- Registered shot acceptance:
                 --   First shot : ST_WAIT_SHOT + (shot_start or deferred)
-                --                + no stop/reset + assemblers not closing
+                --                + no stop/reset
                 --   Mid-face   : face_active + not closing + not done + no stop
                 if (s_face_state_r = ST_WAIT_SHOT
                         and (i_shot_start = '1' or s_shot_deferred_r = '1')
@@ -668,10 +683,15 @@ begin
     --   pulse.  At N+1 the registered frame_done from header_inserter IS
     --   visible, so the kill is effective against the same-edge race.
     -- =========================================================================
+    -- Accepted shot delivery with closing/abort kill.
+    -- If s_shot_pending_r was set but gets killed here (closing went
+    -- high between acceptance and delivery), the shot is auto-deferred
+    -- in p_face_start_delay below — not silently lost.
     s_shot_start_gated <= s_shot_pending_r
                           when s_face_closing = '0'
                                and s_cmd_stop = '0'
                                and s_cmd_soft_reset = '0'
+                               and s_pipeline_abort = '0'
                           else '0';
 
     -- Gated face_start: suppresses orphan-face if cmd_stop or soft_reset
