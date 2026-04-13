@@ -156,6 +156,8 @@ package tdc_gpx_pkg is
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
     -- =========================================================================
+    type t_expected_array is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
+
     type t_axis_tdata_array is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
 
