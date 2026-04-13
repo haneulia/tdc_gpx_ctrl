@@ -210,6 +210,7 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_soft_reset : std_logic;
     signal s_cmd_cfg_write  : std_logic;
     signal s_cmd_cfg_write_g : std_logic;  -- gated: all chips idle + no start
+    signal s_cfg_write_top_pending_r : std_logic := '0';
 
     -- Individual register access (CSR -> chip_ctrl, per-chip)
     signal s_cmd_reg_read     : std_logic;
@@ -236,6 +237,7 @@ architecture rtl of tdc_gpx_top is
     signal s_bus_req_wdata   : t_slv28_array;
     signal s_bus_oen_perm    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_ticks_snap  : t_u3_array;
     signal s_bus_rsp_valid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_rsp_rdata   : t_slv28_array;
     signal s_bus_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -799,16 +801,36 @@ begin
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
                                  and s_cmd_start = '0'
+                                 and s_cmd_cfg_write = '0'
                                 else '0';
         s_cmd_reg_write_g(i) <= s_cmd_reg_write
                                 when to_integer(s_cmd_reg_chip) = i
                                  and s_reg_outstanding_r = '0'
                                  and s_cmd_start = '0'
+                                 and s_cmd_cfg_write = '0'
                                 else '0';
     end generate gen_reg_demux;
 
-    -- cfg_write gating: only when all chips idle and no simultaneous start.
-    s_cmd_cfg_write_g <= s_cmd_cfg_write
+    -- cfg_write pending + gating: hold until all chips idle and no start.
+    p_cfg_write_top_pending : process(i_axis_aclk)
+        variable v_can_issue : boolean;
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
+                s_cfg_write_top_pending_r <= '0';
+            else
+                v_can_issue := s_chip_busy = C_ZEROS_CHIPS
+                           and s_cmd_start = '0';
+                if s_cmd_cfg_write = '1' and not v_can_issue then
+                    s_cfg_write_top_pending_r <= '1';
+                elsif s_cfg_write_top_pending_r = '1' and v_can_issue then
+                    s_cfg_write_top_pending_r <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_cfg_write_top_pending;
+
+    s_cmd_cfg_write_g <= (s_cmd_cfg_write or s_cfg_write_top_pending_r)
                          when s_chip_busy = C_ZEROS_CHIPS
                           and s_cmd_start = '0'
                          else '0';
@@ -822,10 +844,9 @@ begin
                 s_outstanding_reg_chip_r <= (others => '0');
                 s_reg_outstanding_r      <= '0';
             else
-                -- Set on accepted reg access (suppressed during start)
-                if (s_cmd_reg_read = '1' or s_cmd_reg_write = '1')
-                   and s_reg_outstanding_r = '0'
-                   and s_cmd_start = '0' then
+                -- Set on GATED reg access (only when pulse actually reaches chip_ctrl)
+                if (s_cmd_reg_read_g /= C_ZEROS_CHIPS
+                    or s_cmd_reg_write_g /= C_ZEROS_CHIPS) then
                     s_outstanding_reg_chip_r <= s_cmd_reg_chip;
                     s_reg_outstanding_r      <= '1';
                 end if;
@@ -853,7 +874,7 @@ begin
                 i_clk           => i_axis_aclk,
                 i_rst_n         => i_axis_aresetn,
                 i_tick_en       => s_tick_en(i),
-                i_bus_ticks     => s_cfg.bus_ticks,
+                i_bus_ticks     => s_bus_ticks_snap(i),
                 i_req_valid     => s_bus_req_valid(i),
                 i_req_rw        => s_bus_req_rw(i),
                 i_req_addr      => s_bus_req_addr(i),
@@ -918,6 +939,7 @@ begin
                 o_bus_req_wdata     => s_bus_req_wdata(i),
                 o_bus_oen_permanent => s_bus_oen_perm(i),
                 o_bus_req_burst     => s_bus_req_burst(i),
+                o_bus_ticks_snap    => s_bus_ticks_snap(i),
                 i_bus_rsp_valid     => s_bus_rsp_valid(i),
                 i_bus_rsp_rdata     => s_bus_rsp_rdata(i),
                 i_bus_busy          => s_bus_busy(i),
@@ -1507,6 +1529,7 @@ begin
                                             or s_face_fall_buf_tvalid = '1'
                                             or o_m_axis_tvalid = '1'
                                             or o_m_axis_fall_tvalid = '1'
+                                            or s_reg_outstanding_r = '1'
                                         else '0';
     s_status.pipeline_overrun   <= '1'  when s_chip_error_flags /= C_ZEROS_CHIPS
                                             or s_chip_fall_error /= C_ZEROS_CHIPS

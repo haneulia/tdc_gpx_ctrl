@@ -141,6 +141,7 @@ entity tdc_gpx_chip_ctrl is
         o_bus_req_wdata     : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         o_bus_oen_permanent : out std_logic;
         o_bus_req_burst     : out std_logic;          -- '1' = back-to-back burst read
+        o_bus_ticks_snap    : out unsigned(2 downto 0);  -- bus_ticks snapshot for bus_phy
 
         -- bus_phy response interface
         i_bus_rsp_valid     : in  std_logic;
@@ -378,6 +379,8 @@ architecture rtl of tdc_gpx_chip_ctrl is
     signal s_drain_mode_snap_r  : std_logic := '0';
     signal s_n_drain_cap_snap_r : unsigned(3 downto 0) := (others => '0');
     signal s_bus_clk_div_snap_r : unsigned(5 downto 0) := to_unsigned(1, 6);
+    signal s_bus_ticks_snap_r   : unsigned(2 downto 0) := to_unsigned(5, 3);
+    signal s_max_range_snap_r   : unsigned(15 downto 0) := (others => '0');
 
 begin
 
@@ -446,6 +449,8 @@ begin
     -- stopdis_override[4] = override enable, [g_CHIP_ID] = override value
     -- override enable=0: FSM이 제어 (init 시 '1', 측정 시 '0')
     -- override enable=1: SW가 chip별로 StopDis 강제 설정 (디버그용)
+    -- INTENTIONALLY LIVE: this is a debug/emergency override that must
+    -- take effect immediately, even mid-run. NOT snapshotted at cmd_start.
     -- =========================================================================
     o_stopdis <= i_cfg.stopdis_override(g_CHIP_ID)      -- 이 chip의 bit 선택
                  when i_cfg.stopdis_override(4) = '1'   -- override enable
@@ -512,6 +517,8 @@ begin
                 s_drain_mode_snap_r  <= '0';
                 s_n_drain_cap_snap_r <= (others => '0');
                 s_bus_clk_div_snap_r <= to_unsigned(1, 6);
+                s_bus_ticks_snap_r   <= to_unsigned(5, 3);
+                s_max_range_snap_r   <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_raw_valid_r   <= '0';
@@ -671,30 +678,36 @@ begin
                                 s_drain_mode_snap_r  <= i_cfg.drain_mode;
                                 s_n_drain_cap_snap_r <= i_cfg.n_drain_cap;
                                 s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
+                                s_bus_ticks_snap_r   <= i_cfg.bus_ticks;
+                                s_max_range_snap_r   <= i_max_range_clks;
                                 s_state_r            <= ST_ARMED;
                             elsif i_cmd_cfg_write = '1' then
-                                s_cfg_idx_r        <= (others => '0');
-                                s_init_mode_r      <= '0';   -- runtime: no master reset
-                                s_cfg_image_snap_r <= i_cfg_image; -- atomic snapshot
-                                s_busy_r           <= '1';
-                                s_state_r          <= ST_CFG_WRITE;
+                                s_cfg_idx_r          <= (others => '0');
+                                s_init_mode_r        <= '0';
+                                s_cfg_image_snap_r   <= i_cfg_image;
+                                s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
+                                s_bus_ticks_snap_r   <= i_cfg.bus_ticks;
+                                s_busy_r             <= '1';
+                                s_state_r            <= ST_CFG_WRITE;
                             elsif i_cmd_reg_read = '1' then
-                                -- Individual register read
-                                s_req_valid_r  <= '1';
-                                s_req_rw_r     <= '0';   -- READ
-                                s_req_addr_r   <= i_cmd_reg_addr;
-                                s_reg_is_read_r <= '1';
-                                s_busy_r       <= '1';
-                                s_state_r      <= ST_REG_ACCESS;
+                                s_req_valid_r        <= '1';
+                                s_req_rw_r           <= '0';
+                                s_req_addr_r         <= i_cmd_reg_addr;
+                                s_reg_is_read_r      <= '1';
+                                s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
+                                s_bus_ticks_snap_r   <= i_cfg.bus_ticks;
+                                s_busy_r             <= '1';
+                                s_state_r            <= ST_REG_ACCESS;
                             elsif i_cmd_reg_write = '1' then
-                                -- Individual register write
-                                s_req_valid_r  <= '1';
-                                s_req_rw_r     <= '1';   -- WRITE
-                                s_req_addr_r   <= i_cmd_reg_addr;
-                                s_req_wdata_r  <= i_cmd_reg_wdata;
-                                s_reg_is_read_r <= '0';
-                                s_busy_r       <= '1';
-                                s_state_r      <= ST_REG_ACCESS;
+                                s_req_valid_r        <= '1';
+                                s_req_rw_r           <= '1';
+                                s_req_addr_r         <= i_cmd_reg_addr;
+                                s_req_wdata_r        <= i_cmd_reg_wdata;
+                                s_reg_is_read_r      <= '0';
+                                s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
+                                s_bus_ticks_snap_r   <= i_cfg.bus_ticks;
+                                s_busy_r             <= '1';
+                                s_state_r            <= ST_REG_ACCESS;
                             end if;
 
                         -- =================================================
@@ -1310,7 +1323,7 @@ begin
                     s_range_cnt_r          <= (others => '0');
                     s_err_drain_to_fired_r <= '0';
                 elsif s_range_active_r = '1' then
-                    if i_max_range_clks /= 0 and s_range_cnt_r >= i_max_range_clks then
+                    if s_max_range_snap_r /= 0 and s_range_cnt_r >= s_max_range_snap_r then
                         -- Budget exhausted before drain_done — fire once only
                         if s_err_drain_to_fired_r = '0' then
                             s_err_drain_timeout_r  <= '1';
@@ -1359,6 +1372,7 @@ begin
     o_cmd_reg_rdata  <= s_reg_rdata_r;
     o_cmd_reg_rvalid <= s_reg_rvalid_r;
     o_cmd_reg_done   <= s_reg_done_r;
+    o_bus_ticks_snap <= s_bus_ticks_snap_r;
 
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;

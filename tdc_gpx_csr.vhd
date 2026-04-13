@@ -302,6 +302,9 @@ architecture rtl of tdc_gpx_csr is
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_pulse_r : std_logic_vector(3 downto 0) := (others => '0');
 
+    -- cfg_write pending latch (i_axis_aclk domain)
+    signal s_cfg_write_pending_r : std_logic := '0';
+
     -- CDC-idle flag: '1' when all CTL + cfg_image handshakes are quiescent.
     -- Source (s_axi_aclk), synced to i_axis_aclk via 2-FF chain.
     signal s_cdc_all_idle_src  : std_logic := '1';
@@ -673,10 +676,29 @@ begin
         end if;
     end process p_cmd_edge;
 
-    o_cmd_start      <= s_cmd_pulse_r(0);   -- CTL0[28]
+    o_cmd_start      <= s_cmd_pulse_r(0) and s_cdc_all_idle_ff(1);  -- gated on CDC idle
     o_cmd_stop       <= s_cmd_pulse_r(1);   -- CTL0[29]
     o_cmd_soft_reset <= s_cmd_pulse_r(2);   -- CTL0[30]
-    o_cmd_cfg_write  <= s_cmd_pulse_r(3) and s_cdc_all_idle_ff(1);  -- gated on CDC idle
+
+    -- cfg_write pending latch: hold pulse until CDC is idle, then release.
+    -- Prevents cfg_write loss when CDC handshakes are still in flight.
+    p_cfg_write_pending : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_cfg_write_pending_r <= '0';
+            elsif s_cmd_pulse_r(3) = '1' and s_cdc_all_idle_ff(1) = '0' then
+                -- CDC busy: latch the request
+                s_cfg_write_pending_r <= '1';
+            elsif s_cfg_write_pending_r = '1' and s_cdc_all_idle_ff(1) = '1' then
+                -- CDC idle: release pending (output fires this cycle)
+                s_cfg_write_pending_r <= '0';
+            end if;
+        end if;
+    end process p_cfg_write_pending;
+
+    o_cmd_cfg_write <= (s_cmd_pulse_r(3) and s_cdc_all_idle_ff(1))       -- immediate pass-through
+                    or (s_cfg_write_pending_r and s_cdc_all_idle_ff(1));  -- deferred release
 
     -- =========================================================================
     -- [7a] Reg access edge detect (i_axis_aclk domain)

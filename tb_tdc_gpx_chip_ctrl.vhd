@@ -240,6 +240,7 @@ begin
             o_bus_req_wdata     => s_bus_req_wdata,
             o_bus_oen_permanent => s_bus_oen_perm,
             o_bus_req_burst     => s_bus_req_burst,
+            o_bus_ticks_snap    => open,
             i_bus_rsp_valid     => s_bus_rsp_valid,
             i_bus_rsp_rdata     => s_bus_rsp_rdata,
             i_bus_busy          => s_bus_busy,
