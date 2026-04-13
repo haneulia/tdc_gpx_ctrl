@@ -251,7 +251,16 @@ begin
                 v_rows := v_active_cnt * to_integer(i_cfg.stops_per_chip);
                 if v_rows < 2 then v_rows := 2; end if;
                 s_rows_per_face_r <= to_unsigned(v_rows, 16);
-                v_data_beats := v_rows * c_BEATS_PER_CELL;
+                -- Runtime beats_per_cell lookup (same pattern as cell_builder)
+                case i_cfg.max_hits_cfg is
+                    when "001" => v_data_beats := v_rows * fn_beats_per_cell_rt(1, c_TDATA_WIDTH);
+                    when "010" => v_data_beats := v_rows * fn_beats_per_cell_rt(2, c_TDATA_WIDTH);
+                    when "011" => v_data_beats := v_rows * fn_beats_per_cell_rt(3, c_TDATA_WIDTH);
+                    when "100" => v_data_beats := v_rows * fn_beats_per_cell_rt(4, c_TDATA_WIDTH);
+                    when "101" => v_data_beats := v_rows * fn_beats_per_cell_rt(5, c_TDATA_WIDTH);
+                    when "110" => v_data_beats := v_rows * fn_beats_per_cell_rt(6, c_TDATA_WIDTH);
+                    when others => v_data_beats := v_rows * fn_beats_per_cell_rt(7, c_TDATA_WIDTH);
+                end case;
                 s_hsize_bytes_r <= to_unsigned(
                     (v_data_beats + c_HDR_PREFIX_BEATS) * c_TDATA_BYTES, 16);
             end if;

@@ -274,7 +274,7 @@ begin
         )
         port map (
             s_aclk          => i_clk,
-            s_aresetn       => i_rst_n,
+            s_aresetn       => s_fifo_rst_n,  -- flush on shot_start/abort
             s_axis_tdata    => s_pipe_tdata_r,
             s_axis_tvalid   => s_pipe_tvalid_r,
             s_axis_tready   => s_pipe_tready,

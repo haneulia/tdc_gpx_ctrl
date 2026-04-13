@@ -266,7 +266,16 @@ begin
                     word(31 downto 16) := std_logic_vector(s_cols_per_face_r);
                 when 5  =>
                     word(7 downto 0)   := "00000" & std_logic_vector(s_max_hits_cfg_r);
-                    word(15 downto 8)  := std_logic_vector(to_unsigned(c_CELL_SIZE_BYTES, 8));
+                    -- Runtime cell_size from max_hits_cfg
+                    case s_max_hits_cfg_r is
+                        when "001" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(1), 8));
+                        when "010" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(2), 8));
+                        when "011" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(3), 8));
+                        when "100" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(4), 8));
+                        when "101" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(5), 8));
+                        when "110" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(6), 8));
+                        when others => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(7), 8));
+                    end case;
                     word(23 downto 16) := std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 8));
                     word(27 downto 24) := std_logic_vector(to_unsigned(c_N_CHIPS, 4));
                     word(31 downto 28) := std_logic_vector(to_unsigned(c_MAX_STOPS_PER_CHIP, 4));

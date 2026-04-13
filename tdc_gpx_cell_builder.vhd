@@ -262,7 +262,7 @@ begin
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r  <= '0';
-                s_output_full_r <= '0';
+                -- s_output_full_r: latched, NOT auto-cleared (consumed by p_output)
                 s_hit_dropped_r <= '0';
 
                 v_wr := fn_buf_idx(s_wr_buf_r);
@@ -298,12 +298,14 @@ begin
                         if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
                             if i_s_axis_tuser(6) = '0' then
                                 -- IFIFO1 done: trigger early output of stops 0~3
+                                s_output_full_r <= '0';  -- clear from previous shot
                                 if s_ostate_r = ST_O_IDLE then
                                     s_rd_buf_idx_r <= s_wr_buf_r;
                                     s_output_req_r <= '1';
                                 end if;
                             else
                                 -- Final drain_done: trigger stops 4~7, swap buffer
+                                -- Latched: stays '1' until next ififo1_done clears it
                                 s_output_full_r <= '1';
                                 if s_ostate_r = ST_O_IDLE and s_output_req_r = '0' then
                                     -- No ififo1_done was sent (both done simultaneously)
@@ -315,8 +317,10 @@ begin
                             end if;
                         end if;
 
-                        -- shot_start override: clear write buffer, stay active
-                        if i_shot_start = '1' then
+                        -- shot_start override: clear write buffer, stay active.
+                        -- Guard: skip if drain_done fires same cycle (swap changes v_wr meaning)
+                        if i_shot_start = '1'
+                           and not (i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1') then
                             s_cell_buf_r(v_wr) <= (others => c_CELL_INIT);
                         end if;
 
@@ -448,12 +452,10 @@ begin
 
                 end case;
 
-                -- shot_start abort: cancel output, return to idle
-                if i_shot_start = '1' and s_ostate_r /= ST_O_IDLE then
-                    s_tvalid_r <= '0';
-                    s_tlast_r  <= '0';
-                    s_ostate_r <= ST_O_IDLE;
-                end if;
+                -- NOTE: shot_start does NOT abort output. Ping-pong design:
+                -- p_output continues draining read buffer while p_collect
+                -- accepts next shot into write buffer. Output completes
+                -- naturally via slice_done → ST_O_IDLE.
             end if;
         end if;
     end process p_output;
