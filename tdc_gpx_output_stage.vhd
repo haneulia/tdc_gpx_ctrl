@@ -11,8 +11,8 @@
 -- Instances (6):
 --   u_face_asm       : tdc_gpx_face_assembler   (rising)
 --   u_face_asm_fall  : tdc_gpx_face_assembler   (falling)
---   u_face_fifo      : tdc_gpx_sync_fifo        (rising, 16-deep)
---   u_face_fall_fifo : tdc_gpx_sync_fifo        (falling, 16-deep)
+--   u_face_rise_fifo : xpm_fifo_axis             (rising, 16-deep)
+--   u_face_fall_fifo : xpm_fifo_axis             (falling, 16-deep)
 --   u_header         : tdc_gpx_header_inserter   (rising)
 --   u_header_fall    : tdc_gpx_header_inserter   (falling)
 --
@@ -22,6 +22,9 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+
+library xpm;
+use xpm.vcomponents.all;
 
 use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
@@ -139,26 +142,33 @@ architecture rtl of tdc_gpx_output_stage is
     signal s_face_fall_tready : std_logic;
 
     -- =========================================================================
-    -- Internal signals: sync_fifo -> header_inserter (rising)
-    -- g_OUTPUT_WIDTH+1 bits: tdata & tlast bundled
+    -- Internal signals: xpm_fifo_axis -> header_inserter (rising)
     -- =========================================================================
-    signal s_face_buf_tdata   : std_logic_vector(g_OUTPUT_WIDTH downto 0);
+    signal s_face_buf_tdata   : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_face_buf_tvalid  : std_logic;
+    signal s_face_buf_tlast   : std_logic;
     signal s_face_buf_tready  : std_logic;
 
     -- =========================================================================
-    -- Internal signals: sync_fifo -> header_inserter (falling)
+    -- Internal signals: xpm_fifo_axis -> header_inserter (falling)
     -- =========================================================================
-    signal s_face_fall_buf_tdata  : std_logic_vector(g_OUTPUT_WIDTH downto 0);
+    signal s_face_fall_buf_tdata  : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_face_fall_buf_tvalid : std_logic;
+    signal s_face_fall_buf_tlast  : std_logic;
     signal s_face_fall_buf_tready : std_logic;
 
+    -- FIFO reset: active-low, gated by pipeline_abort for flush
+    signal s_fifo_rst_n : std_logic;
+
 begin
+
+    -- FIFO flush: pipeline_abort drives reset (active-low)
+    s_fifo_rst_n <= i_rst_n and not i_pipeline_abort;
 
     -- =========================================================================
     -- Rising face assembler
     -- =========================================================================
-    u_face_asm : entity work.tdc_gpx_face_assembler
+    u_face_asm_rise : entity work.tdc_gpx_face_assembler
         generic map (
             g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS,
             g_TDATA_WIDTH    => g_OUTPUT_WIDTH
@@ -226,55 +236,97 @@ begin
         );
 
     -- =========================================================================
-    -- Rising sync FIFO (16-deep, g_OUTPUT_WIDTH+1 bits: tdata & tlast)
+    -- Rising AXI-Stream FIFO (xpm_fifo_axis, 16-deep)
     -- =========================================================================
-    u_face_fifo : entity work.tdc_gpx_sync_fifo
+    u_face_rise_fifo : xpm_fifo_axis
         generic map (
-            g_DATA_WIDTH => g_OUTPUT_WIDTH + 1,
-            g_DEPTH      => 16,
-            g_LOG2_DEPTH => 4,
-            g_IN_REG     => false,
-            g_OUT_REG    => false
+            CASCADE_HEIGHT    => 0,
+            CDC_SYNC_STAGES   => 2,
+            CLOCKING_MODE     => "common_clock",
+            ECC_MODE          => "no_ecc",
+            FIFO_DEPTH        => 16,
+            FIFO_MEMORY_TYPE  => "distributed",
+            PACKET_FIFO       => "false",
+            TDATA_WIDTH       => g_OUTPUT_WIDTH,
+            TDEST_WIDTH       => 1,
+            TID_WIDTH         => 1,
+            TUSER_WIDTH       => 1,
+            USE_ADV_FEATURES  => "0000"
         )
         port map (
-            i_clk     => i_clk,
-            i_rst_n   => i_rst_n,
-            i_flush   => i_pipeline_abort,
-            i_s_valid => s_face_tvalid,
-            o_s_ready => s_face_tready,
-            i_s_data  => s_face_tdata & s_face_tlast,
-            o_m_valid => s_face_buf_tvalid,
-            i_m_ready => s_face_buf_tready,
-            o_m_data  => s_face_buf_tdata
+            s_aclk          => i_clk,
+            s_aresetn       => s_fifo_rst_n,
+            s_axis_tvalid   => s_face_tvalid,
+            s_axis_tready   => s_face_tready,
+            s_axis_tdata    => s_face_tdata,
+            s_axis_tlast    => s_face_tlast,
+            s_axis_tkeep    => (others => '1'),
+            s_axis_tstrb    => (others => '1'),
+            s_axis_tuser    => (others => '0'),
+            s_axis_tid      => (others => '0'),
+            s_axis_tdest    => (others => '0'),
+            m_axis_tvalid   => s_face_buf_tvalid,
+            m_axis_tready   => s_face_buf_tready,
+            m_axis_tdata    => s_face_buf_tdata,
+            m_axis_tlast    => s_face_buf_tlast,
+            m_axis_tkeep    => open,
+            m_axis_tstrb    => open,
+            m_axis_tuser    => open,
+            m_axis_tid      => open,
+            m_axis_tdest    => open,
+            m_aclk          => '0',
+            injectsbiterr_axis => '0',
+            injectdbiterr_axis => '0'
         );
 
     -- =========================================================================
-    -- Falling sync FIFO (16-deep, g_OUTPUT_WIDTH+1 bits: tdata & tlast)
+    -- Falling AXI-Stream FIFO (xpm_fifo_axis, 16-deep)
     -- =========================================================================
-    u_face_fall_fifo : entity work.tdc_gpx_sync_fifo
+    u_face_fall_fifo : xpm_fifo_axis
         generic map (
-            g_DATA_WIDTH => g_OUTPUT_WIDTH + 1,
-            g_DEPTH      => 16,
-            g_LOG2_DEPTH => 4,
-            g_IN_REG     => false,
-            g_OUT_REG    => false
+            CASCADE_HEIGHT    => 0,
+            CDC_SYNC_STAGES   => 2,
+            CLOCKING_MODE     => "common_clock",
+            ECC_MODE          => "no_ecc",
+            FIFO_DEPTH        => 16,
+            FIFO_MEMORY_TYPE  => "distributed",
+            PACKET_FIFO       => "false",
+            TDATA_WIDTH       => g_OUTPUT_WIDTH,
+            TDEST_WIDTH       => 1,
+            TID_WIDTH         => 1,
+            TUSER_WIDTH       => 1,
+            USE_ADV_FEATURES  => "0000"
         )
         port map (
-            i_clk     => i_clk,
-            i_rst_n   => i_rst_n,
-            i_flush   => i_pipeline_abort,
-            i_s_valid => s_face_fall_tvalid,
-            o_s_ready => s_face_fall_tready,
-            i_s_data  => s_face_fall_tdata & s_face_fall_tlast,
-            o_m_valid => s_face_fall_buf_tvalid,
-            i_m_ready => s_face_fall_buf_tready,
-            o_m_data  => s_face_fall_buf_tdata
+            s_aclk          => i_clk,
+            s_aresetn       => s_fifo_rst_n,
+            s_axis_tvalid   => s_face_fall_tvalid,
+            s_axis_tready   => s_face_fall_tready,
+            s_axis_tdata    => s_face_fall_tdata,
+            s_axis_tlast    => s_face_fall_tlast,
+            s_axis_tkeep    => (others => '1'),
+            s_axis_tstrb    => (others => '1'),
+            s_axis_tuser    => (others => '0'),
+            s_axis_tid      => (others => '0'),
+            s_axis_tdest    => (others => '0'),
+            m_axis_tvalid   => s_face_fall_buf_tvalid,
+            m_axis_tready   => s_face_fall_buf_tready,
+            m_axis_tdata    => s_face_fall_buf_tdata,
+            m_axis_tlast    => s_face_fall_buf_tlast,
+            m_axis_tkeep    => open,
+            m_axis_tstrb    => open,
+            m_axis_tuser    => open,
+            m_axis_tid      => open,
+            m_axis_tdest    => open,
+            m_aclk          => '0',
+            injectsbiterr_axis => '0',
+            injectdbiterr_axis => '0'
         );
 
     -- =========================================================================
     -- Rising header inserter
     -- =========================================================================
-    u_header : entity work.tdc_gpx_header_inserter
+    u_header_rise : entity work.tdc_gpx_header_inserter
         generic map (
             g_TDATA_WIDTH => g_OUTPUT_WIDTH
         )
@@ -293,9 +345,9 @@ begin
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             i_rows_per_face     => i_rows_per_face,
-            i_s_axis_tdata      => s_face_buf_tdata(g_OUTPUT_WIDTH downto 1),
+            i_s_axis_tdata      => s_face_buf_tdata,
             i_s_axis_tvalid     => s_face_buf_tvalid,
-            i_s_axis_tlast      => s_face_buf_tdata(0),
+            i_s_axis_tlast      => s_face_buf_tlast,
             o_s_axis_tready     => s_face_buf_tready,
             o_m_axis_tdata      => o_m_axis_tdata,
             o_m_axis_tvalid     => o_m_axis_tvalid,
@@ -330,9 +382,9 @@ begin
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
             i_rows_per_face     => i_rows_per_face,
-            i_s_axis_tdata      => s_face_fall_buf_tdata(g_OUTPUT_WIDTH downto 1),
+            i_s_axis_tdata      => s_face_fall_buf_tdata,
             i_s_axis_tvalid     => s_face_fall_buf_tvalid,
-            i_s_axis_tlast      => s_face_fall_buf_tdata(0),
+            i_s_axis_tlast      => s_face_fall_buf_tlast,
             o_s_axis_tready     => s_face_fall_buf_tready,
             o_m_axis_tdata      => o_m_axis_fall_tdata,
             o_m_axis_tvalid     => o_m_axis_fall_tvalid,
