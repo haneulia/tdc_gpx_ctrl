@@ -19,10 +19,11 @@
 -- Output FIFO:
 --   1× xpm_fifo_axis (16-deep) for backpressure decoupling.
 --
---   FCFS (First-Come First-Served) scheduling:
---     Ready chips are forwarded in arrival order (lowest index breaks ties).
---     Each cell carries a chip_id tag in metadata beat so downstream
---     can identify chip origin regardless of output order.
+--   Strict In-Order scheduling:
+--     Chips are always output in ascending order (chip0 → chip1 → chip2 → chip3).
+--     Inactive chips are skipped. Timed-out chips receive blank cells.
+--     Deterministic output order eliminates SW reordering overhead.
+--     Each cell carries a chip_id tag in metadata beat for verification.
 --
 --   Per-shot flow:
 --     1. shot_start → ST_SCAN
@@ -154,6 +155,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- Forwarding state
     -- =========================================================================
     signal s_cur_chip_r      : unsigned(1 downto 0) := (others => '0');
+    signal s_next_chip_r     : unsigned(1 downto 0) := (others => '0');  -- strict in-order pointer
     signal s_is_blank_r      : std_logic := '0';   -- current chip is timed out
     signal s_is_last_chip_r  : std_logic := '0';   -- no more undone active chips after this
 
@@ -360,6 +362,7 @@ begin
                 s_shot_cnt_r      <= (others => '0');
                 s_timeout_limit_r <= (others => '0');
                 s_cur_chip_r      <= (others => '0');
+                s_next_chip_r     <= (others => '0');
                 s_is_blank_r      <= '0';
                 s_is_last_chip_r  <= '0';
                 s_blank_stop_r    <= (others => '0');
@@ -436,51 +439,49 @@ begin
                             when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
                             when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
                         end case;
+                        -- Strict in-order: start from lowest active chip
+                        s_next_chip_r     <= (others => '0');
                         s_state_r         <= ST_SCAN;
                     end if;
 
                 -- ==============================================================
-                -- ST_SCAN: find any undone active chip to forward
-                --   Priority 1: ready chip (tvalid latched, lowest index)
-                --   Priority 2: timeout → blank any undone chip
-                --   Result registered → ST_RESOLVE computes is_last_chip
+                -- ST_SCAN: strict in-order chip selection
+                --   Always processes s_next_chip_r in ascending order.
+                --   Skips inactive chips. Waits for current chip's data
+                --   or blanks on timeout.
+                --   Output order guaranteed: chip0 → chip1 → chip2 → chip3
                 -- ==============================================================
                 when ST_SCAN =>
-                    -- Priority 1: find undone + ready chip
-                    v_found := false;
-                    v_cur_chip := (others => '0');
-                    for i in 0 to 3 loop
-                        if s_active_mask_r(i) = '1'
-                           and s_chip_done_r(i) = '0'
-                           and (s_chip_ready_r(i) = '1'
-                                or s_in_tvalid(i) = '1')
-                           and not v_found then
-                            v_cur_chip := to_unsigned(i, 2);
-                            v_found := true;
-                        end if;
-                    end loop;
+                    v_chip_idx := to_integer(s_next_chip_r);
 
-                    if v_found then
-                        s_is_blank_r <= '0';
-                        s_cur_chip_r <= v_cur_chip;
-                        s_state_r    <= ST_RESOLVE;
-                    elsif s_timeout_limit_r /= 0 and s_shot_cnt_r >= s_timeout_limit_r then
-                        -- Priority 2: timeout → pick any undone chip
-                        for i in 0 to 3 loop
-                            if s_active_mask_r(i) = '1'
-                               and s_chip_done_r(i) = '0'
-                               and not v_found then
-                                v_cur_chip := to_unsigned(i, 2);
-                                v_found := true;
-                            end if;
-                        end loop;
-                        if v_found then
-                            s_is_blank_r <= '1';
-                            s_cur_chip_r <= v_cur_chip;
-                            s_chip_error_r(to_integer(v_cur_chip)) <= '1';
-                            s_state_r    <= ST_RESOLVE;
+                    -- Skip inactive chips (not in mask): advance pointer
+                    if s_active_mask_r(v_chip_idx) = '0'
+                       or s_chip_done_r(v_chip_idx) = '1' then
+                        -- This chip is inactive or already done → skip
+                        -- Check if all done
+                        v_done_after := s_chip_done_r;
+                        v_done_after(v_chip_idx) := '1';  -- treat skipped as done
+                        if (v_done_after or (not s_active_mask_r)) = "1111" then
+                            -- All chips processed → will be caught after forward
+                            null;  -- no more chips, row will complete naturally
+                        else
+                            s_next_chip_r <= s_next_chip_r + 1;
                         end if;
+                    elsif s_chip_ready_r(v_chip_idx) = '1'
+                          or s_in_tvalid(v_chip_idx) = '1' then
+                        -- Current chip has data ready → forward
+                        s_is_blank_r <= '0';
+                        s_cur_chip_r <= s_next_chip_r;
+                        s_state_r    <= ST_RESOLVE;
+                    elsif s_timeout_limit_r /= 0
+                          and s_shot_cnt_r >= s_timeout_limit_r then
+                        -- Timeout: current chip didn't deliver → blank cell
+                        s_is_blank_r <= '1';
+                        s_cur_chip_r <= s_next_chip_r;
+                        s_chip_error_r(v_chip_idx) <= '1';
+                        s_state_r    <= ST_RESOLVE;
                     end if;
+                    -- else: wait for current chip (no state change)
 
                 -- ==============================================================
                 -- ST_RESOLVE: compute is_last_chip from registered s_cur_chip_r
@@ -546,7 +547,9 @@ begin
                                     end if;
                                     s_state_r        <= ST_IDLE;
                                 else
-                                    s_state_r    <= ST_SCAN;
+                                    s_next_chip_r <= s_next_chip_r + 1;
+                                    s_shot_cnt_r  <= (others => '0');  -- reset timeout for next chip
+                                    s_state_r     <= ST_SCAN;
                                 end if;
                             end if;
 
@@ -578,7 +581,9 @@ begin
                                         end if;
                                         s_state_r        <= ST_IDLE;
                                     else
-                                        s_state_r    <= ST_SCAN;
+                                        s_next_chip_r <= s_next_chip_r + 1;
+                                        s_shot_cnt_r  <= (others => '0');  -- reset timeout for next chip
+                                        s_state_r     <= ST_SCAN;
                                     end if;
                                 else
                                     s_pipe_tlast_r <= '0';
