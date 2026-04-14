@@ -170,8 +170,8 @@ package tdc_gpx_pkg is
         of std_logic_vector(3 downto 0);
 
     -- =========================================================================
-    -- Per-chip pipeline array types (promoted from top architecture-local)
-    -- Used by cluster wrapper port lists.
+    -- Per-chip pipeline array types (package scope)
+    -- Used by cluster wrapper port lists and top-level signal declarations.
     -- =========================================================================
     type t_slv32_array    is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(31 downto 0);

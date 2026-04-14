@@ -126,7 +126,7 @@ architecture rtl of tdc_gpx_output_stage is
     attribute KEEP_HIERARCHY of rtl : architecture is "yes";
 
     -- =========================================================================
-    -- Internal signals: face_assembler -> sync_fifo (rising)
+    -- Internal signals: face_assembler -> xpm_fifo_axis (rising)
     -- =========================================================================
     signal s_face_tdata      : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_face_tvalid     : std_logic;
@@ -134,7 +134,7 @@ architecture rtl of tdc_gpx_output_stage is
     signal s_face_tready     : std_logic;
 
     -- =========================================================================
-    -- Internal signals: face_assembler -> sync_fifo (falling)
+    -- Internal signals: face_assembler -> xpm_fifo_axis (falling)
     -- =========================================================================
     signal s_face_fall_tdata  : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_face_fall_tvalid : std_logic;
