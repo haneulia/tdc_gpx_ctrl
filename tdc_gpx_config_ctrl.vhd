@@ -193,7 +193,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_done    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_read_g  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_write_g : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_chip_address    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_done_pulse   : std_logic;
     signal s_cmd_reg_done_chip    : unsigned(1 downto 0);
     signal s_reg_loop_resume      : std_logic;
@@ -345,7 +345,7 @@ begin
             i_cmd_reg_rvalid     => s_cmd_reg_rvalid,
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
             i_cmd_reg_addr_done  => s_cmd_reg_addr_out,
-            o_cmd_reg_chip_mask  => s_cmd_reg_chip_mask,
+            o_cmd_reg_chip_address  => s_cmd_reg_chip_address,
             o_cdc_idle      => o_cdc_idle,
             o_irq           => o_irq
         );
@@ -365,7 +365,7 @@ begin
             i_cmd_reg_read       => s_cmd_reg_read,
             i_cmd_reg_write      => s_cmd_reg_write,
             i_cmd_reg_chip       => s_cmd_reg_chip,
-            i_cmd_reg_chip_mask  => s_cmd_reg_chip_mask,
+            i_cmd_reg_chip_address  => s_cmd_reg_chip_address,
             i_cmd_reg_addr       => s_cmd_reg_addr,
             i_chip_busy          => s_chip_busy,
             i_face_asm_idle      => i_face_asm_idle,

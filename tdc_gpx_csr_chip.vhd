@@ -121,7 +121,7 @@ entity tdc_gpx_csr_chip is
         i_cmd_reg_addr_done  : in  std_logic_vector(3 downto 0);  -- addr that was accessed
 
         -- Chip mask output from CTL1 CDC (i_axis_aclk domain)
-        o_cmd_reg_chip_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- CTL1[19:16]
+        o_cmd_reg_chip_address : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- CTL1[19:16]
 
         -- CDC idle output (to csr_pipeline, s_axi_aclk domain)
         o_cdc_idle          : out std_logic;
@@ -797,7 +797,7 @@ begin
     o_cmd_reg_chip  <= unsigned(s_ctl1_out(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
 
     -- Chip mask output from CTL1 CDC (i_axis_aclk domain)
-    o_cmd_reg_chip_mask <= s_ctl1_out(c_BT_REG_CHIP_MASK_HI downto c_BT_REG_CHIP_MASK_LO);
+    o_cmd_reg_chip_address <= s_ctl1_out(c_BT_REG_CHIP_ADDR_HI downto c_BT_REG_CHIP_ADDR_LO);
 
     -- =========================================================================
     -- [10] Per-chip reg read data latch (i_axis_aclk domain)

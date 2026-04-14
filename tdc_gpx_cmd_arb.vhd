@@ -37,7 +37,7 @@ entity tdc_gpx_cmd_arb is
         i_cmd_reg_read       : in  std_logic;
         i_cmd_reg_write      : in  std_logic;
         i_cmd_reg_chip       : in  unsigned(1 downto 0);             -- backward compat
-        i_cmd_reg_chip_mask  : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- target chip mask
+        i_cmd_reg_chip_address  : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- target chip mask
         i_cmd_reg_addr       : in  std_logic_vector(3 downto 0);     -- register address
 
         -- Pipeline idle
@@ -200,7 +200,7 @@ begin
                 -- ---- Accept new multi-chip request ----
                 elsif v_new_request = '1' and s_reg_active_r = '0' then
                     s_reg_active_r       <= '1';
-                    s_reg_target_mask_r  <= i_cmd_reg_chip_mask;
+                    s_reg_target_mask_r  <= i_cmd_reg_chip_address;
                     s_reg_pending_rw_r   <= v_rw;
                     s_reg_pending_addr_r <= i_cmd_reg_addr;
                     s_reg_done_mask_r    <= (others => '0');
@@ -208,7 +208,7 @@ begin
 
                     -- Immediate dispatch for chips that are ready now
                     for i in 0 to c_N_CHIPS - 1 loop
-                        if i_cmd_reg_chip_mask(i) = '1' then
+                        if i_cmd_reg_chip_address(i) = '1' then
                             if i_chip_busy(i) = '0'
                                and i_cmd_start = '0'
                                and i_cmd_start_accepted = '0'
