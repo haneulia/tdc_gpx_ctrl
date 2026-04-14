@@ -12,8 +12,9 @@
 --
 --   p_collect (ST_C_IDLE / ST_C_ACTIVE):
 --     Writes hits into the WRITE buffer from AXI-Stream slave input.
---     On drain_done (tuser[7] control beat): swaps buffer roles and signals
---     p_output to begin serialization.  Immediately ready for next shot.
+--     On ififo1_done (tuser[7]=1, tuser[6]=0): swaps buffer ownership
+--     immediately and signals p_output to begin serialization.
+--     Next shot's collect goes to the opposite buffer (true ping-pong).
 --
 --   p_output (ST_O_IDLE / ST_O_LOAD / ST_O_ACTIVE / ST_O_WAIT_IFIFO2):
 --     Reads from the READ buffer and serializes beats to AXI-Stream master.
@@ -293,34 +294,35 @@ begin
                         end if;
 
                         -- drain_done control beats:
-                        --   tuser[7]=1, tuser[6]=0: ififo1_done → start output stops 0~3
-                        --   tuser[7]=1, tuser[6]=1: final done  → output stops 4~7 + swap
+                        --   tuser[7]=1, tuser[6]=0: ififo1_done → swap + start output stops 0~3
+                        --   tuser[7]=1, tuser[6]=1: final done  → signal stops 4~7 ready
+                        --
+                        -- Ping-pong ownership:
+                        --   Buffer swap happens at OUTPUT START (ififo1_done), NOT at final done.
+                        --   This ensures: output reads old buffer, collect writes new buffer.
+                        --   Next shot's collect always goes to the opposite buffer.
                         if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
                             if i_s_axis_tuser(6) = '0' then
-                                -- IFIFO1 done: trigger early output of stops 0~3
+                                -- IFIFO1 done: SWAP buffer + trigger early output
                                 s_output_full_r <= '0';  -- clear from previous shot
+                                -- Swap NOW: read from current, write to opposite
+                                s_rd_buf_idx_r <= s_wr_buf_r;          -- output reads current
+                                s_wr_buf_r     <= not s_wr_buf_r;      -- collect switches to other
+                                s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
                                 if s_ostate_r = ST_O_IDLE then
-                                    s_rd_buf_idx_r <= s_wr_buf_r;
                                     s_output_req_r <= '1';
                                 end if;
                             else
-                                -- Final drain_done: trigger stops 4~7, swap buffer
+                                -- Final drain_done: signal stops 4~7 ready (NO swap)
                                 -- Latched: stays '1' until next ififo1_done clears it
                                 s_output_full_r <= '1';
                                 if s_ostate_r = ST_O_IDLE and s_output_req_r = '0' then
-                                    -- No ififo1_done was sent (both done simultaneously)
+                                    -- Edge case: both IFIFOs done simultaneously (no ififo1_done)
+                                    -- Swap + output start here as fallback
                                     s_rd_buf_idx_r <= s_wr_buf_r;
-                                    s_output_req_r <= '1';
-                                end if;
-                                -- Swap + clear ONLY if p_output is idle (not reading the other buffer).
-                                -- s_ostate_r is the sole guard: s_output_req_r is a 1-clk pulse
-                                -- that clears before p_output reaches ST_O_ACTIVE, so it cannot
-                                -- reliably indicate output-in-progress.
-                                -- If p_output is still active, skip swap — data in write buffer
-                                -- will be overwritten by next shot (overrun, non-destructive).
-                                if s_ostate_r = ST_O_IDLE then
-                                    s_wr_buf_r <= not s_wr_buf_r;
+                                    s_wr_buf_r     <= not s_wr_buf_r;
                                     s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
+                                    s_output_req_r <= '1';
                                 end if;
                             end if;
                         end if;

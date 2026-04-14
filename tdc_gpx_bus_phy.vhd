@@ -376,7 +376,8 @@ begin
                         -- re-acceptance of the same request.
                         if i_req_valid = '1' and i_tick_en = '1'
                            and s_rsp_valid_r = '0'
-                           and s_rsp_pending_r = '0' then
+                           and s_rsp_pending_r = '0'
+                           and s_axis_tvalid_r = '0' then  -- AXI-Stream response fully consumed
                             s_busy_r <= '1';
 
                             if i_req_rw = '1' then

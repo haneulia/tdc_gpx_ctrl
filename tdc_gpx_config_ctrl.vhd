@@ -572,7 +572,7 @@ begin
                 i_cmd_cfg_write     => o_cmd_cfg_write_g,
                 i_cmd_reg_read      => s_cmd_reg_read_g(i),
                 i_cmd_reg_write     => s_cmd_reg_write_g(i),
-                i_cmd_reg_addr      => s_cmd_reg_addr,
+                i_cmd_reg_addr      => s_cmd_reg_addr_mux,  -- muxed: err_handler or CSR
                 i_cmd_reg_wdata     => s_cmd_reg_wdata,
                 o_cmd_reg_rdata     => s_cmd_reg_rdata(i),
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),

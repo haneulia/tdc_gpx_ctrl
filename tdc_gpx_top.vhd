@@ -281,6 +281,12 @@ architecture rtl of tdc_gpx_top is
     signal s_err_seq_sticky_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_error_merged    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+    -- Error handler status (from config_ctrl)
+    signal s_err_active    : std_logic;
+    signal s_err_fatal     : std_logic;
+    signal s_err_chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_cause     : std_logic_vector(2 downto 0);
+
 begin
 
     -- =========================================================================
@@ -411,10 +417,10 @@ begin
             i_frame_done         => s_frame_done,
             i_frame_fall_done    => s_frame_fall_done,
             -- Error handler status
-            o_err_active         => open,
-            o_err_fatal          => open,  -- TODO: connect to status/IRQ
-            o_err_chip_mask      => open,
-            o_err_cause          => open,
+            o_err_active         => s_err_active,
+            o_err_fatal          => s_err_fatal,
+            o_err_chip_mask      => s_err_chip_mask,
+            o_err_cause          => s_err_cause,
             -- AXI-Stream output to Cluster 2
             o_raw_sk_tvalid      => s_raw_sk_tvalid,
             o_raw_sk_tdata       => s_raw_sk_tdata,
@@ -588,6 +594,9 @@ begin
     -- [6] face_seq (face/shot sequencer)
     -- =========================================================================
     u_face_seq : entity work.tdc_gpx_face_seq
+        generic map (
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+        )
         port map (
             i_clk                  => i_axis_aclk,
             i_rst_n                => i_axis_aresetn,
@@ -681,7 +690,7 @@ begin
     -- =========================================================================
     -- Status field assignments (remaining fields not populated by status_agg)
     -- =========================================================================
-    s_status.bin_mismatch        <= '0';
+    s_status.bin_mismatch        <= s_err_fatal;  -- repurposed: err_handler fatal recovery failure
     s_status.chip_error_mask     <= s_chip_error_merged;
     s_status.drain_timeout_mask  <= s_err_drain_to_sticky_r;
     s_status.sequence_error_mask <= s_err_seq_sticky_r;

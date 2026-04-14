@@ -22,6 +22,9 @@ use ieee.numeric_std.all;
 use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_face_seq is
+    generic (
+        g_OUTPUT_WIDTH : natural := 32  -- 32 or 64 (for hsize/geometry calculation)
+    );
     port (
         i_clk                : in  std_logic;
         i_rst_n              : in  std_logic;
@@ -112,7 +115,7 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_cfg_face_r            : t_tdc_cfg := c_TDC_CFG_INIT;
 
     signal s_rows_per_face_r  : unsigned(15 downto 0) := to_unsigned(c_MAX_ROWS_PER_FACE, 16);
-    signal s_hsize_bytes_r    : unsigned(15 downto 0) := to_unsigned(c_HSIZE_MAX, 16);
+    signal s_hsize_bytes_r    : unsigned(15 downto 0) := (others => '0');  -- computed at packet_start
 
     signal s_frame_rise_done_r : std_logic := '0';
     signal s_frame_fall_done_r : std_logic := '0';
@@ -245,7 +248,7 @@ begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
-                s_hsize_bytes_r   <= to_unsigned(c_HSIZE_MAX, 16);
+                s_hsize_bytes_r   <= (others => '0');
             elsif s_packet_start = '1' then
                 v_active_cnt := fn_count_ones(i_cfg.active_chip_mask);
                 v_rows := v_active_cnt * to_integer(i_cfg.stops_per_chip);
@@ -253,16 +256,17 @@ begin
                 s_rows_per_face_r <= to_unsigned(v_rows, 16);
                 -- Runtime beats_per_cell lookup (same pattern as cell_builder)
                 case i_cfg.max_hits_cfg is
-                    when "001" => v_data_beats := v_rows * fn_beats_per_cell_rt(1, c_TDATA_WIDTH);
-                    when "010" => v_data_beats := v_rows * fn_beats_per_cell_rt(2, c_TDATA_WIDTH);
-                    when "011" => v_data_beats := v_rows * fn_beats_per_cell_rt(3, c_TDATA_WIDTH);
-                    when "100" => v_data_beats := v_rows * fn_beats_per_cell_rt(4, c_TDATA_WIDTH);
-                    when "101" => v_data_beats := v_rows * fn_beats_per_cell_rt(5, c_TDATA_WIDTH);
-                    when "110" => v_data_beats := v_rows * fn_beats_per_cell_rt(6, c_TDATA_WIDTH);
-                    when others => v_data_beats := v_rows * fn_beats_per_cell_rt(7, c_TDATA_WIDTH);
+                    when "001" => v_data_beats := v_rows * fn_beats_per_cell_rt(1, g_OUTPUT_WIDTH);
+                    when "010" => v_data_beats := v_rows * fn_beats_per_cell_rt(2, g_OUTPUT_WIDTH);
+                    when "011" => v_data_beats := v_rows * fn_beats_per_cell_rt(3, g_OUTPUT_WIDTH);
+                    when "100" => v_data_beats := v_rows * fn_beats_per_cell_rt(4, g_OUTPUT_WIDTH);
+                    when "101" => v_data_beats := v_rows * fn_beats_per_cell_rt(5, g_OUTPUT_WIDTH);
+                    when "110" => v_data_beats := v_rows * fn_beats_per_cell_rt(6, g_OUTPUT_WIDTH);
+                    when others => v_data_beats := v_rows * fn_beats_per_cell_rt(7, g_OUTPUT_WIDTH);
                 end case;
                 s_hsize_bytes_r <= to_unsigned(
-                    (v_data_beats + c_HDR_PREFIX_BEATS) * c_TDATA_BYTES, 16);
+                    (v_data_beats + fn_hdr_prefix_beats(g_OUTPUT_WIDTH))
+                    * (g_OUTPUT_WIDTH / 8), 16);
             end if;
         end if;
     end process;
