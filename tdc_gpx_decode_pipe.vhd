@@ -2,7 +2,7 @@
 -- tdc_gpx_decode_pipe.vhd
 --
 -- Cluster 2: Decode pipeline wrapper.
--- Per-chip pipeline: decode_i -> skid_dec -> raw_event_builder -> skid_evt.
+-- Per-chip pipeline: decoder_i_mode -> skid_dec -> raw_event_builder -> skid_evt.
 -- Four identical lanes generated via gen_chip.
 --
 -- Architecture rules:
@@ -50,7 +50,7 @@ architecture rtl of tdc_gpx_decode_pipe is
     attribute KEEP_HIERARCHY of rtl : architecture is "yes";
 
     ---------------------------------------------------------------------------
-    -- decode_i output -> skid_dec input
+    -- decoder_i_mode output -> skid_dec input
     ---------------------------------------------------------------------------
     signal s_dec_axis_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal s_dec_axis_tdata  : t_slv32_array;

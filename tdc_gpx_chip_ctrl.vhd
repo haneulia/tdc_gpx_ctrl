@@ -128,7 +128,7 @@ entity tdc_gpx_chip_ctrl is
         o_alutrigger        : out std_logic;
         o_puresn            : out std_logic;          -- '0' = chip in reset
 
-        -- AXI-Stream master: raw word output (to decode_i)
+        -- AXI-Stream master: raw word output (to decoder_i_mode)
         --   tdata[27:0]  = 28-bit raw IFIFO word (0 for drain_done beat)
         --   tdata[31:28] = 0 (zero-padded to 32-bit)
         --   tuser[0]     = ififo_id ('0'=IFIFO1, '1'=IFIFO2)

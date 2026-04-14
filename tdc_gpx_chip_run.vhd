@@ -79,7 +79,7 @@ entity tdc_gpx_chip_run is
         i_lf1_sync          : in  std_logic;
         i_lf2_sync          : in  std_logic;
 
-        -- Raw word output (to coordinator passthrough → decode_i)
+        -- Raw word output (to coordinator passthrough → decoder_i_mode)
         o_raw_word          : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         o_raw_valid         : out std_logic;
         o_ififo_id          : out std_logic;

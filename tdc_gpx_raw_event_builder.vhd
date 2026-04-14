@@ -13,7 +13,7 @@
 --
 --   Range check: stop_id_local >= stops_per_chip => discard + error pulse.
 --
--- AXI-Stream slave (from decode_i):
+-- AXI-Stream slave (from decoder_i_mode):
 --   tdata[16:0] = raw_hit,  tuser[7] = drain_done
 --   tuser[0] = slope, [2:1] = cha_code, [5:3] = stop_id, [6] = ififo_id
 --
@@ -36,7 +36,7 @@ entity tdc_gpx_raw_event_builder is
         i_clk             : in  std_logic;
         i_rst_n           : in  std_logic;
 
-        -- AXI-Stream slave (from decode_i, registered)
+        -- AXI-Stream slave (from decoder_i_mode, registered)
         --   tdata[16:0]  = raw_hit (17-bit, 0 for drain_done beat)
         --   tuser[0]     = slope
         --   tuser[2:1]   = cha_code_raw

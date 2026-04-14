@@ -289,7 +289,7 @@ package tdc_gpx_pkg is
     );
 
     -- =========================================================================
-    -- t_raw_event : Decoded IFIFO read (decode_i -> raw_event_builder -> cell)
+    -- t_raw_event : Decoded IFIFO read (decoder_i_mode -> raw_event_builder -> cell)
     -- Key = {chip_id, shot_seq, stop_id_local}
     -- =========================================================================
     type t_raw_event is record
