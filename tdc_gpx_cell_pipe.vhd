@@ -122,7 +122,7 @@ begin
     begin
 
         -- Rising-slope cell builder
-        u_cell_bld : entity work.tdc_gpx_cell_builder
+        u_cell_bld_rise : entity work.tdc_gpx_cell_builder
             generic map (
                 g_CHIP_ID     => i,
                 g_TDATA_WIDTH => g_OUTPUT_WIDTH
