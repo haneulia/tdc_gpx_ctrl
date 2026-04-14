@@ -107,7 +107,13 @@ entity tdc_gpx_output_stage is
         o_hdr_draining       : out std_logic;
         o_hdr_fall_draining  : out std_logic;
         o_hdr_idle           : out std_logic;
-        o_hdr_fall_idle      : out std_logic
+        o_hdr_fall_idle      : out std_logic;
+
+        -- Pipeline tvalid monitors (for face_seq / status_agg drain detection)
+        o_face_tvalid          : out std_logic;   -- face_asm output valid (pre-FIFO)
+        o_face_fall_tvalid     : out std_logic;   -- face_asm_fall output valid (pre-FIFO)
+        o_face_buf_tvalid      : out std_logic;   -- post-FIFO valid (rising)
+        o_face_fall_buf_tvalid : out std_logic    -- post-FIFO valid (falling)
     );
 end entity tdc_gpx_output_stage;
 
@@ -338,5 +344,13 @@ begin
             o_last_line         => open,
             o_idle              => o_hdr_fall_idle
         );
+
+    -- =========================================================================
+    -- Pipeline tvalid monitors
+    -- =========================================================================
+    o_face_tvalid          <= s_face_tvalid;
+    o_face_fall_tvalid     <= s_face_fall_tvalid;
+    o_face_buf_tvalid      <= s_face_buf_tvalid;
+    o_face_fall_buf_tvalid <= s_face_fall_buf_tvalid;
 
 end architecture rtl;
