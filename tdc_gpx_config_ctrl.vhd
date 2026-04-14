@@ -8,6 +8,7 @@
 --   Instantiates:
 --     csr_chip       : AXI-Lite CSR + SRM + CDC for chip-owned registers
 --     cmd_arb        : command arbitration (cfg_write, reg read/write gating)
+--     err_handler    : automatic ErrFlag detection, Reg11 read, recovery FSM
 --     stop_decode    : stop event decode + cfg_image override
 --     bus_phy x4     : TDC-GPX bus physical layer (IOBUF + timing FSM)
 --     sk_brsp x4     : skid buffer bus_phy -> chip_ctrl (40b)
@@ -121,6 +122,12 @@ entity tdc_gpx_config_ctrl is
         i_hdr_fall_idle      : in  std_logic;
 
         -- =====================================================================
+        -- Frame boundary (from output_stage, for err_handler)
+        -- =====================================================================
+        i_frame_done         : in  std_logic;
+        i_frame_fall_done    : in  std_logic;
+
+        -- =====================================================================
         -- Output to Cluster 2: AXI-Stream x4 (from sk_raw)
         -- =====================================================================
         o_raw_sk_tvalid      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -151,6 +158,14 @@ entity tdc_gpx_config_ctrl is
         o_reg_outstanding    : out std_logic;
         o_reg_loop_resume    : out std_logic;
         o_cdc_idle           : out std_logic;
+
+        -- =====================================================================
+        -- Error handler status outputs
+        -- =====================================================================
+        o_err_active         : out std_logic;
+        o_err_fatal          : out std_logic;
+        o_err_chip_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_cause          : out std_logic_vector(2 downto 0);
 
         -- =====================================================================
         -- Interrupt
@@ -252,6 +267,30 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_sequence    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+    -- =========================================================================
+    -- err_handler outputs
+    -- =========================================================================
+    signal s_err_cmd_soft_reset    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_cmd_reg_read      : std_logic;
+    signal s_err_cmd_reg_addr      : std_logic_vector(3 downto 0);
+    signal s_err_cmd_reg_chip_addr : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_fill              : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_active            : std_logic;
+
+    -- =========================================================================
+    -- MUX signals: err_handler / csr_chip -> cmd_arb
+    -- =========================================================================
+    signal s_cmd_reg_read_mux         : std_logic;
+    signal s_cmd_reg_addr_mux         : std_logic_vector(3 downto 0);
+    signal s_cmd_reg_chip_address_mux : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- =========================================================================
+    -- Per-chip: sk_raw output (before err_fill gating)
+    -- =========================================================================
+    signal s_sk_raw_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_sk_raw_tdata  : t_slv32_array;
+    signal s_sk_raw_tuser  : t_slv8_array;
+
 begin
 
     -- =========================================================================
@@ -293,6 +332,27 @@ begin
     o_errflag_sync      <= s_errflag_sync;
     o_err_drain_timeout <= s_err_drain_timeout;
     o_err_sequence      <= s_err_sequence;
+    o_err_active        <= s_err_active;
+
+    -- =========================================================================
+    -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
+    -- =========================================================================
+    s_cmd_reg_read_mux         <= s_err_cmd_reg_read      when s_err_active = '1'
+                                  else s_cmd_reg_read;
+    s_cmd_reg_addr_mux         <= s_err_cmd_reg_addr      when s_err_active = '1'
+                                  else s_cmd_reg_addr;
+    s_cmd_reg_chip_address_mux <= s_err_cmd_reg_chip_addr when s_err_active = '1'
+                                  else s_cmd_reg_chip_address;
+
+    -- =========================================================================
+    -- Per-chip err_fill gating on raw AXI-Stream output
+    -- =========================================================================
+    gen_err_fill : for i in 0 to c_N_CHIPS - 1 generate
+        o_raw_sk_tdata(i)  <= s_sk_raw_tdata(i) when s_err_fill(i) = '0'
+                              else (16 downto 0 => '1', others => '0');
+        o_raw_sk_tvalid(i) <= s_sk_raw_tvalid(i);
+        o_raw_sk_tuser(i)  <= s_sk_raw_tuser(i);
+    end generate gen_err_fill;
 
     -- =========================================================================
     -- s_cmd_reg_wdata: cfg_image indexed by target register address
@@ -362,11 +422,11 @@ begin
             i_cmd_stop           => i_cmd_stop,
             i_cmd_soft_reset     => i_cmd_soft_reset,
             i_cmd_cfg_write      => i_cmd_cfg_write,
-            i_cmd_reg_read       => s_cmd_reg_read,
+            i_cmd_reg_read       => s_cmd_reg_read_mux,
             i_cmd_reg_write      => s_cmd_reg_write,
             i_cmd_reg_chip       => s_cmd_reg_chip,
-            i_cmd_reg_chip_address  => s_cmd_reg_chip_address,
-            i_cmd_reg_addr       => s_cmd_reg_addr,
+            i_cmd_reg_chip_address  => s_cmd_reg_chip_address_mux,
+            i_cmd_reg_addr       => s_cmd_reg_addr_mux,
             i_chip_busy          => s_chip_busy,
             i_face_asm_idle      => i_face_asm_idle,
             i_face_asm_fall_idle => i_face_asm_fall_idle,
@@ -382,6 +442,33 @@ begin
             o_cmd_reg_done_chip  => s_cmd_reg_done_chip,
             o_reg_loop_resume    => s_reg_loop_resume,
             o_cmd_reg_addr_out   => s_cmd_reg_addr_out
+        );
+
+    -- =========================================================================
+    -- [2b] err_handler: automatic ErrFlag detection and recovery
+    -- =========================================================================
+    u_err_handler : entity work.tdc_gpx_err_handler
+        port map (
+            i_clk                => i_axis_aclk,
+            i_rst_n              => i_axis_aresetn,
+            i_errflag_sync       => s_errflag_sync,
+            i_chip_busy          => s_chip_busy,
+            i_reg11_data_0       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(0),
+            i_reg11_data_1       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(1),
+            i_reg11_data_2       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(2),
+            i_reg11_data_3       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(3),
+            i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
+            i_frame_done         => i_frame_done or i_frame_fall_done,
+            i_shot_start         => i_shot_start_gated,
+            o_cmd_soft_reset     => s_err_cmd_soft_reset,
+            o_cmd_reg_read       => s_err_cmd_reg_read,
+            o_cmd_reg_addr       => s_err_cmd_reg_addr,
+            o_cmd_reg_chip_addr  => s_err_cmd_reg_chip_addr,
+            o_err_fill           => s_err_fill,
+            o_err_active         => s_err_active,
+            o_err_chip_mask      => o_err_chip_mask,
+            o_err_cause          => o_err_cause,
+            o_err_fatal          => o_err_fatal
         );
 
     -- =========================================================================
@@ -481,6 +568,7 @@ begin
                 i_cmd_start         => i_cmd_start_accepted,
                 i_cmd_stop          => i_cmd_stop,
                 i_cmd_soft_reset    => i_cmd_soft_reset,
+                i_cmd_soft_reset_err => s_err_cmd_soft_reset(i),
                 i_cmd_cfg_write     => o_cmd_cfg_write_g,
                 i_cmd_reg_read      => s_cmd_reg_read_g(i),
                 i_cmd_reg_write     => s_cmd_reg_write_g(i),
@@ -536,10 +624,10 @@ begin
                 i_s_valid => s_raw_axis_tvalid(i),
                 o_s_ready => s_raw_axis_tready(i),
                 i_s_data  => s_raw_axis_tdata(i) & s_raw_axis_tuser(i),
-                o_m_valid => o_raw_sk_tvalid(i),
+                o_m_valid => s_sk_raw_tvalid(i),
                 i_m_ready => i_raw_sk_tready(i),
-                o_m_data(39 downto 8) => o_raw_sk_tdata(i),
-                o_m_data(7 downto 0)  => o_raw_sk_tuser(i)
+                o_m_data(39 downto 8) => s_sk_raw_tdata(i),
+                o_m_data(7 downto 0)  => s_sk_raw_tuser(i)
             );
 
     end generate gen_chip;

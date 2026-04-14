@@ -406,6 +406,14 @@ begin
             i_face_asm_fall_idle => s_face_asm_fall_idle,
             i_hdr_idle           => s_hdr_idle,
             i_hdr_fall_idle      => s_hdr_fall_idle,
+            -- Frame done (for err_handler)
+            i_frame_done         => s_frame_done,
+            i_frame_fall_done    => s_frame_fall_done,
+            -- Error handler status
+            o_err_active         => open,
+            o_err_fatal          => open,  -- TODO: connect to status/IRQ
+            o_err_chip_mask      => open,
+            o_err_cause          => open,
             -- AXI-Stream output to Cluster 2
             o_raw_sk_tvalid      => s_raw_sk_tvalid,
             o_raw_sk_tdata       => s_raw_sk_tdata,

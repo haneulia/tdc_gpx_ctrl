@@ -51,7 +51,8 @@ entity tdc_gpx_chip_ctrl is
         -- CSR commands (active-high, 1-clk pulses from CSR)
         i_cmd_start         : in  std_logic;        -- IDLE -> ARMED
         i_cmd_stop          : in  std_logic;         -- ARMED/CAPTURE -> IDLE
-        i_cmd_soft_reset    : in  std_logic;         -- any -> POWERUP
+        i_cmd_soft_reset    : in  std_logic;         -- any -> POWERUP (global)
+        i_cmd_soft_reset_err: in  std_logic;         -- per-chip error recovery -> POWERUP
         i_cmd_cfg_write     : in  std_logic;         -- IDLE -> CFG_WRITE
 
         -- Individual register access (from CSR, 1-clk pulses, IDLE only)
@@ -251,7 +252,8 @@ architecture coordinator of tdc_gpx_chip_ctrl is
 
 begin
 
-    s_sub_rst_n <= i_rst_n and (not i_cmd_soft_reset);
+    -- Combine global soft_reset with per-chip error recovery reset
+    s_sub_rst_n <= i_rst_n and (not i_cmd_soft_reset) and (not i_cmd_soft_reset_err);
 
     -- =========================================================================
     -- Sub-FSM instantiations
@@ -477,9 +479,10 @@ begin
 
                 end case;
 
-                -- Soft reset: reset sub-FSMs this cycle, restart init next cycle
-                s_soft_reset_d1_r <= i_cmd_soft_reset;
-                if i_cmd_soft_reset = '1' then
+                -- Soft reset: global OR per-chip error recovery
+                -- Reset sub-FSMs this cycle, restart init next cycle
+                s_soft_reset_d1_r <= i_cmd_soft_reset or i_cmd_soft_reset_err;
+                if i_cmd_soft_reset = '1' or i_cmd_soft_reset_err = '1' then
                     s_cfg_image_snap_r <= i_cfg_image;
                     s_phase_r          <= PH_INIT;
                 end if;
