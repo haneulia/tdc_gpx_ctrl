@@ -37,7 +37,7 @@ entity tdc_gpx_decode_pipe is
         o_evt_sk_tvalid : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_evt_sk_tdata  : out t_slv32_array;
         o_evt_sk_tuser  : out t_slv16_array;
-        -- No tready: cell_builder always accepts (i_m_ready => '1')
+        i_evt_sk_tready : in  std_logic_vector(c_N_CHIPS-1 downto 0);  -- backpressure from cell_pipe
 
         -- Status
         o_stop_id_error : out std_logic_vector(c_N_CHIPS-1 downto 0)
@@ -145,7 +145,7 @@ begin
                 o_s_ready               => s_evt_axis_tready(i),
                 i_s_data                => s_evt_axis_tdata(i) & s_evt_axis_tuser(i),
                 o_m_valid               => o_evt_sk_tvalid(i),
-                i_m_ready               => '1',
+                i_m_ready               => i_evt_sk_tready(i),  -- backpressure from cell_pipe
                 o_m_data(47 downto 16)  => o_evt_sk_tdata(i),
                 o_m_data(15 downto 0)   => o_evt_sk_tuser(i)
             );

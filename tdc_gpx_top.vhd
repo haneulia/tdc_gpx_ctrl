@@ -185,6 +185,7 @@ architecture rtl of tdc_gpx_top is
     signal s_evt_sk_tvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_evt_sk_tdata     : t_slv32_array;
     signal s_evt_sk_tuser     : t_slv16_array;
+    signal s_evt_sk_tready    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Cluster 3 -> Cluster 4 (AXI-Stream x4, dual slope)
@@ -464,6 +465,7 @@ begin
             o_evt_sk_tvalid     => s_evt_sk_tvalid,
             o_evt_sk_tdata      => s_evt_sk_tdata,
             o_evt_sk_tuser      => s_evt_sk_tuser,
+            i_evt_sk_tready     => s_evt_sk_tready,
             -- Status
             o_stop_id_error     => s_stop_id_error
         );
@@ -482,6 +484,7 @@ begin
             i_evt_sk_tvalid         => s_evt_sk_tvalid,
             i_evt_sk_tdata          => s_evt_sk_tdata,
             i_evt_sk_tuser          => s_evt_sk_tuser,
+            o_evt_sk_tready         => s_evt_sk_tready,
             -- Control / Config
             i_shot_start_per_chip   => s_shot_start_per_chip,
             i_face_stops_per_chip   => s_face_stops_per_chip_r,
