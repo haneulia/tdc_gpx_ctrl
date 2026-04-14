@@ -4,8 +4,15 @@
 -- =============================================================================
 --
 -- Purpose:
---   Manages reg access 1-outstanding lock, cfg_write pending/gating,
---   and reg demux with start/cfg collision prevention.
+--   Per-chip pending latch with multi-chip parallel dispatch, cfg_write
+--   pending/gating with full pipeline idle, and IRQ/loop-resume outputs.
+--
+--   Key features:
+--     - cfg_write pending latch + full pipeline idle gating (unchanged)
+--     - Per-chip pending tracking for multi-chip parallel register access
+--     - chip_mask-based target selection (parallel dispatch to N chips)
+--     - All-done IRQ pulse and measurement loop resume output
+--     - Per-chip outstanding tracking (replaces global 1-outstanding lock)
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -29,7 +36,9 @@ entity tdc_gpx_cmd_arb is
         i_cmd_cfg_write      : in  std_logic;
         i_cmd_reg_read       : in  std_logic;
         i_cmd_reg_write      : in  std_logic;
-        i_cmd_reg_chip       : in  unsigned(1 downto 0);
+        i_cmd_reg_chip       : in  unsigned(1 downto 0);             -- backward compat
+        i_cmd_reg_chip_mask  : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- target chip mask
+        i_cmd_reg_addr       : in  std_logic_vector(3 downto 0);     -- register address
 
         -- Pipeline idle
         i_chip_busy          : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -46,7 +55,13 @@ entity tdc_gpx_cmd_arb is
         o_cmd_reg_read_g     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_cmd_reg_write_g    : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_reg_outstanding    : out std_logic;
-        o_outstanding_chip   : out unsigned(1 downto 0)
+        o_outstanding_chip   : out unsigned(1 downto 0);             -- backward compat
+
+        -- New: IRQ / done / loop-resume
+        o_cmd_reg_done_pulse : out std_logic;                        -- all-done 1-clk pulse
+        o_cmd_reg_done_chip  : out unsigned(1 downto 0);             -- which chip just completed
+        o_reg_loop_resume    : out std_logic;                        -- measurement loop resume 1-clk
+        o_cmd_reg_addr_out   : out std_logic_vector(3 downto 0)      -- latched addr for csr_chip STAT
     );
 end entity tdc_gpx_cmd_arb;
 
@@ -54,44 +69,53 @@ architecture rtl of tdc_gpx_cmd_arb is
 
     constant C_ZEROS : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
-    signal s_cfg_write_pending_r    : std_logic := '0';
-    signal s_reg_outstanding_r      : std_logic := '0';
-    signal s_outstanding_chip_r     : unsigned(1 downto 0) := (others => '0');
+    -- -------------------------------------------------------------------------
+    -- cfg_write pending (unchanged from original)
+    -- -------------------------------------------------------------------------
+    signal s_cfg_write_pending_r : std_logic := '0';
+    signal s_cmd_cfg_write_g_i   : std_logic;
 
-    signal s_cmd_cfg_write_g_i      : std_logic;
-    signal s_cmd_reg_read_g_i       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_write_g_i      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- -------------------------------------------------------------------------
+    -- Per-chip multi-chip reg dispatch
+    -- -------------------------------------------------------------------------
+    signal s_reg_active_r        : std_logic := '0';                          -- any reg op in progress
+    signal s_reg_pending_rw_r    : std_logic := '0';                          -- '0'=read, '1'=write
+    signal s_reg_pending_addr_r  : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_reg_target_mask_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_done_mask_r     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_dispatched_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_pending_r       : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+
+    -- Dispatch pulses (1-clk each, registered)
+    signal s_dispatch_pulse_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+
+    -- Done tracking
+    signal s_done_pulse_r        : std_logic := '0';
+    signal s_loop_resume_r       : std_logic := '0';
+    signal s_done_chip_r         : unsigned(1 downto 0) := (others => '0');
+
+    -- Backward compat: outstanding_chip tracks last chip that was dispatched
+    signal s_outstanding_chip_r  : unsigned(1 downto 0) := (others => '0');
+
+    -- Reset condition
+    signal s_reset               : std_logic;
+
+    -- All-done detection
+    signal s_all_done            : std_logic;
 
 begin
 
-    -- Reg demux: 1-outstanding + start/cfg collision prevention
-    gen_reg_demux : for i in 0 to c_N_CHIPS - 1 generate
-        s_cmd_reg_read_g_i(i) <= i_cmd_reg_read
-                                when to_integer(i_cmd_reg_chip) = i
-                                 and s_reg_outstanding_r = '0'
-                                 and i_cmd_start = '0'
-                                 and i_cmd_start_accepted = '0'
-                                 and s_cmd_cfg_write_g_i = '0'
-                                 and i_cmd_cfg_write = '0'
-                                 and i_chip_busy(i) = '0'
-                                else '0';
-        s_cmd_reg_write_g_i(i) <= i_cmd_reg_write
-                                when to_integer(i_cmd_reg_chip) = i
-                                 and s_reg_outstanding_r = '0'
-                                 and i_cmd_start = '0'
-                                 and i_cmd_start_accepted = '0'
-                                 and s_cmd_cfg_write_g_i = '0'
-                                 and i_cmd_cfg_write = '0'
-                                 and i_chip_busy(i) = '0'
-                                else '0';
-    end generate;
+    s_reset <= '1' when i_rst_n = '0' or i_cmd_soft_reset = '1' or i_cmd_stop = '1'
+               else '0';
 
-    -- cfg_write pending + full pipeline idle gating
+    -- =========================================================================
+    -- cfg_write pending + full pipeline idle gating (preserved exactly)
+    -- =========================================================================
     p_cfg_write_pending : process(i_clk)
         variable v_pipeline_idle : boolean;
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' or i_cmd_soft_reset = '1' or i_cmd_stop = '1' then
+            if s_reset = '1' then
                 s_cfg_write_pending_r <= '0';
             else
                 v_pipeline_idle := i_chip_busy = C_ZEROS
@@ -120,31 +144,150 @@ begin
                             and i_cmd_start_accepted = '0'
                            else '0';
 
-    -- 1-outstanding lock
-    p_reg_latch : process(i_clk)
+    -- =========================================================================
+    -- All-done detection (combinational)
+    -- =========================================================================
+    s_all_done <= '1' when s_reg_active_r = '1'
+                       and s_reg_target_mask_r /= C_ZEROS
+                       and s_reg_done_mask_r = s_reg_target_mask_r
+                 else '0';
+
+    -- =========================================================================
+    -- Per-chip pending latch + multi-chip parallel dispatch
+    -- =========================================================================
+    p_reg_pending : process(i_clk)
+        variable v_new_request  : std_logic;
+        variable v_rw           : std_logic;  -- '0'=read, '1'=write
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' or i_cmd_soft_reset = '1' or i_cmd_stop = '1' then
+            if s_reset = '1' then
+                s_reg_active_r       <= '0';
+                s_reg_pending_rw_r   <= '0';
+                s_reg_pending_addr_r <= (others => '0');
+                s_reg_target_mask_r  <= (others => '0');
+                s_reg_done_mask_r    <= (others => '0');
+                s_reg_dispatched_r   <= (others => '0');
+                s_reg_pending_r      <= (others => '0');
+                s_dispatch_pulse_r   <= (others => '0');
+                s_done_pulse_r       <= '0';
+                s_loop_resume_r      <= '0';
+                s_done_chip_r        <= (others => '0');
                 s_outstanding_chip_r <= (others => '0');
-                s_reg_outstanding_r  <= '0';
             else
-                if (s_cmd_reg_read_g_i /= C_ZEROS
-                    or s_cmd_reg_write_g_i /= C_ZEROS) then
-                    s_outstanding_chip_r <= i_cmd_reg_chip;
-                    s_reg_outstanding_r  <= '1';
+                -- Default: clear single-cycle pulses
+                s_dispatch_pulse_r <= (others => '0');
+                s_done_pulse_r     <= '0';
+                s_loop_resume_r    <= '0';
+
+                -- Detect new request (read or write; write wins if both)
+                v_new_request := i_cmd_reg_read or i_cmd_reg_write;
+                if i_cmd_reg_write = '1' then
+                    v_rw := '1';
+                else
+                    v_rw := '0';
                 end if;
-                if s_reg_outstanding_r = '1'
-                   and i_cmd_reg_done(to_integer(s_outstanding_chip_r)) = '1' then
-                    s_reg_outstanding_r <= '0';
+
+                -- ---- All-done: clear and fire IRQ ----
+                if s_all_done = '1' then
+                    s_reg_active_r      <= '0';
+                    s_reg_pending_r     <= (others => '0');
+                    s_reg_target_mask_r <= (others => '0');
+                    s_reg_done_mask_r   <= (others => '0');
+                    s_reg_dispatched_r  <= (others => '0');
+                    s_done_pulse_r      <= '1';
+                    s_loop_resume_r     <= '1';
+
+                -- ---- Accept new multi-chip request ----
+                elsif v_new_request = '1' and s_reg_active_r = '0' then
+                    s_reg_active_r       <= '1';
+                    s_reg_target_mask_r  <= i_cmd_reg_chip_mask;
+                    s_reg_pending_rw_r   <= v_rw;
+                    s_reg_pending_addr_r <= i_cmd_reg_addr;
+                    s_reg_done_mask_r    <= (others => '0');
+                    s_reg_dispatched_r   <= (others => '0');
+
+                    -- Immediate dispatch for chips that are ready now
+                    for i in 0 to c_N_CHIPS - 1 loop
+                        if i_cmd_reg_chip_mask(i) = '1' then
+                            if i_chip_busy(i) = '0'
+                               and i_cmd_start = '0'
+                               and i_cmd_start_accepted = '0'
+                               and s_cmd_cfg_write_g_i = '0'
+                               and i_cmd_cfg_write = '0' then
+                                -- Dispatch immediately
+                                s_dispatch_pulse_r(i) <= '1';
+                                s_reg_dispatched_r(i) <= '1';
+                                s_reg_pending_r(i)    <= '0';
+                                s_outstanding_chip_r  <= to_unsigned(i, 2);
+                            else
+                                -- Mark pending for later dispatch
+                                s_reg_pending_r(i)    <= '1';
+                                s_reg_dispatched_r(i) <= '0';
+                            end if;
+                        else
+                            s_reg_pending_r(i)    <= '0';
+                            s_reg_dispatched_r(i) <= '0';
+                        end if;
+                    end loop;
+
+                -- ---- Active: continue dispatching pending + collect dones ----
+                elsif s_reg_active_r = '1' then
+                    -- Dispatch pending chips that become ready
+                    for i in 0 to c_N_CHIPS - 1 loop
+                        if s_reg_pending_r(i) = '1'
+                           and s_reg_dispatched_r(i) = '0'
+                           and s_reg_done_mask_r(i) = '0'
+                           and i_chip_busy(i) = '0'
+                           and i_cmd_start = '0'
+                           and i_cmd_start_accepted = '0'
+                           and s_cmd_cfg_write_g_i = '0'
+                           and i_cmd_cfg_write = '0' then
+                            s_dispatch_pulse_r(i) <= '1';
+                            s_reg_dispatched_r(i) <= '1';
+                            s_reg_pending_r(i)    <= '0';
+                            s_outstanding_chip_r  <= to_unsigned(i, 2);
+                        end if;
+                    end loop;
+
+                    -- Collect per-chip done signals
+                    for i in 0 to c_N_CHIPS - 1 loop
+                        if i_cmd_reg_done(i) = '1'
+                           and s_reg_target_mask_r(i) = '1' then
+                            s_reg_done_mask_r(i) <= '1';
+                            s_done_chip_r <= to_unsigned(i, 2);
+                        end if;
+                    end loop;
+                end if;
+
+                -- Also collect dones during accept cycle (chip may complete
+                -- same cycle it was dispatched in a zero-wait-state path)
+                if v_new_request = '1' and s_reg_active_r = '0' then
+                    -- dones arriving this cycle apply to previous operation,
+                    -- not the new one; done_mask was cleared above, so this
+                    -- is a no-op by design.
+                    null;
                 end if;
             end if;
         end if;
     end process;
 
-    o_cmd_cfg_write_g  <= s_cmd_cfg_write_g_i;
-    o_cmd_reg_read_g   <= s_cmd_reg_read_g_i;
-    o_cmd_reg_write_g  <= s_cmd_reg_write_g_i;
-    o_reg_outstanding  <= s_reg_outstanding_r;
-    o_outstanding_chip <= s_outstanding_chip_r;
+    -- =========================================================================
+    -- Output: gated read/write pulses (1-clk per chip)
+    -- =========================================================================
+    gen_reg_out : for i in 0 to c_N_CHIPS - 1 generate
+        o_cmd_reg_read_g(i)  <= s_dispatch_pulse_r(i) when s_reg_pending_rw_r = '0' else '0';
+        o_cmd_reg_write_g(i) <= s_dispatch_pulse_r(i) when s_reg_pending_rw_r = '1' else '0';
+    end generate;
+
+    -- =========================================================================
+    -- Output assignments
+    -- =========================================================================
+    o_cmd_cfg_write_g    <= s_cmd_cfg_write_g_i;
+    o_reg_outstanding    <= s_reg_active_r;
+    o_outstanding_chip   <= s_outstanding_chip_r;
+    o_cmd_reg_done_pulse <= s_done_pulse_r;
+    o_cmd_reg_done_chip  <= s_done_chip_r;
+    o_reg_loop_resume    <= s_loop_resume_r;
+    o_cmd_reg_addr_out   <= s_reg_pending_addr_r;
 
 end architecture rtl;

@@ -90,9 +90,11 @@ package tdc_gpx_cfg_pkg is
     -- [9] reserved
     constant c_BT_REG_ADDR_HI       : natural := 13;   -- [13:10] reg_target_addr
     constant c_BT_REG_ADDR_LO       : natural := 10;
-    constant c_BT_REG_CHIP_HI       : natural := 15;   -- [15:14] reg_target_chip_id
+    constant c_BT_REG_CHIP_HI       : natural := 15;   -- [15:14] reg_target_chip_id (단일 칩 모드)
     constant c_BT_REG_CHIP_LO       : natural := 14;
-    -- [29:16] reserved
+    constant c_BT_REG_CHIP_MASK_HI  : natural := 19;   -- [19:16] reg_target_chip_mask (멀티칩)
+    constant c_BT_REG_CHIP_MASK_LO  : natural := 16;
+    -- [29:20] reserved
     constant c_BT_REG_READ_TRIG     : natural := 30;   -- [30] reg_read trigger (edge)
     constant c_BT_REG_WRITE_TRIG    : natural := 31;   -- [31] reg_write trigger (edge)
 
