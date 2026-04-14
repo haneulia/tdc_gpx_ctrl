@@ -11,6 +11,7 @@
 -- Owned registers:
 --   CTL1  (0x04) BUS_TIMING     [5:0] bus_clk_div, [8:6] bus_ticks,
 --                                [13:10] reg_target_addr, [15:14] reg_target_chip,
+--                                [19:16] reg_target_chip_mask,
 --                                [30] reg_read_trigger, [31] reg_write_trigger
 --   CTL3  (0x0C) START_OFF1     [17:0]
 --   CTL4  (0x10) CFG_REG7       [31:0]
@@ -23,8 +24,11 @@
 --   CTL22~31            — left open
 --
 -- STAT registers:
---   STAT11 (0xAC) REG_RDATA    [27:0] chip register read data (CDC'd)
---   STAT0~10, STAT12~31        — tied to zero (owned by csr_pipeline)
+--   STAT0  (0x80) chip0 result  [27:0] rdata, [31:28] addr
+--   STAT1  (0x84) chip1 result  [27:0] rdata, [31:28] addr
+--   STAT2  (0x88) chip2 result  [27:0] rdata, [31:28] addr
+--   STAT3  (0x8C) chip3 result  [27:0] rdata, [31:28] addr
+--   STAT4~31                    — tied to zero
 --
 -- CDC structure:
 --   CTL1   : 1 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) — bus timing
@@ -32,12 +36,14 @@
 --   CTL4   : 1 x xpm_cdc_handshake — cfg_reg7
 --   CTL5~20: 16 x xpm_cdc_handshake — cfg_image, per-register
 --   CTL21  : 1 x xpm_cdc_handshake — scan_timeout + max_hits
---   STAT11 : 1 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) — reg rdata
---   Total: 21 CDC instances
+--   STAT0~3: 4 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) — per-chip results
+--   IRQ    : 1 x xpm_cdc_pulse (i_axis_aclk -> s_axi_aclk) — done_pulse
+--   Total: 25 CDC instances
 --
 -- CDC idle flag:
 --   NOR of all 20 src_send signals (ctl1, ctl3, ctl4, img x16, ctl21).
 --   Output as o_cdc_idle (s_axi_aclk domain) for csr_pipeline to use.
+--   Note: STAT CDCs (i_axis->s_axi direction) are NOT included in idle flag.
 --
 -- Clock domains:
 --   s_axi_aclk  : AXI4-Lite domain (PS clock)
@@ -101,8 +107,21 @@ entity tdc_gpx_csr_chip is
         o_cmd_reg_write     : out std_logic;
         o_cmd_reg_addr      : out std_logic_vector(3 downto 0);
         o_cmd_reg_chip      : out unsigned(1 downto 0);
-        i_cmd_reg_rdata     : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-        i_cmd_reg_rvalid    : in  std_logic;
+
+        -- Per-chip reg result (i_axis_aclk domain)
+        -- Each chip independently returns read data when its reg operation completes
+        i_cmd_reg_rdata_0   : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        i_cmd_reg_rdata_1   : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        i_cmd_reg_rdata_2   : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        i_cmd_reg_rdata_3   : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        i_cmd_reg_rvalid    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip valid
+
+        -- All-done feedback from cmd_arb (i_axis_aclk domain)
+        i_cmd_reg_done_pulse : in  std_logic;  -- 1-clk: all target chips completed
+        i_cmd_reg_addr_done  : in  std_logic_vector(3 downto 0);  -- addr that was accessed
+
+        -- Chip mask output from CTL1 CDC (i_axis_aclk domain)
+        o_cmd_reg_chip_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- CTL1[19:16]
 
         -- CDC idle output (to csr_pipeline, s_axi_aclk domain)
         o_cdc_idle          : out std_logic;
@@ -255,6 +274,12 @@ architecture rtl of tdc_gpx_csr_chip is
     -- =========================================================================
     type t_cdc_data_array is array(natural range <>) of std_logic_vector(31 downto 0);
 
+    -- Per-chip STAT registers (i_axis_aclk domain)
+    type t_stat_array is array(0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
+
+    -- Per-chip STAT CDC output (s_axi_aclk domain)
+    type t_stat_cdc_array is array(0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
+
     -- =========================================================================
     -- CTL raw outputs from SRM (s_axi_aclk domain)
     -- =========================================================================
@@ -307,14 +332,15 @@ architecture rtl of tdc_gpx_csr_chip is
     signal s_img_d1         : t_cdc_data_array(0 to c_CFG_IMAGE_N_REGS - 1) := (others => (others => '1'));
 
     -- =========================================================================
-    -- STAT11 CDC (i_axis_aclk -> s_axi_aclk)
+    -- Per-chip STAT registers (i_axis_aclk domain) and CDC outputs
     -- =========================================================================
-    signal s_stat11_src     : std_logic_vector(31 downto 0);
-    signal s_stat11_out     : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_src_send_stat11 : std_logic := '0';
-    signal s_src_rcv_stat11  : std_logic;
-    signal s_dest_req_stat11 : std_logic;
-    signal s_stat11_d1       : std_logic_vector(31 downto 0) := (others => '1');
+    signal s_reg_stat_r : t_stat_array := (others => (others => '0'));
+    signal s_stat_out   : t_stat_cdc_array := (others => (others => '0'));
+
+    -- =========================================================================
+    -- IRQ CDC (i_axis_aclk -> s_axi_aclk)
+    -- =========================================================================
+    signal s_irq_pulse : std_logic;
 
     -- =========================================================================
     -- CDC-idle flag (s_axi_aclk domain)
@@ -329,9 +355,6 @@ architecture rtl of tdc_gpx_csr_chip is
     -- =========================================================================
     signal s_reg_cmd_prev_r   : std_logic_vector(1 downto 0) := (others => '0');
     signal s_reg_cmd_pulse_r  : std_logic_vector(1 downto 0) := (others => '0');
-
-    -- Reg access read data latch (i_axis_aclk domain)
-    signal s_reg_rdata_r      : std_logic_vector(31 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Bus timing combined constraint intermediates
@@ -420,19 +443,19 @@ begin
             ctl29_out => open,
             ctl30_out => open,
             ctl31_out => open,
-            -- STAT inputs: only STAT11 (REG_RDATA) used; rest tied to zero
-            stat0_in  => C_ZERO32,
-            stat1_in  => C_ZERO32,
-            stat2_in  => C_ZERO32,
-            stat3_in  => C_ZERO32,
-            stat4_in  => C_ZERO32,
+            -- STAT inputs: STAT0~3 = per-chip results (CDC'd); rest tied to zero
+            stat0_in  => s_stat_out(0),     -- chip0 result
+            stat1_in  => s_stat_out(1),     -- chip1 result
+            stat2_in  => s_stat_out(2),     -- chip2 result
+            stat3_in  => s_stat_out(3),     -- chip3 result
+            stat4_in  => C_ZERO32,          -- reserved
             stat5_in  => C_ZERO32,
             stat6_in  => C_ZERO32,
             stat7_in  => C_ZERO32,
             stat8_in  => C_ZERO32,
             stat9_in  => C_ZERO32,
             stat10_in => C_ZERO32,
-            stat11_in => s_stat11_out,      -- REG_RDATA: chip register readback
+            stat11_in => C_ZERO32,          -- was REG_RDATA, now in STAT0-3
             stat12_in => C_ZERO32,  stat13_in => C_ZERO32,
             stat14_in => C_ZERO32,  stat15_in => C_ZERO32,
             stat16_in => C_ZERO32,  stat17_in => C_ZERO32,
@@ -443,9 +466,9 @@ begin
             stat26_in => C_ZERO32,  stat27_in => C_ZERO32,
             stat28_in => C_ZERO32,  stat29_in => C_ZERO32,
             stat30_in => C_ZERO32,  stat31_in => C_ZERO32,
-            -- Interrupt: tied low (Phase 2: connect error/frame-done sources)
-            intrpt_src_in => "0",
-            irq           => o_irq
+            -- Interrupt: done_pulse CDC'd to s_axi_aclk domain
+            intrpt_src_in(0) => s_irq_pulse,
+            irq              => o_irq
         );
 
     -- =========================================================================
@@ -651,51 +674,78 @@ begin
     end generate gen_img_cdc;
 
     -- =========================================================================
-    -- [7] STAT11 CDC: i_axis_aclk -> s_axi_aclk (REG_RDATA)
+    -- [7] Per-chip STAT CDC: i_axis_aclk -> s_axi_aclk (STAT0~3)
+    --   Generate 4 xpm_cdc_handshake instances, one per chip.
+    --   Each transfers s_reg_stat_r(i) to s_stat_out(i).
     -- =========================================================================
-    s_stat11_src <= s_reg_rdata_r;
-
-    u_cdc_stat11 : xpm_cdc_handshake
-        generic map (
-            DEST_EXT_HSK   => 1,
-            DEST_SYNC_FF   => 4,
-            INIT_SYNC_FF   => 0,
-            SIM_ASSERT_CHK => 0,
-            SRC_SYNC_FF    => 4,
-            WIDTH          => 32
-        )
-        port map (
-            src_clk   => i_axis_aclk,
-            src_in    => s_stat11_src,
-            src_send  => s_src_send_stat11,
-            src_rcv   => s_src_rcv_stat11,
-            dest_clk  => s_axi_aclk,
-            dest_req  => s_dest_req_stat11,
-            dest_ack  => s_dest_req_stat11,
-            dest_out  => s_stat11_out
-        );
-
-    p_send_stat11 : process(i_axis_aclk)
+    gen_stat_cdc : for i in 0 to c_N_CHIPS - 1 generate
+        signal s_src_send_stat : std_logic := '0';
+        signal s_src_rcv_stat  : std_logic;
+        signal s_dest_req_stat : std_logic;
+        signal s_stat_d1       : std_logic_vector(31 downto 0) := (others => '1');
     begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_src_send_stat11 <= '0';
-                s_stat11_d1       <= (others => '1');
-            else
-                if s_src_send_stat11 = '0' and s_stat11_src /= s_stat11_d1 then
-                    s_src_send_stat11 <= '1';
-                    s_stat11_d1       <= s_stat11_src;
-                elsif s_src_rcv_stat11 = '1' then
-                    s_src_send_stat11 <= '0';
+        u_cdc_stat : xpm_cdc_handshake
+            generic map (
+                DEST_EXT_HSK   => 1,
+                DEST_SYNC_FF   => 4,
+                INIT_SYNC_FF   => 0,
+                SIM_ASSERT_CHK => 0,
+                SRC_SYNC_FF    => 4,
+                WIDTH          => 32
+            )
+            port map (
+                src_clk   => i_axis_aclk,
+                src_in    => s_reg_stat_r(i),
+                src_send  => s_src_send_stat,
+                src_rcv   => s_src_rcv_stat,
+                dest_clk  => s_axi_aclk,
+                dest_req  => s_dest_req_stat,
+                dest_ack  => s_dest_req_stat,
+                dest_out  => s_stat_out(i)
+            );
+
+        p_send_stat : process(i_axis_aclk)
+        begin
+            if rising_edge(i_axis_aclk) then
+                if i_axis_aresetn = '0' then
+                    s_src_send_stat <= '0';
+                    s_stat_d1       <= (others => '1');
+                else
+                    if s_src_send_stat = '0' and s_reg_stat_r(i) /= s_stat_d1 then
+                        s_src_send_stat <= '1';
+                        s_stat_d1       <= s_reg_stat_r(i);
+                    elsif s_src_rcv_stat = '1' then
+                        s_src_send_stat <= '0';
+                    end if;
                 end if;
             end if;
-        end if;
-    end process p_send_stat11;
+        end process p_send_stat;
+    end generate gen_stat_cdc;
+
+    -- =========================================================================
+    -- [7b] IRQ CDC: i_axis_aclk -> s_axi_aclk (done_pulse)
+    -- =========================================================================
+    u_cdc_irq : xpm_cdc_pulse
+        generic map (
+            DEST_SYNC_FF => 4,
+            INIT_SYNC_FF => 0,
+            REG_OUTPUT   => 1,
+            RST_USED     => 1
+        )
+        port map (
+            src_clk    => i_axis_aclk,
+            src_rst    => not i_axis_aresetn,
+            src_pulse  => i_cmd_reg_done_pulse,
+            dest_clk   => s_axi_aclk,
+            dest_rst   => not s_axi_aresetn,
+            dest_pulse => s_irq_pulse
+        );
 
     -- =========================================================================
     -- [8] CDC-idle flag: all CTL handshakes quiescent (s_axi_aclk domain)
     --   NOR of ctl1, ctl3, ctl4, img x16, ctl21 src_send signals.
     --   Output directly to csr_pipeline via o_cdc_idle.
+    --   Note: STAT CDCs (i_axis->s_axi direction) are NOT included.
     -- =========================================================================
     s_cdc_all_idle_src <= '1' when s_src_send_ctl1  = '0'
                                 and s_src_send_ctl3  = '0'
@@ -746,19 +796,37 @@ begin
     o_cmd_reg_addr  <= s_ctl1_out(c_BT_REG_ADDR_HI downto c_BT_REG_ADDR_LO);
     o_cmd_reg_chip  <= unsigned(s_ctl1_out(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
 
+    -- Chip mask output from CTL1 CDC (i_axis_aclk domain)
+    o_cmd_reg_chip_mask <= s_ctl1_out(c_BT_REG_CHIP_MASK_HI downto c_BT_REG_CHIP_MASK_LO);
+
     -- =========================================================================
-    -- [10] Reg read data latch (i_axis_aclk domain)
-    --   i_cmd_reg_rvalid -> latch i_cmd_reg_rdata -> feeds STAT11 CDC
+    -- [10] Per-chip reg read data latch (i_axis_aclk domain)
+    --   i_cmd_reg_rvalid(i) -> latch i_cmd_reg_rdata_i -> feeds STAT(i) CDC
+    --   For write operations, rvalid fires but rdata=0, so STAT[27:0]=0.
+    --   STAT[31:28] = addr_done (always present).
     -- =========================================================================
     p_reg_rdata_latch : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_reg_rdata_r <= (others => '0');
+                s_reg_stat_r <= (others => (others => '0'));
             else
-                if i_cmd_reg_rvalid = '1' then
-                    s_reg_rdata_r(c_TDC_BUS_WIDTH - 1 downto 0) <= i_cmd_reg_rdata;
-                    s_reg_rdata_r(31 downto c_TDC_BUS_WIDTH)     <= (others => '0');
+                -- Per-chip: latch on individual rvalid
+                if i_cmd_reg_rvalid(0) = '1' then
+                    s_reg_stat_r(0)(27 downto 0)  <= i_cmd_reg_rdata_0;
+                    s_reg_stat_r(0)(31 downto 28) <= i_cmd_reg_addr_done;
+                end if;
+                if i_cmd_reg_rvalid(1) = '1' then
+                    s_reg_stat_r(1)(27 downto 0)  <= i_cmd_reg_rdata_1;
+                    s_reg_stat_r(1)(31 downto 28) <= i_cmd_reg_addr_done;
+                end if;
+                if i_cmd_reg_rvalid(2) = '1' then
+                    s_reg_stat_r(2)(27 downto 0)  <= i_cmd_reg_rdata_2;
+                    s_reg_stat_r(2)(31 downto 28) <= i_cmd_reg_addr_done;
+                end if;
+                if i_cmd_reg_rvalid(3) = '1' then
+                    s_reg_stat_r(3)(27 downto 0)  <= i_cmd_reg_rdata_3;
+                    s_reg_stat_r(3)(31 downto 28) <= i_cmd_reg_addr_done;
                 end if;
             end if;
         end if;
