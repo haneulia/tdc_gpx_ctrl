@@ -50,6 +50,7 @@ entity tdc_gpx_status_agg is
         i_chip_error_merged  : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_face_active_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_shot_overrun       : in  std_logic;
+        i_shot_fall_overrun  : in  std_logic;
 
         -- Outputs
         o_status             : out t_tdc_status;
@@ -148,7 +149,7 @@ begin
                           or i_reg_outstanding = '1'
                      else '0';
 
-    o_status.pipeline_overrun <= i_shot_overrun;
+    o_status.pipeline_overrun <= i_shot_overrun or i_shot_fall_overrun;
 
     o_timestamp       <= s_timestamp_r;
     o_error_count     <= s_error_count_r;

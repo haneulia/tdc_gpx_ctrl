@@ -796,8 +796,14 @@ begin
     o_cmd_reg_addr  <= s_ctl1_out(c_BT_REG_ADDR_HI downto c_BT_REG_ADDR_LO);
     o_cmd_reg_chip  <= unsigned(s_ctl1_out(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
 
-    -- Chip mask output from CTL1 CDC (i_axis_aclk domain)
-    o_cmd_reg_chip_address <= s_ctl1_out(c_BT_REG_CHIP_ADDR_HI downto c_BT_REG_CHIP_ADDR_LO);
+    -- Chip address output from CTL1 CDC (i_axis_aclk domain)
+    -- Backward compatibility: if chip_address mask is "0000" (SW only set chip_id),
+    -- auto-generate one-hot mask from the 2-bit chip_id field.
+    o_cmd_reg_chip_address <=
+        s_ctl1_out(c_BT_REG_CHIP_ADDR_HI downto c_BT_REG_CHIP_ADDR_LO)
+        when s_ctl1_out(c_BT_REG_CHIP_ADDR_HI downto c_BT_REG_CHIP_ADDR_LO) /= "0000"
+        else std_logic_vector(shift_left(to_unsigned(1, c_N_CHIPS),
+             to_integer(unsigned(s_ctl1_out(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO)))));
 
     -- =========================================================================
     -- [10] Per-chip reg read data latch (i_axis_aclk domain)

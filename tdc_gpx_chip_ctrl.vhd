@@ -415,7 +415,7 @@ begin
                 s_bus_clk_div_snap_r <= to_unsigned(1, 6);
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_max_range_snap_r   <= (others => '0');
-                s_cfg_image_snap_r   <= (others => (others => '0'));
+                s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
             else
                 -- Default: clear 1-clk dispatch pulses
                 s_init_start     <= '0';
@@ -435,7 +435,8 @@ begin
                     when PH_IDLE =>
                         -- Priority: start > cfg_write > reg_read > reg_write
                         if i_cmd_start = '1' then
-                            -- Snapshot config for run
+                            -- Snapshot ALL config for run (including cfg_image for chip_run)
+                            s_cfg_image_snap_r   <= i_cfg_image;
                             s_drain_mode_snap_r  <= i_cfg.drain_mode;
                             s_n_drain_cap_snap_r <= i_cfg.n_drain_cap;
                             s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;

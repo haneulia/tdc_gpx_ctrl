@@ -669,6 +669,7 @@ begin
             i_chip_error_merged    => s_chip_error_merged,
             i_face_active_mask     => s_face_active_mask_r,
             i_shot_overrun         => s_shot_overrun,
+            i_shot_fall_overrun    => s_shot_fall_overrun,
             o_status               => s_status,
             o_timestamp            => s_timestamp_r,
             o_error_count          => s_error_count_r,

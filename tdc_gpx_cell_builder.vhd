@@ -312,10 +312,13 @@ begin
                                     s_rd_buf_idx_r <= s_wr_buf_r;
                                     s_output_req_r <= '1';
                                 end if;
-                                -- Swap + clear ONLY if p_output is not reading the other buffer.
+                                -- Swap + clear ONLY if p_output is idle (not reading the other buffer).
+                                -- s_ostate_r is the sole guard: s_output_req_r is a 1-clk pulse
+                                -- that clears before p_output reaches ST_O_ACTIVE, so it cannot
+                                -- reliably indicate output-in-progress.
                                 -- If p_output is still active, skip swap — data in write buffer
                                 -- will be overwritten by next shot (overrun, non-destructive).
-                                if s_ostate_r = ST_O_IDLE or s_output_req_r = '0' then
+                                if s_ostate_r = ST_O_IDLE then
                                     s_wr_buf_r <= not s_wr_buf_r;
                                     s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
                                 end if;
