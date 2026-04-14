@@ -149,6 +149,7 @@ entity tdc_gpx_config_ctrl is
         o_err_drain_timeout  : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_sequence       : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_reg_outstanding    : out std_logic;
+        o_reg_loop_resume    : out std_logic;
         o_cdc_idle           : out std_logic;
 
         -- =====================================================================
@@ -192,7 +193,11 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_done    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_read_g  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_write_g : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_outstanding_reg_chip_r : unsigned(1 downto 0);
+    signal s_cmd_reg_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_done_pulse   : std_logic;
+    signal s_cmd_reg_done_chip    : unsigned(1 downto 0);
+    signal s_reg_loop_resume      : std_logic;
+    signal s_cmd_reg_addr_out     : std_logic_vector(3 downto 0);
 
     -- =========================================================================
     -- stop_decode outputs
@@ -282,6 +287,7 @@ begin
     -- Pass-through outputs
     -- =========================================================================
     o_cmd_start         <= i_cmd_start;
+    o_reg_loop_resume   <= s_reg_loop_resume;
     o_chip_busy         <= s_chip_busy;
     o_chip_shot_seq     <= s_chip_shot_seq;
     o_errflag_sync      <= s_errflag_sync;
@@ -332,8 +338,14 @@ begin
             o_cmd_reg_write => s_cmd_reg_write,
             o_cmd_reg_addr  => s_cmd_reg_addr,
             o_cmd_reg_chip  => s_cmd_reg_chip,
-            i_cmd_reg_rdata => s_cmd_reg_rdata(to_integer(s_outstanding_reg_chip_r)),
-            i_cmd_reg_rvalid => s_cmd_reg_rvalid(to_integer(s_outstanding_reg_chip_r)),
+            i_cmd_reg_rdata_0    => s_cmd_reg_rdata(0),
+            i_cmd_reg_rdata_1    => s_cmd_reg_rdata(1),
+            i_cmd_reg_rdata_2    => s_cmd_reg_rdata(2),
+            i_cmd_reg_rdata_3    => s_cmd_reg_rdata(3),
+            i_cmd_reg_rvalid     => s_cmd_reg_rvalid,
+            i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
+            i_cmd_reg_addr_done  => s_cmd_reg_addr_out,
+            o_cmd_reg_chip_mask  => s_cmd_reg_chip_mask,
             o_cdc_idle      => o_cdc_idle,
             o_irq           => o_irq
         );
@@ -353,6 +365,8 @@ begin
             i_cmd_reg_read       => s_cmd_reg_read,
             i_cmd_reg_write      => s_cmd_reg_write,
             i_cmd_reg_chip       => s_cmd_reg_chip,
+            i_cmd_reg_chip_mask  => s_cmd_reg_chip_mask,
+            i_cmd_reg_addr       => s_cmd_reg_addr,
             i_chip_busy          => s_chip_busy,
             i_face_asm_idle      => i_face_asm_idle,
             i_face_asm_fall_idle => i_face_asm_fall_idle,
@@ -363,7 +377,11 @@ begin
             o_cmd_reg_read_g     => s_cmd_reg_read_g,
             o_cmd_reg_write_g    => s_cmd_reg_write_g,
             o_reg_outstanding    => o_reg_outstanding,
-            o_outstanding_chip   => s_outstanding_reg_chip_r
+            o_outstanding_chip   => open,
+            o_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
+            o_cmd_reg_done_chip  => s_cmd_reg_done_chip,
+            o_reg_loop_resume    => s_reg_loop_resume,
+            o_cmd_reg_addr_out   => s_cmd_reg_addr_out
         );
 
     -- =========================================================================
