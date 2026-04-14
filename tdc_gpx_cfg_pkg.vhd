@@ -210,7 +210,7 @@ package tdc_gpx_cfg_pkg is
     -- STATUS bitfields (STAT5)
     constant c_STAT_BUSY             : natural := 0;
     constant c_STAT_OVERRUN          : natural := 1;
-    constant c_STAT_BIN_MISMATCH     : natural := 2;
+    constant c_STAT_ERR_FATAL        : natural := 2;  -- err_handler fatal recovery failure
     constant c_STAT_CHIP_ERR_HI      : natural := 7;
     constant c_STAT_CHIP_ERR_LO      : natural := 4;
     constant c_STAT_DRAIN_TO_HI      : natural := 11;   -- drain_timeout_mask[3:0]

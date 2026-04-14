@@ -118,8 +118,25 @@ begin
     ---------------------------------------------------------------------------
     -- Cell builders (rising + falling) -- one generate for all 4 chips
     ---------------------------------------------------------------------------
+    -- NOTE: cell_builder o_s_axis_tready is monitored but NOT used for
+    -- upstream backpressure. The system guarantees shot_start arrives before
+    -- data, so cell_builder is always in ST_C_ACTIVE when data arrives.
+    -- If this assumption breaks, the assertion below will fire in simulation.
+    ---------------------------------------------------------------------------
     gen_chip : for i in 0 to c_N_CHIPS-1 generate
+        signal s_rise_tready : std_logic;
+        signal s_fall_tready : std_logic;
     begin
+
+        -- Simulation-only drop detection (synthesis-ignored)
+        -- synthesis translate_off
+        assert not (rising_edge(i_clk) and s_rise_valid_r(i) = '1' and s_rise_tready = '0')
+            report "WARN: cell_builder rise(" & integer'image(i) & ") not ready when data valid"
+            severity warning;
+        assert not (rising_edge(i_clk) and s_fall_valid_r(i) = '1' and s_fall_tready = '0')
+            report "WARN: cell_builder fall(" & integer'image(i) & ") not ready when data valid"
+            severity warning;
+        -- synthesis translate_on
 
         -- Rising-slope cell builder
         u_cell_bld_rise : entity work.tdc_gpx_cell_builder
@@ -133,7 +150,7 @@ begin
                 i_s_axis_tvalid     => s_rise_valid_r(i),
                 i_s_axis_tdata      => s_rise_tdata_r(i),
                 i_s_axis_tuser      => s_rise_tuser_r(i),
-                o_s_axis_tready     => open,
+                o_s_axis_tready     => s_rise_tready,
                 i_shot_start        => i_shot_start_per_chip(i),
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
@@ -157,7 +174,7 @@ begin
                 i_s_axis_tvalid     => s_fall_valid_r(i),
                 i_s_axis_tdata      => s_fall_tdata_r(i),
                 i_s_axis_tuser      => s_fall_tuser_r(i),
-                o_s_axis_tready     => open,
+                o_s_axis_tready     => s_fall_tready,
                 i_shot_start        => i_shot_start_per_chip(i),
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,

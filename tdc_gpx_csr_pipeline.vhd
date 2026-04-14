@@ -23,7 +23,7 @@
 --   STAT2  (0x48) MAX_ROWS     [15:0] (constant)
 --   STAT3  (0x4C) CELL_SIZE    [15:0] (constant)
 --   STAT4  (0x50) MAX_HSIZE    [15:0] (constant)
---   STAT5  (0x54) STATUS       [0] busy, [1] overrun, [2] bin_mismatch,
+--   STAT5  (0x54) STATUS       [0] busy, [1] overrun, [2] err_fatal,
 --                               [7:4] chip_err, [11:8] drain_timeout,
 --                               [15:12] seq_err
 --   STAT6..7 reserved
@@ -296,7 +296,9 @@ begin
             stat1_in => s_hw_config,
             stat2_in => std_logic_vector(to_unsigned(c_MAX_ROWS_PER_FACE, 32)),
             stat3_in => std_logic_vector(to_unsigned(c_CELL_SIZE_BYTES, 32)),
-            stat4_in => std_logic_vector(to_unsigned(c_HSIZE_MAX, 32)),
+            stat4_in => std_logic_vector(to_unsigned(
+                (c_MAX_ROWS_PER_FACE * fn_beats_per_cell(g_OUTPUT_WIDTH)
+                 + fn_hdr_prefix_beats(g_OUTPUT_WIDTH)) * (g_OUTPUT_WIDTH / 8), 32)),
             stat5_in => s_stat_out,     -- STATUS (CDC'd from i_axis_aclk)
             stat6_in => C_ZERO32,       -- reserved
             stat7_in => C_ZERO32,       -- reserved
@@ -309,7 +311,7 @@ begin
     -- =========================================================================
     s_stat_src(c_STAT_BUSY)          <= i_status.busy;
     s_stat_src(c_STAT_OVERRUN)       <= i_status.pipeline_overrun;
-    s_stat_src(c_STAT_BIN_MISMATCH)  <= i_status.bin_mismatch;
+    s_stat_src(c_STAT_ERR_FATAL)     <= i_status.err_fatal;
     s_stat_src(3) <= '0';
     s_stat_src(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO)
         <= i_status.chip_error_mask;

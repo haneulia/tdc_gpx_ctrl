@@ -361,7 +361,7 @@ begin
     -- =========================================================================
     -- s_cmd_reg_wdata: cfg_image indexed by target register address
     -- =========================================================================
-    s_cmd_reg_wdata <= o_cfg_image(to_integer(unsigned(s_cmd_reg_addr)))(c_TDC_BUS_WIDTH - 1 downto 0);
+    s_cmd_reg_wdata <= o_cfg_image(to_integer(unsigned(s_cmd_reg_addr_mux)))(c_TDC_BUS_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- [1] csr_chip: AXI-Lite CSR + SRM + CDC

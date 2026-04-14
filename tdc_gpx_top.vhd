@@ -690,7 +690,7 @@ begin
     -- =========================================================================
     -- Status field assignments (remaining fields not populated by status_agg)
     -- =========================================================================
-    s_status.bin_mismatch        <= s_err_fatal;  -- repurposed: err_handler fatal recovery failure
+    s_status.err_fatal        <= s_err_fatal;  -- repurposed: err_handler fatal recovery failure
     s_status.chip_error_mask     <= s_chip_error_merged;
     s_status.drain_timeout_mask  <= s_err_drain_to_sticky_r;
     s_status.sequence_error_mask <= s_err_seq_sticky_r;

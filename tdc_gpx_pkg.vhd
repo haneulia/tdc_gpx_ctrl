@@ -263,7 +263,7 @@ package tdc_gpx_pkg is
     type t_tdc_status is record
         busy                : std_logic;
         pipeline_overrun    : std_logic;
-        bin_mismatch        : std_logic;
+        err_fatal           : std_logic;  -- err_handler fatal recovery failure
         chip_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
         drain_timeout_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip drain timeout
         sequence_error_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip sequence error
@@ -277,7 +277,7 @@ package tdc_gpx_pkg is
     constant c_TDC_STATUS_INIT : t_tdc_status := (
         busy                => '0',
         pipeline_overrun    => '0',
-        bin_mismatch        => '0',
+        err_fatal           => '0',
         chip_error_mask     => (others => '0'),
         drain_timeout_mask  => (others => '0'),
         sequence_error_mask => (others => '0'),
