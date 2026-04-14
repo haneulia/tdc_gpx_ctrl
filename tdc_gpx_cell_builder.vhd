@@ -312,8 +312,13 @@ begin
                                     s_rd_buf_idx_r <= s_wr_buf_r;
                                     s_output_req_r <= '1';
                                 end if;
-                                s_wr_buf_r <= not s_wr_buf_r;
-                                s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
+                                -- Swap + clear ONLY if p_output is not reading the other buffer.
+                                -- If p_output is still active, skip swap — data in write buffer
+                                -- will be overwritten by next shot (overrun, non-destructive).
+                                if s_ostate_r = ST_O_IDLE or s_output_req_r = '0' then
+                                    s_wr_buf_r <= not s_wr_buf_r;
+                                    s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
+                                end if;
                             end if;
                         end if;
 

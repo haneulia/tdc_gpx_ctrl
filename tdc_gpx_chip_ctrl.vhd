@@ -527,7 +527,9 @@ begin
                     end if;
                 end if;
 
-                -- Sequence error: stop_tdc↑ while run is in capture (busy but no drain yet)
+                -- Sequence error: stop_tdc↑ while run is active (armed already cleared).
+                -- Covers capture + drain + ALU: any stop_tdc during active processing
+                -- means the next shot deadline arrived before current shot finished.
                 if s_phase_r = PH_RUN and s_run_armed = '0' and s_run_busy = '1' then
                     if i_stop_tdc = '1' and s_stop_tdc_prev_r = '0' then
                         s_err_sequence_r <= '1';

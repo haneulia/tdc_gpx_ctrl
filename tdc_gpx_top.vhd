@@ -424,6 +424,7 @@ begin
             o_err_drain_timeout  => s_err_drain_timeout,
             o_err_sequence       => s_err_sequence,
             o_reg_outstanding    => s_reg_outstanding,
+            o_reg_loop_resume    => open,  -- reserved: future use for gating face_seq resume
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq

@@ -446,24 +446,29 @@ begin
         end if;
     end process p_cmd_edge;
 
-    -- start pending latch
+    -- start pending latch: hold until BOTH CDC idle AND face_seq accepts.
+    -- Two-phase: (1) wait for CDC idle, (2) wait for accepted feedback.
+    -- Prevents start loss when face_seq is not yet ready.
     p_start_pending : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0'
-               or s_cmd_pulse_r(1) = '1'
-               or s_cmd_pulse_r(2) = '1' then
+               or s_cmd_pulse_r(1) = '1'      -- stop clears
+               or s_cmd_pulse_r(2) = '1' then  -- soft_reset clears
                 s_start_pending_r <= '0';
-            elsif s_cmd_pulse_r(0) = '1' and s_cdc_all_idle_ff(1) = '0' then
+            elsif s_cmd_pulse_r(0) = '1' then
+                -- New start request: always latch (CDC may or may not be idle)
                 s_start_pending_r <= '1';
-            elsif s_start_pending_r = '1' and s_cdc_all_idle_ff(1) = '1' then
+            elsif s_start_pending_r = '1' and i_cmd_start_accepted = '1' then
+                -- face_seq accepted the start → clear pending
                 s_start_pending_r <= '0';
             end if;
         end if;
     end process p_start_pending;
 
-    o_cmd_start      <= (s_cmd_pulse_r(0) and s_cdc_all_idle_ff(1))
-                     or (s_start_pending_r and s_cdc_all_idle_ff(1));
+    -- Output start pulse: fires every cycle while pending AND CDC idle.
+    -- face_seq sees repeated pulses until it accepts (level-ish behavior).
+    o_cmd_start      <= s_start_pending_r and s_cdc_all_idle_ff(1);
     o_cmd_stop       <= s_cmd_pulse_r(1);
     o_cmd_soft_reset <= s_cmd_pulse_r(2);
 

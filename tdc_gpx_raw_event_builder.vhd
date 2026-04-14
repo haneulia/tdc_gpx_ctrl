@@ -4,9 +4,11 @@
 -- =============================================================================
 --
 -- Purpose:
---   Enriches decoded IFIFO fields with context (chip_id, shot_seq) and
---   assigns per-stop hit_seq_local counter (3-bit, 0..7 per slope).
---   Registered pipeline with AXI-Stream slave input and master output.
+--   Enriches decoded IFIFO fields with context (chip_id) and assigns
+--   per-stop hit_seq_local counter (3-bit, 0..7 per stop, shared across slopes).
+--   Registered pipeline with AXI-Stream input and output.
+--   No backpressure support: always accepts input, always drives output.
+--   NOTE: i_shot_seq and i_m_axis_tready ports are declared but unused.
 --
 --   drain_done propagation: input tuser[7]='1' control beat resets hit
 --   counters and is forwarded on the output AXI-Stream as tuser[7]='1'.
@@ -50,7 +52,7 @@ entity tdc_gpx_raw_event_builder is
 
         -- Context (from chip_ctrl / TOP)
         i_chip_id         : in  unsigned(1 downto 0);
-        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);  -- UNUSED (reserved)
 
         -- Configuration
         i_stops_per_chip  : in  unsigned(3 downto 0);
@@ -68,7 +70,7 @@ entity tdc_gpx_raw_event_builder is
         o_m_axis_tvalid   : out std_logic;
         o_m_axis_tdata    : out std_logic_vector(31 downto 0);
         o_m_axis_tuser    : out std_logic_vector(15 downto 0);
-        i_m_axis_tready   : in  std_logic;
+        i_m_axis_tready   : in  std_logic;  -- UNUSED (no backpressure, always outputs)
 
         -- Error
         o_stop_id_error   : out std_logic    -- 1-clk pulse on out-of-range stop_id

@@ -198,7 +198,9 @@ begin
                     s_loop_resume_r     <= '1';
 
                 -- ---- Accept new multi-chip request ----
-                elsif v_new_request = '1' and s_reg_active_r = '0' then
+                elsif v_new_request = '1' and s_reg_active_r = '0'
+                      and i_cmd_reg_chip_address /= C_ZEROS then
+                    -- Guard: zero mask → ignore (prevents permanent lockup)
                     s_reg_active_r       <= '1';
                     s_reg_target_mask_r  <= i_cmd_reg_chip_address;
                     s_reg_pending_rw_r   <= v_rw;
