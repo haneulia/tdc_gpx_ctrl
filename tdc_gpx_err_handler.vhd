@@ -19,6 +19,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;  -- for ceil/log2 in generic width calculation
 
 use work.tdc_gpx_pkg.all;
 
@@ -76,9 +77,10 @@ architecture rtl of tdc_gpx_err_handler is
     signal s_state_r : t_state := ST_IDLE;
 
     -- =========================================================================
-    -- Per-chip debounce counters (3-bit each, max value g_DEBOUNCE_CLKS-1)
+    -- Per-chip debounce counters (width derived from generic)
     -- =========================================================================
-    type t_debounce_arr is array (0 to c_N_CHIPS - 1) of unsigned(2 downto 0);
+    constant C_DEB_WIDTH : natural := maximum(1, integer(ceil(log2(real(g_DEBOUNCE_CLKS)))));
+    type t_debounce_arr is array (0 to c_N_CHIPS - 1) of unsigned(C_DEB_WIDTH - 1 downto 0);
     signal s_debounce_cnt_r : t_debounce_arr := (others => (others => '0'));
 
     -- =========================================================================
@@ -101,7 +103,8 @@ architecture rtl of tdc_gpx_err_handler is
     -- Recovery timeout & retry
     -- =========================================================================
     signal s_recov_timeout_r : unsigned(13 downto 0) := (others => '0');
-    signal s_retry_cnt_r     : unsigned(1 downto 0)  := (others => '0');
+    constant C_RETRY_WIDTH : natural := maximum(1, integer(ceil(log2(real(g_MAX_RETRIES + 1)))));
+    signal s_retry_cnt_r     : unsigned(C_RETRY_WIDTH - 1 downto 0)  := (others => '0');
 
     -- =========================================================================
     -- Frame-done seen flag (sub-state in ST_WAIT_FRAME_DONE)
@@ -161,7 +164,7 @@ begin
 
                         for i in 0 to c_N_CHIPS - 1 loop
                             if i_errflag_sync(i) = '1' then
-                                if s_debounce_cnt_r(i) = to_unsigned(g_DEBOUNCE_CLKS - 1, 3) then
+                                if s_debounce_cnt_r(i) = to_unsigned(g_DEBOUNCE_CLKS - 1, C_DEB_WIDTH) then
                                     s_err_chip_mask_r(i) <= '1';
                                     s_err_fill_r(i)      <= '1';
                                     v_any_debounced      := true;
@@ -181,6 +184,7 @@ begin
                     -- ST_READ_REG11: issue Reg11 read for error chips
                     -- ---------------------------------------------------------
                     when ST_READ_REG11 =>
+                        s_err_cause_r         <= (others => '0');  -- clear before new classification
                         s_cmd_reg_read_r      <= '1';
                         s_cmd_reg_addr_r      <= "1011";  -- Reg11
                         s_cmd_reg_chip_addr_r <= s_err_chip_mask_r;
@@ -231,7 +235,7 @@ begin
                             s_state_r           <= ST_WAIT_FRAME_DONE;
                         elsif s_recov_timeout_r = to_unsigned(9999, 14) then
                             -- Timeout
-                            if s_retry_cnt_r < to_unsigned(g_MAX_RETRIES, 2) then
+                            if s_retry_cnt_r < to_unsigned(g_MAX_RETRIES, C_RETRY_WIDTH) then
                                 s_retry_cnt_r <= s_retry_cnt_r + 1;
                                 s_state_r     <= ST_RECOVERY;
                             else

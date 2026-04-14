@@ -348,8 +348,12 @@ begin
     -- Per-chip err_fill gating on raw AXI-Stream output
     -- =========================================================================
     gen_err_fill : for i in 0 to c_N_CHIPS - 1 generate
-        o_raw_sk_tdata(i)  <= s_sk_raw_tdata(i) when s_err_fill(i) = '0'
-                              else (16 downto 0 => '1', others => '0');
+        -- Error-fill: replace ONLY hit[16:0] with all-ones (0x1FFFF).
+        -- Preserve upper raw bits (stop_id, slope, cha_code, ififo_id)
+        -- so downstream decode/cell_builder see correct stop/slope routing.
+        o_raw_sk_tdata(i)(16 downto 0)  <= s_sk_raw_tdata(i)(16 downto 0) when s_err_fill(i) = '0'
+                                           else (others => '1');
+        o_raw_sk_tdata(i)(31 downto 17) <= s_sk_raw_tdata(i)(31 downto 17);  -- always pass through
         o_raw_sk_tvalid(i) <= s_sk_raw_tvalid(i);
         o_raw_sk_tuser(i)  <= s_sk_raw_tuser(i);
     end generate gen_err_fill;

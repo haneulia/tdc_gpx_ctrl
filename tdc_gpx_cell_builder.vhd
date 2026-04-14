@@ -12,9 +12,9 @@
 --
 --   p_collect (ST_C_IDLE / ST_C_ACTIVE):
 --     Writes hits into the WRITE buffer from AXI-Stream slave input.
---     On ififo1_done (tuser[7]=1, tuser[6]=0): swaps buffer ownership
---     immediately and signals p_output to begin serialization.
---     Next shot's collect goes to the opposite buffer (true ping-pong).
+--     On ififo1_done (tuser[7]=1, tuser[6]=0): starts output from current
+--     buffer (NO swap). IFIFO2 data continues into same buffer.
+--     Buffer swap deferred to next shot_start (true same-shot coherence).
 --
 --   p_output (ST_O_IDLE / ST_O_LOAD / ST_O_ACTIVE / ST_O_WAIT_IFIFO2):
 --     Reads from the READ buffer and serializes beats to AXI-Stream master.
@@ -294,44 +294,43 @@ begin
                         end if;
 
                         -- drain_done control beats:
-                        --   tuser[7]=1, tuser[6]=0: ififo1_done → swap + start output stops 0~3
-                        --   tuser[7]=1, tuser[6]=1: final done  → signal stops 4~7 ready
+                        --   tuser[7]=1, tuser[6]=0: ififo1_done → start output (NO swap)
+                        --   tuser[7]=1, tuser[6]=1: final done  → signal IFIFO2 ready
                         --
                         -- Ping-pong ownership:
-                        --   Buffer swap happens at OUTPUT START (ififo1_done), NOT at final done.
-                        --   This ensures: output reads old buffer, collect writes new buffer.
-                        --   Next shot's collect always goes to the opposite buffer.
+                        --   Same-shot coherence: IFIFO1 + IFIFO2 data stay in SAME buffer.
+                        --   NO swap at ififo1_done (output reads same buffer being written).
+                        --   Buffer swap deferred to shot_start of NEXT shot (when output is done).
+                        --   This ensures stops 0~7 are all in one buffer for output.
                         if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
                             if i_s_axis_tuser(6) = '0' then
-                                -- IFIFO1 done: SWAP buffer + trigger early output
+                                -- IFIFO1 done: start early output (NO buffer swap)
+                                -- Output reads same buffer that collect is still writing to.
+                                -- Safe because: stops 0~3 are complete, output reads 0~3 first,
+                                -- IFIFO2 writes stops 4~7 which output hasn't reached yet.
                                 s_output_full_r <= '0';  -- clear from previous shot
-                                -- Swap NOW: read from current, write to opposite
-                                s_rd_buf_idx_r <= s_wr_buf_r;          -- output reads current
-                                s_wr_buf_r     <= not s_wr_buf_r;      -- collect switches to other
-                                s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
+                                s_rd_buf_idx_r  <= s_wr_buf_r;  -- read from current write buffer
                                 if s_ostate_r = ST_O_IDLE then
                                     s_output_req_r <= '1';
                                 end if;
                             else
-                                -- Final drain_done: signal stops 4~7 ready (NO swap)
-                                -- Latched: stays '1' until next ififo1_done clears it
+                                -- Final drain_done: signal stops 4~7 ready
                                 s_output_full_r <= '1';
                                 if s_ostate_r = ST_O_IDLE and s_output_req_r = '0' then
-                                    -- Edge case: both IFIFOs done simultaneously (no ififo1_done)
-                                    -- Swap + output start here as fallback
+                                    -- Both IFIFOs done simultaneously (no prior ififo1_done)
                                     s_rd_buf_idx_r <= s_wr_buf_r;
-                                    s_wr_buf_r     <= not s_wr_buf_r;
-                                    s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
                                     s_output_req_r <= '1';
                                 end if;
                             end if;
                         end if;
 
-                        -- shot_start override: clear write buffer, stay active.
-                        -- Guard: skip if drain_done fires same cycle (swap changes v_wr meaning)
+                        -- shot_start: swap buffer for next shot's collect.
+                        -- Output continues reading old buffer (s_rd_buf_r latched in p_output).
+                        -- Guard: skip if drain_done fires same cycle.
                         if i_shot_start = '1'
                            and not (i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1') then
-                            s_cell_buf_r(v_wr) <= (others => c_CELL_INIT);
+                            s_wr_buf_r <= not s_wr_buf_r;
+                            s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
                         end if;
 
                 end case;
