@@ -1,0 +1,11 @@
+# Vivado simulation artifacts (generated in tdc_gpx_ctrl.sim/)
+xsim.dir/
+*.log
+*.pb
+*.jou
+*.wdb
+*.vdb
+*.rlx
+.Xil/
+dfx_runtime.txt
+hs_err_*.dmp
