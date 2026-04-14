@@ -225,7 +225,7 @@ begin
     cfg_face.stops_per_chip   <= to_unsigned(2, 4);
     cfg_face.max_scan_clks    <= to_unsigned(1000, 16);
     cfg_face.max_hits_cfg     <= to_unsigned(7, 3);
-    cfg_face.cols_per_face    <= to_unsigned(2, 16);
+    cfg_face.cols_per_face    <= to_unsigned(1, 16);  -- 1 col = 1 shot per frame
 
     -- =========================================================================
     -- VDMA output monitor
@@ -297,8 +297,9 @@ begin
             cell_rise_tdata_0 <= std_logic_vector(v_beat_data);
             cell_rise_tvalid  <= "0001";    -- only chip 0
 
-            -- tlast on last beat of each cell (every C_BEATS_PER_CELL beats)
-            if (beat_idx + 1) mod C_BEATS_PER_CELL = 0 then
+            -- tlast ONLY on the very last beat of the entire chip slice
+            -- (face_assembler expects tlast at chip slice boundary, not per-cell)
+            if beat_idx = C_TOTAL_BEATS - 1 then
                 cell_rise_tlast <= "0001";
             else
                 cell_rise_tlast <= "0000";
