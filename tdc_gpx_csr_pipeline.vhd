@@ -58,7 +58,8 @@ use xpm.vcomponents.all;
 
 entity tdc_gpx_csr_pipeline is
     generic (
-        g_HW_VERSION : std_logic_vector(31 downto 0) := x"00010000"
+        g_HW_VERSION   : std_logic_vector(31 downto 0) := x"00010000";
+        g_OUTPUT_WIDTH : natural := 32    -- 32 or 64 (for HW_CONFIG TDATA width report)
     );
     port (
         -- AXI4-Lite clock / reset
@@ -244,7 +245,7 @@ begin
     s_hw_config(c_HWCFG_HIT_WIDTH_HI downto c_HWCFG_HIT_WIDTH_LO)
         <= std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 5));
     s_hw_config(c_HWCFG_TDATA_HI downto c_HWCFG_TDATA_LO)
-        <= std_logic_vector(to_unsigned(c_TDATA_WIDTH, 8));
+        <= std_logic_vector(to_unsigned(g_OUTPUT_WIDTH, 8));
     s_hw_config(c_HWCFG_CELL_FMT_HI downto c_HWCFG_CELL_FMT_LO)
         <= std_logic_vector(to_unsigned(c_CELL_FORMAT, 3));
     s_hw_config(31 downto c_HWCFG_CELL_FMT_HI + 1) <= (others => '0');

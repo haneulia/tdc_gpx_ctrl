@@ -127,8 +127,9 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Synchronous flush for FIFOs (active-low aresetn pulse)
     -- =========================================================================
-    signal s_flush        : std_logic;  -- input FIFO flush (every shot_start)
-    signal s_fifo_rst_n   : std_logic;  -- active-low reset to xpm_fifo_axis
+    signal s_flush        : std_logic;  -- input FIFO flush (every shot_start/abort)
+    signal s_fifo_rst_n   : std_logic;  -- active-low reset for input FIFOs
+    signal s_out_fifo_rst_n : std_logic;  -- active-low reset for output FIFO (abort only)
 
     -- =========================================================================
     -- FSM
@@ -280,7 +281,7 @@ begin
         )
         port map (
             s_aclk          => i_clk,
-            s_aresetn       => s_fifo_rst_n,  -- flush on shot_start/abort
+            s_aresetn       => s_out_fifo_rst_n,  -- flush on abort ONLY (not shot_start)
             s_axis_tdata    => s_pipe_tdata_r,
             s_axis_tvalid   => s_pipe_tvalid_r,
             s_axis_tready   => s_pipe_tready,
@@ -312,8 +313,11 @@ begin
     s_timeout_limit <= i_max_scan_clks;
 
     -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset)
-    s_flush      <= i_shot_start or i_abort;
-    s_fifo_rst_n <= i_rst_n and (not s_flush);
+    s_flush          <= i_shot_start or i_abort;
+    s_fifo_rst_n     <= i_rst_n and (not s_flush);         -- input FIFOs: flush on shot_start + abort
+    s_out_fifo_rst_n <= i_rst_n and (not i_abort);         -- output FIFO: flush on abort ONLY
+    -- NOTE: shot_start must NOT flush the output FIFO — there may be
+    -- tail beats from the previous row still in transit to header_inserter.
 
     -- Flush output skid on face_abort only (registered, 1-cycle after
     -- overrun detection).  Uses s_face_abort_r which is only set in the

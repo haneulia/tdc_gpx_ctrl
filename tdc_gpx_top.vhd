@@ -294,7 +294,8 @@ begin
     -- =========================================================================
     u_csr_pipeline : entity work.tdc_gpx_csr_pipeline
         generic map (
-            g_HW_VERSION     => g_HW_VERSION
+            g_HW_VERSION     => g_HW_VERSION,
+            g_OUTPUT_WIDTH   => g_OUTPUT_WIDTH
         )
         port map (
             s_axi_aclk          => s_axi_aclk,
