@@ -81,7 +81,7 @@ begin
     gen_chip : for i in 0 to c_N_CHIPS-1 generate
 
         -- Stage 1: I-Mode 28-bit field extraction
-        u_decode : entity work.tdc_gpx_decode_i
+        u_decode : entity work.tdc_gpx_decoder_i_mode
             port map (
                 i_clk           => i_clk,
                 i_rst_n         => i_rst_n,

@@ -387,7 +387,7 @@ begin
     -- =========================================================================
     -- [3] stop_decode: stop event decode + cfg_image override
     -- =========================================================================
-    u_stop_decode : entity work.tdc_gpx_stop_decode
+    u_stop_decode : entity work.tdc_gpx_stop_cfg_decode
         generic map (g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH)
         port map (
             i_clk              => i_axis_aclk,

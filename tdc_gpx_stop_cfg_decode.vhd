@@ -1,5 +1,5 @@
 -- =============================================================================
--- tdc_gpx_stop_decode.vhd
+-- tdc_gpx_stop_cfg_decode.vhd
 -- TDC-GPX Controller - Stop Event Decoder
 -- =============================================================================
 --
@@ -17,7 +17,7 @@ use ieee.numeric_std.all;
 use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
 
-entity tdc_gpx_stop_decode is
+entity tdc_gpx_stop_cfg_decode is
     generic (
         g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH
     );
@@ -43,9 +43,9 @@ entity tdc_gpx_stop_decode is
         i_cfg_image_raw   : in  t_cfg_image;
         o_cfg_image       : out t_cfg_image
     );
-end entity tdc_gpx_stop_decode;
+end entity tdc_gpx_stop_cfg_decode;
 
-architecture rtl of tdc_gpx_stop_decode is
+architecture rtl of tdc_gpx_stop_cfg_decode is
 begin
 
     o_stop_evt_tready <= '1';

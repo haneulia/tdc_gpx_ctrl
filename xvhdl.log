@@ -1,0 +1,50 @@
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_pkg.vhd" into library work
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_cfg_pkg.vhd" into library work
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_bus_phy.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_bus_phy'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_chip_init.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_chip_init'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_chip_run.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_chip_run'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_chip_reg.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_chip_reg'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_chip_ctrl.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_chip_ctrl'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_decoder_i_mode.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_decoder_i_mode'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_raw_event_builder.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_raw_event_builder'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_cell_builder.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_cell_builder'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_face_assembler.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_face_assembler'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_header_inserter.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_header_inserter'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_face_seq.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_face_seq'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_status_agg.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_status_agg'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_stop_cfg_decode.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_stop_cfg_decode'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_cmd_arb.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_cmd_arb'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_csr_chip.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_csr_chip'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_csr_pipeline.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_csr_pipeline'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_skid_buffer.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_skid_buffer'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_sync_fifo.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_sync_fifo'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_srm.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_srm'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_config_ctrl.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_config_ctrl'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_decode_pipe.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_decode_pipe'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_cell_pipe.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_cell_pipe'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_output_stage.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_output_stage'
+INFO: [VRFC 10-163] Analyzing VHDL file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/tdc_gpx_top.vhd" into library work
+INFO: [VRFC 10-3107] analyzing entity 'tdc_gpx_top'

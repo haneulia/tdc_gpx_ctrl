@@ -1,5 +1,5 @@
 -- =============================================================================
--- tdc_gpx_decode_i.vhd
+-- tdc_gpx_decoder_i_mode.vhd
 -- TDC-GPX Controller - Raw 28-bit Word Decoder (Registered, AXI-Stream)
 -- =============================================================================
 --
@@ -37,7 +37,7 @@ use ieee.numeric_std.all;
 
 use work.tdc_gpx_pkg.all;
 
-entity tdc_gpx_decode_i is
+entity tdc_gpx_decoder_i_mode is
     generic (
         g_BUS_DATA_WIDTH : natural := c_TDC_BUS_WIDTH       -- 28
     );
@@ -57,9 +57,9 @@ entity tdc_gpx_decode_i is
         o_m_axis_tuser    : out std_logic_vector(7 downto 0);
         i_m_axis_tready   : in  std_logic
     );
-end entity tdc_gpx_decode_i;
+end entity tdc_gpx_decoder_i_mode;
 
-architecture rtl of tdc_gpx_decode_i is
+architecture rtl of tdc_gpx_decoder_i_mode is
 
     signal s_tvalid_r : std_logic := '0';
     signal s_tdata_r  : std_logic_vector(31 downto 0) := (others => '0');
