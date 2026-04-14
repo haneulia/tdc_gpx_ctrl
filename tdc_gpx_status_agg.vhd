@@ -55,7 +55,7 @@ entity tdc_gpx_status_agg is
         -- Outputs
         o_status             : out t_tdc_status;
         o_timestamp          : out unsigned(63 downto 0);
-        o_error_count        : out unsigned(31 downto 0);
+        o_error_count        : out unsigned(31 downto 0);  -- error-active cycle count (not event count)
         o_err_drain_sticky   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_seq_sticky     : out std_logic_vector(c_N_CHIPS - 1 downto 0)
     );
@@ -88,7 +88,9 @@ begin
     end process;
 
     -- =========================================================================
-    -- Error counter
+    -- Error cycle counter: increments by 1 per clock cycle where ANY error
+    -- source is active. Multiple simultaneous errors = still +1.
+    -- Semantics: "number of error-active cycles", NOT "number of events".
     -- =========================================================================
     p_error_cnt : process(i_clk)
         variable v_merged_rising : std_logic_vector(c_N_CHIPS - 1 downto 0);

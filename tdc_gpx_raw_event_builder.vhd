@@ -52,7 +52,7 @@ entity tdc_gpx_raw_event_builder is
 
         -- Context (from chip_ctrl / TOP)
         i_chip_id         : in  unsigned(1 downto 0);
-        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);  -- UNUSED (reserved)
+        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);  -- RESERVED: not used in current impl, kept for future shot tagging
 
         -- Configuration
         i_stops_per_chip  : in  unsigned(3 downto 0);
@@ -70,7 +70,7 @@ entity tdc_gpx_raw_event_builder is
         o_m_axis_tvalid   : out std_logic;
         o_m_axis_tdata    : out std_logic_vector(31 downto 0);
         o_m_axis_tuser    : out std_logic_vector(15 downto 0);
-        i_m_axis_tready   : in  std_logic;  -- UNUSED (no backpressure, always outputs)
+        i_m_axis_tready   : in  std_logic;  -- NOT consumed: this module always outputs (1-clk registered pipeline). Backpressure is handled by upstream skid buffer in decode_pipe.
 
         -- Error
         o_stop_id_error   : out std_logic    -- 1-clk pulse on out-of-range stop_id

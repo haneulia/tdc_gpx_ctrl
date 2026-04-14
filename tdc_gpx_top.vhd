@@ -699,8 +699,11 @@ begin
     s_status.sequence_error_mask <= s_err_seq_sticky_r;
     s_status.shot_seq_current    <= s_global_shot_seq_r;
     s_status.vdma_frame_count    <= s_frame_id_r;
-    s_status.error_count         <= s_error_count_r;
+    s_status.error_cycle_count         <= s_error_count_r;
     s_status.shot_drop_count     <= s_shot_drop_cnt_r;
     s_status.frame_abort_count   <= s_frame_abort_cnt_r;
+    s_status.err_active          <= s_err_active;
+    s_status.err_chip_mask       <= s_err_chip_mask;
+    s_status.err_cause           <= s_err_cause;
 
 end architecture rtl;

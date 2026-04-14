@@ -269,9 +269,12 @@ package tdc_gpx_pkg is
         sequence_error_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip sequence error
         shot_seq_current    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         vdma_frame_count    : unsigned(31 downto 0);
-        error_count         : unsigned(31 downto 0);
+        error_cycle_count         : unsigned(31 downto 0);
         shot_drop_count     : unsigned(15 downto 0);  -- deferred-shot overflow drops
         frame_abort_count   : unsigned(15 downto 0);  -- frames discarded by abort
+        err_active          : std_logic;               -- err_handler recovery in progress
+        err_chip_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chips under recovery
+        err_cause           : std_logic_vector(2 downto 0);  -- [0]=HitFIFO [1]=IFIFO [2]=PLL
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -283,9 +286,12 @@ package tdc_gpx_pkg is
         sequence_error_mask => (others => '0'),
         shot_seq_current    => (others => '0'),
         vdma_frame_count    => (others => '0'),
-        error_count         => (others => '0'),
+        error_cycle_count         => (others => '0'),
         shot_drop_count     => (others => '0'),
-        frame_abort_count   => (others => '0')
+        frame_abort_count   => (others => '0'),
+        err_active          => '0',
+        err_chip_mask       => (others => '0'),
+        err_cause           => (others => '0')
     );
 
     -- =========================================================================
