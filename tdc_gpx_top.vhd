@@ -217,23 +217,11 @@ end entity tdc_gpx_top;
 
 architecture rtl of tdc_gpx_top is
 
-    -- =========================================================================
-    -- Architecture-local array types (per-chip pipeline signals)
-    -- =========================================================================
-    type t_slv28_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-    type t_slv4_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(3 downto 0);
-    type t_raw_hit_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
-    type t_u2_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(1 downto 0);
-    type t_u3_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(2 downto 0);
+    -- Array types promoted to tdc_gpx_pkg (t_slv28/4/32/16/8_array, t_u2/3_array,
+    -- t_shot_seq_array, t_raw_hit_array). Architecture-local only for types
+    -- not needed by cluster wrappers.
     type t_raw_event_array is array(0 to c_N_CHIPS - 1)
         of t_raw_event;
-    type t_shot_seq_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- Zero constants
@@ -285,10 +273,6 @@ architecture rtl of tdc_gpx_top is
     signal s_bus_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy → chip_ctrl AXI-Stream (response)
-    type t_slv32_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(31 downto 0);
-    type t_slv8_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(7 downto 0);
     signal s_brsp_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_brsp_axis_tdata  : t_slv32_array;
     signal s_brsp_axis_tkeep  : t_slv4_array;
@@ -336,8 +320,6 @@ architecture rtl of tdc_gpx_top is
     signal s_dec_sk_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: skid buffer outputs (raw_event_builder → cell_builder)
-    type t_slv16_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(15 downto 0);
     signal s_evt_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_evt_axis_tdata  : t_slv32_array;
     signal s_evt_axis_tuser  : t_slv16_array;

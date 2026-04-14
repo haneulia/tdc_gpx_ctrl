@@ -170,6 +170,29 @@ package tdc_gpx_pkg is
         of std_logic_vector(3 downto 0);
 
     -- =========================================================================
+    -- Per-chip pipeline array types (promoted from top architecture-local)
+    -- Used by cluster wrapper port lists.
+    -- =========================================================================
+    type t_slv32_array    is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(31 downto 0);
+    type t_slv16_array    is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(15 downto 0);
+    type t_slv8_array     is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(7 downto 0);
+    type t_slv4_array     is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(3 downto 0);
+    type t_slv28_array    is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+    type t_u2_array       is array(0 to c_N_CHIPS - 1)
+        of unsigned(1 downto 0);
+    type t_u3_array       is array(0 to c_N_CHIPS - 1)
+        of unsigned(2 downto 0);
+    type t_shot_seq_array is array(0 to c_N_CHIPS - 1)
+        of unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    type t_raw_hit_array  is array(0 to c_N_CHIPS - 1)
+        of unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+
+    -- =========================================================================
     -- cfg_image array type (TDC-GPX register image stored in CSR)
     -- =========================================================================
     type t_cfg_image is array(0 to 15) of std_logic_vector(31 downto 0);
