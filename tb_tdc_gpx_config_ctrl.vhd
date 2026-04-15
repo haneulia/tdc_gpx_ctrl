@@ -279,6 +279,7 @@ begin
             o_errflag_sync       => o_errflag_sync,
             o_err_drain_timeout  => o_err_drain_timeout,
             o_err_sequence       => o_err_sequence,
+            o_err_rsp_mismatch   => open,
             o_reg_outstanding    => o_reg_outstanding,
             o_reg_loop_resume    => o_reg_loop_resume,
             o_cdc_idle           => o_cdc_idle,

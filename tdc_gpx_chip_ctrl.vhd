@@ -147,7 +147,8 @@ entity tdc_gpx_chip_ctrl is
 
         -- Error flags (1-clk pulses)
         o_err_drain_timeout : out std_logic;    -- max_range_clks expired before drain_done
-        o_err_sequence      : out std_logic     -- IrFlag expected but not yet received
+        o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
+        o_err_rsp_mismatch  : out std_logic     -- bus response tuser mismatch (sticky)
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -252,6 +253,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_drain_timeout_r  : std_logic := '0';
     signal s_err_drain_to_fired_r : std_logic := '0';
     signal s_err_sequence_r       : std_logic := '0';
+    signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_stop_tdc_prev_r      : std_logic := '0';
 
     -- Effective reset for ALL sub-FSMs: hard reset OR soft_reset
@@ -624,5 +626,26 @@ begin
 
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;
+    o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
+
+    -- =========================================================================
+    -- Bus response tuser mismatch detector (sticky)
+    -- Checks that reg-phase responses carry the expected RW/address in tuser.
+    -- =========================================================================
+    p_rsp_check : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if s_sub_rst_n = '0' then
+                s_err_rsp_mismatch_r <= '0';
+            elsif s_phase_r = PH_REG and i_s_axis_tvalid = '1' then
+                -- tuser[0] = RW, tuser[4:1] = addr
+                -- Compare against dispatched reg request
+                if i_s_axis_tuser(0) /= s_reg_bus_rw
+                   or i_s_axis_tuser(4 downto 1) /= s_reg_bus_addr then
+                    s_err_rsp_mismatch_r <= '1';  -- sticky
+                end if;
+            end if;
+        end if;
+    end process p_rsp_check;
 
 end architecture coordinator;

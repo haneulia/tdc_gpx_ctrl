@@ -62,7 +62,7 @@
 -- Signal ownership (no multi-driver):
 --   p_collect WRITES: s_cell_buf_r, s_wr_buf_r, s_cstate_r, s_output_req_r,
 --                     s_output_full_r, s_rd_buf_idx_r, s_output_pending_r,
---                     s_pending_buf_idx_r, s_pending_full_r
+--                     s_pending_buf_idx_r, s_pending_full_r, s_swap_pending_r
 --   p_output  WRITES: s_cell_sel_r, s_ostate_r, s_tdata_r, s_tvalid_r,
 --                     s_consume_pending_r, etc.
 --   p_output  READS:  s_cell_buf_r, s_output_pending_r (no write conflict)
@@ -154,6 +154,9 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_pending_buf_idx_r   : std_logic := '0';  -- queued buffer index
     signal s_pending_full_r      : std_logic := '0';  -- queued: both IFIFOs done?
     signal s_consume_pending_r   : std_logic := '0';  -- p_output → p_collect: pending consumed
+
+    -- Deferred buffer swap: shot_start while output is busy
+    signal s_swap_pending_r      : std_logic := '0';  -- swap deferred until output idle
 
     -- =========================================================================
     -- Output FSM (p_output)
@@ -271,6 +274,7 @@ begin
                 s_output_pending_r  <= '0';
                 s_pending_buf_idx_r <= '0';
                 s_pending_full_r    <= '0';
+                s_swap_pending_r    <= '0';
                 s_hit_dropped_r <= '0';
             else
                 -- Default: clear single-cycle pulses
@@ -282,6 +286,13 @@ begin
                 if s_consume_pending_r = '1' then
                     s_output_pending_r <= '0';
                     s_output_full_r    <= s_pending_full_r;  -- ownership transfer to p_collect
+                end if;
+
+                -- Execute deferred swap when output returns to idle
+                if s_swap_pending_r = '1' and s_ostate_r = ST_O_IDLE then
+                    s_wr_buf_r <= not s_wr_buf_r;
+                    s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
+                    s_swap_pending_r <= '0';
                 end if;
 
                 v_wr := fn_buf_idx(s_wr_buf_r);
@@ -357,12 +368,19 @@ begin
                         end if;
 
                         -- shot_start: swap buffer for next shot's collect.
-                        -- Output continues reading old buffer (s_rd_buf_r latched in p_output).
                         -- Guard: skip if drain_done fires same cycle.
+                        -- If output is busy, defer swap until output returns to idle
+                        -- to prevent new-shot data from corrupting old-shot read buffer.
                         if i_shot_start = '1'
                            and not (i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1') then
-                            s_wr_buf_r <= not s_wr_buf_r;
-                            s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
+                            if s_ostate_r = ST_O_IDLE then
+                                -- Output idle: swap immediately
+                                s_wr_buf_r <= not s_wr_buf_r;
+                                s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
+                            else
+                                -- Output busy: defer swap
+                                s_swap_pending_r <= '1';
+                            end if;
                         end if;
 
                 end case;

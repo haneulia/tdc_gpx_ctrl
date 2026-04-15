@@ -158,6 +158,7 @@ entity tdc_gpx_config_ctrl is
         o_errflag_sync       : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_drain_timeout  : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_sequence       : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_rsp_mismatch   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_reg_outstanding    : out std_logic;
         o_reg_loop_resume    : out std_logic;
         o_cdc_idle           : out std_logic;
@@ -268,7 +269,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_chip_busy       : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_tick_en         : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_sequence    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_sequence      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_rsp_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- err_handler outputs
@@ -336,6 +338,7 @@ begin
     o_errflag_sync      <= s_errflag_sync;
     o_err_drain_timeout <= s_err_drain_timeout;
     o_err_sequence      <= s_err_sequence;
+    o_err_rsp_mismatch  <= s_err_rsp_mismatch;
     o_err_active        <= s_err_active;
 
     -- =========================================================================
@@ -621,7 +624,8 @@ begin
                 o_shot_seq          => s_chip_shot_seq(i),
                 o_busy              => s_chip_busy(i),
                 o_err_drain_timeout => s_err_drain_timeout(i),
-                o_err_sequence      => s_err_sequence(i)
+                o_err_sequence      => s_err_sequence(i),
+                o_err_rsp_mismatch  => s_err_rsp_mismatch(i)
             );
 
         -- ----- skid buffer: chip_ctrl -> decode_pipe (32b + 8b = 40b) -----
