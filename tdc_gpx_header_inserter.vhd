@@ -469,7 +469,11 @@ begin
                     s_active_chip_mask_r  <= i_cfg.active_chip_mask;
                     s_n_faces_r           <= i_cfg.n_faces;
                     s_cols_per_face_r     <= i_cfg.cols_per_face;
-                    s_cols_per_face_m1_r  <= i_cfg.cols_per_face - 1;
+                    if i_cfg.cols_per_face >= 1 then
+                        s_cols_per_face_m1_r <= i_cfg.cols_per_face - 1;
+                    else
+                        s_cols_per_face_m1_r <= (others => '0');  -- degenerate: clamp to 1 col
+                    end if;
                     s_stops_per_chip_r    <= i_cfg.stops_per_chip;
                     s_max_hits_cfg_r      <= i_cfg.max_hits_cfg;
                     s_hit_store_mode_r    <= i_cfg.hit_store_mode;

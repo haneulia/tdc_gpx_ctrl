@@ -135,6 +135,7 @@ begin
             i_abort            => '0',
             i_active_chip_mask => active_mask,
             i_stops_per_chip   => stops_per_chip,
+            i_max_hits_cfg     => "001",
             i_max_scan_clks   => max_range_clks,
             o_m_axis_tdata     => face_tdata,
             o_m_axis_tvalid    => face_tvalid,

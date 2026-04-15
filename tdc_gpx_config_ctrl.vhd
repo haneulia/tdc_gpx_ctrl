@@ -35,9 +35,9 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_config_ctrl is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
-        g_POWERUP_CLKS    : natural := 48;
-        g_RECOVERY_CLKS   : natural := 8;
-        g_ALU_PULSE_CLKS  : natural := 4;
+        g_POWERUP_CLKS    : positive := 48;
+        g_RECOVERY_CLKS   : positive := 8;
+        g_ALU_PULSE_CLKS  : positive := 4;
         g_STOP_EVT_DWIDTH : natural := 32
     );
     port (
@@ -126,6 +126,9 @@ entity tdc_gpx_config_ctrl is
         -- =====================================================================
         i_frame_done         : in  std_logic;
         i_frame_fall_done    : in  std_logic;
+
+        -- Pipeline abort: flush raw-path skid buffers
+        i_pipeline_abort     : in  std_logic;
 
         -- =====================================================================
         -- Output to Cluster 2: AXI-Stream x4 (from sk_raw)
@@ -281,6 +284,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- MUX signals: err_handler / csr_chip -> cmd_arb
     -- =========================================================================
     signal s_cmd_reg_read_mux         : std_logic;
+    signal s_cmd_reg_write_mux        : std_logic;
     signal s_cmd_reg_addr_mux         : std_logic_vector(3 downto 0);
     signal s_cmd_reg_chip_address_mux : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
@@ -343,6 +347,8 @@ begin
                                   else s_cmd_reg_addr;
     s_cmd_reg_chip_address_mux <= s_err_cmd_reg_chip_addr when s_err_active = '1'
                                   else s_cmd_reg_chip_address;
+    s_cmd_reg_write_mux        <= '0' when s_err_active = '1'
+                                  else s_cmd_reg_write;
 
     -- =========================================================================
     -- Per-chip err_fill gating on raw AXI-Stream output
@@ -427,7 +433,7 @@ begin
             i_cmd_soft_reset     => i_cmd_soft_reset,
             i_cmd_cfg_write      => i_cmd_cfg_write,
             i_cmd_reg_read       => s_cmd_reg_read_mux,
-            i_cmd_reg_write      => s_cmd_reg_write,
+            i_cmd_reg_write      => s_cmd_reg_write_mux,
             i_cmd_reg_chip       => s_cmd_reg_chip,
             i_cmd_reg_chip_address  => s_cmd_reg_chip_address_mux,
             i_cmd_reg_addr       => s_cmd_reg_addr_mux,
@@ -624,7 +630,7 @@ begin
             port map (
                 i_clk     => i_axis_aclk,
                 i_rst_n   => i_axis_aresetn,
-                i_flush   => '0',
+                i_flush   => i_pipeline_abort,
                 i_s_valid => s_raw_axis_tvalid(i),
                 o_s_ready => s_raw_axis_tready(i),
                 i_s_data  => s_raw_axis_tdata(i) & s_raw_axis_tuser(i),

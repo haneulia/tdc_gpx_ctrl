@@ -34,9 +34,9 @@ entity tdc_gpx_top is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
         g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32 or 64)
-        g_POWERUP_CLKS    : natural := 48;
-        g_RECOVERY_CLKS   : natural := 8;
-        g_ALU_PULSE_CLKS  : natural := 4;
+        g_POWERUP_CLKS    : positive := 48;
+        g_RECOVERY_CLKS   : positive := 8;
+        g_ALU_PULSE_CLKS  : positive := 4;
         -- Stop event AXI-Stream interface parameters
         g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;
         g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH
@@ -417,6 +417,8 @@ begin
             -- Frame done (for err_handler)
             i_frame_done         => s_frame_done,
             i_frame_fall_done    => s_frame_fall_done,
+            -- Pipeline abort (flush raw skid buffers)
+            i_pipeline_abort     => s_pipeline_abort,
             -- Error handler status
             o_err_active         => s_err_active,
             o_err_fatal          => s_err_fatal,
@@ -467,7 +469,9 @@ begin
             o_evt_sk_tuser      => s_evt_sk_tuser,
             i_evt_sk_tready     => s_evt_sk_tready,
             -- Status
-            o_stop_id_error     => s_stop_id_error
+            o_stop_id_error     => s_stop_id_error,
+            -- Pipeline abort: flush internal skid buffers
+            i_flush             => s_pipeline_abort
         );
 
     -- =========================================================================

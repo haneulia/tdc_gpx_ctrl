@@ -228,6 +228,7 @@ begin
             i_cmd_start         => s_cmd_start,
             i_cmd_stop          => s_cmd_stop,
             i_cmd_soft_reset    => s_cmd_soft_reset,
+            i_cmd_soft_reset_err => '0',
             i_cmd_cfg_write     => s_cmd_cfg_write,
             i_cmd_reg_read      => s_cmd_reg_read,
             i_cmd_reg_write     => s_cmd_reg_write,

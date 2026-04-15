@@ -432,7 +432,11 @@ begin
                         s_shot_cnt_r      <= (others => '0');
                         s_chip_error_r    <= (others => '0');
                         s_active_mask_r   <= i_active_chip_mask;    -- latch config
-                        s_last_stop_r     <= i_stops_per_chip(2 downto 0) - 1;
+                        if i_stops_per_chip >= 2 then
+                            s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
+                        else
+                            s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
+                        end if;
                         -- Runtime beats/cell for blank generation
                         case i_max_hits_cfg is
                             when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);

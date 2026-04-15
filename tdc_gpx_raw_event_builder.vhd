@@ -7,8 +7,9 @@
 --   Enriches decoded IFIFO fields with context (chip_id) and assigns
 --   per-stop hit_seq_local counter (3-bit, 0..7 per stop, shared across slopes).
 --   Registered pipeline with AXI-Stream input and output.
---   No backpressure support: always accepts input, always drives output.
---   NOTE: i_shot_seq and i_m_axis_tready ports are declared but unused.
+--   Supports downstream backpressure via i_m_axis_tready: output register
+--   holds valid+data until consumed; input is stalled when output is busy.
+--   NOTE: i_shot_seq is declared but unused (reserved for future shot tagging).
 --
 --   drain_done propagation: input tuser[7]='1' control beat resets hit
 --   counters and is forwarded on the output AXI-Stream as tuser[7]='1'.
@@ -70,7 +71,7 @@ entity tdc_gpx_raw_event_builder is
         o_m_axis_tvalid   : out std_logic;
         o_m_axis_tdata    : out std_logic_vector(31 downto 0);
         o_m_axis_tuser    : out std_logic_vector(15 downto 0);
-        i_m_axis_tready   : in  std_logic;  -- NOT consumed: this module always outputs (1-clk registered pipeline). Backpressure is handled by upstream skid buffer in decode_pipe.
+        i_m_axis_tready   : in  std_logic;
 
         -- Error
         o_stop_id_error   : out std_logic    -- 1-clk pulse on out-of-range stop_id
@@ -91,10 +92,13 @@ architecture rtl of tdc_gpx_raw_event_builder is
     signal s_tuser_r          : std_logic_vector(15 downto 0) := (others => '0');
     signal s_stop_id_error_r  : std_logic := '0';
 
+    -- Backpressure: accept input when output register is free or being consumed
+    signal s_can_accept       : std_logic;
+
 begin
 
-    -- Always-accept (no stall in this pipeline stage)
-    o_s_axis_tready <= '1';
+    s_can_accept    <= '1' when s_tvalid_r = '0' else i_m_axis_tready;
+    o_s_axis_tready <= s_can_accept;
 
     p_builder : process(i_clk)
         variable v_stop_idx : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
@@ -111,11 +115,15 @@ begin
                 s_tuser_r          <= (others => '0');
                 s_stop_id_error_r  <= '0';
             else
-                -- Default: clear single-cycle pulses
-                s_tvalid_r        <= '0';
+                -- Default: clear single-cycle status pulse
                 s_stop_id_error_r <= '0';
 
-                if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
+                -- Clear output valid on downstream handshake
+                if s_tvalid_r = '1' and i_m_axis_tready = '1' then
+                    s_tvalid_r <= '0';
+                end if;
+
+                if i_s_axis_tvalid = '1' and s_can_accept = '1' and i_s_axis_tuser(7) = '1' then
                     -- drain_done control beat: forward with ififo_id preserved.
                     -- ififo_id=0 (ififo1_done): do NOT reset counters (IFIFO2 active)
                     -- ififo_id=1 (final done):  reset ALL hit counters (shot boundary)
@@ -127,7 +135,7 @@ begin
                     s_tuser_r(7)  <= '1';   -- drain_done flag
                     s_tuser_r(6)  <= i_s_axis_tuser(6);  -- preserve ififo_id
                     s_tvalid_r    <= '1';
-                elsif i_s_axis_tvalid = '1' then
+                elsif i_s_axis_tvalid = '1' and s_can_accept = '1' then
                     -- Unpack input AXI-Stream sideband
                     v_raw_hit  := unsigned(i_s_axis_tdata(c_RAW_HIT_WIDTH - 1 downto 0));
                     v_slope    := i_s_axis_tuser(0);

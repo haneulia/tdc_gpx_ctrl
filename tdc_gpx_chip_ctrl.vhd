@@ -36,9 +36,9 @@ entity tdc_gpx_chip_ctrl is
     generic (
         g_BUS_DATA_WIDTH    : natural := c_TDC_BUS_WIDTH;   -- 28
         g_CHIP_ID           : natural := 0;                  -- 0..3
-        g_POWERUP_CLKS      : natural := 48;     -- PuResN low duration (>200ns, ~240ns @ 200MHz)
-        g_RECOVERY_CLKS     : natural := 8;       -- Reset/ALU recovery (~40ns @ 200MHz)
-        g_ALU_PULSE_CLKS    : natural := 4        -- AluTrigger pulse width (~20ns @ 200MHz)
+        g_POWERUP_CLKS      : positive := 48;    -- PuResN low duration (>200ns, ~240ns @ 200MHz)
+        g_RECOVERY_CLKS     : positive := 8;      -- Reset/ALU recovery (~40ns @ 200MHz)
+        g_ALU_PULSE_CLKS    : positive := 4        -- AluTrigger pulse width (~20ns @ 200MHz)
     );
     port (
         i_clk               : in  std_logic;
@@ -194,6 +194,14 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_alutrigger  : std_logic;
     signal s_run_busy        : std_logic;
     signal s_run_shot_seq    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+
+    -- =========================================================================
+    -- Raw AXI-Stream holding register (tready handshake)
+    -- =========================================================================
+    signal s_raw_hold_valid_r : std_logic := '0';
+    signal s_raw_hold_tdata_r : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_raw_hold_tuser_r : std_logic_vector(7 downto 0)  := (others => '0');
+    signal s_raw_hold_drain_r : std_logic := '0';
 
     -- =========================================================================
     -- Sub-FSM signals: chip_reg
@@ -562,15 +570,45 @@ begin
     o_puresn         <= s_init_puresn;
     o_alutrigger     <= s_run_alutrigger;
 
-    -- AXI-Stream raw word (passthrough from chip_run)
-    o_m_raw_axis_tvalid <= s_run_raw_valid or s_run_drain_done or s_run_ififo1_beat;
-    o_m_raw_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0) <= s_run_raw_word
-                                                          when s_run_raw_valid = '1'
-                                                          else (others => '0');
-    o_m_raw_axis_tdata(31 downto g_BUS_DATA_WIDTH) <= (others => '0');
-    o_m_raw_axis_tuser <= (s_run_drain_done or s_run_ififo1_beat)
-                          & "000000" & s_run_ififo_id;
-    o_drain_done       <= s_run_drain_done;
+    -- AXI-Stream raw word: holding register with tready handshake.
+    -- chip_run pulses are latched and held until downstream accepts.
+    p_raw_hold : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if s_sub_rst_n = '0' then
+                s_raw_hold_valid_r <= '0';
+                s_raw_hold_tdata_r <= (others => '0');
+                s_raw_hold_tuser_r <= (others => '0');
+                s_raw_hold_drain_r <= '0';
+            else
+                -- Clear on downstream accept
+                if s_raw_hold_valid_r = '1' and i_m_raw_axis_tready = '1' then
+                    s_raw_hold_valid_r <= '0';
+                    s_raw_hold_drain_r <= '0';
+                end if;
+                -- Latch new beat (when hold register is free or being consumed)
+                if s_raw_hold_valid_r = '0' or i_m_raw_axis_tready = '1' then
+                    if s_run_raw_valid = '1' then
+                        s_raw_hold_valid_r                                <= '1';
+                        s_raw_hold_tdata_r(g_BUS_DATA_WIDTH - 1 downto 0) <= s_run_raw_word;
+                        s_raw_hold_tdata_r(31 downto g_BUS_DATA_WIDTH)    <= (others => '0');
+                        s_raw_hold_tuser_r                                <= "0000000" & s_run_ififo_id;
+                        s_raw_hold_drain_r                                <= '0';
+                    elsif s_run_drain_done = '1' or s_run_ififo1_beat = '1' then
+                        s_raw_hold_valid_r <= '1';
+                        s_raw_hold_tdata_r <= (others => '0');
+                        s_raw_hold_tuser_r <= '1' & "000000" & s_run_ififo_id;
+                        s_raw_hold_drain_r <= s_run_drain_done;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_raw_hold;
+
+    o_m_raw_axis_tvalid <= s_raw_hold_valid_r;
+    o_m_raw_axis_tdata  <= s_raw_hold_tdata_r;
+    o_m_raw_axis_tuser  <= s_raw_hold_tuser_r;
+    o_drain_done        <= s_raw_hold_drain_r and s_raw_hold_valid_r and i_m_raw_axis_tready;
 
     o_shot_seq       <= s_run_shot_seq;
     o_busy           <= s_init_busy or s_run_busy or s_reg_busy;

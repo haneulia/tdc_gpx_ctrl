@@ -25,8 +25,8 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_err_handler is
     generic (
-        g_DEBOUNCE_CLKS : natural := 4;
-        g_MAX_RETRIES   : natural := 3
+        g_DEBOUNCE_CLKS : positive := 4;
+        g_MAX_RETRIES   : positive := 3
     );
     port (
         i_clk               : in  std_logic;

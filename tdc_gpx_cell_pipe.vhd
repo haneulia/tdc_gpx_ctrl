@@ -107,16 +107,25 @@ begin
     -- drain_done goes to both → need both ready
     -- hit goes to one → need that one ready
     gen_tready : for i in 0 to c_N_CHIPS - 1 generate
+        signal s_rise_free : std_logic;
+        signal s_fall_free : std_logic;
         signal s_can_accept : std_logic;
     begin
-        s_can_accept <= '1' when s_rise_valid_r(i) = '0' and s_fall_valid_r(i) = '0'
-                   else '1' when s_rise_valid_r(i) = '1' and s_rise_tready(i) = '1'
-                                 and s_fall_valid_r(i) = '0'
-                   else '1' when s_fall_valid_r(i) = '1' and s_fall_tready(i) = '1'
-                                 and s_rise_valid_r(i) = '0'
-                   else '1' when s_rise_valid_r(i) = '1' and s_rise_tready(i) = '1'
-                                 and s_fall_valid_r(i) = '1' and s_fall_tready(i) = '1'
-                   else '0';
+        s_rise_free <= '1' when s_rise_valid_r(i) = '0' or s_rise_tready(i) = '1' else '0';
+        s_fall_free <= '1' when s_fall_valid_r(i) = '0' or s_fall_tready(i) = '1' else '0';
+
+        -- Beat-type-aware tready (tready may depend on tvalid in AXI-Stream)
+        s_can_accept <= '1' when s_rise_free = '1' and s_fall_free = '1'
+                              and (i_evt_sk_tvalid(i) = '0' or i_evt_sk_tuser(i)(7) = '1')
+                   -- drain_done or no valid: need both slopes free
+                   else s_rise_free when i_evt_sk_tvalid(i) = '1' and i_evt_sk_tuser(i)(7) = '0'
+                                         and i_evt_sk_tuser(i)(0) = '1'
+                   -- rising hit: only need rise free
+                   else s_fall_free when i_evt_sk_tvalid(i) = '1' and i_evt_sk_tuser(i)(7) = '0'
+                                         and i_evt_sk_tuser(i)(0) = '0'
+                   -- falling hit: only need fall free
+                   else s_rise_free and s_fall_free;
+                   -- fallback (conservative)
         o_evt_sk_tready(i) <= s_can_accept;
     end generate gen_tready;
 
@@ -137,9 +146,18 @@ begin
                         s_fall_valid_r(i) <= '0';
                     end if;
 
-                    -- Load new data when demux register is free
-                    v_can_load := (s_rise_valid_r(i) = '0' or s_rise_tready(i) = '1')
-                              and (s_fall_valid_r(i) = '0' or s_fall_tready(i) = '1');
+                    -- Load new data: beat-type-aware backpressure
+                    if i_evt_sk_tuser(i)(7) = '1' then
+                        -- drain_done: goes to both slopes, need both free
+                        v_can_load := (s_rise_valid_r(i) = '0' or s_rise_tready(i) = '1')
+                                  and (s_fall_valid_r(i) = '0' or s_fall_tready(i) = '1');
+                    elsif i_evt_sk_tuser(i)(0) = '1' then
+                        -- rising hit: only need rise slot free
+                        v_can_load := (s_rise_valid_r(i) = '0' or s_rise_tready(i) = '1');
+                    else
+                        -- falling hit: only need fall slot free
+                        v_can_load := (s_fall_valid_r(i) = '0' or s_fall_tready(i) = '1');
+                    end if;
 
                     if v_can_load and i_evt_sk_tvalid(i) = '1' then
                         s_rise_valid_r(i) <= i_evt_sk_tuser(i)(0) or i_evt_sk_tuser(i)(7);

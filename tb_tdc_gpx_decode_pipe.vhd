@@ -64,7 +64,9 @@ begin
             o_evt_sk_tvalid       => evt_sk_tvalid,
             o_evt_sk_tdata        => evt_sk_tdata,
             o_evt_sk_tuser        => evt_sk_tuser,
-            o_stop_id_error       => stop_id_error
+            i_evt_sk_tready       => (others => '1'),
+            o_stop_id_error       => stop_id_error,
+            i_flush               => '0'
         );
 
     --------------------------------------------------------------------------

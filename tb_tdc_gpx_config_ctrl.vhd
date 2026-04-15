@@ -261,6 +261,7 @@ begin
             -- Frame boundary
             i_frame_done         => i_frame_done,
             i_frame_fall_done    => i_frame_fall_done,
+            i_pipeline_abort     => '0',
             -- Raw skid output
             o_raw_sk_tvalid      => o_raw_sk_tvalid,
             o_raw_sk_tdata       => o_raw_sk_tdata,

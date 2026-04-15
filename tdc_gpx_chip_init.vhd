@@ -30,8 +30,8 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_chip_init is
     generic (
         g_BUS_DATA_WIDTH : natural := c_TDC_BUS_WIDTH;
-        g_POWERUP_CLKS   : natural := 48;
-        g_RECOVERY_CLKS  : natural := 8
+        g_POWERUP_CLKS   : positive := 48;
+        g_RECOVERY_CLKS  : positive := 8
     );
     port (
         i_clk            : in  std_logic;

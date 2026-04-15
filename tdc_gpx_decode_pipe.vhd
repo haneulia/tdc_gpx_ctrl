@@ -40,7 +40,10 @@ entity tdc_gpx_decode_pipe is
         i_evt_sk_tready : in  std_logic_vector(c_N_CHIPS-1 downto 0);  -- backpressure from cell_pipe
 
         -- Status
-        o_stop_id_error : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        o_stop_id_error : out std_logic_vector(c_N_CHIPS-1 downto 0);
+
+        -- Pipeline abort: flush internal skid buffers
+        i_flush : in std_logic
     );
 end entity tdc_gpx_decode_pipe;
 
@@ -103,7 +106,7 @@ begin
             port map (
                 i_clk                  => i_clk,
                 i_rst_n                => i_rst_n,
-                i_flush                => '0',
+                i_flush                => i_flush,
                 i_s_valid              => s_dec_axis_tvalid(i),
                 o_s_ready              => s_dec_axis_tready(i),
                 i_s_data               => s_dec_axis_tdata(i) & s_dec_axis_tuser(i),
@@ -140,7 +143,7 @@ begin
             port map (
                 i_clk                   => i_clk,
                 i_rst_n                 => i_rst_n,
-                i_flush                 => '0',
+                i_flush                 => i_flush,
                 i_s_valid               => s_evt_axis_tvalid(i),
                 o_s_ready               => s_evt_axis_tready(i),
                 i_s_data                => s_evt_axis_tdata(i) & s_evt_axis_tuser(i),

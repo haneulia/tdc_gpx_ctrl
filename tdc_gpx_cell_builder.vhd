@@ -143,8 +143,14 @@ architecture rtl of tdc_gpx_cell_builder is
 
     -- Handshake: p_collect → p_output
     signal s_output_req_r : std_logic := '0';        -- 1-clk: start output (ififo1_done or full)
-    signal s_output_full_r : std_logic := '0';       -- 1-clk: all IFIFOs done (output stops 4~7)
+    signal s_output_full_r : std_logic := '0';       -- latched: all IFIFOs done (output stops 4~7)
     signal s_rd_buf_idx_r : std_logic := '0';        -- which buffer p_output should read
+
+    -- Pending output queue: stores next-shot request when output FSM is busy
+    signal s_output_pending_r    : std_logic := '0';  -- next shot output queued
+    signal s_pending_buf_idx_r   : std_logic := '0';  -- queued buffer index
+    signal s_pending_full_r      : std_logic := '0';  -- queued: both IFIFOs done?
+    signal s_consume_pending_r   : std_logic := '0';  -- p_output → p_collect: pending consumed
 
     -- =========================================================================
     -- Output FSM (p_output)
@@ -259,12 +265,20 @@ begin
                 s_output_req_r  <= '0';
                 s_output_full_r <= '0';
                 s_rd_buf_idx_r  <= '0';
+                s_output_pending_r  <= '0';
+                s_pending_buf_idx_r <= '0';
+                s_pending_full_r    <= '0';
                 s_hit_dropped_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r  <= '0';
                 -- s_output_full_r: latched, NOT auto-cleared (consumed by p_output)
                 s_hit_dropped_r <= '0';
+
+                -- Consume pending ack from p_output
+                if s_consume_pending_r = '1' then
+                    s_output_pending_r <= '0';
+                end if;
 
                 v_wr := fn_buf_idx(s_wr_buf_r);
 
@@ -310,16 +324,30 @@ begin
                                 -- IFIFO2 writes stops 4~7 which output hasn't reached yet.
                                 s_output_full_r <= '0';  -- clear from previous shot
                                 s_rd_buf_idx_r  <= s_wr_buf_r;  -- read from current write buffer
-                                if s_ostate_r = ST_O_IDLE then
+                                if s_ostate_r = ST_O_IDLE and s_output_pending_r = '0' then
                                     s_output_req_r <= '1';
+                                else
+                                    -- Output busy or pending: queue next shot
+                                    s_output_pending_r  <= '1';
+                                    s_pending_buf_idx_r <= s_wr_buf_r;
+                                    s_pending_full_r    <= '0';
                                 end if;
                             else
                                 -- Final drain_done: signal stops 4~7 ready
                                 s_output_full_r <= '1';
-                                if s_ostate_r = ST_O_IDLE and s_output_req_r = '0' then
+                                if s_ostate_r = ST_O_IDLE and s_output_req_r = '0'
+                                   and s_output_pending_r = '0' then
                                     -- Both IFIFOs done simultaneously (no prior ififo1_done)
                                     s_rd_buf_idx_r <= s_wr_buf_r;
                                     s_output_req_r <= '1';
+                                elsif s_output_pending_r = '1' then
+                                    -- Already pending from ififo1_done; upgrade to full
+                                    s_pending_full_r <= '1';
+                                else
+                                    -- Output busy, no prior ififo1 pending
+                                    s_output_pending_r  <= '1';
+                                    s_pending_buf_idx_r <= s_wr_buf_r;
+                                    s_pending_full_r    <= '1';
                                 end if;
                             end if;
                         end if;
@@ -342,7 +370,8 @@ begin
     -- p_output: serialize read-buffer cells to AXI-Stream master
     -- Owns: s_ostate_r, s_rd_buf_r, s_cell_sel_r, s_stop_idx_r, s_beat_idx_r,
     --       s_last_stop_r, s_tdata_r, s_tvalid_r, s_tlast_r, s_slice_done_r
-    -- Reads (no write): s_cell_buf_r, s_output_req_r, s_rd_buf_idx_r
+    -- Reads (no write): s_cell_buf_r, s_output_req_r, s_rd_buf_idx_r,
+    --       s_output_pending_r, s_pending_buf_idx_r, s_pending_full_r
     -- =========================================================================
     p_output : process(i_clk)
         variable v_rd       : natural range 0 to 1;
@@ -360,9 +389,11 @@ begin
                 s_tdata_r     <= (others => '0');
                 s_tvalid_r    <= '0';
                 s_tlast_r     <= '0';
-                s_slice_done_r <= '0';
+                s_slice_done_r     <= '0';
+                s_consume_pending_r <= '0';
             else
-                s_slice_done_r <= '0';
+                s_slice_done_r      <= '0';
+                s_consume_pending_r <= '0';
 
                 case s_ostate_r is
 
@@ -377,8 +408,37 @@ begin
                             s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
                             s_stop_idx_r    <= (others => '0');
                             s_beat_idx_r    <= (others => '0');
-                            s_last_stop_r   <= i_stops_per_chip(2 downto 0) - 1;
+                            if i_stops_per_chip >= 2 then
+                                s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
+                            else
+                                s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
+                            end if;
                             -- Runtime beats/cell lookup (elaboration-safe)
+                            case i_max_hits_cfg is
+                                when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
+                                when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
+                                when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
+                                when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
+                                when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
+                                when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
+                                when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
+                            end case;
+                            s_rt_max_hits_r  <= i_max_hits_cfg;
+                            s_ostate_r       <= ST_O_LOAD;
+                        elsif s_output_pending_r = '1' then
+                            -- Consume queued next-shot request
+                            s_consume_pending_r <= '1';
+                            s_rd_buf_r    <= s_pending_buf_idx_r;
+                            s_output_full_r <= s_pending_full_r;
+                            v_rd          := fn_buf_idx(s_pending_buf_idx_r);
+                            s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
+                            s_stop_idx_r    <= (others => '0');
+                            s_beat_idx_r    <= (others => '0');
+                            if i_stops_per_chip >= 2 then
+                                s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
+                            else
+                                s_last_stop_r <= (others => '0');
+                            end if;
                             case i_max_hits_cfg is
                                 when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
                                 when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);

@@ -188,7 +188,7 @@ begin
                             s_face_state_r <= ST_IDLE;
                         elsif s_frame_done_both = '1' then
                             s_frame_id_r <= s_frame_id_r + 1;
-                            if s_face_id_r >= resize(s_face_n_faces_r, 8) - 1 then
+                            if s_face_n_faces_r = 0 or s_face_id_r >= resize(s_face_n_faces_r, 8) - 1 then
                                 s_face_id_r <= (others => '0');
                             else
                                 s_face_id_r <= s_face_id_r + 1;
