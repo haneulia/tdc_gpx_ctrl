@@ -9,7 +9,7 @@
 --   Registered pipeline with AXI-Stream input and output.
 --   Supports downstream backpressure via i_m_axis_tready: output register
 --   holds valid+data until consumed; input is stalled when output is busy.
---   NOTE: i_shot_seq is declared but unused (reserved for future shot tagging).
+--   i_shot_seq lower 5 bits are mapped to tuser[15:11] for shot identity tagging.
 --
 --   drain_done propagation: input tuser[7]='1' control beat resets hit
 --   counters and is forwarded on the output AXI-Stream as tuser[7]='1'.
@@ -53,7 +53,7 @@ entity tdc_gpx_raw_event_builder is
 
         -- Context (from chip_ctrl / TOP)
         i_chip_id         : in  unsigned(1 downto 0);
-        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);  -- RESERVED: not used in current impl, kept for future shot tagging
+        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);  -- lower 5 bits mapped to tuser[15:11]
 
         -- Configuration
         i_stops_per_chip  : in  unsigned(3 downto 0);
@@ -67,7 +67,7 @@ entity tdc_gpx_raw_event_builder is
         --   tuser[6]     = ififo_id
         --   tuser[7]    = drain_done (control beat: no data, triggers output phase)
         --   tuser[10:8]   = hit_seq_local (0..7 per stop, shared across slopes)
-        --   tuser[15:11] = 0 (reserved)
+        --   tuser[15:11] = shot_seq[4:0] (lower 5 bits of shot sequence counter)
         o_m_axis_tvalid   : out std_logic;
         o_m_axis_tdata    : out std_logic_vector(31 downto 0);
         o_m_axis_tuser    : out std_logic_vector(15 downto 0);
@@ -134,6 +134,7 @@ begin
                     s_tuser_r     <= (others => '0');
                     s_tuser_r(7)  <= '1';   -- drain_done flag
                     s_tuser_r(6)  <= i_s_axis_tuser(6);  -- preserve ififo_id
+                    s_tuser_r(15 downto 11) <= std_logic_vector(i_shot_seq(4 downto 0));
                     s_tvalid_r    <= '1';
                 elsif i_s_axis_tvalid = '1' and s_can_accept = '1' then
                     -- Unpack input AXI-Stream sideband
@@ -157,7 +158,7 @@ begin
                         s_tuser_r(6)            <= v_ififo_id;
                         s_tuser_r(7)            <= '0';   -- not drain_done
                         s_tuser_r(10 downto 8)  <= std_logic_vector(s_hit_cnt_r(v_stop_idx));
-                        s_tuser_r(15 downto 11) <= (others => '0');
+                        s_tuser_r(15 downto 11) <= std_logic_vector(i_shot_seq(4 downto 0));
 
                         s_hit_cnt_r(v_stop_idx) <= s_hit_cnt_r(v_stop_idx) + 1;
                         s_tvalid_r <= '1';

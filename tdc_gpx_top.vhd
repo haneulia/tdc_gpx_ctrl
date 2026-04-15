@@ -281,6 +281,7 @@ architecture rtl of tdc_gpx_top is
     signal s_err_drain_to_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_seq_sticky_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_error_merged    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_raw       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- unmasked: all chips
 
     -- Error handler status (from config_ctrl)
     signal s_err_active    : std_logic;
@@ -293,8 +294,10 @@ begin
     -- =========================================================================
     -- Chip error merged (concurrent glue)
     -- =========================================================================
-    s_chip_error_merged <= (s_errflag_sync or s_chip_error_flags or s_chip_fall_error)
-                           and s_face_active_mask_r;
+    -- Unmasked: all chip errors visible for SW diagnostics / status
+    s_chip_error_raw    <= s_errflag_sync or s_chip_error_flags or s_chip_fall_error;
+    -- Masked: only active chips, used for recovery gating and header
+    s_chip_error_merged <= s_chip_error_raw and s_face_active_mask_r;
 
     -- =========================================================================
     -- [1] csr_pipeline (Pipeline CSR, separate AXI4-Lite port)
@@ -699,7 +702,7 @@ begin
     -- Status field assignments (remaining fields not populated by status_agg)
     -- =========================================================================
     s_status.err_fatal        <= s_err_fatal;  -- repurposed: err_handler fatal recovery failure
-    s_status.chip_error_mask     <= s_chip_error_merged;
+    s_status.chip_error_mask     <= s_chip_error_raw;  -- unmasked: SW sees all chips
     s_status.drain_timeout_mask  <= s_err_drain_to_sticky_r;
     s_status.sequence_error_mask <= s_err_seq_sticky_r;
     s_status.shot_seq_current    <= s_global_shot_seq_r;
