@@ -86,6 +86,9 @@ entity tdc_gpx_chip_run is
         o_drain_done        : out std_logic;
         o_ififo1_done_beat  : out std_logic;
 
+        -- Backpressure from coordinator hold register
+        i_raw_busy          : in  std_logic;    -- '1' = hold register full, stall drain
+
         -- Pin outputs
         o_stopdis           : out std_logic;
         o_alutrigger        : out std_logic;
@@ -288,6 +291,7 @@ begin
                         s_state_r           <= ST_DRAIN_CHECK;
 
                     when ST_DRAIN_CHECK =>
+                      if i_raw_busy = '0' then
                         v_cap := shift_left(resize(i_n_drain_cap, 8), 2);
 
                         v_ififo1_done := (i_ef1_sync = '1')
@@ -316,12 +320,11 @@ begin
                             s_wait_cnt_r      <= (others => '0');
                             if s_purge_mode_r = '1' then
                                 s_purge_mode_r <= '0';
-                                s_state_r      <= ST_ALU_PULSE;
-                            else
-                                s_drain_done_r <= '1';
-                                s_ififo_id_r   <= '1';
-                                s_state_r      <= ST_ALU_PULSE;
                             end if;
+                            -- Always emit final drain_done (normal + purge)
+                            s_drain_done_r <= '1';
+                            s_ififo_id_r   <= '1';
+                            s_state_r      <= ST_ALU_PULSE;
 
                         -- Burst IFIFO1
                         elsif s_purge_mode_r = '0'
@@ -386,13 +389,13 @@ begin
                             s_wait_cnt_r      <= (others => '0');
                             if s_purge_mode_r = '1' then
                                 s_purge_mode_r <= '0';
-                                s_state_r      <= ST_ALU_PULSE;
-                            else
-                                s_drain_done_r <= '1';
-                                s_ififo_id_r   <= '1';
-                                s_state_r      <= ST_ALU_PULSE;
                             end if;
+                            -- Always emit final drain_done (normal + purge)
+                            s_drain_done_r <= '1';
+                            s_ififo_id_r   <= '1';
+                            s_state_r      <= ST_ALU_PULSE;
                         end if;
+                      end if; -- i_raw_busy = '0'
 
                     when ST_DRAIN_EF1 =>
                         if i_bus_rsp_valid = '1' then

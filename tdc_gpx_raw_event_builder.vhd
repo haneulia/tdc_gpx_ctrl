@@ -66,7 +66,7 @@ entity tdc_gpx_raw_event_builder is
         --   tuser[5:3]   = stop_id_local (0..7)
         --   tuser[6]     = ififo_id
         --   tuser[7]    = drain_done (control beat: no data, triggers output phase)
-        --   tuser[10:8]   = hit_seq_local (0..7 per slope)
+        --   tuser[10:8]   = hit_seq_local (0..7 per stop, shared across slopes)
         --   tuser[15:11] = 0 (reserved)
         o_m_axis_tvalid   : out std_logic;
         o_m_axis_tdata    : out std_logic_vector(31 downto 0);
@@ -80,7 +80,7 @@ end entity tdc_gpx_raw_event_builder;
 
 architecture rtl of tdc_gpx_raw_event_builder is
 
-    -- Per-stop hit sequence counters (3-bit: 0..7 per slope, MAX_HITS=7)
+    -- Per-stop hit sequence counters (3-bit: 0..7 per stop shared across slopes, MAX_HITS=7)
     type t_hit_cnt_array is array (0 to c_MAX_STOPS_PER_CHIP - 1)
         of unsigned(2 downto 0);
 

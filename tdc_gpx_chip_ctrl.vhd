@@ -202,6 +202,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_raw_hold_tdata_r : std_logic_vector(31 downto 0) := (others => '0');
     signal s_raw_hold_tuser_r : std_logic_vector(7 downto 0)  := (others => '0');
     signal s_raw_hold_drain_r : std_logic := '0';
+    signal s_raw_hold_busy    : std_logic;  -- backpressure to chip_run
 
     -- =========================================================================
     -- Sub-FSM signals: chip_reg
@@ -327,6 +328,7 @@ begin
             o_ififo_id          => s_run_ififo_id,
             o_drain_done        => s_run_drain_done,
             o_ififo1_done_beat  => s_run_ififo1_beat,
+            i_raw_busy          => s_raw_hold_busy,
             o_stopdis           => s_run_stopdis,
             o_alutrigger        => s_run_alutrigger,
             o_busy              => s_run_busy,
@@ -609,6 +611,9 @@ begin
     o_m_raw_axis_tdata  <= s_raw_hold_tdata_r;
     o_m_raw_axis_tuser  <= s_raw_hold_tuser_r;
     o_drain_done        <= s_raw_hold_drain_r and s_raw_hold_valid_r and i_m_raw_axis_tready;
+
+    -- Backpressure: hold register full and downstream not accepting
+    s_raw_hold_busy     <= s_raw_hold_valid_r and (not i_m_raw_axis_tready);
 
     o_shot_seq       <= s_run_shot_seq;
     o_busy           <= s_init_busy or s_run_busy or s_reg_busy;

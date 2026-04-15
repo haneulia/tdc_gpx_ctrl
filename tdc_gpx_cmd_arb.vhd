@@ -103,6 +103,10 @@ architecture rtl of tdc_gpx_cmd_arb is
     -- All-done detection
     signal s_all_done            : std_logic;
 
+    -- Reg access timeout (prevents permanent hang if chip never responds)
+    signal s_reg_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');
+    signal s_reg_timeout_r       : std_logic := '0';  -- sticky: timeout occurred
+
 begin
 
     s_reset <= '1' when i_rst_n = '0' or i_cmd_soft_reset = '1' or i_cmd_stop = '1'
@@ -173,6 +177,8 @@ begin
                 s_loop_resume_r      <= '0';
                 s_done_chip_r        <= (others => '0');
                 s_outstanding_chip_r <= (others => '0');
+                s_reg_timeout_cnt_r  <= (others => '0');
+                s_reg_timeout_r      <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_dispatch_pulse_r <= (others => '0');
@@ -187,6 +193,19 @@ begin
                     v_rw := '0';
                 end if;
 
+                -- ---- Timeout: force all-done if chip never responds ----
+                if s_reg_active_r = '1' then
+                    if s_reg_timeout_cnt_r = x"FFFF" then
+                        -- Timeout: force done for all target chips
+                        s_reg_done_mask_r   <= s_reg_target_mask_r;
+                        s_reg_timeout_r     <= '1';  -- sticky
+                    else
+                        s_reg_timeout_cnt_r <= s_reg_timeout_cnt_r + 1;
+                    end if;
+                else
+                    s_reg_timeout_cnt_r <= (others => '0');
+                end if;
+
                 -- ---- All-done: clear and fire IRQ ----
                 if s_all_done = '1' then
                     s_reg_active_r      <= '0';
@@ -194,6 +213,7 @@ begin
                     s_reg_target_mask_r <= (others => '0');
                     s_reg_done_mask_r   <= (others => '0');
                     s_reg_dispatched_r  <= (others => '0');
+                    s_reg_timeout_cnt_r <= (others => '0');
                     s_done_pulse_r      <= '1';
                     s_loop_resume_r     <= '1';
 

@@ -449,7 +449,11 @@ begin
                         end case;
                         -- Strict in-order: start from lowest active chip
                         s_next_chip_r     <= (others => '0');
-                        s_state_r         <= ST_SCAN;
+                        if i_active_chip_mask = "0000" then
+                            s_state_r     <= ST_IDLE;  -- degenerate: no active chips
+                        else
+                            s_state_r     <= ST_SCAN;
+                        end if;
                     end if;
 
                 -- ==============================================================

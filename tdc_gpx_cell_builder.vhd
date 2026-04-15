@@ -60,9 +60,12 @@
 --   Examples @64b: max_hits=7→4, max_hits=3→1, max_hits=1→1
 --
 -- Signal ownership (no multi-driver):
---   p_collect WRITES: s_cell_buf_r, s_wr_buf_r, s_cstate_r, s_output_req_r
---   p_output  WRITES: s_cell_sel_r, s_ostate_r, s_tdata_r, s_tvalid_r, etc.
---   p_output  READS:  s_cell_buf_r (no write conflict)
+--   p_collect WRITES: s_cell_buf_r, s_wr_buf_r, s_cstate_r, s_output_req_r,
+--                     s_output_full_r, s_rd_buf_idx_r, s_output_pending_r,
+--                     s_pending_buf_idx_r, s_pending_full_r
+--   p_output  WRITES: s_cell_sel_r, s_ostate_r, s_tdata_r, s_tvalid_r,
+--                     s_consume_pending_r, etc.
+--   p_output  READS:  s_cell_buf_r, s_output_pending_r (no write conflict)
 --
 -- All outputs are registered (module boundary = FF).
 --
@@ -278,6 +281,7 @@ begin
                 -- Consume pending ack from p_output
                 if s_consume_pending_r = '1' then
                     s_output_pending_r <= '0';
+                    s_output_full_r    <= s_pending_full_r;  -- ownership transfer to p_collect
                 end if;
 
                 v_wr := fn_buf_idx(s_wr_buf_r);
@@ -427,9 +431,9 @@ begin
                             s_ostate_r       <= ST_O_LOAD;
                         elsif s_output_pending_r = '1' then
                             -- Consume queued next-shot request
+                            -- NOTE: s_output_full_r is set by p_collect via consume_pending handshake
                             s_consume_pending_r <= '1';
                             s_rd_buf_r    <= s_pending_buf_idx_r;
-                            s_output_full_r <= s_pending_full_r;
                             v_rd          := fn_buf_idx(s_pending_buf_idx_r);
                             s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
                             s_stop_idx_r    <= (others => '0');
