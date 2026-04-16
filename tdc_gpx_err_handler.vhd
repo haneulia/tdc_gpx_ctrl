@@ -242,7 +242,10 @@ begin
                                 s_err_fatal_r <= '1';
                                 -- Fatal: release reg-access path so SW can diagnose.
                                 -- s_err_fatal_r stays sticky until system reset.
-                                s_state_r     <= ST_IDLE;
+                                -- Clear err_fill to stop raw-data substitution.
+                                s_err_fill_r      <= (others => '0');
+                                s_err_chip_mask_r <= (others => '0');
+                                s_state_r         <= ST_IDLE;
                             end if;
                         else
                             s_recov_timeout_r <= s_recov_timeout_r + 1;

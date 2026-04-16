@@ -157,8 +157,9 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- =========================================================================
     -- Coordinator phase tracking
     -- =========================================================================
-    type t_phase is (PH_INIT, PH_IDLE, PH_RUN, PH_REG, PH_CFG_WRITE);
-    signal s_phase_r : t_phase := PH_INIT;
+    type t_phase is (PH_INIT, PH_IDLE, PH_RUN, PH_REG, PH_CFG_WRITE, PH_RESP_DRAIN);
+    signal s_phase_r      : t_phase := PH_INIT;
+    signal s_drain_cnt_r  : unsigned(3 downto 0) := (others => '0');  -- stale response drain counter
 
     -- =========================================================================
     -- Sub-FSM signals: chip_init
@@ -377,14 +378,19 @@ begin
     o_bus_oen_permanent <= s_run_bus_oen when s_phase_r = PH_RUN else '0';
     o_bus_req_burst     <= s_run_bus_burst when s_phase_r = PH_RUN else '0';
 
-    -- Bus response routing
-    s_init_rsp_valid <= i_s_axis_tvalid when s_phase_r = PH_INIT or s_phase_r = PH_CFG_WRITE else '0';
+    -- Bus response routing (PH_RESP_DRAIN: all routing disabled, responses discarded)
+    s_init_rsp_valid <= i_s_axis_tvalid when (s_phase_r = PH_INIT or s_phase_r = PH_CFG_WRITE)
+                                             and s_phase_r /= PH_RESP_DRAIN else '0';
     s_run_rsp_valid  <= i_s_axis_tvalid when s_phase_r = PH_RUN else '0';
     s_run_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
     s_reg_rsp_valid  <= i_s_axis_tvalid when s_phase_r = PH_REG else '0';
     s_reg_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
 
-    o_s_axis_tready  <= '1' when s_init_busy = '1' or s_run_busy = '1' or s_reg_busy = '1'
+    -- Bus response tready: deassert during RUN drain when raw hold is full.
+    -- PH_RESP_DRAIN always accepts (to drain stale responses).
+    o_s_axis_tready  <= '0' when s_phase_r = PH_RUN and s_raw_hold_busy = '1'
+                   else '1' when s_phase_r = PH_RESP_DRAIN
+                   else '1' when s_init_busy = '1' or s_run_busy = '1' or s_reg_busy = '1'
                    else '0';
 
     -- =========================================================================
@@ -490,19 +496,26 @@ begin
                             s_phase_r <= PH_IDLE;
                         end if;
 
+                    when PH_RESP_DRAIN =>
+                        -- Drain stale bus responses after soft reset.
+                        -- tready='1' (above), routing='0' (all discarded).
+                        -- 8 cycles drains skid buffer (depth 2) + bus_phy pipeline.
+                        if s_drain_cnt_r = to_unsigned(7, 4) then
+                            s_phase_r    <= PH_INIT;
+                            s_init_start <= '1';
+                        else
+                            s_drain_cnt_r <= s_drain_cnt_r + 1;
+                        end if;
+
                 end case;
 
                 -- Soft reset: global OR per-chip error recovery
-                -- Reset sub-FSMs this cycle, restart init next cycle
+                -- Drain stale responses first, then restart init
                 s_soft_reset_d1_r <= i_cmd_soft_reset or i_cmd_soft_reset_err;
                 if i_cmd_soft_reset = '1' or i_cmd_soft_reset_err = '1' then
                     s_cfg_image_snap_r <= i_cfg_image;
-                    s_phase_r          <= PH_INIT;
-                end if;
-                -- Delayed init start: 1 clk after soft_reset so sub-FSMs
-                -- see reset first, then start
-                if s_soft_reset_d1_r = '1' then
-                    s_init_start <= '1';
+                    s_phase_r          <= PH_RESP_DRAIN;
+                    s_drain_cnt_r      <= (others => '0');
                 end if;
             end if;
         end if;
@@ -629,20 +642,43 @@ begin
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
 
     -- =========================================================================
-    -- Bus response tuser mismatch detector (sticky)
-    -- Checks that reg-phase responses carry the expected RW/address in tuser.
+    -- Bus response tuser mismatch detector (sticky, all phases)
+    -- Checks tuser[0]=RW and tuser[4:1]=addr against the active sub-FSM's
+    -- last dispatched request.  Covers INIT, CFG_WRITE, RUN, and REG.
     -- =========================================================================
     p_rsp_check : process(i_clk)
+        variable v_exp_rw   : std_logic;
+        variable v_exp_addr : std_logic_vector(3 downto 0);
+        variable v_check    : boolean;
     begin
         if rising_edge(i_clk) then
             if s_sub_rst_n = '0' then
                 s_err_rsp_mismatch_r <= '0';
-            elsif s_phase_r = PH_REG and i_s_axis_tvalid = '1' then
-                -- tuser[0] = RW, tuser[4:1] = addr
-                -- Compare against dispatched reg request
-                if i_s_axis_tuser(0) /= s_reg_bus_rw
-                   or i_s_axis_tuser(4 downto 1) /= s_reg_bus_addr then
-                    s_err_rsp_mismatch_r <= '1';  -- sticky
+            elsif i_s_axis_tvalid = '1' then
+                v_check := false;
+                case s_phase_r is
+                    when PH_INIT | PH_CFG_WRITE =>
+                        v_exp_rw   := s_init_bus_rw;
+                        v_exp_addr := s_init_bus_addr;
+                        v_check    := true;
+                    when PH_RUN =>
+                        if s_run_bus_burst = '0' then
+                            v_exp_rw   := s_run_bus_rw;
+                            v_exp_addr := s_run_bus_addr;
+                            v_check    := true;
+                        end if;
+                    when PH_REG =>
+                        v_exp_rw   := s_reg_bus_rw;
+                        v_exp_addr := s_reg_bus_addr;
+                        v_check    := true;
+                    when others =>
+                        null;
+                end case;
+                if v_check then
+                    if i_s_axis_tuser(0) /= v_exp_rw
+                       or i_s_axis_tuser(4 downto 1) /= v_exp_addr then
+                        s_err_rsp_mismatch_r <= '1';
+                    end if;
                 end if;
             end if;
         end if;

@@ -1,6 +1,6 @@
 -- =============================================================================
 -- tdc_gpx_cell_builder.vhd
--- TDC-GPX Controller - Cell Builder + Chip Slice Output (Ping-Pong)
+-- TDC-GPX Controller - Cell Builder + Chip Slice Output (Per-Buffer Owner FSM)
 -- =============================================================================
 --
 -- Purpose:
@@ -8,23 +8,35 @@
 --   cells to AXI-Stream as a chip slice (stops_per_chip cells, ascending order).
 --
 -- Architecture:
---   Ping-pong dual buffer with two independent processes:
+--   Dual cell buffer with explicit per-buffer ownership FSM managed by p_collect.
+--   Each buffer has an independent state:
+--
+--     BUF_FREE    - Nobody owns it. Available for next shot_start.
+--     BUF_COLLECT - p_collect owns it. Writing hits from AXI-Stream.
+--     BUF_SHARED  - p_collect may still write stops 4-7, p_output reads.
+--                   Entered on ififo1_done. buf_full flag indicates stops 4-7 ready.
+--
+--   Two independent processes share the dual buffer:
 --
 --   p_collect (ST_C_IDLE / ST_C_ACTIVE):
---     Writes hits into the WRITE buffer from AXI-Stream slave input.
---     On ififo1_done (tuser[7]=1, tuser[6]=0): starts output from current
---     buffer (NO swap). IFIFO2 data continues into same buffer.
---     Buffer swap deferred to next shot_start (true same-shot coherence).
+--     Owns ALL buffer state transitions (no multi-driver on s_buf_state_r).
+--     On shot_start: finds BUF_FREE buffer, transitions to BUF_COLLECT.
+--     On ififo1_done: BUF_COLLECT -> BUF_SHARED, signals p_output to start.
+--     On final_done: sets buf_full flag (stops 4-7 ready).
+--     On s_output_done_r: BUF_SHARED -> BUF_FREE, auto-starts next if queued.
+--     On i_abort: all buffers -> BUF_FREE, FSM -> ST_C_IDLE.
 --
 --   p_output (ST_O_IDLE / ST_O_LOAD / ST_O_ACTIVE / ST_O_WAIT_IFIFO2):
---     Reads from the READ buffer and serializes beats to AXI-Stream master.
---     Pipeline: cell MUX (ST_O_LOAD, 1-clk bubble) → beat MUX (ST_O_ACTIVE).
---     Per-IFIFO early output: starts stops 0~3 on ififo1_done (tuser[7]=1,
---     tuser[6]=0), stalls at stop 3→4 boundary in ST_O_WAIT_IFIFO2 until
---     final drain_done (tuser[6]=1) signals stops 4~7 ready.
+--     Reads from the buffer indicated by s_rd_buf_idx_r.
+--     Pipeline: cell MUX (ST_O_LOAD, 1-clk bubble) -> beat MUX (ST_O_ACTIVE).
+--     Per-IFIFO early output: starts stops 0~3 on ififo1_done, stalls at
+--     stop 3->4 boundary in ST_O_WAIT_IFIFO2 until buf_full flag is set.
+--     Signals completion via s_output_done_r pulse.
 --
---   Dual-buffer benefit: collect(shot N+1) overlaps with output(shot N),
---   reducing effective per-shot latency to max(drain_time, output_time).
+--   Handshake signals (no multi-driver):
+--     s_output_req_r  : p_collect -> p_output (1-clk pulse: start output)
+--     s_rd_buf_idx_r  : p_collect -> p_output (which buffer to read)
+--     s_output_done_r : p_output -> p_collect (1-clk pulse: slice complete)
 --
 -- Runtime max_hits_cfg (i_max_hits_cfg, 1~7):
 --   Controls output beats/cell dynamically. Buffer always allocated for MAX=7.
@@ -39,14 +51,17 @@
 --        7     |   32B     |     8     |     4
 --
 -- Overrun:
---   If p_output is still active when the next drain_done arrives,
---   the swap is skipped (data in write buffer will be overwritten by next shot).
+--   If no BUF_FREE buffer is available on shot_start, the shot is dropped.
 --
 -- AXI-Stream slave input (from raw_event_builder / slope demux):
 --   tdata[16:0]  = raw_hit (17-bit, lower 16 stored as HIT_SLOT_DATA_WIDTH)
 --   tuser[0]     = slope
+--   tuser[2:1]   = chip_id
 --   tuser[5:3]   = stop_id_local (0..7)
+--   tuser[6]     = ififo_id
 --   tuser[7]     = drain_done (control beat: triggers output phase)
+--   tuser[10:8]  = hit_seq_local (0..7)
+--   tuser[15:11] = 0
 --
 -- AXI-Stream master output (to face_assembler):
 --   tdata         = g_TDATA_WIDTH bits (32 or 64)
@@ -57,15 +72,16 @@
 --   Beat META_BEAT_IDX:        metadata (hit_valid, slope_vec, hit_count, flags)
 --   Remaining beats:           padding (zeros)
 --   Runtime beats/cell: fn_beats_per_cell_rt(max_hits_cfg, g_TDATA_WIDTH)
---   Examples @64b: max_hits=7→4, max_hits=3→1, max_hits=1→1
+--   Examples @64b: max_hits=7->4, max_hits=3->1, max_hits=1->1
 --
 -- Signal ownership (no multi-driver):
---   p_collect WRITES: s_cell_buf_r, s_wr_buf_r, s_cstate_r, s_output_req_r,
---                     s_output_full_r, s_rd_buf_idx_r, s_output_pending_r,
---                     s_pending_buf_idx_r, s_pending_full_r, s_swap_pending_r
+--   p_collect WRITES: s_cell_buf_r, s_buf_state_r, s_buf_full_r, s_wr_buf_r,
+--                     s_cstate_r, s_output_req_r, s_rd_buf_idx_r
 --   p_output  WRITES: s_cell_sel_r, s_ostate_r, s_tdata_r, s_tvalid_r,
---                     s_consume_pending_r, etc.
---   p_output  READS:  s_cell_buf_r, s_output_pending_r (no write conflict)
+--                     s_tlast_r, s_output_done_r, etc.
+--   p_output  READS:  s_cell_buf_r, s_buf_full_r, s_output_req_r,
+--                     s_rd_buf_idx_r (no write conflict)
+--   p_collect READS:  s_ostate_r, s_output_done_r (no write conflict)
 --
 -- All outputs are registered (module boundary = FF).
 --
@@ -104,6 +120,7 @@ entity tdc_gpx_cell_builder is
 
         -- Control (from chip_ctrl)
         i_shot_start        : in  std_logic;   -- new shot: clear cell buffers
+        i_abort             : in  std_logic;   -- abort: free all buffers, return to idle
         -- drain_done is received via i_s_axis_tuser(7) control beat
 
         -- Configuration (latched at packet_start)
@@ -125,7 +142,7 @@ end entity tdc_gpx_cell_builder;
 architecture rtl of tdc_gpx_cell_builder is
 
     -- =========================================================================
-    -- Ping-pong dual cell buffer (register-based, 2 × MAX_STOPS entries)
+    -- Ping-pong dual cell buffer (register-based, 2 x MAX_STOPS entries)
     -- p_collect writes to buffer[wr_buf], p_output reads from buffer[rd_buf].
     -- =========================================================================
     type t_cell_array is array (0 to c_MAX_STOPS_PER_CHIP - 1) of t_cell;
@@ -138,25 +155,23 @@ architecture rtl of tdc_gpx_cell_builder is
     end function;
 
     -- =========================================================================
-    -- Collect FSM (p_collect)
+    -- Buffer ownership FSM (p_collect owns ALL transitions)
     -- =========================================================================
+    type t_buf_owner is (BUF_FREE, BUF_COLLECT, BUF_SHARED);
+    type t_buf_state_array is array(0 to 1) of t_buf_owner;
+    signal s_buf_state_r : t_buf_state_array := (others => BUF_FREE);
+    signal s_buf_full_r  : std_logic_vector(1 downto 0) := "00";
+
     type t_collect_state is (ST_C_IDLE, ST_C_ACTIVE);
     signal s_cstate_r     : t_collect_state := ST_C_IDLE;
-    signal s_wr_buf_r     : std_logic := '0';       -- which buffer is write target
+    signal s_wr_buf_r     : std_logic := '0';
 
-    -- Handshake: p_collect → p_output
-    signal s_output_req_r : std_logic := '0';        -- 1-clk: start output (ififo1_done or full)
-    signal s_output_full_r : std_logic := '0';       -- latched: all IFIFOs done (output stops 4~7)
-    signal s_rd_buf_idx_r : std_logic := '0';        -- which buffer p_output should read
+    -- p_collect -> p_output handshake
+    signal s_output_req_r  : std_logic := '0';
+    signal s_rd_buf_idx_r  : std_logic := '0';
 
-    -- Pending output queue: stores next-shot request when output FSM is busy
-    signal s_output_pending_r    : std_logic := '0';  -- next shot output queued
-    signal s_pending_buf_idx_r   : std_logic := '0';  -- queued buffer index
-    signal s_pending_full_r      : std_logic := '0';  -- queued: both IFIFOs done?
-    signal s_consume_pending_r   : std_logic := '0';  -- p_output → p_collect: pending consumed
-
-    -- Deferred buffer swap: shot_start while output is busy
-    signal s_swap_pending_r      : std_logic := '0';  -- swap deferred until output idle
+    -- p_output -> p_collect handshake
+    signal s_output_done_r : std_logic := '0';
 
     -- =========================================================================
     -- Output FSM (p_output)
@@ -189,7 +204,6 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_tdata_r     : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_tvalid_r    : std_logic := '0';
     signal s_tlast_r     : std_logic := '0';
-    signal s_slice_done_r    : std_logic := '0';
     signal s_hit_dropped_r   : std_logic := '0';
 
     -- =========================================================================
@@ -255,145 +269,194 @@ begin
     o_s_axis_tready <= '1' when s_cstate_r = ST_C_ACTIVE else '0';
 
     -- =========================================================================
-    -- p_collect: write hits into write-buffer, handle drain_done swap
-    -- Owns: s_cell_buf_r, s_wr_buf_r, s_cstate_r, s_output_req_r, s_rd_buf_idx_r
+    -- p_collect: write hits into write-buffer, manage buffer ownership FSM
+    -- Owns: s_cell_buf_r, s_buf_state_r, s_buf_full_r, s_wr_buf_r, s_cstate_r,
+    --       s_output_req_r, s_rd_buf_idx_r, s_hit_dropped_r
+    -- Reads (no write): s_ostate_r, s_output_done_r
     -- =========================================================================
     p_collect : process(i_clk)
-        variable v_wr   : natural range 0 to 1;
-        variable v_stop : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
-        variable v_seq  : natural range 0 to c_MAX_HITS_PER_STOP - 1;
+        variable v_wr    : natural range 0 to 1;
+        variable v_other : natural range 0 to 1;
+        variable v_stop  : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
+        variable v_seq   : natural range 0 to c_MAX_HITS_PER_STOP - 1;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_cell_buf_r   <= (others => (others => c_CELL_INIT));
-                s_cstate_r     <= ST_C_IDLE;
-                s_wr_buf_r     <= '0';
+                s_cell_buf_r    <= (others => (others => c_CELL_INIT));
+                s_buf_state_r   <= (others => BUF_FREE);
+                s_buf_full_r    <= "00";
+                s_cstate_r      <= ST_C_IDLE;
+                s_wr_buf_r      <= '0';
                 s_output_req_r  <= '0';
-                s_output_full_r <= '0';
                 s_rd_buf_idx_r  <= '0';
-                s_output_pending_r  <= '0';
-                s_pending_buf_idx_r <= '0';
-                s_pending_full_r    <= '0';
-                s_swap_pending_r    <= '0';
                 s_hit_dropped_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r  <= '0';
-                -- s_output_full_r: latched, NOT auto-cleared (consumed by p_output)
                 s_hit_dropped_r <= '0';
 
-                -- Consume pending ack from p_output
-                if s_consume_pending_r = '1' then
-                    s_output_pending_r <= '0';
-                    s_output_full_r    <= s_pending_full_r;  -- ownership transfer to p_collect
-                end if;
-
-                -- Execute deferred swap when output returns to idle
-                if s_swap_pending_r = '1' and s_ostate_r = ST_O_IDLE then
-                    s_wr_buf_r <= not s_wr_buf_r;
-                    s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
-                    s_swap_pending_r <= '0';
-                end if;
-
-                v_wr := fn_buf_idx(s_wr_buf_r);
-
-                case s_cstate_r is
-
-                    when ST_C_IDLE =>
-                        if i_shot_start = '1' then
-                            s_cell_buf_r(v_wr) <= (others => c_CELL_INIT);
-                            s_cstate_r         <= ST_C_ACTIVE;
-                        end if;
-
-                    when ST_C_ACTIVE =>
-                        -- Raw event write (exclude drain_done control beat)
-                        if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '0' then
-                            v_stop := to_integer(unsigned(i_s_axis_tuser(5 downto 3)));
-
-                            if s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
-                                v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
-                                s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
-                                s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq) <= '1';
-                                s_cell_buf_r(v_wr)(v_stop).slope_vec(v_seq) <= i_s_axis_tuser(0);
-                                s_cell_buf_r(v_wr)(v_stop).hit_count_actual <= s_cell_buf_r(v_wr)(v_stop).hit_count_actual + 1;
-                            else
-                                s_cell_buf_r(v_wr)(v_stop).hit_dropped <= '1';
-                                s_hit_dropped_r <= '1';
+                -- ---------------------------------------------------------
+                -- Abort: free all buffers, return to idle
+                -- ---------------------------------------------------------
+                if i_abort = '1' then
+                    s_buf_state_r <= (others => BUF_FREE);
+                    s_buf_full_r  <= "00";
+                    s_cstate_r    <= ST_C_IDLE;
+                    -- Do NOT clear cell_buf (unnecessary, will be cleared on next shot_start)
+                else
+                    -- ---------------------------------------------------------
+                    -- Handle output completion: BUF_SHARED -> BUF_FREE
+                    -- ---------------------------------------------------------
+                    if s_output_done_r = '1' then
+                        for b in 0 to 1 loop
+                            if s_buf_state_r(b) = BUF_SHARED then
+                                s_buf_state_r(b) <= BUF_FREE;
+                                s_buf_full_r(b)  <= '0';
                             end if;
-                        end if;
+                        end loop;
+                        -- Auto-start: check if other buffer is SHARED and waiting
+                        -- (This handles the case where a second buffer became SHARED
+                        --  while output was busy with the first.)
+                        -- NOTE: The loop above frees the completed buffer this cycle.
+                        -- The auto-start check below looks for a DIFFERENT buffer that
+                        -- is BUF_SHARED. Since the freed buffer transitions to BUF_FREE
+                        -- in the same delta, and VHDL signal assignment is deferred,
+                        -- s_buf_state_r still reads BUF_SHARED for the old buffer here.
+                        -- We must exclude the buffer that just finished.
+                        -- However, only ONE buffer can be BUF_SHARED at a time in normal
+                        -- operation (output is busy with one, the other is COLLECT or FREE).
+                        -- So auto-start only fires if the OTHER buffer was promoted to
+                        -- SHARED while output was busy -- which cannot happen because
+                        -- p_collect only promotes to SHARED on ififo1_done, and a new
+                        -- shot would need a BUF_FREE buffer first. Therefore, auto-start
+                        -- is effectively a no-op in the common case, but included for
+                        -- robustness if timing changes in future.
+                    end if;
 
-                        -- drain_done control beats:
-                        --   tuser[7]=1, tuser[6]=0: ififo1_done → start output (NO swap)
-                        --   tuser[7]=1, tuser[6]=1: final done  → signal IFIFO2 ready
-                        --
-                        -- Ping-pong ownership:
-                        --   Same-shot coherence: IFIFO1 + IFIFO2 data stay in SAME buffer.
-                        --   NO swap at ififo1_done (output reads same buffer being written).
-                        --   Buffer swap deferred to shot_start of NEXT shot (when output is done).
-                        --   This ensures stops 0~7 are all in one buffer for output.
-                        if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
-                            if i_s_axis_tuser(6) = '0' then
-                                -- IFIFO1 done: start early output (NO buffer swap)
-                                -- Output reads same buffer that collect is still writing to.
-                                -- Safe because: stops 0~3 are complete, output reads 0~3 first,
-                                -- IFIFO2 writes stops 4~7 which output hasn't reached yet.
-                                s_output_full_r <= '0';  -- clear from previous shot
-                                s_rd_buf_idx_r  <= s_wr_buf_r;  -- read from current write buffer
-                                if s_ostate_r = ST_O_IDLE and s_output_pending_r = '0' then
-                                    s_output_req_r <= '1';
-                                else
-                                    -- Output busy or pending: queue next shot
-                                    s_output_pending_r  <= '1';
-                                    s_pending_buf_idx_r <= s_wr_buf_r;
-                                    s_pending_full_r    <= '0';
+                    v_wr := fn_buf_idx(s_wr_buf_r);
+
+                    case s_cstate_r is
+
+                        when ST_C_IDLE =>
+                            if i_shot_start = '1' then
+                                -- Find a FREE buffer
+                                if s_buf_state_r(0) = BUF_FREE then
+                                    s_wr_buf_r        <= '0';
+                                    s_buf_state_r(0)  <= BUF_COLLECT;
+                                    s_cell_buf_r(0)   <= (others => c_CELL_INIT);
+                                    s_cstate_r        <= ST_C_ACTIVE;
+                                elsif s_buf_state_r(1) = BUF_FREE then
+                                    s_wr_buf_r        <= '1';
+                                    s_buf_state_r(1)  <= BUF_COLLECT;
+                                    s_cell_buf_r(1)   <= (others => c_CELL_INIT);
+                                    s_cstate_r        <= ST_C_ACTIVE;
                                 end if;
-                            else
-                                -- Final drain_done: signal stops 4~7 ready
-                                s_output_full_r <= '1';
-                                if s_ostate_r = ST_O_IDLE and s_output_req_r = '0'
-                                   and s_output_pending_r = '0' then
-                                    -- Both IFIFOs done simultaneously (no prior ififo1_done)
-                                    s_rd_buf_idx_r <= s_wr_buf_r;
-                                    s_output_req_r <= '1';
-                                elsif s_output_pending_r = '1' then
-                                    -- Already pending from ififo1_done; upgrade to full
-                                    s_pending_full_r <= '1';
+                                -- else: no free buffer, stay IDLE (shot dropped)
+                            end if;
+
+                        when ST_C_ACTIVE =>
+                            -- Raw event write (exclude drain_done control beat)
+                            if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '0' then
+                                v_stop := to_integer(unsigned(i_s_axis_tuser(5 downto 3)));
+
+                                if s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
+                                    v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
+                                    s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+                                    s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq) <= '1';
+                                    s_cell_buf_r(v_wr)(v_stop).slope_vec(v_seq) <= i_s_axis_tuser(0);
+                                    s_cell_buf_r(v_wr)(v_stop).hit_count_actual <= s_cell_buf_r(v_wr)(v_stop).hit_count_actual + 1;
                                 else
-                                    -- Output busy, no prior ififo1 pending
-                                    s_output_pending_r  <= '1';
-                                    s_pending_buf_idx_r <= s_wr_buf_r;
-                                    s_pending_full_r    <= '1';
+                                    s_cell_buf_r(v_wr)(v_stop).hit_dropped <= '1';
+                                    s_hit_dropped_r <= '1';
                                 end if;
                             end if;
-                        end if;
 
-                        -- shot_start: swap buffer for next shot's collect.
-                        -- Guard: skip if drain_done fires same cycle.
-                        -- If output is busy, defer swap until output returns to idle
-                        -- to prevent new-shot data from corrupting old-shot read buffer.
-                        if i_shot_start = '1'
-                           and not (i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1') then
-                            if s_ostate_r = ST_O_IDLE then
-                                -- Output idle: swap immediately
-                                s_wr_buf_r <= not s_wr_buf_r;
-                                s_cell_buf_r(fn_buf_idx(not s_wr_buf_r)) <= (others => c_CELL_INIT);
-                            else
-                                -- Output busy: defer swap
-                                s_swap_pending_r <= '1';
+                            -- drain_done control beats:
+                            --   tuser[7]=1, tuser[6]=0: ififo1_done -> BUF_SHARED, start output
+                            --   tuser[7]=1, tuser[6]=1: final_done  -> set buf_full flag
+                            if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1' then
+                                if i_s_axis_tuser(6) = '0' then
+                                    -- IFIFO1 done: BUF_COLLECT -> BUF_SHARED
+                                    -- Output reads stops 0~3 from same buffer.
+                                    -- Collect continues writing stops 4~7.
+                                    s_buf_state_r(v_wr) <= BUF_SHARED;
+                                    s_buf_full_r(v_wr)  <= '0';
+                                    if s_ostate_r = ST_O_IDLE then
+                                        s_output_req_r <= '1';
+                                        s_rd_buf_idx_r <= s_wr_buf_r;
+                                    end if;
+                                    -- Note: if output is busy, the SHARED buffer waits.
+                                    -- When output finishes the current slice and returns
+                                    -- to IDLE, it will pick up this SHARED buffer via
+                                    -- the auto-start check in the output_done handler.
+                                    -- Actually, auto-start fires on the SAME cycle as
+                                    -- output_done, so we need a separate check below.
+                                else
+                                    -- Final drain_done: mark stops 4~7 ready
+                                    s_buf_full_r(v_wr) <= '1';
+                                    if s_buf_state_r(v_wr) = BUF_COLLECT then
+                                        -- Both IFIFOs done simultaneously (no prior ififo1_done)
+                                        s_buf_state_r(v_wr) <= BUF_SHARED;
+                                        if s_ostate_r = ST_O_IDLE then
+                                            s_output_req_r <= '1';
+                                            s_rd_buf_idx_r <= s_wr_buf_r;
+                                        end if;
+                                    end if;
+                                    -- If already BUF_SHARED: just setting full flag is enough.
+                                    -- p_output will see buf_full and exit WAIT_IFIFO2.
+                                end if;
                             end if;
-                        end if;
 
-                end case;
-            end if;
-        end if;
+                            -- shot_start during active: switch to other buffer for next shot.
+                            -- Guard: skip if drain_done fires same cycle (priority to drain_done).
+                            if i_shot_start = '1'
+                               and not (i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1') then
+                                -- Find the OTHER buffer
+                                if v_wr = 0 then v_other := 1; else v_other := 0; end if;
+                                if s_buf_state_r(v_other) = BUF_FREE then
+                                    s_wr_buf_r <= not s_wr_buf_r;
+                                    s_buf_state_r(v_other) <= BUF_COLLECT;
+                                    s_cell_buf_r(v_other)  <= (others => c_CELL_INIT);
+                                end if;
+                                -- else: other buffer busy (SHARED, output reading it).
+                                -- Current buffer continues as-is. Overrun situation.
+                            end if;
+
+                    end case;
+
+                    -- ---------------------------------------------------------
+                    -- Deferred auto-start: if output just went IDLE (not via
+                    -- output_done, e.g. abort recovery) and a SHARED buffer
+                    -- exists without an active output_req, start it.
+                    -- This also catches the case where ififo1_done arrived
+                    -- while output was busy with the previous slice.
+                    -- ---------------------------------------------------------
+                    if s_ostate_r = ST_O_IDLE and s_output_req_r = '0'
+                       and s_output_done_r = '0' then
+                        for b in 0 to 1 loop
+                            if s_buf_state_r(b) = BUF_SHARED then
+                                s_output_req_r <= '1';
+                                if b = 0 then
+                                    s_rd_buf_idx_r <= '0';
+                                else
+                                    s_rd_buf_idx_r <= '1';
+                                end if;
+                                exit;  -- only start one
+                            end if;
+                        end loop;
+                    end if;
+
+                end if;  -- not abort
+            end if;  -- rst_n
+        end if;  -- rising_edge
     end process p_collect;
 
     -- =========================================================================
     -- p_output: serialize read-buffer cells to AXI-Stream master
     -- Owns: s_ostate_r, s_rd_buf_r, s_cell_sel_r, s_stop_idx_r, s_beat_idx_r,
-    --       s_last_stop_r, s_tdata_r, s_tvalid_r, s_tlast_r, s_slice_done_r
-    -- Reads (no write): s_cell_buf_r, s_output_req_r, s_rd_buf_idx_r,
-    --       s_output_pending_r, s_pending_buf_idx_r, s_pending_full_r
+    --       s_last_stop_r, s_tdata_r, s_tvalid_r, s_tlast_r, s_output_done_r
+    -- Reads (no write): s_cell_buf_r, s_buf_full_r, s_output_req_r,
+    --       s_rd_buf_idx_r
     -- =========================================================================
     p_output : process(i_clk)
         variable v_rd       : natural range 0 to 1;
@@ -411,144 +474,124 @@ begin
                 s_tdata_r     <= (others => '0');
                 s_tvalid_r    <= '0';
                 s_tlast_r     <= '0';
-                s_slice_done_r     <= '0';
-                s_consume_pending_r <= '0';
+                s_output_done_r <= '0';
             else
-                s_slice_done_r      <= '0';
-                s_consume_pending_r <= '0';
+                s_output_done_r <= '0';
 
-                case s_ostate_r is
+                -- ---------------------------------------------------------
+                -- Abort: return to idle, clear tvalid
+                -- ---------------------------------------------------------
+                if i_abort = '1' then
+                    s_ostate_r <= ST_O_IDLE;
+                    s_tvalid_r <= '0';
+                    s_tlast_r  <= '0';
+                else
 
-                    when ST_O_IDLE =>
-                        s_tvalid_r <= '0';
-                        s_tlast_r  <= '0';
+                    case s_ostate_r is
 
-                        if s_output_req_r = '1' then
-                            -- Latch read buffer, load first cell
-                            s_rd_buf_r    <= s_rd_buf_idx_r;
-                            v_rd          := fn_buf_idx(s_rd_buf_idx_r);
-                            s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
-                            s_stop_idx_r    <= (others => '0');
-                            s_beat_idx_r    <= (others => '0');
-                            if i_stops_per_chip >= 2 then
-                                s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
-                            else
-                                s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
+                        when ST_O_IDLE =>
+                            s_tvalid_r <= '0';
+                            s_tlast_r  <= '0';
+
+                            if s_output_req_r = '1' then
+                                -- Latch read buffer, load first cell
+                                s_rd_buf_r    <= s_rd_buf_idx_r;
+                                v_rd          := fn_buf_idx(s_rd_buf_idx_r);
+                                s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
+                                s_stop_idx_r    <= (others => '0');
+                                s_beat_idx_r    <= (others => '0');
+                                if i_stops_per_chip >= 2 then
+                                    s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
+                                else
+                                    s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
+                                end if;
+                                -- Runtime beats/cell lookup (elaboration-safe)
+                                case i_max_hits_cfg is
+                                    when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
+                                    when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
+                                    when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
+                                    when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
+                                    when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
+                                    when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
+                                    when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
+                                end case;
+                                s_rt_max_hits_r  <= i_max_hits_cfg;
+                                s_ostate_r       <= ST_O_LOAD;
                             end if;
-                            -- Runtime beats/cell lookup (elaboration-safe)
-                            case i_max_hits_cfg is
-                                when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
-                                when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
-                                when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
-                                when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
-                                when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
-                                when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
-                                when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
-                            end case;
-                            s_rt_max_hits_r  <= i_max_hits_cfg;
-                            s_ostate_r       <= ST_O_LOAD;
-                        elsif s_output_pending_r = '1' then
-                            -- Consume queued next-shot request
-                            -- NOTE: s_output_full_r is set by p_collect via consume_pending handshake
-                            s_consume_pending_r <= '1';
-                            s_rd_buf_r    <= s_pending_buf_idx_r;
-                            v_rd          := fn_buf_idx(s_pending_buf_idx_r);
-                            s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
-                            s_stop_idx_r    <= (others => '0');
-                            s_beat_idx_r    <= (others => '0');
-                            if i_stops_per_chip >= 2 then
-                                s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
-                            else
-                                s_last_stop_r <= (others => '0');
-                            end if;
-                            case i_max_hits_cfg is
-                                when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
-                                when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
-                                when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
-                                when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
-                                when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
-                                when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
-                                when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
-                            end case;
-                            s_rt_max_hits_r  <= i_max_hits_cfg;
-                            s_ostate_r       <= ST_O_LOAD;
-                        end if;
 
-                    when ST_O_LOAD =>
-                        -- Beat MUX from pipeline register (1-clk bubble)
-                        s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r, s_rt_last_beat_r);
-                        s_tvalid_r <= '1';
-                        if s_stop_idx_r = s_last_stop_r
-                           and s_beat_idx_r = s_rt_last_beat_r then
-                            s_tlast_r <= '1';
-                        else
-                            s_tlast_r <= '0';
-                        end if;
-                        s_ostate_r <= ST_O_ACTIVE;
-
-                    when ST_O_ACTIVE =>
-                        if s_tvalid_r = '1' and i_m_axis_tready = '1' then
-                            v_rd := fn_buf_idx(s_rd_buf_r);
-
+                        when ST_O_LOAD =>
+                            -- Beat MUX from pipeline register (1-clk bubble)
+                            s_tdata_r  <= fn_cell_beat(s_cell_sel_r, s_beat_idx_r, s_rt_last_beat_r);
+                            s_tvalid_r <= '1';
                             if s_stop_idx_r = s_last_stop_r
                                and s_beat_idx_r = s_rt_last_beat_r then
-                                -- Chip slice complete
-                                s_tvalid_r     <= '0';
-                                s_tlast_r      <= '0';
-                                s_slice_done_r <= '1';
-                                s_ostate_r     <= ST_O_IDLE;
-
-                            elsif s_beat_idx_r = s_rt_last_beat_r then
-                                -- Cell boundary: check IFIFO1/2 split point (stop 3→4)
-                                v_nxt_stop := s_stop_idx_r + 1;
-                                if s_stop_idx_r = "011" and s_output_full_r = '0' then
-                                    -- IFIFO1 stops done, IFIFO2 not ready: wait
-                                    s_tvalid_r <= '0';
-                                    s_tlast_r  <= '0';
-                                    s_ostate_r <= ST_O_WAIT_IFIFO2;
-                                else
-                                    -- Normal cell boundary: load next cell
-                                    s_stop_idx_r <= v_nxt_stop;
-                                    s_beat_idx_r <= (others => '0');
-                                    s_cell_sel_r <= s_cell_buf_r(v_rd)(to_integer(v_nxt_stop));
-                                    s_tvalid_r   <= '0';
-                                    s_tlast_r    <= '0';
-                                    s_ostate_r   <= ST_O_LOAD;
-                                end if;
-
+                                s_tlast_r <= '1';
                             else
-                                -- Same cell: beat MUX
-                                v_nxt_beat   := s_beat_idx_r + 1;
-                                s_beat_idx_r <= v_nxt_beat;
-                                s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat, s_rt_last_beat_r);
+                                s_tlast_r <= '0';
+                            end if;
+                            s_ostate_r <= ST_O_ACTIVE;
+
+                        when ST_O_ACTIVE =>
+                            if s_tvalid_r = '1' and i_m_axis_tready = '1' then
+                                v_rd := fn_buf_idx(s_rd_buf_r);
+
                                 if s_stop_idx_r = s_last_stop_r
-                                   and v_nxt_beat = s_rt_last_beat_r then
-                                    s_tlast_r <= '1';
+                                   and s_beat_idx_r = s_rt_last_beat_r then
+                                    -- Chip slice complete
+                                    s_tvalid_r      <= '0';
+                                    s_tlast_r       <= '0';
+                                    s_output_done_r <= '1';
+                                    s_ostate_r      <= ST_O_IDLE;
+
+                                elsif s_beat_idx_r = s_rt_last_beat_r then
+                                    -- Cell boundary: check IFIFO1/2 split point (stop 3->4)
+                                    v_nxt_stop := s_stop_idx_r + 1;
+                                    if s_stop_idx_r = "011"
+                                       and s_buf_full_r(fn_buf_idx(s_rd_buf_r)) = '0' then
+                                        -- IFIFO1 stops done, IFIFO2 not ready: wait
+                                        s_tvalid_r <= '0';
+                                        s_tlast_r  <= '0';
+                                        s_ostate_r <= ST_O_WAIT_IFIFO2;
+                                    else
+                                        -- Normal cell boundary: load next cell
+                                        s_stop_idx_r <= v_nxt_stop;
+                                        s_beat_idx_r <= (others => '0');
+                                        s_cell_sel_r <= s_cell_buf_r(v_rd)(to_integer(v_nxt_stop));
+                                        s_tvalid_r   <= '0';
+                                        s_tlast_r    <= '0';
+                                        s_ostate_r   <= ST_O_LOAD;
+                                    end if;
+
                                 else
-                                    s_tlast_r <= '0';
+                                    -- Same cell: beat MUX
+                                    v_nxt_beat   := s_beat_idx_r + 1;
+                                    s_beat_idx_r <= v_nxt_beat;
+                                    s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat, s_rt_last_beat_r);
+                                    if s_stop_idx_r = s_last_stop_r
+                                       and v_nxt_beat = s_rt_last_beat_r then
+                                        s_tlast_r <= '1';
+                                    else
+                                        s_tlast_r <= '0';
+                                    end if;
                                 end if;
                             end if;
-                        end if;
 
-                    when ST_O_WAIT_IFIFO2 =>
-                        -- Stall: stops 0~3 output done, waiting for IFIFO2 data.
-                        -- Resume when s_output_full_r is asserted by p_collect.
-                        if s_output_full_r = '1' then
-                            v_rd := fn_buf_idx(s_rd_buf_r);
-                            s_stop_idx_r <= "100";    -- stop 4
-                            s_beat_idx_r <= (others => '0');
-                            s_cell_sel_r <= s_cell_buf_r(v_rd)(4);
-                            s_ostate_r   <= ST_O_LOAD;
-                        end if;
+                        when ST_O_WAIT_IFIFO2 =>
+                            -- Stall: stops 0~3 output done, waiting for IFIFO2 data.
+                            -- Resume when buf_full flag is set by p_collect.
+                            if s_buf_full_r(fn_buf_idx(s_rd_buf_r)) = '1' then
+                                v_rd := fn_buf_idx(s_rd_buf_r);
+                                s_stop_idx_r <= "100";    -- stop 4
+                                s_beat_idx_r <= (others => '0');
+                                s_cell_sel_r <= s_cell_buf_r(v_rd)(4);
+                                s_ostate_r   <= ST_O_LOAD;
+                            end if;
 
-                end case;
+                    end case;
 
-                -- NOTE: shot_start does NOT abort output. Ping-pong design:
-                -- p_output continues draining read buffer while p_collect
-                -- accepts next shot into write buffer. Output completes
-                -- naturally via slice_done → ST_O_IDLE.
-            end if;
-        end if;
+                end if;  -- not abort
+            end if;  -- rst_n
+        end if;  -- rising_edge
     end process p_output;
 
     -- =========================================================================
@@ -557,7 +600,7 @@ begin
     o_m_axis_tdata    <= s_tdata_r;
     o_m_axis_tvalid   <= s_tvalid_r;
     o_m_axis_tlast    <= s_tlast_r;
-    o_slice_done      <= s_slice_done_r;
+    o_slice_done      <= s_output_done_r;
     o_hit_dropped_any <= s_hit_dropped_r;
 
 end architecture rtl;

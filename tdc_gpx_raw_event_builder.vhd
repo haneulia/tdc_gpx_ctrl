@@ -38,6 +38,7 @@ entity tdc_gpx_raw_event_builder is
     port (
         i_clk             : in  std_logic;
         i_rst_n           : in  std_logic;
+        i_abort           : in  std_logic;   -- pipeline abort: clear counters + output
 
         -- AXI-Stream slave (from decoder_i_mode, registered)
         --   tdata[16:0]  = raw_hit (17-bit, 0 for drain_done beat)
@@ -108,7 +109,7 @@ begin
         variable v_ififo_id : std_logic;
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' then
+            if i_rst_n = '0' or i_abort = '1' then
                 s_hit_cnt_r        <= (others => (others => '0'));
                 s_tvalid_r         <= '0';
                 s_tdata_r          <= (others => '0');

@@ -555,7 +555,7 @@ begin
             port map (
                 i_clk     => i_axis_aclk,
                 i_rst_n   => i_axis_aresetn,
-                i_flush   => '0',
+                i_flush   => i_cmd_soft_reset,  -- flush stale responses on soft reset
                 i_s_valid => s_brsp_axis_tvalid(i),
                 o_s_ready => s_brsp_axis_tready(i),
                 i_s_data  => s_brsp_axis_tdata(i) & s_brsp_axis_tuser(i),

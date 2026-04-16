@@ -98,6 +98,7 @@ begin
             i_evt_sk_tuser        => evt_tuser,
 
             i_shot_start_per_chip => shot_start,
+            i_abort               => '0',
             i_face_stops_per_chip => face_stops,
             i_max_hits_cfg        => max_hits,
 

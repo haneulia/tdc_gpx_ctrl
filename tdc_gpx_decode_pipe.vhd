@@ -121,6 +121,7 @@ begin
             port map (
                 i_clk            => i_clk,
                 i_rst_n          => i_rst_n,
+                i_abort          => i_flush,
                 i_s_axis_tvalid  => s_dec_sk_tvalid(i),
                 i_s_axis_tdata   => s_dec_sk_tdata(i),
                 i_s_axis_tuser   => s_dec_sk_tuser(i),

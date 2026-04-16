@@ -282,6 +282,7 @@ architecture rtl of tdc_gpx_top is
     signal s_err_seq_sticky_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_error_merged    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_error_raw       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- unmasked: all chips
+    signal s_err_rsp_mismatch     : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Error handler status (from config_ctrl)
     signal s_err_active    : std_logic;
@@ -444,7 +445,7 @@ begin
             o_errflag_sync       => s_errflag_sync,
             o_err_drain_timeout  => s_err_drain_timeout,
             o_err_sequence       => s_err_sequence,
-            o_err_rsp_mismatch   => open,  -- sticky: bus response tuser mismatch per chip
+            o_err_rsp_mismatch   => s_err_rsp_mismatch,
             o_reg_outstanding    => s_reg_outstanding,
             o_reg_loop_resume    => open,  -- reserved: future use for gating face_seq resume
             o_cdc_idle           => s_cdc_idle,
@@ -495,6 +496,7 @@ begin
             o_evt_sk_tready         => s_evt_sk_tready,
             -- Control / Config
             i_shot_start_per_chip   => s_shot_start_per_chip,
+            i_abort                 => s_pipeline_abort,
             i_face_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_hits_cfg          => s_cfg.max_hits_cfg,
             -- Rising cell output
@@ -713,5 +715,6 @@ begin
     s_status.err_active          <= s_err_active;
     s_status.err_chip_mask       <= s_err_chip_mask;
     s_status.err_cause           <= s_err_cause;
+    s_status.rsp_mismatch_mask   <= s_err_rsp_mismatch;
 
 end architecture rtl;

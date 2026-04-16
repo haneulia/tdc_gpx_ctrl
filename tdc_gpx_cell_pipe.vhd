@@ -33,6 +33,7 @@ entity tdc_gpx_cell_pipe is
 
         -- Control / Config
         i_shot_start_per_chip   : in  std_logic_vector(c_N_CHIPS-1 downto 0);
+        i_abort                 : in  std_logic;   -- pipeline abort: flush all state
         i_face_stops_per_chip   : in  unsigned(3 downto 0);
         i_max_hits_cfg          : in  unsigned(2 downto 0);
 
@@ -133,7 +134,7 @@ begin
         variable v_can_load : boolean;
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' then
+            if i_rst_n = '0' or i_abort = '1' then
                 s_rise_valid_r <= (others => '0');
                 s_fall_valid_r <= (others => '0');
             else
@@ -207,6 +208,7 @@ begin
                 i_s_axis_tuser      => s_rise_tuser_r(i),
                 o_s_axis_tready     => s_rise_tready(i),
                 i_shot_start        => i_shot_start_per_chip(i),
+                i_abort             => i_abort,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
                 o_m_axis_tdata      => s_cell_rise_tdata(i),
@@ -231,6 +233,7 @@ begin
                 i_s_axis_tuser      => s_fall_tuser_r(i),
                 o_s_axis_tready     => s_fall_tready(i),
                 i_shot_start        => i_shot_start_per_chip(i),
+                i_abort             => i_abort,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
                 o_m_axis_tdata      => s_cell_fall_tdata(i),
