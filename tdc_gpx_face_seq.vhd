@@ -129,6 +129,7 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_shot_drop_cnt_r   : unsigned(15 downto 0) := (others => '0');
     signal s_shot_start_gated  : std_logic;
     signal s_pipeline_abort    : std_logic;
+    signal s_abort_quiesce_r   : std_logic := '0';  -- 1-cycle guard after abort
     signal s_all_shots_fired   : std_logic;
     signal s_face_closing      : std_logic;
 
@@ -148,8 +149,11 @@ begin
                 s_frame_id_r          <= (others => '0');
                 s_shot_overrun_r      <= '0';
                 s_cmd_start_accepted_r <= '0';
+                s_abort_quiesce_r     <= '0';
             else
                 s_cmd_start_accepted_r <= '0';
+                -- 1-cycle quiesce guard: latch abort, clear next cycle
+                s_abort_quiesce_r <= s_pipeline_abort;
 
                 if i_shot_overrun = '1' or i_shot_fall_overrun = '1' then
                     s_shot_overrun_r <= '1';
@@ -437,6 +441,7 @@ begin
                                and i_cmd_stop = '0'
                                and i_cmd_soft_reset = '0'
                                and s_pipeline_abort = '0'
+                               and s_abort_quiesce_r = '0'
                           else '0';
 
     -- Per-chip shot masking

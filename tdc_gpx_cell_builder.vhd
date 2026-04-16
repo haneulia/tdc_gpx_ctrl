@@ -275,8 +275,9 @@ begin
     -- Reads (no write): s_ostate_r, s_output_done_r
     -- =========================================================================
     p_collect : process(i_clk)
-        variable v_wr    : natural range 0 to 1;
-        variable v_other : natural range 0 to 1;
+        variable v_wr       : natural range 0 to 1;
+        variable v_other    : natural range 0 to 1;
+        variable v_done_buf : natural range 0 to 1;
         variable v_stop  : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
         variable v_seq   : natural range 0 to c_MAX_HITS_PER_STOP - 1;
     begin
@@ -308,29 +309,22 @@ begin
                     -- Handle output completion: BUF_SHARED -> BUF_FREE
                     -- ---------------------------------------------------------
                     if s_output_done_r = '1' then
-                        for b in 0 to 1 loop
-                            if s_buf_state_r(b) = BUF_SHARED then
-                                s_buf_state_r(b) <= BUF_FREE;
-                                s_buf_full_r(b)  <= '0';
+                        -- Free ONLY the buffer that output just finished reading.
+                        -- Do NOT touch the other buffer (it may be BUF_SHARED
+                        -- for the next shot, waiting for output to start).
+                        v_done_buf := fn_buf_idx(s_rd_buf_r);
+                        s_buf_state_r(v_done_buf) <= BUF_FREE;
+                        s_buf_full_r(v_done_buf)  <= '0';
+                        -- Auto-start: if the OTHER buffer is SHARED, start output
+                        v_other := 1 - v_done_buf;
+                        if s_buf_state_r(v_other) = BUF_SHARED then
+                            s_output_req_r <= '1';
+                            if v_other = 0 then
+                                s_rd_buf_idx_r <= '0';
+                            else
+                                s_rd_buf_idx_r <= '1';
                             end if;
-                        end loop;
-                        -- Auto-start: check if other buffer is SHARED and waiting
-                        -- (This handles the case where a second buffer became SHARED
-                        --  while output was busy with the first.)
-                        -- NOTE: The loop above frees the completed buffer this cycle.
-                        -- The auto-start check below looks for a DIFFERENT buffer that
-                        -- is BUF_SHARED. Since the freed buffer transitions to BUF_FREE
-                        -- in the same delta, and VHDL signal assignment is deferred,
-                        -- s_buf_state_r still reads BUF_SHARED for the old buffer here.
-                        -- We must exclude the buffer that just finished.
-                        -- However, only ONE buffer can be BUF_SHARED at a time in normal
-                        -- operation (output is busy with one, the other is COLLECT or FREE).
-                        -- So auto-start only fires if the OTHER buffer was promoted to
-                        -- SHARED while output was busy -- which cannot happen because
-                        -- p_collect only promotes to SHARED on ififo1_done, and a new
-                        -- shot would need a BUF_FREE buffer first. Therefore, auto-start
-                        -- is effectively a no-op in the common case, but included for
-                        -- robustness if timing changes in future.
+                        end if;
                     end if;
 
                     v_wr := fn_buf_idx(s_wr_buf_r);

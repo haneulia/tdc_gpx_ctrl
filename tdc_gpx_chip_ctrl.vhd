@@ -499,12 +499,17 @@ begin
                     when PH_RESP_DRAIN =>
                         -- Drain stale bus responses after soft reset.
                         -- tready='1' (above), routing='0' (all discarded).
-                        -- 8 cycles drains skid buffer (depth 2) + bus_phy pipeline.
-                        if s_drain_cnt_r = to_unsigned(7, 4) then
+                        -- Wait until bus_phy is idle AND minimum 4 cycles elapsed.
+                        -- This handles slow bus_clk_div where 8 fixed cycles
+                        -- may not be enough to drain in-flight transactions.
+                        s_drain_cnt_r <= s_drain_cnt_r + 1;
+                        if i_bus_busy = '0' and s_drain_cnt_r >= to_unsigned(3, 4) then
                             s_phase_r    <= PH_INIT;
                             s_init_start <= '1';
-                        else
-                            s_drain_cnt_r <= s_drain_cnt_r + 1;
+                        elsif s_drain_cnt_r = to_unsigned(15, 4) then
+                            -- Hard cap: force exit after 16 cycles even if bus stuck
+                            s_phase_r    <= PH_INIT;
+                            s_init_start <= '1';
                         end if;
 
                 end case;

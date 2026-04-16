@@ -521,8 +521,12 @@ begin
                                 -- CSN, OEN, ADR unchanged throughout burst.
                                 if i_oen_permanent = '1'
                                    and i_req_burst = '1' then
-                                    s_tick_r  <= to_unsigned(0, 3);
-                                    -- stay in ST_READ, busy remains '1'
+                                    -- Burst mode: continue only if response was consumed
+                                    if s_axis_tvalid_r = '0' or i_m_axis_tready = '1' then
+                                        s_tick_r <= to_unsigned(0, 3);
+                                        -- stay in ST_READ, busy remains '1'
+                                    end if;
+                                    -- else: hold at max tick until tready clears response
                                 else
                                     -- Normal completion: return to IDLE
                                     -- busy is NOT cleared here: rsp_pending

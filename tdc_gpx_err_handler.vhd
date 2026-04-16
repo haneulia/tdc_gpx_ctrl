@@ -162,22 +162,25 @@ begin
                     when ST_IDLE =>
                         v_any_debounced := false;
 
-                        for i in 0 to c_N_CHIPS - 1 loop
-                            if i_errflag_sync(i) = '1' then
-                                if s_debounce_cnt_r(i) = to_unsigned(g_DEBOUNCE_CLKS - 1, C_DEB_WIDTH) then
-                                    s_err_chip_mask_r(i) <= '1';
-                                    s_err_fill_r(i)      <= '1';
-                                    v_any_debounced      := true;
+                        -- After fatal, block auto-recovery. SW must system reset.
+                        if s_err_fatal_r = '0' then
+                            for i in 0 to c_N_CHIPS - 1 loop
+                                if i_errflag_sync(i) = '1' then
+                                    if s_debounce_cnt_r(i) = to_unsigned(g_DEBOUNCE_CLKS - 1, C_DEB_WIDTH) then
+                                        s_err_chip_mask_r(i) <= '1';
+                                        s_err_fill_r(i)      <= '1';
+                                        v_any_debounced      := true;
+                                    else
+                                        s_debounce_cnt_r(i) <= s_debounce_cnt_r(i) + 1;
+                                    end if;
                                 else
-                                    s_debounce_cnt_r(i) <= s_debounce_cnt_r(i) + 1;
+                                    s_debounce_cnt_r(i) <= (others => '0');
                                 end if;
-                            else
-                                s_debounce_cnt_r(i) <= (others => '0');
-                            end if;
-                        end loop;
+                            end loop;
 
-                        if v_any_debounced then
-                            s_state_r <= ST_READ_REG11;
+                            if v_any_debounced then
+                                s_state_r <= ST_READ_REG11;
+                            end if;
                         end if;
 
                     -- ---------------------------------------------------------
