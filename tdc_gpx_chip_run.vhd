@@ -407,6 +407,15 @@ begin
                             s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                             s_wait_cnt_r         <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
+                        else
+                            s_wait_cnt_r <= s_wait_cnt_r + 1;
+                            if s_wait_cnt_r = x"FFFF" then
+                                -- Bus response timeout: abort drain
+                                s_req_valid_r <= '0';
+                                s_drain_done_r <= '1';
+                                s_ififo_id_r   <= '1';
+                                s_state_r      <= ST_ALU_PULSE;
+                            end if;
                         end if;
 
                     when ST_DRAIN_EF2 =>
@@ -419,6 +428,14 @@ begin
                             s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                             s_wait_cnt_r         <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
+                        else
+                            s_wait_cnt_r <= s_wait_cnt_r + 1;
+                            if s_wait_cnt_r = x"FFFF" then
+                                s_req_valid_r <= '0';
+                                s_drain_done_r <= '1';
+                                s_ififo_id_r   <= '1';
+                                s_state_r      <= ST_ALU_PULSE;
+                            end if;
                         end if;
 
                     when ST_DRAIN_BURST =>
@@ -426,6 +443,7 @@ begin
                             s_raw_word_r  <= i_bus_rsp_rdata;
                             s_raw_valid_r <= '1';
                             s_burst_cnt_r <= s_burst_cnt_r + 1;
+                            s_wait_cnt_r  <= (others => '0');
                             if s_ififo_id_r = '0' then
                                 s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                             else
@@ -436,21 +454,38 @@ begin
                                 s_req_valid_r <= '0';
                                 s_state_r     <= ST_DRAIN_FLUSH;
                             end if;
+                        else
+                            s_wait_cnt_r <= s_wait_cnt_r + 1;
+                            if s_wait_cnt_r = x"FFFF" then
+                                s_req_burst_r  <= '0';
+                                s_req_valid_r  <= '0';
+                                s_drain_done_r <= '1';
+                                s_ififo_id_r   <= '1';
+                                s_state_r      <= ST_ALU_PULSE;
+                            end if;
                         end if;
 
                     when ST_DRAIN_FLUSH =>
                         if i_bus_rsp_valid = '1' then
                             s_raw_word_r  <= i_bus_rsp_rdata;
                             s_raw_valid_r <= '1';
+                            s_wait_cnt_r  <= (others => '0');
                             if s_ififo_id_r = '0' then
                                 s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                             else
                                 s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                             end if;
+                        else
+                            s_wait_cnt_r <= s_wait_cnt_r + 1;
                         end if;
                         if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
                             s_wait_cnt_r <= (others => '0');
                             s_state_r    <= ST_DRAIN_SETTLE;
+                        elsif s_wait_cnt_r = x"FFFF" then
+                            -- Bus hung during flush: force completion
+                            s_drain_done_r <= '1';
+                            s_ififo_id_r   <= '1';
+                            s_state_r      <= ST_ALU_PULSE;
                         end if;
 
                     when ST_DRAIN_SETTLE =>

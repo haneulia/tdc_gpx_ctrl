@@ -68,6 +68,7 @@ architecture rtl of tdc_gpx_chip_reg is
     signal s_rvalid_r    : std_logic := '0';
     signal s_done_r      : std_logic := '0';
     signal s_busy_r      : std_logic := '0';
+    signal s_timeout_r   : unsigned(15 downto 0) := (others => '0');
 
 begin
 
@@ -112,11 +113,20 @@ begin
                             s_req_valid_r <= '0';
                             s_busy_r      <= '0';
                             s_done_r      <= '1';
+                            s_timeout_r   <= (others => '0');
                             s_state_r     <= ST_OFF;
                             if s_is_read_r = '1' then
                                 s_rdata_r  <= i_bus_rsp_rdata;
                                 s_rvalid_r <= '1';
                             end if;
+                        elsif s_timeout_r = x"FFFF" then
+                            -- Timeout: bus hung, force done
+                            s_req_valid_r <= '0';
+                            s_busy_r      <= '0';
+                            s_done_r      <= '1';
+                            s_state_r     <= ST_OFF;
+                        else
+                            s_timeout_r <= s_timeout_r + 1;
                         end if;
 
                 end case;

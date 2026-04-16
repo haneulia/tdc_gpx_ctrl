@@ -92,6 +92,7 @@ architecture rtl of tdc_gpx_chip_init is
     signal s_stopdis_r       : std_logic := '1';
     signal s_busy_r          : std_logic := '0';
     signal s_done_r          : std_logic := '0';
+    signal s_rsp_timeout_r   : unsigned(15 downto 0) := (others => '0');  -- bus response watchdog
 
     type t_reg_idx_array is array(0 to 10) of natural range 0 to 15;
     constant c_CFG_WRITE_SEQ  : t_reg_idx_array := (0, 1, 2, 3, 4, 5, 6, 7, 11, 12, 14);
@@ -169,12 +170,12 @@ begin
 
                     when ST_CFG_WR_WAIT =>
                         if i_bus_rsp_valid = '1' then
-                            s_req_valid_r <= '0';
+                            s_req_valid_r   <= '0';
+                            s_rsp_timeout_r <= (others => '0');
                             if s_cfg_idx_r = c_CFG_WRITE_LAST then
                                 if s_init_mode_r = '1' then
                                     s_state_r <= ST_MASTER_RESET;
                                 else
-                                    -- Runtime cfg_write: done, return to OFF
                                     s_busy_r  <= '0';
                                     s_done_r  <= '1';
                                     s_state_r <= ST_OFF;
@@ -183,6 +184,14 @@ begin
                                 s_cfg_idx_r <= s_cfg_idx_r + 1;
                                 s_state_r   <= ST_CFG_WRITE;
                             end if;
+                        elsif s_rsp_timeout_r = x"FFFF" then
+                            -- Timeout: force done with error (bus hung)
+                            s_req_valid_r <= '0';
+                            s_busy_r      <= '0';
+                            s_done_r      <= '1';
+                            s_state_r     <= ST_OFF;
+                        else
+                            s_rsp_timeout_r <= s_rsp_timeout_r + 1;
                         end if;
 
                     when ST_MASTER_RESET =>
@@ -196,9 +205,17 @@ begin
 
                     when ST_MR_WAIT =>
                         if i_bus_rsp_valid = '1' then
+                            s_req_valid_r   <= '0';
+                            s_wait_cnt_r    <= (others => '0');
+                            s_rsp_timeout_r <= (others => '0');
+                            s_state_r       <= ST_RECOVERY;
+                        elsif s_rsp_timeout_r = x"FFFF" then
                             s_req_valid_r <= '0';
-                            s_wait_cnt_r  <= (others => '0');
-                            s_state_r     <= ST_RECOVERY;
+                            s_busy_r      <= '0';
+                            s_done_r      <= '1';
+                            s_state_r     <= ST_OFF;
+                        else
+                            s_rsp_timeout_r <= s_rsp_timeout_r + 1;
                         end if;
 
                     when ST_RECOVERY =>
