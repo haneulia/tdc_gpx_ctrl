@@ -228,6 +228,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
     signal s_reg_rsp_valid   : std_logic;
     signal s_reg_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+    signal s_bus_rsp_fire    : std_logic;  -- valid AND ready: true "accepted" pulse
 
     -- =========================================================================
     -- Config snapshots (latched at cmd_start, refreshed on cfg_write/reg)
@@ -378,20 +379,24 @@ begin
     o_bus_oen_permanent <= s_run_bus_oen when s_phase_r = PH_RUN else '0';
     o_bus_req_burst     <= s_run_bus_burst when s_phase_r = PH_RUN else '0';
 
-    -- Bus response routing (PH_RESP_DRAIN: all routing disabled, responses discarded)
-    s_init_rsp_valid <= i_s_axis_tvalid when (s_phase_r = PH_INIT or s_phase_r = PH_CFG_WRITE)
-                                             and s_phase_r /= PH_RESP_DRAIN else '0';
-    s_run_rsp_valid  <= i_s_axis_tvalid when s_phase_r = PH_RUN else '0';
-    s_run_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
-    s_reg_rsp_valid  <= i_s_axis_tvalid when s_phase_r = PH_REG else '0';
-    s_reg_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
-
     -- Bus response tready: deassert during RUN drain when raw hold is full.
     -- PH_RESP_DRAIN always accepts (to drain stale responses).
     o_s_axis_tready  <= '0' when s_phase_r = PH_RUN and s_raw_hold_busy = '1'
                    else '1' when s_phase_r = PH_RESP_DRAIN
                    else '1' when s_init_busy = '1' or s_run_busy = '1' or s_reg_busy = '1'
                    else '0';
+
+    -- Bus response FIRE pulse: valid AND ready. Sub-FSMs must use this,
+    -- not raw tvalid, to avoid consuming the same beat multiple times
+    -- when tready is deasserted (e.g., raw hold full during PH_RUN).
+    s_bus_rsp_fire   <= i_s_axis_tvalid and o_s_axis_tready;
+
+    -- Bus response routing (PH_RESP_DRAIN: all routing disabled)
+    s_init_rsp_valid <= s_bus_rsp_fire when (s_phase_r = PH_INIT or s_phase_r = PH_CFG_WRITE) else '0';
+    s_run_rsp_valid  <= s_bus_rsp_fire when s_phase_r = PH_RUN else '0';
+    s_run_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
+    s_reg_rsp_valid  <= s_bus_rsp_fire when s_phase_r = PH_REG else '0';
+    s_reg_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- Tick enable generation (from bus_clk_div snapshot)
@@ -636,7 +641,8 @@ begin
     s_raw_hold_busy     <= s_raw_hold_valid_r and (not i_m_raw_axis_tready);
 
     o_shot_seq       <= s_run_shot_seq;
-    o_busy           <= s_init_busy or s_run_busy or s_reg_busy;
+    -- Busy includes PH_RESP_DRAIN and PH_INIT to prevent premature dispatch
+    o_busy           <= '0' when s_phase_r = PH_IDLE else '1';
 
     o_cmd_reg_rdata  <= s_reg_rdata;
     o_cmd_reg_rvalid <= s_reg_rvalid;
@@ -659,7 +665,7 @@ begin
         if rising_edge(i_clk) then
             if s_sub_rst_n = '0' then
                 s_err_rsp_mismatch_r <= '0';
-            elsif i_s_axis_tvalid = '1' then
+            elsif s_bus_rsp_fire = '1' then
                 v_check := false;
                 case s_phase_r is
                     when PH_INIT | PH_CFG_WRITE =>

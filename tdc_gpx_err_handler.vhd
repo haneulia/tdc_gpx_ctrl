@@ -288,6 +288,9 @@ begin
     o_cmd_reg_addr      <= s_cmd_reg_addr_r;
     o_cmd_reg_chip_addr <= s_cmd_reg_chip_addr_r;
     o_err_fill          <= s_err_fill_r;
+    -- err_active reflects FSM busy (recovery in progress), NOT fatal status.
+    -- Fatal state is reported separately via o_err_fatal.
+    -- Keeping err_active=0 when fatal+idle allows SW manual reg access for diagnosis.
     o_err_active        <= '0' when s_state_r = ST_IDLE else '1';
     o_err_chip_mask     <= s_err_chip_mask_r;
     o_err_cause         <= s_err_cause_r;

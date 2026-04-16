@@ -162,7 +162,7 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_buf_state_r : t_buf_state_array := (others => BUF_FREE);
     signal s_buf_full_r  : std_logic_vector(1 downto 0) := "00";
 
-    type t_collect_state is (ST_C_IDLE, ST_C_ACTIVE);
+    type t_collect_state is (ST_C_IDLE, ST_C_ACTIVE, ST_C_DROP);
     signal s_cstate_r     : t_collect_state := ST_C_IDLE;
     signal s_wr_buf_r     : std_logic := '0';
 
@@ -265,8 +265,9 @@ architecture rtl of tdc_gpx_cell_builder is
 
 begin
 
-    -- AXI-Stream slave: always accept during collect phase (no backpressure)
-    o_s_axis_tready <= '1' when s_cstate_r = ST_C_ACTIVE else '0';
+    -- AXI-Stream slave: accept during collect or drop (drop silently discards)
+    o_s_axis_tready <= '1' when s_cstate_r = ST_C_ACTIVE or s_cstate_r = ST_C_DROP
+                  else '0';
 
     -- =========================================================================
     -- p_collect: write hits into write-buffer, manage buffer ownership FSM
@@ -411,9 +412,22 @@ begin
                                     s_wr_buf_r <= not s_wr_buf_r;
                                     s_buf_state_r(v_other) <= BUF_COLLECT;
                                     s_cell_buf_r(v_other)  <= (others => c_CELL_INIT);
+                                else
+                                    -- No free buffer: enter drop mode to prevent shot mixing.
+                                    -- All incoming data for this shot is silently discarded.
+                                    -- tready stays '1' so upstream doesn't stall.
+                                    s_cstate_r     <= ST_C_DROP;
+                                    s_hit_dropped_r <= '1';  -- flag that data was lost
                                 end if;
-                                -- else: other buffer busy (SHARED, output reading it).
-                                -- Current buffer continues as-is. Overrun situation.
+                            end if;
+
+                        when ST_C_DROP =>
+                            -- Silently discard all incoming data until drain_done
+                            -- (final_done tuser[7]=1, tuser[6]=1) signals shot end.
+                            -- Then return to IDLE for next shot.
+                            if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1'
+                               and i_s_axis_tuser(6) = '1' then
+                                s_cstate_r <= ST_C_IDLE;
                             end if;
 
                     end case;
