@@ -135,7 +135,8 @@ entity tdc_gpx_cell_builder is
 
         -- Status
         o_slice_done        : out std_logic;    -- 1-clk pulse: chip slice complete
-        o_hit_dropped_any   : out std_logic     -- 1-clk pulse: any cell overflow
+        o_hit_dropped_any   : out std_logic;    -- 1-clk pulse: cell hit overflow
+        o_shot_dropped      : out std_logic     -- 1-clk pulse: entire shot dropped (no free buffer)
     );
 end entity tdc_gpx_cell_builder;
 
@@ -171,7 +172,8 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_rd_buf_idx_r  : std_logic := '0';
 
     -- p_output -> p_collect handshake
-    signal s_output_done_r : std_logic := '0';
+    signal s_output_done_r    : std_logic := '0';
+    signal s_out_timeout_r    : unsigned(15 downto 0) := (others => '0');  -- output watchdog
 
     -- =========================================================================
     -- Output FSM (p_output)
@@ -205,6 +207,8 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_tvalid_r    : std_logic := '0';
     signal s_tlast_r     : std_logic := '0';
     signal s_hit_dropped_r   : std_logic := '0';
+    signal s_shot_dropped_r  : std_logic := '0';  -- shot-level drop (no free buffer)
+    signal s_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');  -- watchdog
 
     -- =========================================================================
     -- Cell-to-beat mux (combinational, used inside p_output)
@@ -291,11 +295,14 @@ begin
                 s_wr_buf_r      <= '0';
                 s_output_req_r  <= '0';
                 s_rd_buf_idx_r  <= '0';
-                s_hit_dropped_r <= '0';
+                s_hit_dropped_r  <= '0';
+                s_shot_dropped_r <= '0';
+                s_timeout_cnt_r  <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
-                s_output_req_r  <= '0';
-                s_hit_dropped_r <= '0';
+                s_output_req_r   <= '0';
+                s_hit_dropped_r  <= '0';
+                s_shot_dropped_r <= '0';
 
                 -- ---------------------------------------------------------
                 -- Abort: free all buffers, return to idle
@@ -416,18 +423,24 @@ begin
                                     -- No free buffer: enter drop mode to prevent shot mixing.
                                     -- All incoming data for this shot is silently discarded.
                                     -- tready stays '1' so upstream doesn't stall.
-                                    s_cstate_r     <= ST_C_DROP;
-                                    s_hit_dropped_r <= '1';  -- flag that data was lost
+                                    s_cstate_r      <= ST_C_DROP;
+                                    s_shot_dropped_r <= '1';  -- distinct from hit overflow
+                                    s_timeout_cnt_r  <= (others => '0');
                                 end if;
                             end if;
 
                         when ST_C_DROP =>
-                            -- Silently discard all incoming data until drain_done
-                            -- (final_done tuser[7]=1, tuser[6]=1) signals shot end.
-                            -- Then return to IDLE for next shot.
+                            -- Silently discard all incoming data until final drain_done.
                             if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1'
                                and i_s_axis_tuser(6) = '1' then
-                                s_cstate_r <= ST_C_IDLE;
+                                s_cstate_r     <= ST_C_IDLE;
+                                s_timeout_cnt_r <= (others => '0');
+                            elsif s_timeout_cnt_r = x"FFFF" then
+                                -- Timeout: drain_done never came, force IDLE
+                                s_cstate_r     <= ST_C_IDLE;
+                                s_timeout_cnt_r <= (others => '0');
+                            else
+                                s_timeout_cnt_r <= s_timeout_cnt_r + 1;
                             end if;
 
                     end case;
@@ -586,13 +599,21 @@ begin
 
                         when ST_O_WAIT_IFIFO2 =>
                             -- Stall: stops 0~3 output done, waiting for IFIFO2 data.
-                            -- Resume when buf_full flag is set by p_collect.
                             if s_buf_full_r(fn_buf_idx(s_rd_buf_r)) = '1' then
                                 v_rd := fn_buf_idx(s_rd_buf_r);
-                                s_stop_idx_r <= "100";    -- stop 4
-                                s_beat_idx_r <= (others => '0');
-                                s_cell_sel_r <= s_cell_buf_r(v_rd)(4);
-                                s_ostate_r   <= ST_O_LOAD;
+                                s_stop_idx_r    <= "100";    -- stop 4
+                                s_beat_idx_r    <= (others => '0');
+                                s_cell_sel_r    <= s_cell_buf_r(v_rd)(4);
+                                s_out_timeout_r <= (others => '0');
+                                s_ostate_r      <= ST_O_LOAD;
+                            elsif s_out_timeout_r = x"FFFF" then
+                                -- Timeout: IFIFO2 data never arrived, force slice done
+                                s_tvalid_r      <= '0';
+                                s_output_done_r <= '1';
+                                s_out_timeout_r <= (others => '0');
+                                s_ostate_r      <= ST_O_IDLE;
+                            else
+                                s_out_timeout_r <= s_out_timeout_r + 1;
                             end if;
 
                     end case;
@@ -610,5 +631,6 @@ begin
     o_m_axis_tlast    <= s_tlast_r;
     o_slice_done      <= s_output_done_r;
     o_hit_dropped_any <= s_hit_dropped_r;
+    o_shot_dropped    <= s_shot_dropped_r;
 
 end architecture rtl;

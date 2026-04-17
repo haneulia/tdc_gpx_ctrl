@@ -256,7 +256,13 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_drain_to_fired_r : std_logic := '0';
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
+    -- 2-FF CDC synchronizer for i_stop_tdc (may cross clock domains)
+    signal s_stop_tdc_sync1_r     : std_logic := '0';
+    signal s_stop_tdc_sync2_r     : std_logic := '0';
     signal s_stop_tdc_prev_r      : std_logic := '0';
+    attribute ASYNC_REG : string;
+    attribute ASYNC_REG of s_stop_tdc_sync1_r : signal is "TRUE";
+    attribute ASYNC_REG of s_stop_tdc_sync2_r : signal is "TRUE";
 
     -- Effective reset for ALL sub-FSMs: hard reset OR soft_reset
     signal s_sub_rst_n            : std_logic;
@@ -512,7 +518,9 @@ begin
                             s_phase_r    <= PH_INIT;
                             s_init_start <= '1';
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap: force exit after 16 cycles even if bus stuck
+                            -- Hard cap: bus appears stuck. Go to IDLE instead of
+                            -- INIT to avoid init deadlock on a hung bus.
+                            -- chip_init timeout will handle bus recovery.
                             s_phase_r    <= PH_INIT;
                             s_init_start <= '1';
                         end if;
@@ -549,7 +557,10 @@ begin
             else
                 s_err_drain_timeout_r <= '0';
                 s_err_sequence_r      <= '0';
-                s_stop_tdc_prev_r     <= i_stop_tdc;
+                -- 2-FF CDC sync chain
+                s_stop_tdc_sync1_r    <= i_stop_tdc;
+                s_stop_tdc_sync2_r    <= s_stop_tdc_sync1_r;
+                s_stop_tdc_prev_r     <= s_stop_tdc_sync2_r;
                 s_range_active_prev_r <= s_range_active_r;
 
                 if s_range_active_r = '1' and s_range_active_prev_r = '0' then
@@ -570,7 +581,7 @@ begin
                 -- Covers capture + drain + ALU: any stop_tdc during active processing
                 -- means the next shot deadline arrived before current shot finished.
                 if s_phase_r = PH_RUN and s_run_armed = '0' and s_run_busy = '1' then
-                    if i_stop_tdc = '1' and s_stop_tdc_prev_r = '0' then
+                    if s_stop_tdc_sync2_r = '1' and s_stop_tdc_prev_r = '0' then
                         s_err_sequence_r <= '1';
                     end if;
                 end if;

@@ -253,7 +253,7 @@ package tdc_gpx_cfg_pkg is
     -- =========================================================================
     constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum (div>=2)
     constant c_BUS_TICKS_MIN_DIV1   : natural := 5;     -- div=1 needs extra tick for tV-DR
-    constant c_BUS_CLK_DIV_MIN      : natural := 1;     -- div=1 OK with ticks>=5
+    constant c_BUS_CLK_DIV_MIN      : natural := 2;     -- div=1 prohibited per review/datasheet
 
     -- =========================================================================
     -- Init values

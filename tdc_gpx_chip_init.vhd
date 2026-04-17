@@ -165,7 +165,14 @@ begin
                         s_req_valid_r <= '1';
                         s_req_rw_r    <= '1';
                         s_req_addr_r  <= std_logic_vector(to_unsigned(v_reg_num, 4));
-                        s_req_wdata_r <= s_cfg_image_snap_r(v_reg_num)(g_BUS_DATA_WIDTH - 1 downto 0);
+                        v_wr_data     := s_cfg_image_snap_r(v_reg_num)(g_BUS_DATA_WIDTH - 1 downto 0);
+                        -- Safety: force Reg14[4]=0 to block 16-bit mode.
+                        -- TDC-GPX 16-bit mode has CSN malfunction bug and requires
+                        -- workaround sequences not implemented in this RTL.
+                        if v_reg_num = 14 then
+                            v_wr_data(4) := '0';
+                        end if;
+                        s_req_wdata_r <= v_wr_data;
                         s_state_r     <= ST_CFG_WR_WAIT;
 
                     when ST_CFG_WR_WAIT =>
