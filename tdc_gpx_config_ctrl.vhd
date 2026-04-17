@@ -477,6 +477,7 @@ begin
             i_reg11_data_2       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(2),
             i_reg11_data_3       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(3),
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
+            i_cmd_reg_rvalid    => s_cmd_reg_rvalid,
             i_reg_outstanding    => s_reg_outstanding,
             i_frame_done         => i_frame_done and i_frame_fall_done,
             i_shot_start         => i_shot_start_gated,

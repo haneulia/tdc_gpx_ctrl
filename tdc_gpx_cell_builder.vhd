@@ -491,9 +491,10 @@ begin
                         -- Age-based selection: if both SHARED, pick older (smaller seq)
                         if s_buf_state_r(0) = BUF_SHARED and s_buf_state_r(1) = BUF_SHARED then
                             s_output_req_r <= '1';
-                            -- Wrap-safe age compare: if diff MSB=0, age0 is older or equal
-                            if (s_buf_age_r(0) - s_buf_age_r(1)) < 128 then
-                                s_rd_buf_idx_r <= '0';
+                            -- Wrap-safe age compare: (age1 - age0) < 128 means age0 is older
+                            -- Example: age0=10, age1=11 → (11-10)=1 < 128 → buf0 is older → pick buf0
+                            if (s_buf_age_r(1) - s_buf_age_r(0)) < 128 then
+                                s_rd_buf_idx_r <= '0';  -- buf0 is older
                             else
                                 s_rd_buf_idx_r <= '1';
                             end if;

@@ -406,7 +406,11 @@ begin
                                     s_req_wdata_r     <= i_req_wdata;
                                     s_oen_r           <= '1';
                                     s_turn_to_write_r <= '1';
-                                    s_bus_ticks_r     <= i_bus_ticks;
+                                    if i_bus_ticks >= 4 then
+                                        s_bus_ticks_r <= i_bus_ticks;
+                                    else
+                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                    end if;
                                     s_axis_rw_r       <= '1';
                                     s_axis_addr_r     <= i_req_addr;
                                     s_state_r         <= ST_TURNAROUND;
@@ -437,7 +441,11 @@ begin
                                     -- [INV-5] Need turnaround
                                     s_req_addr_r      <= i_req_addr;
                                     s_turn_to_write_r <= '0';
-                                    s_bus_ticks_r     <= i_bus_ticks;
+                                    if i_bus_ticks >= 4 then
+                                        s_bus_ticks_r <= i_bus_ticks;
+                                    else
+                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                    end if;
                                     s_req_burst_r     <= i_req_burst;
                                     s_oen_perm_r      <= i_oen_permanent;
                                     s_axis_rw_r       <= '0';

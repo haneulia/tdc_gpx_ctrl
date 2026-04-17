@@ -167,7 +167,8 @@ begin
                         if i_cmd_start = '1' then
                             -- Config validation: reject if geometry is degenerate
                             if i_cfg.active_chip_mask = "0000"
-                               or i_cfg.stops_per_chip < 2 then
+                               or i_cfg.stops_per_chip < 2
+                               or i_cfg.cols_per_face < 1 then
                                 -- Invalid config: reject start, pulse cfg_rejected
                                 s_cfg_rejected_r <= '1';
                             elsif i_chip_busy = C_ZEROS_CHIPS

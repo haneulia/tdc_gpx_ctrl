@@ -43,6 +43,7 @@ entity tdc_gpx_err_handler is
         i_reg11_data_2      : in  std_logic_vector(31 downto 0);
         i_reg11_data_3      : in  std_logic_vector(31 downto 0);
         i_cmd_reg_done_pulse: in  std_logic;
+        i_cmd_reg_rvalid    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip read valid
         i_reg_outstanding   : in  std_logic;   -- cmd_arb has active reg access
         -- Frame done (from output_stage, for VDMA frame boundary)
         i_frame_done        : in  std_logic;
@@ -213,7 +214,10 @@ begin
                     when ST_WAIT_READ =>
                         if i_cmd_reg_done_pulse = '1' then
                             for i in 0 to c_N_CHIPS - 1 loop
-                                if s_err_chip_mask_r(i) = '1' then
+                                if s_err_chip_mask_r(i) = '1' and i_cmd_reg_rvalid(i) = '1' then
+                                    -- Only classify if read data is actually valid.
+                                    -- If reg timeout occurred, rvalid stays '0' and
+                                    -- stale data is not used for cause classification.
                                     v_reg12 := s_reg11_data(i);  -- data from Reg12 read
                                     -- Reg12 datasheet bit map:
                                     --   [7:0]  = HFifoFull per stop (8 flags)
