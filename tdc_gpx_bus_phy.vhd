@@ -203,6 +203,8 @@ architecture rtl of tdc_gpx_bus_phy is
     -- Latched bus_ticks: snapshot at transaction entry to prevent
     -- mid-transaction changes from corrupting tick counter comparisons.
     signal s_bus_ticks_r      : unsigned(2 downto 0) := "101";  -- default 5
+    signal s_req_burst_r      : std_logic := '0';  -- latched at accept
+    signal s_oen_perm_r       : std_logic := '0';  -- latched at accept
 
     -- Direction tracking for turnaround
     signal s_last_was_write_r : std_logic := '0';
@@ -443,6 +445,8 @@ begin
                                     s_d_tri_r     <= '1';           -- FPGA Hi-Z [INV-2]
                                     s_rdn_r       <= '1';           -- high during Phase A
                                     s_bus_ticks_r <= i_bus_ticks;   -- latch config
+                                    s_req_burst_r <= i_req_burst;   -- latch burst
+                                    s_oen_perm_r  <= i_oen_permanent; -- latch oen
                                     s_axis_rw_r   <= '0';           -- READ
                                     s_axis_addr_r <= i_req_addr;
                                     s_tick_r      <= to_unsigned(1, 3);
@@ -531,7 +535,9 @@ begin
                                 -- satisfying tPW-RH >= 6 ns even at div=1
                                 -- (2 × 5 ns = 10 ns >= 6 ns).
                                 -- CSN, OEN, ADR unchanged throughout burst.
-                                if i_oen_permanent = '1'
+                                -- Burst: oen uses latched value, burst uses live
+                                -- (chip_run lowers i_req_burst to stop burst)
+                                if s_oen_perm_r = '1'
                                    and i_req_burst = '1' then
                                     -- Burst mode: continue only if response was consumed
                                     if s_axis_tvalid_r = '0' or i_m_axis_tready = '1' then

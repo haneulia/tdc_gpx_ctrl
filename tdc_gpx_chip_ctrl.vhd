@@ -198,7 +198,8 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_ififo1_beat : std_logic;
     signal s_run_stopdis     : std_logic;
     signal s_run_alutrigger  : std_logic;
-    signal s_run_busy        : std_logic;
+    signal s_run_busy         : std_logic;
+    signal s_run_range_active : std_logic;
     signal s_run_shot_seq    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
 
     -- =========================================================================
@@ -279,7 +280,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
 
     -- Effective reset for ALL sub-FSMs: hard reset OR soft_reset
     signal s_sub_rst_n            : std_logic;
-    signal s_soft_reset_d1_r      : std_logic := '0';  -- 1-clk delay for init restart
+    -- s_soft_reset_d1_r removed: PH_RESP_DRAIN handles delayed init start
     signal s_stopdis_latch_r      : std_logic := '1';  -- latched stopdis for PH_IDLE
 
 begin
@@ -326,6 +327,7 @@ begin
             i_start             => s_run_start,
             i_cmd_stop          => i_cmd_stop,
             o_done              => s_run_done,
+            o_range_active      => s_run_range_active,
             o_timeout           => open,  -- TODO: aggregate to status
             o_timeout_cause     => open,  -- TODO: aggregate to status
             o_armed             => s_run_armed,
@@ -575,7 +577,7 @@ begin
 
                 -- Soft reset: global OR per-chip error recovery
                 -- Drain stale responses first, then restart init
-                s_soft_reset_d1_r <= i_cmd_soft_reset or i_cmd_soft_reset_err;
+                -- (s_soft_reset_d1_r removed)
                 if i_cmd_soft_reset = '1' or i_cmd_soft_reset_err = '1' then
                     s_cfg_image_snap_r   <= i_cfg_image;
                     s_phase_r            <= PH_RESP_DRAIN;
@@ -589,7 +591,7 @@ begin
     -- =========================================================================
     -- Range counter + error detection
     -- =========================================================================
-    s_range_active_r <= s_run_busy;
+    s_range_active_r <= s_run_range_active;  -- actual capture+drain window, not full run busy
 
     p_range_cnt : process(i_clk)
     begin
@@ -600,6 +602,8 @@ begin
                 s_err_drain_timeout_r  <= '0';
                 s_err_drain_to_fired_r <= '0';
                 s_err_sequence_r       <= '0';
+                s_stop_tdc_sync1_r     <= '0';
+                s_stop_tdc_sync2_r     <= '0';
                 s_stop_tdc_prev_r      <= '0';
             else
                 s_err_drain_timeout_r <= '0';
@@ -778,11 +782,10 @@ begin
                         v_exp_addr := s_init_bus_addr;
                         v_check    := true;
                     when PH_RUN =>
-                        if s_run_bus_burst = '0' then
-                            v_exp_rw   := s_run_bus_rw;
-                            v_exp_addr := s_run_bus_addr;
-                            v_check    := true;
-                        end if;
+                        -- Check ALL run responses including burst (addr/rw stay constant)
+                        v_exp_rw   := s_run_bus_rw;
+                        v_exp_addr := s_run_bus_addr;
+                        v_check    := true;
                     when PH_REG =>
                         v_exp_rw   := s_reg_bus_rw;
                         v_exp_addr := s_reg_bus_addr;

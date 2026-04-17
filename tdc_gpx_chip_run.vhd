@@ -89,7 +89,8 @@ entity tdc_gpx_chip_run is
         -- Backpressure from coordinator hold register
         i_raw_busy          : in  std_logic;    -- '1' = hold register full, stall drain
 
-        -- Timeout status
+        -- Range / timeout status
+        o_range_active      : out std_logic;           -- '1' during capture+drain window
         o_timeout           : out std_logic;           -- 1-clk pulse: abnormal drain exit
         o_timeout_cause     : out std_logic_vector(2 downto 0);  -- cause code (valid with o_timeout)
         -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
@@ -653,6 +654,7 @@ begin
     o_busy              <= s_busy_r;
     o_shot_seq          <= s_shot_seq_r;
     o_done              <= s_done_r;
+    o_range_active      <= s_range_active_r;
     o_timeout           <= s_timeout_r;
     o_timeout_cause     <= s_timeout_cause_r;
     o_armed             <= '1' when s_state_r = ST_ARMED else '0';

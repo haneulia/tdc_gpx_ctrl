@@ -370,8 +370,13 @@ begin
 
                                 -- synthesis translate_off
                                 assert i_max_hits_cfg /= "000"
-                                    report "cell_builder: i_max_hits_cfg=0 is invalid (all hits dropped)"
+                                    report "cell_builder: i_max_hits_cfg=0 is invalid"
                                     severity error;
+                                assert unsigned(i_s_axis_tuser(2 downto 1)) = g_CHIP_ID
+                                    report "cell_builder: input chip_id mismatch (got " &
+                                           integer'image(to_integer(unsigned(i_s_axis_tuser(2 downto 1)))) &
+                                           ", expected " & integer'image(g_CHIP_ID) & ")"
+                                    severity warning;
                                 -- synthesis translate_on
 
                                 -- Runtime stop_id bounds check

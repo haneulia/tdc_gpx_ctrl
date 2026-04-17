@@ -80,6 +80,9 @@ begin
             if i_rst_n = '0' then
                 s_state_r     <= ST_OFF;
                 s_req_valid_r <= '0';
+                s_req_rw_r    <= '0';
+                s_req_addr_r  <= (others => '0');
+                s_req_wdata_r <= (others => '0');
                 s_is_read_r   <= '0';
                 s_rdata_r     <= (others => '0');
                 s_rvalid_r    <= '0';
