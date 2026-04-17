@@ -40,6 +40,7 @@ entity tdc_gpx_chip_reg is
         o_rdata         : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         o_rvalid        : out std_logic;         -- 1-clk pulse: read data valid
         o_done          : out std_logic;          -- 1-clk pulse: transaction complete
+        o_timeout       : out std_logic;         -- 1-clk pulse: bus response timeout
         o_busy          : out std_logic;
 
         -- Bus request (to coordinator bus mux)
@@ -66,9 +67,10 @@ architecture rtl of tdc_gpx_chip_reg is
     signal s_is_read_r   : std_logic := '0';
     signal s_rdata_r     : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_rvalid_r    : std_logic := '0';
-    signal s_done_r      : std_logic := '0';
-    signal s_busy_r      : std_logic := '0';
-    signal s_timeout_r   : unsigned(15 downto 0) := (others => '0');
+    signal s_done_r         : std_logic := '0';
+    signal s_timeout_out_r  : std_logic := '0';
+    signal s_busy_r         : std_logic := '0';
+    signal s_timeout_r      : unsigned(15 downto 0) := (others => '0');
 
 begin
 
@@ -81,12 +83,14 @@ begin
                 s_is_read_r   <= '0';
                 s_rdata_r     <= (others => '0');
                 s_rvalid_r    <= '0';
-                s_done_r      <= '0';
-                s_busy_r      <= '0';
-                s_timeout_r   <= (others => '0');
+                s_done_r         <= '0';
+                s_timeout_out_r  <= '0';
+                s_busy_r         <= '0';
+                s_timeout_r      <= (others => '0');
             else
-                s_rvalid_r <= '0';
-                s_done_r   <= '0';
+                s_rvalid_r      <= '0';
+                s_done_r        <= '0';
+                s_timeout_out_r <= '0';
 
                 case s_state_r is
 
@@ -97,6 +101,7 @@ begin
                             s_req_rw_r    <= '0';
                             s_req_addr_r  <= i_addr;
                             s_is_read_r   <= '1';
+                            s_timeout_r   <= (others => '0');  -- rearm watchdog
                             s_busy_r      <= '1';
                             s_state_r     <= ST_ACTIVE;
                         elsif i_start_write = '1' then
@@ -113,6 +118,7 @@ begin
                                 s_req_wdata_r <= i_wdata;
                             end if;
                             s_is_read_r   <= '0';
+                            s_timeout_r   <= (others => '0');  -- rearm watchdog
                             s_busy_r      <= '1';
                             s_state_r     <= ST_ACTIVE;
                         end if;
@@ -129,11 +135,12 @@ begin
                                 s_rvalid_r <= '1';
                             end if;
                         elsif s_timeout_r = x"FFFF" then
-                            -- Timeout: bus hung, force done
-                            s_req_valid_r <= '0';
-                            s_busy_r      <= '0';
-                            s_done_r      <= '1';
-                            s_state_r     <= ST_OFF;
+                            -- Timeout: bus hung, force done + timeout flag
+                            s_req_valid_r   <= '0';
+                            s_busy_r        <= '0';
+                            s_done_r        <= '1';
+                            s_timeout_out_r <= '1';
+                            s_state_r       <= ST_OFF;
                         else
                             s_timeout_r <= s_timeout_r + 1;
                         end if;
@@ -150,6 +157,7 @@ begin
     o_rdata         <= s_rdata_r;
     o_rvalid        <= s_rvalid_r;
     o_done          <= s_done_r;
+    o_timeout       <= s_timeout_out_r;
     o_busy          <= s_busy_r;
 
 end architecture rtl;

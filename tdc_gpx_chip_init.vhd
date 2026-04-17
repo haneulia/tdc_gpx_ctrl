@@ -42,6 +42,7 @@ entity tdc_gpx_chip_init is
         i_cfg_write_req  : in  std_logic;        -- runtime cfg_write (no master reset)
         i_cfg_image      : in  t_cfg_image;      -- latched by coordinator at request time
         o_done           : out std_logic;         -- 1-clk: init/cfg_write complete
+        o_timeout        : out std_logic;         -- 1-clk: bus response timeout (done also fires)
 
         -- Bus request (to coordinator bus mux)
         o_bus_req_valid  : out std_logic;
@@ -92,6 +93,7 @@ architecture rtl of tdc_gpx_chip_init is
     signal s_stopdis_r       : std_logic := '1';
     signal s_busy_r          : std_logic := '0';
     signal s_done_r          : std_logic := '0';
+    signal s_timeout_out_r   : std_logic := '0';
     signal s_rsp_timeout_r   : unsigned(15 downto 0) := (others => '0');  -- bus response watchdog
 
     type t_reg_idx_array is array(0 to 10) of natural range 0 to 15;
@@ -115,10 +117,12 @@ begin
                 s_stopdis_r      <= '1';
                 s_busy_r         <= '0';
                 s_done_r         <= '0';
+                s_timeout_out_r  <= '0';
                 s_init_mode_r    <= '1';
                 s_cfg_image_snap_r <= (others => (others => '0'));
             else
-                s_done_r <= '0';
+                s_done_r        <= '0';
+                s_timeout_out_r <= '0';
 
                 case s_state_r is
 
@@ -127,12 +131,14 @@ begin
                         if i_start = '1' then
                             s_init_mode_r      <= '1';
                             s_cfg_image_snap_r <= i_cfg_image;
+                            s_rsp_timeout_r    <= (others => '0');  -- rearm watchdog
                             s_busy_r           <= '1';
                             s_state_r          <= ST_POWERUP;
                         elsif i_cfg_write_req = '1' then
                             s_init_mode_r      <= '0';
                             s_cfg_image_snap_r <= i_cfg_image;
                             s_cfg_idx_r        <= (others => '0');
+                            s_rsp_timeout_r    <= (others => '0');  -- rearm watchdog
                             s_busy_r           <= '1';
                             s_state_r          <= ST_STOPDIS_HIGH;
                         end if;
@@ -194,10 +200,11 @@ begin
                             end if;
                         elsif s_rsp_timeout_r = x"FFFF" then
                             -- Timeout: force done with error (bus hung)
-                            s_req_valid_r <= '0';
-                            s_busy_r      <= '0';
-                            s_done_r      <= '1';
-                            s_state_r     <= ST_OFF;
+                            s_req_valid_r   <= '0';
+                            s_busy_r        <= '0';
+                            s_done_r        <= '1';
+                            s_timeout_out_r <= '1';
+                            s_state_r       <= ST_OFF;
                         else
                             s_rsp_timeout_r <= s_rsp_timeout_r + 1;
                         end if;
@@ -218,10 +225,11 @@ begin
                             s_rsp_timeout_r <= (others => '0');
                             s_state_r       <= ST_RECOVERY;
                         elsif s_rsp_timeout_r = x"FFFF" then
-                            s_req_valid_r <= '0';
-                            s_busy_r      <= '0';
-                            s_done_r      <= '1';
-                            s_state_r     <= ST_OFF;
+                            s_req_valid_r   <= '0';
+                            s_busy_r        <= '0';
+                            s_done_r        <= '1';
+                            s_timeout_out_r <= '1';
+                            s_state_r       <= ST_OFF;
                         else
                             s_rsp_timeout_r <= s_rsp_timeout_r + 1;
                         end if;
@@ -253,5 +261,6 @@ begin
     o_stopdis       <= s_stopdis_r;
     o_busy          <= s_busy_r;
     o_done          <= s_done_r;
+    o_timeout       <= s_timeout_out_r;
 
 end architecture rtl;

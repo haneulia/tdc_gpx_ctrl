@@ -247,7 +247,7 @@ package tdc_gpx_pkg is
         stops_per_chip      => to_unsigned(8, 4),
         n_drain_cap         => (others => '0'),         -- unlimited
         stopdis_override    => (others => '0'),
-        bus_clk_div         => to_unsigned(1, 6),
+        bus_clk_div         => to_unsigned(2, 6),  -- min=2 per review/datasheet
         bus_ticks           => to_unsigned(5, 3),
         max_range_clks      => to_unsigned(267, 16),    -- ~200m @200MHz
         cols_per_face       => to_unsigned(2400, 16),

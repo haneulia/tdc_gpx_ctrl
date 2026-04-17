@@ -160,7 +160,8 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- =========================================================================
     type t_phase is (PH_INIT, PH_IDLE, PH_RUN, PH_REG, PH_CFG_WRITE, PH_RESP_DRAIN);
     signal s_phase_r      : t_phase := PH_INIT;
-    signal s_drain_cnt_r  : unsigned(3 downto 0) := (others => '0');  -- stale response drain counter
+    signal s_drain_cnt_r    : unsigned(3 downto 0) := (others => '0');  -- stale response drain counter
+    signal s_drain_to_init_r : std_logic := '0';  -- '1' = drain→PH_INIT (soft reset), '0' = drain→PH_IDLE (timeout)
 
     -- =========================================================================
     -- Sub-FSM signals: chip_init
@@ -168,6 +169,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_init_start      : std_logic := '0';
     signal s_init_cfg_write  : std_logic := '0';
     signal s_init_done       : std_logic;
+    signal s_init_timeout    : std_logic;
     signal s_init_bus_valid  : std_logic;
     signal s_init_bus_rw     : std_logic;
     signal s_init_bus_addr   : std_logic_vector(3 downto 0);
@@ -221,6 +223,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_reg_start_rd    : std_logic := '0';
     signal s_reg_start_wr    : std_logic := '0';
     signal s_reg_done        : std_logic;
+    signal s_reg_timeout     : std_logic;
     signal s_reg_rdata       : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
     signal s_reg_rvalid      : std_logic;
     signal s_reg_busy        : std_logic;
@@ -244,7 +247,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- =========================================================================
     signal s_drain_mode_snap_r  : std_logic := '0';
     signal s_n_drain_cap_snap_r : unsigned(3 downto 0) := (others => '0');
-    signal s_bus_clk_div_snap_r : unsigned(5 downto 0) := to_unsigned(1, 6);
+    signal s_bus_clk_div_snap_r : unsigned(5 downto 0) := to_unsigned(2, 6);
     signal s_bus_ticks_snap_r   : unsigned(2 downto 0) := to_unsigned(5, 3);
     signal s_max_range_snap_r   : unsigned(15 downto 0) := (others => '0');
     signal s_cfg_image_snap_r   : t_cfg_image := (others => (others => '0'));
@@ -299,6 +302,7 @@ begin
             i_cfg_write_req => s_init_cfg_write,
             i_cfg_image     => s_cfg_image_snap_r,
             o_done          => s_init_done,
+            o_timeout       => s_init_timeout,
             o_bus_req_valid => s_init_bus_valid,
             o_bus_req_rw    => s_init_bus_rw,
             o_bus_req_addr  => s_init_bus_addr,
@@ -366,6 +370,7 @@ begin
             o_rdata         => s_reg_rdata,
             o_rvalid        => s_reg_rvalid,
             o_done          => s_reg_done,
+            o_timeout       => s_reg_timeout,
             o_busy          => s_reg_busy,
             o_bus_req_valid => s_reg_bus_valid,
             o_bus_req_rw    => s_reg_bus_rw,
@@ -450,7 +455,7 @@ begin
                 s_reg_start_wr     <= '0';
                 s_drain_mode_snap_r  <= '0';
                 s_n_drain_cap_snap_r <= (others => '0');
-                s_bus_clk_div_snap_r <= to_unsigned(1, 6);
+                s_bus_clk_div_snap_r <= to_unsigned(2, 6);
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
@@ -467,7 +472,13 @@ begin
                     when PH_INIT =>
                         s_stopdis_latch_r <= s_init_stopdis;
                         if s_init_done = '1' then
-                            s_phase_r <= PH_IDLE;
+                            if s_init_timeout = '1' then
+                                -- Timeout: drain stale responses before IDLE
+                                s_phase_r     <= PH_RESP_DRAIN;
+                                s_drain_cnt_r <= (others => '0');
+                            else
+                                s_phase_r <= PH_IDLE;
+                            end if;
                         end if;
 
                     when PH_IDLE =>
@@ -503,35 +514,52 @@ begin
                     when PH_RUN =>
                         s_stopdis_latch_r <= s_run_stopdis;
                         if s_run_done = '1' then
-                            s_phase_r <= PH_IDLE;
+                            -- chip_run has multiple internal timeout paths;
+                            -- any of them may leave stale responses in bus_phy.
+                            -- Drain as precaution on every run completion.
+                            s_phase_r     <= PH_RESP_DRAIN;
+                            s_drain_cnt_r <= (others => '0');
                         end if;
 
                     when PH_CFG_WRITE =>
                         if s_init_done = '1' then
-                            s_phase_r <= PH_IDLE;
+                            if s_init_timeout = '1' then
+                                s_phase_r     <= PH_RESP_DRAIN;
+                                s_drain_cnt_r <= (others => '0');
+                            else
+                                s_phase_r <= PH_IDLE;
+                            end if;
                         end if;
 
                     when PH_REG =>
                         if s_reg_done = '1' then
-                            s_phase_r <= PH_IDLE;
+                            if s_reg_timeout = '1' then
+                                s_phase_r     <= PH_RESP_DRAIN;
+                                s_drain_cnt_r <= (others => '0');
+                            else
+                                s_phase_r <= PH_IDLE;
+                            end if;
                         end if;
 
                     when PH_RESP_DRAIN =>
-                        -- Drain stale bus responses after soft reset.
+                        -- Drain stale bus responses after timeout or soft reset.
                         -- tready='1' (above), routing='0' (all discarded).
-                        -- Wait until bus_phy is idle AND minimum 4 cycles elapsed.
-                        -- This handles slow bus_clk_div where 8 fixed cycles
-                        -- may not be enough to drain in-flight transactions.
                         s_drain_cnt_r <= s_drain_cnt_r + 1;
                         if i_bus_busy = '0' and s_drain_cnt_r >= to_unsigned(3, 4) then
-                            s_phase_r    <= PH_INIT;
-                            s_init_start <= '1';
+                            if s_drain_to_init_r = '1' then
+                                s_phase_r    <= PH_INIT;
+                                s_init_start <= '1';
+                            else
+                                s_phase_r <= PH_IDLE;
+                            end if;
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap: bus may be stuck. Proceed to PH_INIT anyway;
-                            -- chip_init has its own response timeout (x"FFFF") that
-                            -- will force completion if bus_phy never responds.
-                            s_phase_r    <= PH_INIT;
-                            s_init_start <= '1';
+                            -- Hard cap: bus may be stuck.
+                            if s_drain_to_init_r = '1' then
+                                s_phase_r    <= PH_INIT;
+                                s_init_start <= '1';
+                            else
+                                s_phase_r <= PH_IDLE;
+                            end if;
                         end if;
 
                 end case;
@@ -540,9 +568,10 @@ begin
                 -- Drain stale responses first, then restart init
                 s_soft_reset_d1_r <= i_cmd_soft_reset or i_cmd_soft_reset_err;
                 if i_cmd_soft_reset = '1' or i_cmd_soft_reset_err = '1' then
-                    s_cfg_image_snap_r <= i_cfg_image;
-                    s_phase_r          <= PH_RESP_DRAIN;
-                    s_drain_cnt_r      <= (others => '0');
+                    s_cfg_image_snap_r   <= i_cfg_image;
+                    s_phase_r            <= PH_RESP_DRAIN;
+                    s_drain_cnt_r        <= (others => '0');
+                    s_drain_to_init_r    <= '1';  -- soft reset → drain then init
                 end if;
             end if;
         end if;

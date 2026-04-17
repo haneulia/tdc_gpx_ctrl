@@ -10,7 +10,7 @@
 --   shot boundary.
 --
 -- FSM States (6):
---   ST_IDLE -> ST_READ_REG11 -> ST_WAIT_READ -> ST_RECOVERY ->
+--   ST_IDLE -> ST_READ_REG12 -> ST_WAIT_READ -> ST_RECOVERY ->
 --   ST_WAIT_RECOVERY -> ST_WAIT_FRAME_DONE -> ST_IDLE
 --
 -- Standard: VHDL-2008
@@ -68,7 +68,7 @@ architecture rtl of tdc_gpx_err_handler is
     -- =========================================================================
     type t_state is (
         ST_IDLE,
-        ST_READ_REG11,
+        ST_READ_REG12,
         ST_WAIT_READ,
         ST_RECOVERY,
         ST_WAIT_RECOVERY,
@@ -182,18 +182,18 @@ begin
                             end loop;
 
                             if v_any_debounced then
-                                s_state_r <= ST_READ_REG11;
+                                s_state_r <= ST_READ_REG12;
                             end if;
                         end if;
 
                     -- ---------------------------------------------------------
-                    -- ST_READ_REG11: issue Reg12 read for error cause flags
+                    -- ST_READ_REG12: issue Reg12 read for error cause flags
                     -- NOTE: Reg11 contains unmask configuration bits, NOT status.
                     -- Reg12 contains actual error flags: HFifoFull, IFifoFull,
                     -- NotLocked. Reading Reg12 may clear some flags (datasheet),
                     -- so we latch cause internally on read completion.
                     -- ---------------------------------------------------------
-                    when ST_READ_REG11 =>
+                    when ST_READ_REG12 =>
                         -- Wait for any prior reg access to complete before issuing
                         -- our read. This prevents consuming a stale done_pulse from
                         -- a different reg transaction.
