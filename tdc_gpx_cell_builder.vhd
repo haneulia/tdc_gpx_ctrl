@@ -162,6 +162,9 @@ architecture rtl of tdc_gpx_cell_builder is
     type t_buf_owner is (BUF_FREE, BUF_COLLECT, BUF_SHARED);
     type t_buf_state_array is array(0 to 1) of t_buf_owner;
     signal s_buf_state_r : t_buf_state_array := (others => BUF_FREE);
+    signal s_buf_seq_r   : unsigned(7 downto 0) := (others => '0');  -- monotonic shot counter
+    type t_buf_age_array is array(0 to 1) of unsigned(7 downto 0);
+    signal s_buf_age_r   : t_buf_age_array := (others => (others => '0'));  -- per-buffer age tag
     signal s_buf_full_r  : std_logic_vector(1 downto 0) := "00";
 
     type t_collect_state is (ST_C_IDLE, ST_C_ACTIVE, ST_C_DROP);
@@ -370,7 +373,12 @@ begin
                                     report "cell_builder: i_max_hits_cfg=0 is invalid (all hits dropped)"
                                     severity error;
                                 -- synthesis translate_on
-                                if s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
+
+                                -- Runtime stop_id bounds check
+                                if ('0' & unsigned(i_s_axis_tuser(5 downto 3))) >= i_stops_per_chip then
+                                    -- Out-of-range stop_id: discard silently
+                                    s_hit_dropped_r <= '1';
+                                elsif s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
                                     v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
                                     s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
                                     s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq) <= '1';
@@ -392,6 +400,8 @@ begin
                                     -- Collect continues writing stops 4~7.
                                     s_buf_state_r(v_wr) <= BUF_SHARED;
                                     s_buf_full_r(v_wr)  <= '0';
+                                    s_buf_age_r(v_wr)   <= s_buf_seq_r;
+                                    s_buf_seq_r         <= s_buf_seq_r + 1;
                                     if s_ostate_r = ST_O_IDLE then
                                         s_output_req_r <= '1';
                                         s_rd_buf_idx_r <= s_wr_buf_r;
@@ -408,6 +418,8 @@ begin
                                     if s_buf_state_r(v_wr) = BUF_COLLECT then
                                         -- Both IFIFOs done simultaneously (no prior ififo1_done)
                                         s_buf_state_r(v_wr) <= BUF_SHARED;
+                                        s_buf_age_r(v_wr)   <= s_buf_seq_r;
+                                        s_buf_seq_r         <= s_buf_seq_r + 1;
                                         if s_ostate_r = ST_O_IDLE then
                                             s_output_req_r <= '1';
                                             s_rd_buf_idx_r <= s_wr_buf_r;
@@ -463,18 +475,22 @@ begin
                     -- ---------------------------------------------------------
                     if s_ostate_r = ST_O_IDLE and s_output_req_r = '0'
                        and s_output_done_r = '0' then
-                        for b in 0 to 1 loop
-                            if s_buf_state_r(b) = BUF_SHARED then
-                                s_output_req_r <= '1';
-                                if b = 0 then
-                                    s_rd_buf_idx_r <= '0';
-                                else
-                                    s_rd_buf_idx_r <= '1';
-                                end if;
-                                exit;  -- only start one
+                        -- Age-based selection: if both SHARED, pick older (smaller seq)
+                        if s_buf_state_r(0) = BUF_SHARED and s_buf_state_r(1) = BUF_SHARED then
+                            s_output_req_r <= '1';
+                            if s_buf_age_r(0) <= s_buf_age_r(1) then  -- unsigned compare handles wrap
+                                s_rd_buf_idx_r <= '0';
+                            else
+                                s_rd_buf_idx_r <= '1';
                             end if;
-                        end loop;
-                    end if;
+                        elsif s_buf_state_r(0) = BUF_SHARED then
+                            s_output_req_r <= '1';
+                            s_rd_buf_idx_r <= '0';
+                        elsif s_buf_state_r(1) = BUF_SHARED then
+                            s_output_req_r <= '1';
+                            s_rd_buf_idx_r <= '1';
+                        end if;
+                    end if;  -- deferred auto-start
 
                 end if;  -- not abort
             end if;  -- rst_n

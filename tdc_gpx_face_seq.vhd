@@ -368,6 +368,8 @@ begin
                                and (i_shot_start_raw = '1' or s_shot_deferred_r = '1')
                                and i_cmd_stop = '0'
                                and i_cmd_soft_reset = '0'
+                               and s_pipeline_abort = '0'
+                               and s_abort_quiesce_r = '0'
                                and i_hdr_idle = '1'
                                and i_hdr_fall_idle = '1'
                      else '0';
@@ -469,6 +471,7 @@ begin
     -- Output assignments
     o_face_start       <= s_face_start_r;
     o_face_start_gated <= s_face_start_r when i_cmd_stop = '0' and i_cmd_soft_reset = '0'
+                                            and s_pipeline_abort = '0' and s_abort_quiesce_r = '0'
                           else '0';
     o_shot_start_gated <= s_shot_start_gated;
     o_pipeline_abort   <= s_pipeline_abort;

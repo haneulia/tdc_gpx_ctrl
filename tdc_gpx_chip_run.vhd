@@ -589,6 +589,17 @@ begin
                             end if;
                             s_wait_cnt_r <= (others => '0');
                             s_state_r    <= ST_DRAIN_SETTLE;
+                        else
+                            s_wait_cnt_r <= s_wait_cnt_r + 1;
+                            if s_wait_cnt_r = x"FFFF" then
+                                -- Overrun flush timeout: force to drain settle
+                                s_oen_permanent_r <= '0';
+                                s_purge_mode_r    <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "110";  -- overrun_flush
+                                s_wait_cnt_r      <= (others => '0');
+                                s_state_r         <= ST_DRAIN_SETTLE;
+                            end if;
                         end if;
 
                 end case;

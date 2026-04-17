@@ -243,7 +243,9 @@ begin
                 o_m_axis_tlast      => o_cell_fall_tlast(i),
                 i_m_axis_tready     => i_cell_fall_tready(i),
                 o_slice_done        => open,
-                o_hit_dropped_any   => o_hit_fall_dropped(i)
+                o_hit_dropped_any   => o_hit_fall_dropped(i),
+                o_shot_dropped      => open,
+                o_slice_timeout     => open
             );
 
     end generate gen_chip;

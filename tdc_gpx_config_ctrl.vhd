@@ -236,7 +236,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_ticks_snap  : t_u3_array;
     signal s_bus_busy           : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_rsp_pending    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_rsp_pending_raw : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_rsp_pending     : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy response AXI-Stream
     signal s_brsp_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -477,7 +478,7 @@ begin
             i_reg11_data_3       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(3),
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
             i_reg_outstanding    => s_reg_outstanding,
-            i_frame_done         => i_frame_done or i_frame_fall_done,
+            i_frame_done         => i_frame_done and i_frame_fall_done,
             i_shot_start         => i_shot_start_gated,
             o_cmd_soft_reset     => s_err_cmd_soft_reset,
             o_cmd_reg_read       => s_err_cmd_reg_read,
@@ -553,7 +554,7 @@ begin
                 o_lf2_sync      => s_lf2_sync(i),
                 o_irflag_sync   => s_irflag_sync(i),
                 o_errflag_sync  => s_errflag_sync(i),
-                o_rsp_pending   => s_bus_rsp_pending(i)
+                o_rsp_pending   => s_bus_rsp_pending_raw(i)
             );
 
         -- ----- skid buffer: bus_phy -> chip_ctrl (32b tdata + 8b tuser = 40b) -----
@@ -562,7 +563,8 @@ begin
             port map (
                 i_clk     => i_axis_aclk,
                 i_rst_n   => i_axis_aresetn,
-                i_flush   => i_cmd_soft_reset,  -- flush stale responses on soft reset
+                -- Flush on any soft reset (global or per-chip error recovery)
+                i_flush   => i_cmd_soft_reset or s_err_cmd_soft_reset(i),
                 i_s_valid => s_brsp_axis_tvalid(i),
                 o_s_ready => s_brsp_axis_tready(i),
                 i_s_data  => s_brsp_axis_tdata(i) & s_brsp_axis_tuser(i),
@@ -571,6 +573,9 @@ begin
                 o_m_data(39 downto 8) => s_brsp_sk_tdata(i),
                 o_m_data(7 downto 0)  => s_brsp_sk_tuser(i)
             );
+
+        -- Combined pending: bus_phy internal + brsp skid output
+        s_bus_rsp_pending(i) <= s_bus_rsp_pending_raw(i) or s_brsp_sk_tvalid(i);
 
         -- ----- chip_ctrl: single-shot FSM (powerup/cfg/arm/capture/drain) -----
         u_chip_ctrl : entity work.tdc_gpx_chip_ctrl

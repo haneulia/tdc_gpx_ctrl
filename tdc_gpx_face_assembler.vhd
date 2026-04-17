@@ -477,8 +477,8 @@ begin
                         v_done_after := s_chip_done_r;
                         v_done_after(v_chip_idx) := '1';  -- treat skipped as done
                         if (v_done_after or (not s_active_mask_r)) = "1111" then
-                            -- All chips processed → will be caught after forward
-                            null;  -- no more chips, row will complete naturally
+                            -- All chips processed → row complete, go to IDLE
+                            s_state_r <= ST_IDLE;
                         else
                             s_next_chip_r <= s_next_chip_r + 1;
                         end if;
