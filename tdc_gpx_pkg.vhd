@@ -276,6 +276,7 @@ package tdc_gpx_pkg is
         err_chip_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chips under recovery
         err_cause           : std_logic_vector(2 downto 0);  -- [0]=HitFIFO [1]=IFIFO [2]=PLL
         rsp_mismatch_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- bus response tuser mismatch
+        cfg_rejected        : std_logic;  -- cmd_start rejected due to invalid config
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -293,7 +294,8 @@ package tdc_gpx_pkg is
         err_active          => '0',
         err_chip_mask       => (others => '0'),
         err_cause           => (others => '0'),
-        rsp_mismatch_mask   => (others => '0')
+        rsp_mismatch_mask   => (others => '0'),
+        cfg_rejected        => '0'
     );
 
     -- =========================================================================

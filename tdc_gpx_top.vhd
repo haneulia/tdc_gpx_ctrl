@@ -268,6 +268,7 @@ architecture rtl of tdc_gpx_top is
     signal s_packet_start           : std_logic;
     signal s_face_start_r           : std_logic;
     signal s_shot_drop_cnt_r        : unsigned(15 downto 0);
+    signal s_cfg_rejected_r         : std_logic;
     signal s_frame_abort_cnt_r      : unsigned(15 downto 0);
     signal s_frame_done_both        : std_logic;
     signal s_face_n_faces_r         : unsigned(3 downto 0);
@@ -647,7 +648,7 @@ begin
             o_face_closing         => s_face_closing,
             o_pipeline_abort       => s_pipeline_abort,
             o_shot_drop_cnt        => s_shot_drop_cnt_r,
-            o_cfg_rejected         => open,  -- TODO: wire to status when CSR field available
+            o_cfg_rejected         => s_cfg_rejected_r,
             o_shot_start_per_chip  => s_shot_start_per_chip,
             o_face_id              => s_face_id_r,
             o_frame_id             => s_frame_id_r,
@@ -717,5 +718,6 @@ begin
     s_status.err_chip_mask       <= s_err_chip_mask;
     s_status.err_cause           <= s_err_cause;
     s_status.rsp_mismatch_mask   <= s_err_rsp_mismatch;
+    s_status.cfg_rejected        <= s_cfg_rejected_r;
 
 end architecture rtl;
