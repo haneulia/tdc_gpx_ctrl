@@ -647,6 +647,7 @@ begin
             o_face_closing         => s_face_closing,
             o_pipeline_abort       => s_pipeline_abort,
             o_shot_drop_cnt        => s_shot_drop_cnt_r,
+            o_cfg_rejected         => open,  -- TODO: wire to status when CSR field available
             o_shot_start_per_chip  => s_shot_start_per_chip,
             o_face_id              => s_face_id_r,
             o_frame_id             => s_frame_id_r,

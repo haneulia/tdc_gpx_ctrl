@@ -72,6 +72,7 @@ entity tdc_gpx_face_seq is
         o_face_closing       : out std_logic;
         o_pipeline_abort     : out std_logic;
         o_shot_drop_cnt      : out unsigned(15 downto 0);
+        o_cfg_rejected       : out std_logic;  -- 1-clk pulse: cmd_start rejected due to invalid config
         o_shot_start_per_chip : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
         -- ID outputs
@@ -127,6 +128,7 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_shot_pending_r    : std_logic := '0';
     signal s_shot_deferred_r   : std_logic := '0';
     signal s_shot_drop_cnt_r   : unsigned(15 downto 0) := (others => '0');
+    signal s_cfg_rejected_r    : std_logic := '0';
     signal s_shot_start_gated  : std_logic;
     signal s_pipeline_abort    : std_logic;
     signal s_abort_quiesce_r   : std_logic := '0';  -- 1-cycle guard after abort
@@ -152,6 +154,7 @@ begin
                 s_abort_quiesce_r     <= '0';
             else
                 s_cmd_start_accepted_r <= '0';
+                s_cfg_rejected_r       <= '0';
                 -- 1-cycle quiesce guard: latch abort, clear next cycle
                 s_abort_quiesce_r <= s_pipeline_abort;
 
@@ -161,23 +164,29 @@ begin
 
                 case s_face_state_r is
                     when ST_IDLE =>
-                        if i_cmd_start = '1'
-                           and i_chip_busy = C_ZEROS_CHIPS
-                           and i_reg_outstanding = '0'
-                           and i_face_asm_idle = '1'
-                           and i_face_asm_fall_idle = '1'
-                           and i_hdr_idle = '1'
-                           and i_hdr_fall_idle = '1'
-                           and i_face_tvalid = '0'
-                           and i_face_fall_tvalid = '0'
-                           and i_face_buf_tvalid = '0'
-                           and i_face_fall_buf_tvalid = '0'
-                           and i_m_axis_tvalid = '0'
-                           and i_m_axis_fall_tvalid = '0' then
-                            s_face_id_r            <= (others => '0');
-                            s_shot_overrun_r       <= '0';
-                            s_cmd_start_accepted_r <= '1';
-                            s_face_state_r         <= ST_WAIT_SHOT;
+                        if i_cmd_start = '1' then
+                            -- Config validation: reject if geometry is degenerate
+                            if i_cfg.active_chip_mask = "0000"
+                               or i_cfg.stops_per_chip < 2 then
+                                -- Invalid config: reject start, pulse cfg_rejected
+                                s_cfg_rejected_r <= '1';
+                            elsif i_chip_busy = C_ZEROS_CHIPS
+                               and i_reg_outstanding = '0'
+                               and i_face_asm_idle = '1'
+                               and i_face_asm_fall_idle = '1'
+                               and i_hdr_idle = '1'
+                               and i_hdr_fall_idle = '1'
+                               and i_face_tvalid = '0'
+                               and i_face_fall_tvalid = '0'
+                               and i_face_buf_tvalid = '0'
+                               and i_face_fall_buf_tvalid = '0'
+                               and i_m_axis_tvalid = '0'
+                               and i_m_axis_fall_tvalid = '0' then
+                                s_face_id_r            <= (others => '0');
+                                s_shot_overrun_r       <= '0';
+                                s_cmd_start_accepted_r <= '1';
+                                s_face_state_r         <= ST_WAIT_SHOT;
+                            end if;
                         end if;
 
                     when ST_WAIT_SHOT =>
@@ -464,5 +473,6 @@ begin
     o_shot_start_gated <= s_shot_start_gated;
     o_pipeline_abort   <= s_pipeline_abort;
     o_shot_drop_cnt    <= s_shot_drop_cnt_r;
+    o_cfg_rejected     <= s_cfg_rejected_r;
 
 end architecture rtl;
