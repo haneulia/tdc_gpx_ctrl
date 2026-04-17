@@ -89,6 +89,12 @@ entity tdc_gpx_chip_run is
         -- Backpressure from coordinator hold register
         i_raw_busy          : in  std_logic;    -- '1' = hold register full, stall drain
 
+        -- Timeout status
+        o_timeout           : out std_logic;           -- 1-clk pulse: abnormal drain exit
+        o_timeout_cause     : out std_logic_vector(2 downto 0);  -- cause code (valid with o_timeout)
+        -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
+        --              "100"=burst_rsp, "101"=flush_rsp
+
         -- Pin outputs
         o_stopdis           : out std_logic;
         o_alutrigger        : out std_logic;
@@ -135,6 +141,8 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_alutrigger_r      : std_logic := '0';
     signal s_busy_r            : std_logic := '0';
     signal s_done_r            : std_logic := '0';
+    signal s_timeout_r         : std_logic := '0';
+    signal s_timeout_cause_r   : std_logic_vector(2 downto 0) := (others => '0');
 
     signal s_raw_word_r        : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_raw_valid_r       : std_logic := '0';
@@ -206,9 +214,12 @@ begin
                 s_purge_mode_r      <= '0';
                 s_stop_pending_r    <= '0';
                 s_overrun_deferred_r <= '0';
+                s_timeout_r          <= '0';
+                s_timeout_cause_r    <= (others => '0');
             else
                 s_raw_valid_r        <= '0';
                 s_drain_done_r       <= '0';
+                s_timeout_r          <= '0';
                 s_ififo1_done_beat_r <= '0';
                 s_done_r             <= '0';
 
@@ -401,10 +412,12 @@ begin
                         -- raw_busy watchdog: abort drain if stalled too long
                         s_wait_cnt_r <= s_wait_cnt_r + 1;
                         if s_wait_cnt_r = x"FFFF" then
-                            s_oen_permanent_r <= '0';  -- cleanup
-                            s_drain_done_r <= '1';
-                            s_ififo_id_r   <= '1';
-                            s_state_r      <= ST_ALU_PULSE;
+                            s_oen_permanent_r <= '0';
+                            s_drain_done_r    <= '1';
+                            s_ififo_id_r      <= '1';
+                            s_timeout_r       <= '1';
+                            s_timeout_cause_r <= "001";  -- raw_busy
+                            s_state_r         <= ST_ALU_PULSE;
                         end if;
                       end if; -- i_raw_busy = '0'
 
@@ -425,6 +438,8 @@ begin
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
                                 s_ififo_id_r      <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "010";  -- ef1_rsp
                                 s_state_r         <= ST_ALU_PULSE;
                             end if;
                         end if;
@@ -446,6 +461,8 @@ begin
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
                                 s_ififo_id_r      <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "011";  -- ef2_rsp
                                 s_state_r         <= ST_ALU_PULSE;
                             end if;
                         end if;
@@ -474,6 +491,8 @@ begin
                                 s_oen_permanent_r <= '0';
                                 s_drain_done_r    <= '1';
                                 s_ififo_id_r      <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "100";  -- burst_rsp
                                 s_state_r         <= ST_ALU_PULSE;
                             end if;
                         end if;
@@ -499,6 +518,8 @@ begin
                             s_oen_permanent_r <= '0';
                             s_drain_done_r    <= '1';
                             s_ififo_id_r      <= '1';
+                            s_timeout_r       <= '1';
+                            s_timeout_cause_r <= "101";  -- flush_rsp
                             s_state_r         <= ST_ALU_PULSE;
                         end if;
 
@@ -621,6 +642,8 @@ begin
     o_busy              <= s_busy_r;
     o_shot_seq          <= s_shot_seq_r;
     o_done              <= s_done_r;
+    o_timeout           <= s_timeout_r;
+    o_timeout_cause     <= s_timeout_cause_r;
     o_armed             <= '1' when s_state_r = ST_ARMED else '0';
 
 end architecture rtl;

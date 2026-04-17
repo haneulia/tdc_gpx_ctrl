@@ -326,6 +326,8 @@ begin
             i_start             => s_run_start,
             i_cmd_stop          => i_cmd_stop,
             o_done              => s_run_done,
+            o_timeout           => open,  -- TODO: aggregate to status
+            o_timeout_cause     => open,  -- TODO: aggregate to status
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
             i_n_drain_cap       => s_n_drain_cap_snap_r,
