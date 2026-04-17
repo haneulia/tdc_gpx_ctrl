@@ -251,9 +251,14 @@ package tdc_gpx_cfg_pkg is
     --    3     4     20 ns     30 ns    30 ns          17 MHz    OK
     --    2     7     45 ns     50 ns    20 ns          14 MHz    OK (slowest 3-bit)
     -- =========================================================================
-    constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum (div>=2)
-    constant c_BUS_TICKS_MIN_DIV1   : natural := 5;     -- div=1 needs extra tick for tV-DR
+    constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum
     constant c_BUS_CLK_DIV_MIN      : natural := 2;     -- div=1 prohibited per review/datasheet
+
+    -- Design clock frequency assumption.
+    -- All timeout constants (x"FFFF" watchdogs, powerup/recovery clocks,
+    -- err_handler recovery timeout 9999) assume this frequency.
+    -- If the actual system clock differs, these must be rescaled.
+    constant c_ASSUMED_CLK_FREQ_HZ  : natural := 200_000_000;  -- 200 MHz
 
     -- =========================================================================
     -- Init values

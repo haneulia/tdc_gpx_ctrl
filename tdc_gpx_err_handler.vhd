@@ -258,9 +258,11 @@ begin
                                 -- Fatal: release reg-access path so SW can diagnose.
                                 -- s_err_fatal_r stays sticky until system reset.
                                 -- Clear err_fill to stop raw-data substitution.
-                                s_err_fill_r      <= (others => '0');
-                                s_err_chip_mask_r <= (others => '0');
-                                s_state_r         <= ST_IDLE;
+                                -- Preserve chip_mask and cause for SW diagnostics.
+                                s_err_fill_r  <= (others => '0');
+                                -- s_err_chip_mask_r: KEPT for diagnosis
+                                -- s_err_cause_r:     KEPT for diagnosis
+                                s_state_r     <= ST_IDLE;
                             end if;
                         else
                             s_recov_stable_r  <= (others => '0');

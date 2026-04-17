@@ -843,17 +843,15 @@ begin
     -- =========================================================================
 
     -- Bus timing clamping ---------------------------------------------------
-    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN (1)
+    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN (2)
     s_div_clamped <= unsigned(s_ctl1_out(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
                      when unsigned(s_ctl1_out(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
                           >= c_BUS_CLK_DIV_MIN
                      else to_unsigned(c_BUS_CLK_DIV_MIN, 6);
     o_bus_clk_div <= s_div_clamped;
 
-    -- bus_ticks: combined constraint — div=1 needs ticks>=5, div>=2 needs ticks>=4
-    s_ticks_min   <= to_unsigned(c_BUS_TICKS_MIN_DIV1, 3)
-                     when s_div_clamped = 1
-                     else to_unsigned(c_BUS_TICKS_MIN, 3);
+    -- bus_ticks: minimum ticks>=4 (div>=2 always, div=1 prohibited)
+    s_ticks_min   <= to_unsigned(c_BUS_TICKS_MIN, 3);
     o_bus_ticks   <= unsigned(s_ctl1_out(c_BT_TICKS_HI downto c_BT_TICKS_LO))
                      when unsigned(s_ctl1_out(c_BT_TICKS_HI downto c_BT_TICKS_LO))
                           >= s_ticks_min

@@ -136,7 +136,8 @@ entity tdc_gpx_cell_builder is
         -- Status
         o_slice_done        : out std_logic;    -- 1-clk pulse: chip slice complete
         o_hit_dropped_any   : out std_logic;    -- 1-clk pulse: cell hit overflow
-        o_shot_dropped      : out std_logic     -- 1-clk pulse: entire shot dropped (no free buffer)
+        o_shot_dropped      : out std_logic;    -- 1-clk pulse: entire shot dropped (no free buffer)
+        o_slice_timeout     : out std_logic     -- 1-clk pulse: slice truncated by IFIFO2 timeout
     );
 end entity tdc_gpx_cell_builder;
 
@@ -174,6 +175,7 @@ architecture rtl of tdc_gpx_cell_builder is
     -- p_output -> p_collect handshake
     signal s_output_done_r    : std_logic := '0';
     signal s_out_timeout_r    : unsigned(15 downto 0) := (others => '0');  -- output watchdog
+    signal s_slice_timeout_r  : std_logic := '0';  -- 1-clk pulse: IFIFO2 timeout truncation
 
     -- =========================================================================
     -- Output FSM (p_output)
@@ -497,9 +499,11 @@ begin
                 s_tdata_r     <= (others => '0');
                 s_tvalid_r    <= '0';
                 s_tlast_r     <= '0';
-                s_output_done_r <= '0';
+                s_output_done_r  <= '0';
+                s_slice_timeout_r <= '0';
             else
-                s_output_done_r <= '0';
+                s_output_done_r  <= '0';
+                s_slice_timeout_r <= '0';
 
                 -- ---------------------------------------------------------
                 -- Abort: return to idle, clear tvalid
@@ -610,10 +614,11 @@ begin
                                 s_ostate_r      <= ST_O_LOAD;
                             elsif s_out_timeout_r = x"FFFF" then
                                 -- Timeout: IFIFO2 data never arrived, force slice done
-                                s_tvalid_r      <= '0';
-                                s_output_done_r <= '1';
-                                s_out_timeout_r <= (others => '0');
-                                s_ostate_r      <= ST_O_IDLE;
+                                s_tvalid_r        <= '0';
+                                s_output_done_r   <= '1';
+                                s_slice_timeout_r <= '1';  -- distinct from normal slice_done
+                                s_out_timeout_r   <= (others => '0');
+                                s_ostate_r        <= ST_O_IDLE;
                             else
                                 s_out_timeout_r <= s_out_timeout_r + 1;
                             end if;
@@ -634,5 +639,6 @@ begin
     o_slice_done      <= s_output_done_r;
     o_hit_dropped_any <= s_hit_dropped_r;
     o_shot_dropped    <= s_shot_dropped_r;
+    o_slice_timeout   <= s_slice_timeout_r;
 
 end architecture rtl;

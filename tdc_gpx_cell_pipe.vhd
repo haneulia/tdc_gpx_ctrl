@@ -217,7 +217,8 @@ begin
                 i_m_axis_tready     => i_cell_rise_tready(i),
                 o_slice_done        => open,
                 o_hit_dropped_any   => o_hit_dropped(i),
-                o_shot_dropped      => open
+                o_shot_dropped      => open,
+                o_slice_timeout     => open
             );
 
         -- Falling-slope cell builder

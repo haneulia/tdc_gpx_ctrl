@@ -312,7 +312,10 @@ begin
     -- Timeout limit: max_range_clks only (drain/ALU margins TBD after bench)
     s_timeout_limit <= i_max_scan_clks;
 
-    -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset)
+    -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset).
+    -- Late-arriving beats from previous shot are intentionally dropped.
+    -- This policy prioritizes shot boundary integrity over data completeness.
+    -- Drops are reflected in top-level frame_abort_count / shot_drop_count.
     s_flush          <= i_shot_start or i_abort;
     s_fifo_rst_n     <= i_rst_n and (not s_flush);         -- input FIFOs: flush on shot_start + abort
     s_out_fifo_rst_n <= i_rst_n and (not i_abort);         -- output FIFO: flush on abort ONLY

@@ -102,7 +102,9 @@ begin
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '1';
                             s_req_addr_r  <= i_addr;
-                            -- Safety: block 16-bit mode via direct reg write path
+                            -- Safety: block dangerous register bits via direct write.
+                            -- Reg14 bit4: 16-bit mode (CSN malfunction bug, no workaround).
+                            -- Future: add service bit filters for other registers as needed.
                             if i_addr = x"E" then  -- Reg14
                                 s_req_wdata_r    <= i_wdata;
                                 s_req_wdata_r(4) <= '0';  -- force bit4=0
