@@ -72,11 +72,12 @@ entity tdc_gpx_chip_ctrl is
 
         -- External stop signal (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         -- Used for ERROR DETECTION ONLY — NOT a drain trigger.
-        -- If stop_tdc rises before IrFlag in ST_CAPTURE → err_sequence.
-        -- Rationale: stop_tdc means "max range reached, no more returns expected,"
-        -- but IrFlag (MTimer expiry) must ALWAYS arrive first to guarantee
-        -- IFIFO writes are settled. If stop_tdc arrives first, the MTimer
-        -- setting is misconfigured relative to the actual measurement window.
+        -- Detects rising edge of stop_tdc during ANY active run phase
+        -- (capture + drain + ALU), i.e. while armed='0' and busy='1'.
+        -- This means the next shot deadline arrived before the current shot
+        -- finished processing — indicating a timing mismatch between the
+        -- laser repetition rate and the TDC measurement/drain/ALU cycle.
+        -- 2-FF synchronized internally (ASYNC_REG).
         i_stop_tdc          : in  std_logic;
 
         -- Per-IFIFO expected drain counts (from echo_receiver via tdc_gpx_top)

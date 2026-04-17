@@ -365,6 +365,11 @@ begin
                             if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '0' then
                                 v_stop := to_integer(unsigned(i_s_axis_tuser(5 downto 3)));
 
+                                -- synthesis translate_off
+                                assert i_max_hits_cfg /= "000"
+                                    report "cell_builder: i_max_hits_cfg=0 is invalid (all hits dropped)"
+                                    severity error;
+                                -- synthesis translate_on
                                 if s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
                                     v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
                                     s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
