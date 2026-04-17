@@ -102,7 +102,13 @@ begin
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '1';
                             s_req_addr_r  <= i_addr;
-                            s_req_wdata_r <= i_wdata;
+                            -- Safety: block 16-bit mode via direct reg write path
+                            if i_addr = x"E" then  -- Reg14
+                                s_req_wdata_r    <= i_wdata;
+                                s_req_wdata_r(4) <= '0';  -- force bit4=0
+                            else
+                                s_req_wdata_r <= i_wdata;
+                            end if;
                             s_is_read_r   <= '0';
                             s_busy_r      <= '1';
                             s_state_r     <= ST_ACTIVE;

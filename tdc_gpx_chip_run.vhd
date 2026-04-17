@@ -292,6 +292,7 @@ begin
 
                     when ST_DRAIN_CHECK =>
                       if i_raw_busy = '0' then
+                        s_wait_cnt_r <= (others => '0');  -- clear raw_busy watchdog
                         v_cap := shift_left(resize(i_n_drain_cap, 8), 2);
 
                         v_ififo1_done := (i_ef1_sync = '1')
@@ -391,6 +392,14 @@ begin
                                 s_purge_mode_r <= '0';
                             end if;
                             -- Always emit final drain_done (normal + purge)
+                            s_drain_done_r <= '1';
+                            s_ififo_id_r   <= '1';
+                            s_state_r      <= ST_ALU_PULSE;
+                        end if;
+                      else
+                        -- raw_busy watchdog: abort drain if stalled too long
+                        s_wait_cnt_r <= s_wait_cnt_r + 1;
+                        if s_wait_cnt_r = x"FFFF" then
                             s_drain_done_r <= '1';
                             s_ififo_id_r   <= '1';
                             s_state_r      <= ST_ALU_PULSE;

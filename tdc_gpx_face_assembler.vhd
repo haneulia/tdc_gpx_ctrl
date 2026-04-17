@@ -492,8 +492,14 @@ begin
                         s_cur_chip_r <= s_next_chip_r;
                         s_chip_error_r(v_chip_idx) <= '1';
                         s_state_r    <= ST_RESOLVE;
+                    elsif s_shot_cnt_r = x"FFFF" then
+                        -- Hard safety cap: even if timeout_limit=0 (disabled),
+                        -- don't wait forever. Force blank after ~330us @200MHz.
+                        s_is_blank_r <= '1';
+                        s_cur_chip_r <= s_next_chip_r;
+                        s_chip_error_r(v_chip_idx) <= '1';
+                        s_state_r    <= ST_RESOLVE;
                     end if;
-                    -- else: wait for current chip (no state change)
 
                 -- ==============================================================
                 -- ST_RESOLVE: compute is_last_chip from registered s_cur_chip_r

@@ -130,7 +130,7 @@ begin
     -- =========================================================================
     p_fsm : process (i_clk)
         variable v_any_debounced : boolean;
-        variable v_reg11         : std_logic_vector(31 downto 0);
+        variable v_reg12         : std_logic_vector(31 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -184,12 +184,16 @@ begin
                         end if;
 
                     -- ---------------------------------------------------------
-                    -- ST_READ_REG11: issue Reg11 read for error chips
+                    -- ST_READ_REG11: issue Reg12 read for error cause flags
+                    -- NOTE: Reg11 contains unmask configuration bits, NOT status.
+                    -- Reg12 contains actual error flags: HFifoFull, IFifoFull,
+                    -- NotLocked. Reading Reg12 may clear some flags (datasheet),
+                    -- so we latch cause internally on read completion.
                     -- ---------------------------------------------------------
                     when ST_READ_REG11 =>
-                        s_err_cause_r         <= (others => '0');  -- clear before new classification
+                        s_err_cause_r         <= (others => '0');
                         s_cmd_reg_read_r      <= '1';
-                        s_cmd_reg_addr_r      <= "1011";  -- Reg11
+                        s_cmd_reg_addr_r      <= c_TDC_REG12;  -- Reg12: actual status flags
                         s_cmd_reg_chip_addr_r <= s_err_chip_mask_r;
                         s_state_r             <= ST_WAIT_READ;
 
@@ -200,17 +204,17 @@ begin
                         if i_cmd_reg_done_pulse = '1' then
                             for i in 0 to c_N_CHIPS - 1 loop
                                 if s_err_chip_mask_r(i) = '1' then
-                                    v_reg11 := s_reg11_data(i);
-                                    -- Bits 23:16 = HitFIFO overflow flags
-                                    if v_reg11(23 downto 16) /= x"00" then
+                                    v_reg12 := s_reg11_data(i);  -- data comes from reg read (now Reg12)
+                                    -- Reg12 bits 23:16 = HFifoFull per stop (actual status)
+                                    if v_reg12(23 downto 16) /= x"00" then
                                         s_err_cause_r(0) <= '1';
                                     end if;
-                                    -- Bits 25:24 = IFIFO overflow flags
-                                    if v_reg11(25 downto 24) /= "00" then
+                                    -- Reg12 bits 25:24 = IFifoFull (actual status)
+                                    if v_reg12(25 downto 24) /= "00" then
                                         s_err_cause_r(1) <= '1';
                                     end if;
-                                    -- Bit 26 = PLL lock lost
-                                    if v_reg11(26) = '1' then
+                                    -- Reg12 bit 26 = NotLocked (actual status)
+                                    if v_reg12(26) = '1' then
                                         s_err_cause_r(2) <= '1';
                                     end if;
                                 end if;

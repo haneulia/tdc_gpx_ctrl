@@ -352,8 +352,10 @@ begin
                                     s_buf_state_r(1)  <= BUF_COLLECT;
                                     s_cell_buf_r(1)   <= (others => c_CELL_INIT);
                                     s_cstate_r        <= ST_C_ACTIVE;
+                                else
+                                    -- No free buffer: shot dropped silently at IDLE
+                                    s_shot_dropped_r <= '1';
                                 end if;
-                                -- else: no free buffer, stay IDLE (shot dropped)
                             end if;
 
                         when ST_C_ACTIVE =>

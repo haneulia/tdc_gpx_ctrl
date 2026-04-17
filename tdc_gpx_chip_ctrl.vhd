@@ -518,9 +518,9 @@ begin
                             s_phase_r    <= PH_INIT;
                             s_init_start <= '1';
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap: bus appears stuck. Go to IDLE instead of
-                            -- INIT to avoid init deadlock on a hung bus.
-                            -- chip_init timeout will handle bus recovery.
+                            -- Hard cap: bus may be stuck. Proceed to PH_INIT anyway;
+                            -- chip_init has its own response timeout (x"FFFF") that
+                            -- will force completion if bus_phy never responds.
                             s_phase_r    <= PH_INIT;
                             s_init_start <= '1';
                         end if;
