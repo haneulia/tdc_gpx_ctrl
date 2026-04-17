@@ -214,6 +214,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_write_g : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_chip_address    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_done_pulse   : std_logic;
+    signal s_reg_outstanding      : std_logic;
     signal s_cmd_reg_done_chip    : unsigned(1 downto 0);
     signal s_reg_loop_resume      : std_logic;
     signal s_cmd_reg_addr_out     : std_logic_vector(3 downto 0);
@@ -338,6 +339,7 @@ begin
     o_errflag_sync      <= s_errflag_sync;
     o_err_drain_timeout <= s_err_drain_timeout;
     o_err_sequence      <= s_err_sequence;
+    o_reg_outstanding   <= s_reg_outstanding;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch;
     o_err_active        <= s_err_active;
 
@@ -449,7 +451,7 @@ begin
             o_cmd_cfg_write_g    => o_cmd_cfg_write_g,
             o_cmd_reg_read_g     => s_cmd_reg_read_g,
             o_cmd_reg_write_g    => s_cmd_reg_write_g,
-            o_reg_outstanding    => o_reg_outstanding,
+            o_reg_outstanding    => s_reg_outstanding,
             o_outstanding_chip   => open,
             o_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
             o_cmd_reg_done_chip  => s_cmd_reg_done_chip,
@@ -471,6 +473,7 @@ begin
             i_reg11_data_2       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(2),
             i_reg11_data_3       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(3),
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
+            i_reg_outstanding    => s_reg_outstanding,
             i_frame_done         => i_frame_done or i_frame_fall_done,
             i_shot_start         => i_shot_start_gated,
             o_cmd_soft_reset     => s_err_cmd_soft_reset,

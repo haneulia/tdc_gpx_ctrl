@@ -83,6 +83,7 @@ begin
                 s_rvalid_r    <= '0';
                 s_done_r      <= '0';
                 s_busy_r      <= '0';
+                s_timeout_r   <= (others => '0');
             else
                 s_rvalid_r <= '0';
                 s_done_r   <= '0';

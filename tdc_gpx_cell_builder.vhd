@@ -499,8 +499,9 @@ begin
                 s_tdata_r     <= (others => '0');
                 s_tvalid_r    <= '0';
                 s_tlast_r     <= '0';
-                s_output_done_r  <= '0';
+                s_output_done_r   <= '0';
                 s_slice_timeout_r <= '0';
+                s_out_timeout_r   <= (others => '0');
             else
                 s_output_done_r  <= '0';
                 s_slice_timeout_r <= '0';

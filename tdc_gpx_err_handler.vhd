@@ -41,6 +41,7 @@ entity tdc_gpx_err_handler is
         i_reg11_data_2      : in  std_logic_vector(31 downto 0);
         i_reg11_data_3      : in  std_logic_vector(31 downto 0);
         i_cmd_reg_done_pulse: in  std_logic;
+        i_reg_outstanding   : in  std_logic;   -- cmd_arb has active reg access
         -- Frame done (from output_stage, for VDMA frame boundary)
         i_frame_done        : in  std_logic;
         -- Shot start (for sync recovery to shot boundary)
@@ -193,11 +194,16 @@ begin
                     -- so we latch cause internally on read completion.
                     -- ---------------------------------------------------------
                     when ST_READ_REG11 =>
-                        s_err_cause_r         <= (others => '0');
-                        s_cmd_reg_read_r      <= '1';
-                        s_cmd_reg_addr_r      <= c_TDC_REG12;  -- Reg12: actual status flags
-                        s_cmd_reg_chip_addr_r <= s_err_chip_mask_r;
-                        s_state_r             <= ST_WAIT_READ;
+                        -- Wait for any prior reg access to complete before issuing
+                        -- our read. This prevents consuming a stale done_pulse from
+                        -- a different reg transaction.
+                        if i_reg_outstanding = '0' then
+                            s_err_cause_r         <= (others => '0');
+                            s_cmd_reg_read_r      <= '1';
+                            s_cmd_reg_addr_r      <= c_TDC_REG12;
+                            s_cmd_reg_chip_addr_r <= s_err_chip_mask_r;
+                            s_state_r             <= ST_WAIT_READ;
+                        end if;
 
                     -- ---------------------------------------------------------
                     -- ST_WAIT_READ: wait for read completion, classify error
@@ -206,18 +212,22 @@ begin
                         if i_cmd_reg_done_pulse = '1' then
                             for i in 0 to c_N_CHIPS - 1 loop
                                 if s_err_chip_mask_r(i) = '1' then
-                                    v_reg12 := s_reg11_data(i);  -- data comes from reg read (now Reg12)
-                                    -- Reg12 bits 23:16 = HFifoFull per stop (actual status)
-                                    if v_reg12(23 downto 16) /= x"00" then
-                                        s_err_cause_r(0) <= '1';
+                                    v_reg12 := s_reg11_data(i);  -- data from Reg12 read
+                                    -- Reg12 datasheet bit map:
+                                    --   [7:0]  = HFifoFull per stop (8 flags)
+                                    --   [9:8]  = IFifoFull (2 flags: IFIFO1, IFIFO2)
+                                    --   [10]   = NotLocked (PLL lock lost)
+                                    --   [11+]  = reserved / interrupt control
+                                    -- NOTE: reading Reg12 clears HFifoFull/IFifoFull,
+                                    -- so we latch cause immediately.
+                                    if v_reg12(7 downto 0) /= x"00" then
+                                        s_err_cause_r(0) <= '1';  -- HitFIFO overflow
                                     end if;
-                                    -- Reg12 bits 25:24 = IFifoFull (actual status)
-                                    if v_reg12(25 downto 24) /= "00" then
-                                        s_err_cause_r(1) <= '1';
+                                    if v_reg12(9 downto 8) /= "00" then
+                                        s_err_cause_r(1) <= '1';  -- IFIFO overflow
                                     end if;
-                                    -- Reg12 bit 26 = NotLocked (actual status)
-                                    if v_reg12(26) = '1' then
-                                        s_err_cause_r(2) <= '1';
+                                    if v_reg12(10) = '1' then
+                                        s_err_cause_r(2) <= '1';  -- PLL not locked
                                     end if;
                                 end if;
                             end loop;

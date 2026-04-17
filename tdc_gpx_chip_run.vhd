@@ -401,6 +401,7 @@ begin
                         -- raw_busy watchdog: abort drain if stalled too long
                         s_wait_cnt_r <= s_wait_cnt_r + 1;
                         if s_wait_cnt_r = x"FFFF" then
+                            s_oen_permanent_r <= '0';  -- cleanup
                             s_drain_done_r <= '1';
                             s_ififo_id_r   <= '1';
                             s_state_r      <= ST_ALU_PULSE;
@@ -420,11 +421,11 @@ begin
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
-                                -- Bus response timeout: abort drain
-                                s_req_valid_r <= '0';
-                                s_drain_done_r <= '1';
-                                s_ififo_id_r   <= '1';
-                                s_state_r      <= ST_ALU_PULSE;
+                                s_req_valid_r     <= '0';
+                                s_oen_permanent_r <= '0';
+                                s_drain_done_r    <= '1';
+                                s_ififo_id_r      <= '1';
+                                s_state_r         <= ST_ALU_PULSE;
                             end if;
                         end if;
 
@@ -441,10 +442,11 @@ begin
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
-                                s_req_valid_r <= '0';
-                                s_drain_done_r <= '1';
-                                s_ififo_id_r   <= '1';
-                                s_state_r      <= ST_ALU_PULSE;
+                                s_req_valid_r     <= '0';
+                                s_oen_permanent_r <= '0';
+                                s_drain_done_r    <= '1';
+                                s_ififo_id_r      <= '1';
+                                s_state_r         <= ST_ALU_PULSE;
                             end if;
                         end if;
 
@@ -467,11 +469,12 @@ begin
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
-                                s_req_burst_r  <= '0';
-                                s_req_valid_r  <= '0';
-                                s_drain_done_r <= '1';
-                                s_ififo_id_r   <= '1';
-                                s_state_r      <= ST_ALU_PULSE;
+                                s_req_burst_r     <= '0';
+                                s_req_valid_r     <= '0';
+                                s_oen_permanent_r <= '0';
+                                s_drain_done_r    <= '1';
+                                s_ififo_id_r      <= '1';
+                                s_state_r         <= ST_ALU_PULSE;
                             end if;
                         end if;
 
@@ -493,9 +496,10 @@ begin
                             s_state_r    <= ST_DRAIN_SETTLE;
                         elsif s_wait_cnt_r = x"FFFF" then
                             -- Bus hung during flush: force completion
-                            s_drain_done_r <= '1';
-                            s_ififo_id_r   <= '1';
-                            s_state_r      <= ST_ALU_PULSE;
+                            s_oen_permanent_r <= '0';
+                            s_drain_done_r    <= '1';
+                            s_ififo_id_r      <= '1';
+                            s_state_r         <= ST_ALU_PULSE;
                         end if;
 
                     when ST_DRAIN_SETTLE =>

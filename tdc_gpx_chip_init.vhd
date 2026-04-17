@@ -108,6 +108,7 @@ begin
             if i_rst_n = '0' then
                 s_state_r        <= ST_OFF;
                 s_wait_cnt_r     <= (others => '0');
+                s_rsp_timeout_r  <= (others => '0');
                 s_cfg_idx_r      <= (others => '0');
                 s_req_valid_r    <= '0';
                 s_puresn_r       <= '0';

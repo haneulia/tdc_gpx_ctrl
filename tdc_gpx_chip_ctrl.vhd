@@ -620,10 +620,12 @@ begin
     -- Slot 0 (hold) = output register. Slot 1 (skid) = overflow buffer.
     -- chip_run pulses are latched; if hold is busy, skid absorbs 1 beat.
     p_raw_hold : process(i_clk)
-        variable v_new_valid : std_logic;
-        variable v_new_tdata : std_logic_vector(31 downto 0);
-        variable v_new_tuser : std_logic_vector(7 downto 0);
-        variable v_new_drain : std_logic;
+        variable v_new_valid       : std_logic;
+        variable v_new_tdata       : std_logic_vector(31 downto 0);
+        variable v_new_tuser       : std_logic_vector(7 downto 0);
+        variable v_new_drain       : std_logic;
+        variable v_hold_next_valid : std_logic;
+        variable v_skid_next_valid : std_logic;
     begin
         if rising_edge(i_clk) then
             if s_sub_rst_n = '0' then
@@ -651,39 +653,47 @@ begin
                     v_new_drain := s_run_drain_done;
                 end if;
 
-                -- Output slot: clear on downstream accept
+                -- Variable-based next-state to avoid VHDL signal-update ordering issues.
+                -- This ensures same-cycle consume + promote + enqueue is lossless.
+                v_hold_next_valid := s_raw_hold_valid_r;
+                v_skid_next_valid := s_raw_skid_valid_r;
+
+                -- Step 1: consume hold on downstream accept
                 if s_raw_hold_valid_r = '1' and i_m_raw_axis_tready = '1' then
-                    -- Promote skid to hold if available
                     if s_raw_skid_valid_r = '1' then
+                        -- Promote skid to hold
                         s_raw_hold_tdata_r <= s_raw_skid_tdata_r;
                         s_raw_hold_tuser_r <= s_raw_skid_tuser_r;
                         s_raw_hold_drain_r <= s_raw_skid_drain_r;
-                        s_raw_skid_valid_r <= '0';
+                        v_hold_next_valid := '1';  -- still valid (promoted)
+                        v_skid_next_valid := '0';  -- skid now free
                     else
-                        s_raw_hold_valid_r <= '0';
                         s_raw_hold_drain_r <= '0';
+                        v_hold_next_valid := '0';  -- hold now free
                     end if;
                 end if;
 
-                -- Latch new beat
+                -- Step 2: enqueue new beat using next-state variables
                 if v_new_valid = '1' then
-                    if s_raw_hold_valid_r = '0'
-                       or (s_raw_hold_valid_r = '1' and i_m_raw_axis_tready = '1'
-                           and s_raw_skid_valid_r = '0') then
-                        -- Hold is free (or being consumed and skid empty): write to hold
+                    if v_hold_next_valid = '0' then
                         s_raw_hold_valid_r <= '1';
                         s_raw_hold_tdata_r <= v_new_tdata;
                         s_raw_hold_tuser_r <= v_new_tuser;
                         s_raw_hold_drain_r <= v_new_drain;
-                    elsif s_raw_skid_valid_r = '0' then
-                        -- Hold full, skid empty: write to skid
+                        v_hold_next_valid := '1';
+                    elsif v_skid_next_valid = '0' then
                         s_raw_skid_valid_r <= '1';
                         s_raw_skid_tdata_r <= v_new_tdata;
                         s_raw_skid_tuser_r <= v_new_tuser;
                         s_raw_skid_drain_r <= v_new_drain;
+                        v_skid_next_valid := '1';
                     end if;
-                    -- else: both full → beat lost (should not happen with tready gating)
+                    -- else: both full after step 1 → should not happen with backpressure
                 end if;
+
+                -- Commit valid flags
+                s_raw_hold_valid_r <= v_hold_next_valid;
+                s_raw_skid_valid_r <= v_skid_next_valid;
             end if;
         end if;
     end process p_raw_hold;
