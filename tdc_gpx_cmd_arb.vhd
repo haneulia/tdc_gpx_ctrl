@@ -232,8 +232,15 @@ begin
                     end if;
 
                 -- ---- Accept new multi-chip request ----
-                elsif v_new_request = '1' and s_reg_active_r = '0'
-                      and i_cmd_reg_chip_address /= C_ZEROS then
+                elsif v_new_request = '1' and s_reg_active_r = '0' then
+                  if i_cmd_reg_chip_address = C_ZEROS then
+                    -- Zero mask: silently ignore to prevent permanent lockup
+                    -- synthesis translate_off
+                    assert false
+                        report "cmd_arb: reg request with zero chip mask ignored"
+                        severity warning;
+                    -- synthesis translate_on
+                  else
                     -- Guard: zero mask → ignore (prevents permanent lockup)
                     s_reg_active_r       <= '1';
                     s_reg_target_mask_r  <= i_cmd_reg_chip_address;
@@ -268,6 +275,7 @@ begin
                             s_reg_dispatched_r(i) <= '0';
                         end if;
                     end loop;
+                  end if;  -- zero mask check
 
                 -- ---- Active: continue dispatching pending + collect dones ----
                 elsif s_reg_active_r = '1' then

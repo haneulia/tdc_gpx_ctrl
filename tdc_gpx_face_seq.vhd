@@ -187,6 +187,13 @@ begin
                                 s_shot_overrun_r       <= '0';
                                 s_cmd_start_accepted_r <= '1';
                                 s_face_state_r         <= ST_WAIT_SHOT;
+                            else
+                                -- Pipeline busy: start not accepted (not a config error).
+                                -- synthesis translate_off
+                                assert false
+                                    report "face_seq: cmd_start ignored (pipeline busy)"
+                                    severity note;
+                                -- synthesis translate_on
                             end if;
                         end if;
 

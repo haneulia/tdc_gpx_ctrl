@@ -489,6 +489,16 @@ begin
 
                     when PH_IDLE =>
                         -- Priority: start > cfg_write > reg_read > reg_write
+                        -- synthesis translate_off
+                        -- Warn if multiple commands arrive simultaneously
+                        if (i_cmd_start and i_cmd_cfg_write) = '1'
+                           or (i_cmd_start and (i_cmd_reg_read or i_cmd_reg_write)) = '1'
+                           or (i_cmd_cfg_write and (i_cmd_reg_read or i_cmd_reg_write)) = '1' then
+                            assert false
+                                report "chip_ctrl: multiple commands in PH_IDLE (lower priority dropped)"
+                                severity warning;
+                        end if;
+                        -- synthesis translate_on
                         if i_cmd_start = '1' then
                             -- Snapshot ALL config for run (including cfg_image for chip_run)
                             s_cfg_image_snap_r   <= i_cfg_image;
