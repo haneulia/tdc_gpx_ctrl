@@ -61,7 +61,11 @@ entity tdc_gpx_cmd_arb is
         o_cmd_reg_done_pulse : out std_logic;                        -- all-done 1-clk pulse
         o_cmd_reg_done_chip  : out unsigned(1 downto 0);             -- which chip just completed
         o_reg_loop_resume    : out std_logic;                        -- measurement loop resume 1-clk
-        o_cmd_reg_addr_out   : out std_logic_vector(3 downto 0)      -- latched addr for csr_chip STAT
+        o_cmd_reg_addr_out   : out std_logic_vector(3 downto 0);     -- latched addr for csr_chip STAT
+
+        -- Timeout status
+        o_reg_timeout        : out std_logic;                        -- sticky: reg access timeout occurred
+        o_reg_timeout_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0)  -- which chips timed out
     );
 end entity tdc_gpx_cmd_arb;
 
@@ -106,6 +110,7 @@ architecture rtl of tdc_gpx_cmd_arb is
     -- Reg access timeout (prevents permanent hang if chip never responds)
     signal s_reg_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');
     signal s_reg_timeout_r       : std_logic := '0';  -- sticky: timeout occurred
+    signal s_reg_timeout_mask_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
 begin
 
@@ -179,6 +184,7 @@ begin
                 s_outstanding_chip_r <= (others => '0');
                 s_reg_timeout_cnt_r  <= (others => '0');
                 s_reg_timeout_r      <= '0';
+                s_reg_timeout_mask_r <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_dispatch_pulse_r <= (others => '0');
@@ -197,8 +203,10 @@ begin
                 if s_reg_active_r = '1' then
                     if s_reg_timeout_cnt_r = x"FFFF" then
                         -- Timeout: force done for all target chips
-                        s_reg_done_mask_r   <= s_reg_target_mask_r;
-                        s_reg_timeout_r     <= '1';  -- sticky
+                        s_reg_done_mask_r    <= s_reg_target_mask_r;
+                        s_reg_timeout_r      <= '1';  -- sticky
+                        -- Record which chips didn't respond
+                        s_reg_timeout_mask_r <= s_reg_target_mask_r and (not s_reg_done_mask_r);
                     else
                         s_reg_timeout_cnt_r <= s_reg_timeout_cnt_r + 1;
                     end if;
@@ -311,5 +319,7 @@ begin
     o_cmd_reg_done_chip  <= s_done_chip_r;
     o_reg_loop_resume    <= s_loop_resume_r;
     o_cmd_reg_addr_out   <= s_reg_pending_addr_r;
+    o_reg_timeout        <= s_reg_timeout_r;
+    o_reg_timeout_mask   <= s_reg_timeout_mask_r;
 
 end architecture rtl;

@@ -457,7 +457,9 @@ begin
             o_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
             o_cmd_reg_done_chip  => s_cmd_reg_done_chip,
             o_reg_loop_resume    => s_reg_loop_resume,
-            o_cmd_reg_addr_out   => s_cmd_reg_addr_out
+            o_cmd_reg_addr_out   => s_cmd_reg_addr_out,
+            o_reg_timeout        => open,  -- TODO: wire to status
+            o_reg_timeout_mask   => open   -- TODO: wire to status
         );
 
     -- =========================================================================
