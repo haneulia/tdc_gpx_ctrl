@@ -259,7 +259,7 @@ architecture rtl of tdc_gpx_csr_chip is
             stat30_in : in std_logic_vector(31 downto 0);
             stat31_in : in std_logic_vector(31 downto 0);
             -- Interrupt
-            intrpt_src_in : in  std_logic_vector(0 downto 0);
+            intrpt_src_in : in  std_logic_vector(1 downto 0);
             irq           : out std_logic
         );
     end component tdc_gpx_axil_csr32_chip;
@@ -468,6 +468,7 @@ begin
             stat30_in => C_ZERO32,  stat31_in => C_ZERO32,
             -- Interrupt: done_pulse CDC'd to s_axi_aclk domain
             intrpt_src_in(0) => s_irq_pulse,
+            intrpt_src_in(1) => '0',
             irq              => o_irq
         );
 

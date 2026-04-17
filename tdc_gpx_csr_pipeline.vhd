@@ -168,7 +168,7 @@ architecture rtl of tdc_gpx_csr_pipeline is
             stat5_in            : in  std_logic_vector(31 downto 0);
             stat6_in            : in  std_logic_vector(31 downto 0);
             stat7_in            : in  std_logic_vector(31 downto 0);
-            intrpt_src_in       : in  std_logic_vector(31 downto 0);
+            intrpt_src_in       : in  std_logic_vector(0 downto 0);
             irq                 : out std_logic
         );
     end component tdc_gpx_axil_csr_pipeline;
@@ -302,7 +302,7 @@ begin
             stat5_in => s_stat_out,     -- STATUS (CDC'd from i_axis_aclk)
             stat6_in => C_ZERO32,       -- reserved
             stat7_in => C_ZERO32,       -- reserved
-            intrpt_src_in => C_ZERO32,
+            intrpt_src_in => "0",
             irq           => o_irq
         );
 
