@@ -194,6 +194,7 @@ begin
             i_oen_permanent => s_oen_permanent,
             i_req_burst     => s_req_burst,
             o_busy          => s_busy,
+            o_rsp_pending   => open,
             o_m_axis_tvalid => s_axis_tvalid,
             o_m_axis_tdata  => s_axis_tdata,
             o_m_axis_tkeep  => s_axis_tkeep,

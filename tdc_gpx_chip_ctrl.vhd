@@ -114,6 +114,7 @@ entity tdc_gpx_chip_ctrl is
         i_s_axis_tuser      : in  std_logic_vector(7 downto 0);
         o_s_axis_tready     : out std_logic;
         i_bus_busy          : in  std_logic;
+        i_bus_rsp_pending   : in  std_logic;  -- bus_phy response pending or tvalid held
 
         -- bus_phy synchronized status inputs
         i_ef1_sync          : in  std_logic;          -- '1' = IFIFO1 empty
@@ -474,8 +475,9 @@ begin
                         if s_init_done = '1' then
                             if s_init_timeout = '1' then
                                 -- Timeout: drain stale responses before IDLE
-                                s_phase_r     <= PH_RESP_DRAIN;
-                                s_drain_cnt_r <= (others => '0');
+                                s_phase_r         <= PH_RESP_DRAIN;
+                                s_drain_cnt_r     <= (others => '0');
+                                s_drain_to_init_r <= '0';
                             else
                                 s_phase_r <= PH_IDLE;
                             end if;
@@ -517,15 +519,17 @@ begin
                             -- chip_run has multiple internal timeout paths;
                             -- any of them may leave stale responses in bus_phy.
                             -- Drain as precaution on every run completion.
-                            s_phase_r     <= PH_RESP_DRAIN;
-                            s_drain_cnt_r <= (others => '0');
+                            s_phase_r         <= PH_RESP_DRAIN;
+                            s_drain_cnt_r     <= (others => '0');
+                            s_drain_to_init_r <= '0';
                         end if;
 
                     when PH_CFG_WRITE =>
                         if s_init_done = '1' then
                             if s_init_timeout = '1' then
-                                s_phase_r     <= PH_RESP_DRAIN;
-                                s_drain_cnt_r <= (others => '0');
+                                s_phase_r         <= PH_RESP_DRAIN;
+                                s_drain_cnt_r     <= (others => '0');
+                                s_drain_to_init_r <= '0';
                             else
                                 s_phase_r <= PH_IDLE;
                             end if;
@@ -534,8 +538,9 @@ begin
                     when PH_REG =>
                         if s_reg_done = '1' then
                             if s_reg_timeout = '1' then
-                                s_phase_r     <= PH_RESP_DRAIN;
-                                s_drain_cnt_r <= (others => '0');
+                                s_phase_r         <= PH_RESP_DRAIN;
+                                s_drain_cnt_r     <= (others => '0');
+                                s_drain_to_init_r <= '0';
                             else
                                 s_phase_r <= PH_IDLE;
                             end if;
@@ -545,21 +550,23 @@ begin
                         -- Drain stale bus responses after timeout or soft reset.
                         -- tready='1' (above), routing='0' (all discarded).
                         s_drain_cnt_r <= s_drain_cnt_r + 1;
-                        if i_bus_busy = '0' and s_drain_cnt_r >= to_unsigned(3, 4) then
+                        if i_bus_busy = '0' and i_bus_rsp_pending = '0'
+                           and s_drain_cnt_r >= to_unsigned(3, 4) then
                             if s_drain_to_init_r = '1' then
                                 s_phase_r    <= PH_INIT;
                                 s_init_start <= '1';
                             else
                                 s_phase_r <= PH_IDLE;
                             end if;
+                            s_drain_to_init_r <= '0';  -- always clear on drain exit
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap: bus may be stuck.
                             if s_drain_to_init_r = '1' then
                                 s_phase_r    <= PH_INIT;
                                 s_init_start <= '1';
                             else
                                 s_phase_r <= PH_IDLE;
                             end if;
+                            s_drain_to_init_r <= '0';  -- always clear on drain exit
                         end if;
 
                 end case;

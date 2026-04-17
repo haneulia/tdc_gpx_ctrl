@@ -35,7 +35,9 @@ entity tdc_gpx_err_handler is
         i_errflag_sync      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         -- Chip status
         i_chip_busy         : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Reg11 read results (from csr_chip STAT, per-chip)
+        -- Reg read results (from csr_chip STAT, per-chip)
+        -- NOTE: despite port name "reg11", this now reads Reg12 (actual status).
+        -- Port name kept for backward compatibility with config_ctrl wiring.
         i_reg11_data_0      : in  std_logic_vector(31 downto 0);
         i_reg11_data_1      : in  std_logic_vector(31 downto 0);
         i_reg11_data_2      : in  std_logic_vector(31 downto 0);

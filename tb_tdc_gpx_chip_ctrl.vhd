@@ -254,6 +254,7 @@ begin
             i_s_axis_tuser      => s_brsp_axis_tuser,
             o_s_axis_tready     => s_brsp_axis_tready,
             i_bus_busy          => s_bus_busy,
+            i_bus_rsp_pending   => '0',
             i_ef1_sync          => s_ef1_sync,
             i_ef2_sync          => s_ef2_sync,
             i_irflag_sync       => s_irflag_sync,

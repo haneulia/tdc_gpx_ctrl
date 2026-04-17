@@ -235,7 +235,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_bus_oen_perm    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_ticks_snap  : t_u3_array;
-    signal s_bus_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_busy           : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_rsp_pending    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy response AXI-Stream
     signal s_brsp_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -549,7 +550,8 @@ begin
                 o_lf1_sync      => s_lf1_sync(i),
                 o_lf2_sync      => s_lf2_sync(i),
                 o_irflag_sync   => s_irflag_sync(i),
-                o_errflag_sync  => s_errflag_sync(i)
+                o_errflag_sync  => s_errflag_sync(i),
+                o_rsp_pending   => s_bus_rsp_pending(i)
             );
 
         -- ----- skid buffer: bus_phy -> chip_ctrl (32b tdata + 8b tuser = 40b) -----
@@ -610,6 +612,7 @@ begin
                 i_s_axis_tuser      => s_brsp_sk_tuser(i),
                 o_s_axis_tready     => s_brsp_sk_tready(i),
                 i_bus_busy          => s_bus_busy(i),
+                i_bus_rsp_pending   => s_bus_rsp_pending(i),
                 i_ef1_sync          => s_ef1_sync(i),
                 i_ef2_sync          => s_ef2_sync(i),
                 i_irflag_sync       => s_irflag_sync(i),

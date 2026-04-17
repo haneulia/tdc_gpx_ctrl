@@ -95,6 +95,7 @@ entity tdc_gpx_bus_phy is
 
         -- Response: busy flag (active during transaction)
         o_busy          : out std_logic;
+        o_rsp_pending   : out std_logic;  -- response pending or AXI tvalid held
 
         -- TDC-GPX physical pins
         o_adr           : out std_logic_vector(3 downto 0);
@@ -615,7 +616,8 @@ begin
     o_wrn       <= s_wrn_r;
     o_oen       <= s_oen_r;
 
-    o_busy      <= s_busy_r;
+    o_busy        <= s_busy_r;
+    o_rsp_pending <= s_rsp_pending_r or s_axis_tvalid_r;
 
     o_m_axis_tvalid <= s_axis_tvalid_r;
     o_m_axis_tdata  <= s_axis_tdata_r;

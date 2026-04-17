@@ -140,6 +140,7 @@ begin
                             s_busy_r        <= '0';
                             s_done_r        <= '1';
                             s_timeout_out_r <= '1';
+                            s_timeout_r     <= (others => '0');  -- clear for next use
                             s_state_r       <= ST_OFF;
                         else
                             s_timeout_r <= s_timeout_r + 1;
