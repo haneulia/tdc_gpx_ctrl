@@ -455,6 +455,13 @@ begin
                 -- Post-case override: last assignment wins.
                 -- =============================================================
                 if i_face_start = '1' then
+                    -- synthesis translate_off
+                    assert s_state_r = ST_IDLE
+                        report "header_inserter: face_start while not IDLE (state=" &
+                               t_state'image(s_state_r) & ")"
+                        severity warning;
+                    -- synthesis translate_on
+
                     -- All fields latched at face_start (= s_face_start_r in top).
                     -- Error fields (chip_error_mask, chip_error_cnt) are a
                     -- SNAPSHOT at face-start time, NOT the post-drain result.

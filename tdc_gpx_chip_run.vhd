@@ -293,7 +293,8 @@ begin
                     when ST_DRAIN_CHECK =>
                       if i_raw_busy = '0' then
                         s_wait_cnt_r <= (others => '0');  -- clear raw_busy watchdog
-                        v_cap := shift_left(resize(i_n_drain_cap, 8), 2);
+                        -- n_drain_cap × 4: each cap unit = 4 IFIFO words (burst quantum)
+                        v_cap := shift_left(resize(i_n_drain_cap, 8), 2);  -- ×4
 
                         v_ififo1_done := (i_ef1_sync = '1')
                             or (s_purge_mode_r = '0' and i_n_drain_cap /= "0000"

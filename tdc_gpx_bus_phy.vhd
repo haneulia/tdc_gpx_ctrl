@@ -378,12 +378,23 @@ begin
                            and s_rsp_valid_r = '0'
                            and s_rsp_pending_r = '0'
                            and s_axis_tvalid_r = '0' then  -- AXI-Stream response fully consumed
+                            -- synthesis translate_off
+                            assert to_integer(i_bus_ticks) >= 4
+                                report "bus_phy: bus_ticks < 4 (got " &
+                                       integer'image(to_integer(i_bus_ticks)) & ")"
+                                severity error;
+                            -- synthesis translate_on
                             s_busy_r <= '1';
 
                             if i_req_rw = '1' then
                                 -- ===== WRITE request =====
                                 if i_oen_permanent = '1' then
                                     -- [INV-7] WRITE forbidden during oen_permanent
+                                    -- synthesis translate_off
+                                    assert false
+                                        report "bus_phy: write request ignored (oen_permanent='1')"
+                                        severity warning;
+                                    -- synthesis translate_on
                                     s_busy_r <= '0';
 
                                 elsif s_last_was_read_r = '1' then

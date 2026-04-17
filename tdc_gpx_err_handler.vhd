@@ -102,7 +102,8 @@ architecture rtl of tdc_gpx_err_handler is
     -- =========================================================================
     -- Recovery timeout & retry
     -- =========================================================================
-    signal s_recov_timeout_r : unsigned(13 downto 0) := (others => '0');
+    signal s_recov_timeout_r  : unsigned(13 downto 0) := (others => '0');
+    signal s_recov_stable_r   : unsigned(2 downto 0)  := (others => '0');  -- stable-low counter
     constant C_RETRY_WIDTH : natural := maximum(1, integer(ceil(log2(real(g_MAX_RETRIES + 1)))));
     signal s_retry_cnt_r     : unsigned(C_RETRY_WIDTH - 1 downto 0)  := (others => '0');
 
@@ -145,6 +146,7 @@ begin
                 s_cmd_reg_addr_r     <= (others => '0');
                 s_cmd_reg_chip_addr_r <= (others => '0');
                 s_recov_timeout_r    <= (others => '0');
+                s_recov_stable_r     <= (others => '0');
                 s_retry_cnt_r        <= (others => '0');
                 s_frame_done_seen_r  <= '0';
             else
@@ -228,6 +230,7 @@ begin
                     when ST_RECOVERY =>
                         s_cmd_soft_reset_r <= s_err_chip_mask_r;
                         s_recov_timeout_r  <= (others => '0');
+                        s_recov_stable_r   <= (others => '0');
                         s_state_r          <= ST_WAIT_RECOVERY;
 
                     -- ---------------------------------------------------------
@@ -237,9 +240,14 @@ begin
                         if ((i_chip_busy and s_err_chip_mask_r) = (s_err_chip_mask_r'range => '0'))
                            and ((i_errflag_sync and s_err_chip_mask_r) = (s_err_chip_mask_r'range => '0'))
                         then
-                            -- Recovery succeeded
-                            s_frame_done_seen_r <= '0';
-                            s_state_r           <= ST_WAIT_FRAME_DONE;
+                            -- Require 8-cycle stable-low before declaring success
+                            if s_recov_stable_r = "111" then
+                                s_frame_done_seen_r <= '0';
+                                s_recov_stable_r    <= (others => '0');
+                                s_state_r           <= ST_WAIT_FRAME_DONE;
+                            else
+                                s_recov_stable_r <= s_recov_stable_r + 1;
+                            end if;
                         elsif s_recov_timeout_r = to_unsigned(9999, 14) then
                             -- Timeout
                             if s_retry_cnt_r < to_unsigned(g_MAX_RETRIES, C_RETRY_WIDTH) then
@@ -255,6 +263,7 @@ begin
                                 s_state_r         <= ST_IDLE;
                             end if;
                         else
+                            s_recov_stable_r  <= (others => '0');
                             s_recov_timeout_r <= s_recov_timeout_r + 1;
                         end if;
 

@@ -352,6 +352,8 @@ begin
 
     -- =========================================================================
     -- Packet start (combinational, from internal FSM state)
+    -- NOTE: kept combinational for zero-latency face start. Assertions below
+    -- guard against unexpected double-fire or illegal-state glitches.
     -- =========================================================================
     s_packet_start <= '1' when s_face_state_r = ST_WAIT_SHOT
                                and (i_shot_start_raw = '1' or s_shot_deferred_r = '1')
@@ -384,6 +386,12 @@ begin
                 s_shot_deferred_r <= '0';
             else
                 s_face_start_r <= s_packet_start;
+
+                -- synthesis translate_off
+                assert not (s_packet_start = '1' and s_face_state_r /= ST_WAIT_SHOT)
+                    report "face_seq: packet_start while not ST_WAIT_SHOT"
+                    severity error;
+                -- synthesis translate_on
 
                 if s_packet_start = '1' then
                     s_face_active_r <= '1';
