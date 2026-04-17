@@ -56,6 +56,9 @@ entity tdc_gpx_chip_run is
         i_shot_start        : in  std_logic;
 
         -- Expected IFIFO counts (from echo_receiver)
+        -- CONTRACT: must be stable from i_shot_start through ST_DRAIN_LATCH.
+        -- Sampled in ST_DRAIN_LATCH (1 cycle after IrFlag-based drain entry).
+        -- If upstream changes these during capture/drain, results are undefined.
         i_expected_ififo1   : in  unsigned(7 downto 0);
         i_expected_ififo2   : in  unsigned(7 downto 0);
 
@@ -259,8 +262,9 @@ begin
                             s_range_active_r     <= '1';
                             s_drain_cnt_ififo1_r <= (others => '0');
                             s_drain_cnt_ififo2_r <= (others => '0');
-                            s_expected_ififo1_r  <= (others => '0');
-                            s_expected_ififo2_r  <= (others => '0');
+                            -- Snapshot expected counts at shot entry for stability check
+                            s_expected_ififo1_r  <= i_expected_ififo1;
+                            s_expected_ififo2_r  <= i_expected_ififo2;
                             s_ififo1_done_sent_r <= '0';
                             s_state_r            <= ST_CAPTURE;
                         end if;
@@ -298,6 +302,15 @@ begin
                         end if;
 
                     when ST_DRAIN_LATCH =>
+                        -- Re-sample and verify stability since shot_start
+                        -- synthesis translate_off
+                        assert i_expected_ififo1 = s_expected_ififo1_r
+                            report "chip_run: expected_ififo1 changed between shot_start and drain_latch"
+                            severity error;
+                        assert i_expected_ififo2 = s_expected_ififo2_r
+                            report "chip_run: expected_ififo2 changed between shot_start and drain_latch"
+                            severity error;
+                        -- synthesis translate_on
                         s_expected_ififo1_r <= i_expected_ififo1;
                         s_expected_ififo2_r <= i_expected_ififo2;
                         s_state_r           <= ST_DRAIN_CHECK;
