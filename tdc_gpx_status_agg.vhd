@@ -121,7 +121,9 @@ begin
     p_err_sticky : process(i_clk)
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' or i_cmd_start_accepted = '1' then
+            -- Sticky errors: cleared on reset only (not on start_accepted).
+            -- SW must explicitly read before reset to observe error history.
+            if i_rst_n = '0' then
                 s_err_drain_sticky_r <= (others => '0');
                 s_err_seq_sticky_r   <= (others => '0');
             else

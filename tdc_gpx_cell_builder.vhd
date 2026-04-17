@@ -381,8 +381,16 @@ begin
 
                                 -- Runtime stop_id bounds check
                                 if ('0' & unsigned(i_s_axis_tuser(5 downto 3))) >= i_stops_per_chip then
-                                    -- Out-of-range stop_id: discard silently
-                                    s_hit_dropped_r <= '1';
+                                    -- Out-of-range stop_id: discard (distinct from hit overflow)
+                                    -- synthesis translate_off
+                                    assert false
+                                        report "cell_builder: stop_id " &
+                                               integer'image(to_integer(unsigned(i_s_axis_tuser(5 downto 3)))) &
+                                               " >= stops_per_chip " &
+                                               integer'image(to_integer(i_stops_per_chip))
+                                        severity warning;
+                                    -- synthesis translate_on
+                                    s_hit_dropped_r <= '1';  -- TODO: separate o_stop_id_invalid when port available
                                 elsif s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
                                     v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
                                     s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
@@ -483,7 +491,8 @@ begin
                         -- Age-based selection: if both SHARED, pick older (smaller seq)
                         if s_buf_state_r(0) = BUF_SHARED and s_buf_state_r(1) = BUF_SHARED then
                             s_output_req_r <= '1';
-                            if s_buf_age_r(0) <= s_buf_age_r(1) then  -- unsigned compare handles wrap
+                            -- Wrap-safe age compare: if diff MSB=0, age0 is older or equal
+                            if (s_buf_age_r(0) - s_buf_age_r(1)) < 128 then
                                 s_rd_buf_idx_r <= '0';
                             else
                                 s_rd_buf_idx_r <= '1';

@@ -451,15 +451,23 @@ begin
 
                 -- =============================================================
                 -- face_start: latch fields and start first line prefix.
-                -- Works from ANY state (ST_IDLE normal, others = abort/restart).
-                -- Post-case override: last assignment wins.
+                -- ONLY accepted in ST_IDLE (hardware guard).
+                -- Non-IDLE face_start is silently ignored.
                 -- =============================================================
-                if i_face_start = '1' then
-                    -- synthesis translate_off
-                    assert s_state_r = ST_IDLE
-                        report "header_inserter: face_start while not IDLE (state=" &
+                -- synthesis translate_off
+                if i_face_start = '1' and s_state_r /= ST_IDLE then
+                    assert false
+                        report "header_inserter: face_start IGNORED (not IDLE, state=" &
                                t_state'image(s_state_r) & ")"
-                        severity warning;
+                        severity error;
+                end if;
+                -- synthesis translate_on
+                if i_face_start = '1' and s_state_r = ST_IDLE then
+                    -- Hardware guard: face_start is only accepted in ST_IDLE.
+                    -- Non-IDLE face_start is silently ignored (upstream contract
+                    -- guarantees hdr_idle check before issuing face_start).
+                    -- synthesis translate_off
+                    -- (assertion moved to process default for non-IDLE detect)
                     -- synthesis translate_on
 
                     -- All fields latched at face_start (= s_face_start_r in top).

@@ -94,7 +94,7 @@ entity tdc_gpx_chip_run is
         o_timeout           : out std_logic;           -- 1-clk pulse: abnormal drain exit
         o_timeout_cause     : out std_logic_vector(2 downto 0);  -- cause code (valid with o_timeout)
         -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
-        --              "100"=burst_rsp, "101"=flush_rsp
+        --              "100"=burst_rsp, "101"=flush_rsp, "110"=overrun_flush
 
         -- Pin outputs
         o_stopdis           : out std_logic;
@@ -605,7 +605,12 @@ begin
 
                 end case;
 
-                -- Shot overrun handler
+                -- Shot overrun handler (POST-CASE OVERRIDE — highest priority)
+                -- This intentionally overwrites state/req/raw set by the main
+                -- case above in the same cycle. If a bus response and shot_start
+                -- coincide, the overrun wins and the response beat may be lost.
+                -- This is the intended design: immediate overrun recovery takes
+                -- priority over completing the current drain transaction.
                 if i_shot_start = '1' and s_state_r /= ST_OFF
                    and s_state_r /= ST_ARMED then
                     case s_state_r is

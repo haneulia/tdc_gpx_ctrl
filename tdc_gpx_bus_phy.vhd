@@ -419,7 +419,12 @@ begin
                                     s_d_out_r     <= i_req_wdata;
                                     s_d_tri_r     <= '0';           -- drive D-bus
                                     s_wrn_r       <= '1';           -- high during Phase A
-                                    s_bus_ticks_r <= i_bus_ticks;   -- latch config
+                                    -- Local clamp: minimum 4 ticks for safe phase timing
+                                    if i_bus_ticks >= 4 then
+                                        s_bus_ticks_r <= i_bus_ticks;
+                                    else
+                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                    end if;
                                     s_axis_rw_r   <= '1';           -- WRITE
                                     s_axis_addr_r <= i_req_addr;
                                     s_tick_r      <= to_unsigned(1, 3);
@@ -433,6 +438,8 @@ begin
                                     s_req_addr_r      <= i_req_addr;
                                     s_turn_to_write_r <= '0';
                                     s_bus_ticks_r     <= i_bus_ticks;
+                                    s_req_burst_r     <= i_req_burst;
+                                    s_oen_perm_r      <= i_oen_permanent;
                                     s_axis_rw_r       <= '0';
                                     s_axis_addr_r     <= i_req_addr;
                                     s_state_r         <= ST_TURNAROUND;
@@ -444,7 +451,12 @@ begin
                                     s_oen_r       <= '0';           -- chip drives D-bus
                                     s_d_tri_r     <= '1';           -- FPGA Hi-Z [INV-2]
                                     s_rdn_r       <= '1';           -- high during Phase A
-                                    s_bus_ticks_r <= i_bus_ticks;   -- latch config
+                                    -- Local clamp: minimum 4 ticks for safe phase timing
+                                    if i_bus_ticks >= 4 then
+                                        s_bus_ticks_r <= i_bus_ticks;
+                                    else
+                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                    end if;
                                     s_req_burst_r <= i_req_burst;   -- latch burst
                                     s_oen_perm_r  <= i_oen_permanent; -- latch oen
                                     s_axis_rw_r   <= '0';           -- READ
@@ -555,7 +567,7 @@ begin
                                     -- This prevents chip_ctrl from seeing
                                     -- busy=0 + rsp_valid=0 (premature exit).
                                     s_csn_r   <= '1';
-                                    if i_oen_permanent = '0' then
+                                    if s_oen_perm_r = '0' then  -- use latched, not live
                                         s_oen_r <= '1';
                                     end if;
                                     s_tick_r  <= (others => '0');
