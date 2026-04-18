@@ -277,6 +277,10 @@ package tdc_gpx_pkg is
         err_cause           : std_logic_vector(2 downto 0);  -- [0]=HitFIFO [1]=IFIFO [2]=PLL
         rsp_mismatch_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- bus response tuser mismatch
         cfg_rejected        : std_logic;  -- cmd_start rejected due to invalid config
+        run_timeout_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip chip_run timeout (sticky)
+        reg_arb_timeout     : std_logic;  -- cmd_arb register access timeout (sticky)
+        shot_drop_any       : std_logic;  -- OR of all cell_builder shot_dropped (rise+fall)
+        slice_timeout_any   : std_logic;  -- OR of all cell_builder slice_timeout (rise+fall)
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -295,7 +299,11 @@ package tdc_gpx_pkg is
         err_chip_mask       => (others => '0'),
         err_cause           => (others => '0'),
         rsp_mismatch_mask   => (others => '0'),
-        cfg_rejected        => '0'
+        cfg_rejected        => '0',
+        run_timeout_mask    => (others => '0'),
+        reg_arb_timeout     => '0',
+        shot_drop_any       => '0',
+        slice_timeout_any   => '0'
     );
 
     -- =========================================================================

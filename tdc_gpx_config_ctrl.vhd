@@ -172,6 +172,12 @@ entity tdc_gpx_config_ctrl is
         o_err_cause          : out std_logic_vector(2 downto 0);
 
         -- =====================================================================
+        -- Additional status outputs
+        -- =====================================================================
+        o_run_timeout        : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_reg_arb_timeout    : out std_logic;
+
+        -- =====================================================================
         -- Interrupt
         -- =====================================================================
         o_irq                : out std_logic
@@ -274,6 +280,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_sequence      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_timeout       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_reg_arb_timeout   : std_logic;
 
     -- =========================================================================
     -- err_handler outputs
@@ -343,6 +351,8 @@ begin
     o_err_sequence      <= s_err_sequence;
     o_reg_outstanding   <= s_reg_outstanding;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch;
+    o_run_timeout       <= s_run_timeout;
+    o_reg_arb_timeout   <= s_reg_arb_timeout;
     o_err_active        <= s_err_active;
 
     -- =========================================================================
@@ -459,8 +469,8 @@ begin
             o_cmd_reg_done_chip  => s_cmd_reg_done_chip,
             o_reg_loop_resume    => s_reg_loop_resume,
             o_cmd_reg_addr_out   => s_cmd_reg_addr_out,
-            o_reg_timeout        => open,  -- TODO: wire to status
-            o_reg_timeout_mask   => open   -- TODO: wire to status
+            o_reg_timeout        => s_reg_arb_timeout,
+            o_reg_timeout_mask   => open   -- per-chip mask available but not surfaced yet
         );
 
     -- =========================================================================
@@ -639,7 +649,8 @@ begin
                 o_busy              => s_chip_busy(i),
                 o_err_drain_timeout => s_err_drain_timeout(i),
                 o_err_sequence      => s_err_sequence(i),
-                o_err_rsp_mismatch  => s_err_rsp_mismatch(i)
+                o_err_rsp_mismatch  => s_err_rsp_mismatch(i),
+                o_run_timeout       => s_run_timeout(i)
             );
 
         -- ----- skid buffer: chip_ctrl -> decode_pipe (32b + 8b = 40b) -----

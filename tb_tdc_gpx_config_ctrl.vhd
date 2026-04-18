@@ -282,6 +282,8 @@ begin
             o_err_rsp_mismatch   => open,
             o_reg_outstanding    => o_reg_outstanding,
             o_reg_loop_resume    => o_reg_loop_resume,
+            o_run_timeout        => open,
+            o_reg_arb_timeout    => open,
             o_cdc_idle           => o_cdc_idle,
             -- Error handler outputs
             o_err_active         => o_err_active,

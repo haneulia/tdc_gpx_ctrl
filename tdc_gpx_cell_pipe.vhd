@@ -57,7 +57,11 @@ entity tdc_gpx_cell_pipe is
 
         -- Status
         o_hit_dropped           : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_hit_fall_dropped      : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        o_hit_fall_dropped      : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_shot_dropped          : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_shot_fall_dropped     : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_slice_timeout         : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_slice_fall_timeout    : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
 end entity tdc_gpx_cell_pipe;
 
@@ -217,8 +221,8 @@ begin
                 i_m_axis_tready     => i_cell_rise_tready(i),
                 o_slice_done        => open,
                 o_hit_dropped_any   => o_hit_dropped(i),
-                o_shot_dropped      => open,
-                o_slice_timeout     => open
+                o_shot_dropped      => o_shot_dropped(i),
+                o_slice_timeout     => o_slice_timeout(i)
             );
 
         -- Falling-slope cell builder
@@ -244,8 +248,8 @@ begin
                 i_m_axis_tready     => i_cell_fall_tready(i),
                 o_slice_done        => open,
                 o_hit_dropped_any   => o_hit_fall_dropped(i),
-                o_shot_dropped      => open,
-                o_slice_timeout     => open
+                o_shot_dropped      => o_shot_fall_dropped(i),
+                o_slice_timeout     => o_slice_fall_timeout(i)
             );
 
     end generate gen_chip;

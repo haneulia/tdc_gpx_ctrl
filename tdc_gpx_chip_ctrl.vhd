@@ -150,7 +150,8 @@ entity tdc_gpx_chip_ctrl is
         -- Error flags (1-clk pulses)
         o_err_drain_timeout : out std_logic;    -- max_range_clks expired before drain_done
         o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
-        o_err_rsp_mismatch  : out std_logic     -- bus response tuser mismatch (sticky)
+        o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
+        o_run_timeout       : out std_logic     -- 1-clk pulse: chip_run abnormal drain exit
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -201,6 +202,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_busy         : std_logic;
     signal s_run_range_active : std_logic;
     signal s_run_shot_seq    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    signal s_run_timeout     : std_logic;
 
     -- =========================================================================
     -- Raw AXI-Stream 2-deep holding register (skid pattern, tready handshake)
@@ -328,8 +330,8 @@ begin
             i_cmd_stop          => i_cmd_stop,
             o_done              => s_run_done,
             o_range_active      => s_run_range_active,
-            o_timeout           => open,  -- TODO: aggregate to status
-            o_timeout_cause     => open,  -- TODO: aggregate to status
+            o_timeout           => s_run_timeout,
+            o_timeout_cause     => open,  -- cause code not needed at top level
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
             i_n_drain_cap       => s_n_drain_cap_snap_r,
@@ -770,6 +772,7 @@ begin
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
+    o_run_timeout       <= s_run_timeout;
 
     -- =========================================================================
     -- Bus response tuser mismatch detector (sticky, all phases)

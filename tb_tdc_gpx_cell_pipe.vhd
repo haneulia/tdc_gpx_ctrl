@@ -119,7 +119,11 @@ begin
             i_cell_fall_tready    => cell_fall_tready,
 
             o_hit_dropped         => hit_dropped,
-            o_hit_fall_dropped    => hit_fall_dropped
+            o_hit_fall_dropped    => hit_fall_dropped,
+            o_shot_dropped        => open,
+            o_shot_fall_dropped   => open,
+            o_slice_timeout       => open,
+            o_slice_fall_timeout  => open
         );
 
     -- =========================================================================

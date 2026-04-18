@@ -247,6 +247,10 @@ architecture rtl of tdc_gpx_top is
     signal s_stop_id_error    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_hit_dropped      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_hit_fall_dropped : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_dropped     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_fall_dropped : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_slice_timeout    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_slice_fall_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Face sequencer signals
@@ -284,6 +288,9 @@ architecture rtl of tdc_gpx_top is
     signal s_chip_error_merged    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_error_raw       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- unmasked: all chips
     signal s_err_rsp_mismatch     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_timeout          : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_reg_arb_timeout      : std_logic;
+    signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- Error handler status (from config_ctrl)
     signal s_err_active    : std_logic;
@@ -449,6 +456,8 @@ begin
             o_err_rsp_mismatch   => s_err_rsp_mismatch,
             o_reg_outstanding    => s_reg_outstanding,
             o_reg_loop_resume    => open,  -- reserved: future use for gating face_seq resume
+            o_run_timeout        => s_run_timeout,
+            o_reg_arb_timeout    => s_reg_arb_timeout,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -518,7 +527,11 @@ begin
             i_cell_fall_tready      => s_cell_fall_tready,
             -- Status
             o_hit_dropped           => s_hit_dropped,
-            o_hit_fall_dropped      => s_hit_fall_dropped
+            o_hit_fall_dropped      => s_hit_fall_dropped,
+            o_shot_dropped          => s_shot_dropped,
+            o_shot_fall_dropped     => s_shot_fall_dropped,
+            o_slice_timeout         => s_slice_timeout,
+            o_slice_fall_timeout    => s_slice_fall_timeout
         );
 
     -- =========================================================================
@@ -719,5 +732,25 @@ begin
     s_status.err_cause           <= s_err_cause;
     s_status.rsp_mismatch_mask   <= s_err_rsp_mismatch;
     s_status.cfg_rejected        <= s_cfg_rejected_r;
+    s_status.run_timeout_mask    <= s_run_timeout_sticky_r;
+    s_status.reg_arb_timeout     <= s_reg_arb_timeout;
+    s_status.shot_drop_any       <= '1' when (s_shot_dropped or s_shot_fall_dropped)
+                                              /= (s_shot_dropped'range => '0') else '0';
+    s_status.slice_timeout_any   <= '1' when (s_slice_timeout or s_slice_fall_timeout)
+                                              /= (s_slice_timeout'range => '0') else '0';
+
+    -- =========================================================================
+    -- Sticky latch for run_timeout (1-clk pulses -> persistent mask)
+    -- =========================================================================
+    p_run_timeout_sticky : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_run_timeout_sticky_r <= (others => '0');
+            else
+                s_run_timeout_sticky_r <= s_run_timeout_sticky_r or s_run_timeout;
+            end if;
+        end if;
+    end process p_run_timeout_sticky;
 
 end architecture rtl;
