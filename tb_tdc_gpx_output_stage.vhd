@@ -68,6 +68,12 @@ architecture sim of tb_tdc_gpx_output_stage is
     -- Control
     signal shot_start_gated  : std_logic := '0';
     signal pipeline_abort    : std_logic := '0';
+    -- #22 Sprint 3 plumbing: per-slope abort drives.
+    -- Default both to '0' so the existing smoke test keeps its current
+    -- behavior (no abort). Future slope-independence tests wiggle them
+    -- independently to verify fall-only abort leaves rise output alive.
+    signal pipeline_abort_rise : std_logic := '0';
+    signal pipeline_abort_fall : std_logic := '0';
     signal face_start_gated  : std_logic := '0';
 
     -- Configuration
@@ -166,6 +172,8 @@ begin
             -- Control
             i_shot_start_gated     => shot_start_gated,
             i_pipeline_abort       => pipeline_abort,
+            i_pipeline_abort_rise  => pipeline_abort_rise,
+            i_pipeline_abort_fall  => pipeline_abort_fall,
             i_face_start_gated     => face_start_gated,
             -- Configuration
             i_face_active_mask     => face_active_mask,

@@ -1,5 +1,33 @@
 # Sprint Design — #22 Slope-Independent Abort (Rise 우선, Fall 옵션)
 
+## 상태 (2026-04-18)
+
+✅ **Sprint 1 완료** — commit `461fe89`: face_seq 내부 rise/fall 분리
+✅ **Sprint 2 완료** — commit `c9cc5b7`: face_seq 출력 포트 + cell_pipe 포트 + top 배선
+✅ **Sprint 3 완료** — commit `da6e1a8`: output_stage per-slope + fall abort 분리 활성화 + status 필드
+📋 **TB 확장** — commit TBD: output_stage TB에 per-slope abort port 배선 (인프라)
+
+실제 RTL 수준에서 fall-only abort가 rise 파이프라인을 죽이지 않음.
+회귀 검증 8/8 TB 통과, 기존 동작 회귀 없음.
+
+### SW 측 작업 (RTL 범위 밖)
+
+- [ ] Rise VDMA 인스턴스 + Fall VDMA 인스턴스 각각 base address 설정
+- [ ] Rise/Fall frame 파싱 로직 분리
+- [ ] `t_tdc_status.rise_overrun` / `fall_overrun` 필드로 per-slope validity 판단
+- [ ] Fall-only abort 발생 시 rise frame 유지 + fall frame discard 동작 확인
+
+### 추가 권장 TB
+
+- [ ] Fall-only abort 시나리오: `pipeline_abort_fall='1'` 1 cycle 주입 → rise frame 완성 + fall frame 폐기 검증
+- [ ] Rise abort propagation 시나리오: `pipeline_abort_rise='1'` → rise+fall 모두 abort 검증
+- [ ] cmd_stop global abort 시나리오: 기존 동작 유지 검증
+
+infra는 `tb_tdc_gpx_output_stage.vhd`에 이미 준비됨
+(signal: `pipeline_abort_rise`, `pipeline_abort_fall` default `'0'`).
+
+---
+
 ## 배경
 
 **사용자 결정 (Q&A #22):**
