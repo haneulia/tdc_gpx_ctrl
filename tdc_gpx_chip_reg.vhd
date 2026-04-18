@@ -13,6 +13,13 @@
 --   For reads: o_rdata + o_rvalid provide read result (rvalid = read only).
 --   For writes: o_done pulses but rvalid stays low (STAT11 protection).
 --
+-- Pending-request queue (Round 3 #20/#37):
+--   A 1-depth pending queue (s_pend_valid_r + addr/rw/wdata) absorbs a
+--   second request pulse while the current transaction is in ST_ACTIVE.
+--   It also handles the same-cycle read+write case (read wins, write
+--   queued). A third pulse while the queue is already occupied raises
+--   s_err_req_overflow_r sticky so SW can observe command loss.
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 

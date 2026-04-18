@@ -26,12 +26,33 @@
 --     On s_output_done_r: BUF_SHARED -> BUF_FREE, auto-starts next if queued.
 --     On i_abort: all buffers -> BUF_FREE, FSM -> ST_C_IDLE.
 --
---   p_output (ST_O_IDLE / ST_O_LOAD / ST_O_ACTIVE / ST_O_WAIT_IFIFO2):
+--   p_output (ST_O_IDLE / ST_O_LOAD / ST_O_ACTIVE / ST_O_WAIT_IFIFO2 /
+--             ST_O_TIMEOUT_EOS):
 --     Reads from the buffer indicated by s_rd_buf_idx_r.
 --     Pipeline: cell MUX (ST_O_LOAD, 1-clk bubble) -> beat MUX (ST_O_ACTIVE).
 --     Per-IFIFO early output: starts stops 0~3 on ififo1_done, stalls at
 --     stop 3->4 boundary in ST_O_WAIT_IFIFO2 until buf_full flag is set.
 --     Signals completion via s_output_done_r pulse.
+--
+--   ST_O_TIMEOUT_EOS (Round 1 #2):
+--     Entered from ST_O_WAIT_IFIFO2 on the 65K-cycle watchdog expiring
+--     (IFIFO2 data never arrived). Emits ONE synthetic final beat with
+--     tvalid='1', tlast='1', zero data so the downstream face_assembler
+--     can complete this chip slice via its tlast-based detection. The
+--     o_slice_timeout sticky flags the truncation for SW visibility; SW
+--     uses that + cell metadata error bits to identify corrupted slices.
+--
+-- Pulse-retention latches:
+--   s_shot_pending_r (Round 1 #8/#9): latches i_shot_start when it
+--     cannot be consumed this cycle (same-cycle drain_done in ACTIVE,
+--     or arrival during ST_C_DROP). ST_C_IDLE's handler consumes it.
+--     Cleared on i_abort.
+--
+-- No-free-buffer on shot_start (Round 2 #4):
+--   From ST_C_IDLE, if both buffers are busy and a shot_start (or pending
+--   replay) fires, the FSM enters ST_C_DROP so the incoming shot's beats
+--   are actually absorbed (tready='1' in DROP) instead of stalling the
+--   upstream raw_event stream. s_shot_dropped_r pulses for SW visibility.
 --
 --   Handshake signals (no multi-driver):
 --     s_output_req_r  : p_collect -> p_output (1-clk pulse: start output)

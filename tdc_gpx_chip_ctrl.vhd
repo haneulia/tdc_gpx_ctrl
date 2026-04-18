@@ -10,7 +10,7 @@
 --     tdc_gpx_chip_reg   — individual register read/write (2 states)
 --
 --   Coordinator manages:
---     - ST_INIT / ST_IDLE phase tracking
+--     - ST_INIT / ST_IDLE phase tracking (plus PH_RESP_DRAIN between phases)
 --     - Bus request mux (active sub-FSM → bus_phy)
 --     - Bus response routing (bus_phy → active sub-FSM)
 --     - Tick enable generation (bus_clk_div clock divider)
@@ -18,9 +18,24 @@
 --     - StopDis override (INTENTIONALLY LIVE for debug)
 --     - Range counter (err_drain_timeout) and sequence error detection
 --     - AXI-Stream raw word output (passthrough from chip_run)
+--     - 2-deep raw hold/skid absorbing 1-cycle-late busy backpressure
 --
---   External entity interface is UNCHANGED from pre-refactoring version.
---   All 13 chip_ctrl TB tests pass with identical behavior.
+-- Raw beat overflow diagnostics (Round 2 #5/#6):
+--   s_err_raw_overflow_r (sticky) captures "some raw/control beat was
+--   dropped for diagnostic reasons":
+--     - chip_ctrl hold+skid both full → beat silently lost
+--     - chip_run overrun override dropped same-cycle bus response (OR-folded
+--       via s_run_overrun_drop)
+--     - PH_RESP_DRAIN hard cap (15 cycles) hit while bus still busy/pending
+--       (s_err_drain_cap_r, OR'd into o_err_raw_overflow)
+--   Exposed via new o_err_raw_overflow port (Round 2 added this port — the
+--   entity interface is NO LONGER unchanged from the original split).
+--
+-- PH_RESP_DRAIN hard-cap behavior (Round 3 #9):
+--   Every PH_RUN completion enters PH_RESP_DRAIN to flush potential stale
+--   bus responses. Normal exit: bus idle + ≥3 cycles. Hard cap 15 cycles
+--   forces onward to PH_IDLE/PH_INIT but sets s_err_drain_cap_r if bus
+--   was still active — SW can diagnose the forced drain.
 --
 -- Standard: VHDL-2008
 -- =============================================================================

@@ -26,12 +26,40 @@
 --     Each cell carries a chip_id tag in metadata beat for verification.
 --
 --   Per-shot flow:
---     1. shot_start → ST_SCAN
+--     1. shot_start → ST_SCAN (or row_done immediate-pulse if zero active mask)
 --     2. ST_SCAN: priority encode undone chip (ready first, timeout blank)
 --     3. ST_RESOLVE: compute is_last_chip (1 clk)
 --     4. ST_FORWARD: produce beats to output FIFO
 --     5. Chip done → mark s_chip_done_r, back to ST_SCAN
 --     6. All active chips done → row_done, ST_IDLE
+--
+-- Zero active_chip_mask policy (Round 3 #19):
+--   If i_active_chip_mask = "0000" at shot_start, row_done pulses
+--   immediately and the FSM returns to ST_IDLE (self-consistent without
+--   needing face_seq to pre-gate zero-mask shots).
+--
+-- shot_start overrun policy — BLANK-FILL (Q&A #36, Round 4):
+--   If shot_start arrives while still in ST_SCAN/ST_RESOLVE/ST_FORWARD
+--   (current line not finished), we do NOT face-abort. Instead:
+--     - s_shot_pending_r <= '1' (new shot becomes next line)
+--     - s_shot_overrun_r <= '1' (SW visibility)
+--     - s_chip_error_r OR'd with un-done chips (SW sees error_fill per
+--       affected chip's cells)
+--     - s_shot_cnt_r <= FFFF so subsequent chips enter blank via ST_SCAN
+--       hard-cap
+--     - If mid-ST_FORWARD real-chip: switch s_is_blank_r='1' and resume
+--       blank generation from (s_fwd_stop_r, s_fwd_beat_r) position so
+--       the chip's beat count stays exact
+--     - face_abort is NOT pulsed; line completes in-place and the face
+--       continues naturally.
+--   Net effect: VDMA frame size is preserved; SW detects per-cell errors
+--   via error_fill bit in cell metadata; next shot becomes the next line.
+--
+-- Forward position tracking (Round 4 #36 support):
+--   s_fwd_stop_r / s_fwd_beat_r (both 3-bit) track (stop_idx, beat_idx_in_cell)
+--   during ST_FORWARD real-chip forwarding. Reset at ST_RESOLVE → ST_FORWARD
+--   transition, incremented per forwarded beat, handed off to blank
+--   generator on overrun.
 --
 -- All outputs are registered (module boundary = FF).
 --

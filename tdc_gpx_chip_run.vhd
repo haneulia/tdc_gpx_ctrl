@@ -7,7 +7,7 @@
 --   Handles the complete measurement cycle: armed → capture → drain → ALU.
 --   Extracted from tdc_gpx_chip_ctrl to reduce FSM complexity.
 --
--- FSM States (12):
+-- FSM States (13):
 --   ST_OFF → (start) → ST_ARMED → ST_CAPTURE → ST_DRAIN_LATCH →
 --   ST_DRAIN_CHECK → ST_DRAIN_EF1/EF2/BURST/FLUSH → ST_DRAIN_SETTLE →
 --   ST_ALU_PULSE → ST_ALU_RECOVERY → (done/armed)
@@ -17,9 +17,35 @@
 --   - EF1-first round-robin IFIFO drain
 --   - LF-based burst read optimization
 --   - Per-IFIFO early drain_done (ififo1_done intermediate beat)
---   - Shot overrun detection and purge recovery
---   - cmd_stop deferred handling (via stop_pending)
+--   - Shot overrun detection and recovery
+--   - cmd_stop deferred handling (via s_stop_pending_r) including
+--     ST_OVERRUN_FLUSH in the defer targets (Round 2)
 --   - drain_mode/n_drain_cap/bus_clk_div already snapshotted by coordinator
+--   - s_range_active_r is cleared on ALL drain timeout exit paths as well as
+--     normal completion (Round 1 #1)
+--   - Expected IFIFO counts are latched only at ST_DRAIN_LATCH (after
+--     irflag). No assertion-based stability check between shot_start and
+--     drain_latch — that would conflict with stop_cfg_decode's continuous
+--     update during capture (Round 1 #7)
+--
+-- ST_CAPTURE cmd_stop policy — GRACEFUL (Q&A #29, Round 4):
+--   On i_cmd_stop during ST_CAPTURE, we latch s_stop_pending_r and raise
+--   s_stopdis_r but do NOT purge. Let the natural irflag path drain the
+--   shot normally so captured data is preserved. After drain + ALU, the
+--   pending flag routes the FSM to ST_OFF.
+--   Fallback watchdog (65535 cycles): if irflag never arrives (chip
+--   malfunction), fall back to the original purge path with timeout
+--   cause "111" (capture_stop_fallback).
+--
+-- Shot overrun policy (i_shot_start during non-idle, non-completion):
+--   Post-case override forces ST_OVERRUN_FLUSH. If a bus response arrives
+--   in the same cycle, the response beat is dropped; s_err_overrun_drop_r
+--   sticky records the event. chip_ctrl OR-folds it into the unified
+--   o_err_raw_overflow status output.
+--
+-- Timeout cause codes (o_timeout_cause):
+--   001 = raw_busy, 010 = ef1_rsp, 011 = ef2_rsp, 100 = burst_rsp,
+--   101 = flush_rsp, 110 = overrun_flush, 111 = capture_stop_fallback
 --
 -- Standard: VHDL-2008
 -- =============================================================================

@@ -13,6 +13,19 @@
 --   ST_IDLE -> ST_READ_REG12 -> ST_WAIT_READ -> ST_RECOVERY ->
 --   ST_WAIT_RECOVERY -> ST_WAIT_FRAME_DONE -> ST_IDLE
 --
+-- ST_WAIT_READ watchdog (Round 2 #2):
+--   A 16-bit counter bounds the wait for i_cmd_reg_done_pulse; on
+--   expiration s_err_read_timeout_r sticky fires and the FSM proceeds
+--   to ST_RECOVERY anyway (rvalid stayed '0' so no stale data is latched
+--   as a classification cause). Prevents permanent stall if the reg
+--   access subsystem never acknowledges.
+--
+-- i_soft_clear (Round 3 #10 / Round 4 #40):
+--   SW-initiated clear that resets the FSM to ST_IDLE and drops fatal/
+--   retry state without a hard reset. Shared at top with
+--   status_agg.i_soft_clear so both observers see consistent history
+--   clearing. Default '0' (backward compatible).
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 

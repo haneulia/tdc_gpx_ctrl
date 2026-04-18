@@ -14,6 +14,13 @@
 --     - All-done IRQ pulse and measurement loop resume output
 --     - Per-chip outstanding tracking (replaces global 1-outstanding lock)
 --
+-- Reg timeout policy (Round 2 #3):
+--   The global reg-access timeout counter only runs once every targeted
+--   chip has been dispatched (s_reg_pending_r all-zero). Previously the
+--   counter ran from s_reg_active_r='1', so busy-chip dispatch waits
+--   consumed the timeout budget before any real response could arrive.
+--   Now the counter measures response latency only.
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 

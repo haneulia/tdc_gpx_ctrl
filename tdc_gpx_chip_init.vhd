@@ -17,6 +17,18 @@
 --   Module asserts o_done for 1 cycle when complete.
 --   cfg_write (i_cfg_write_req) triggers runtime cfg_write (no master reset).
 --
+-- Concurrent request handling (Round 3 #21):
+--   If i_start and i_cfg_write_req are asserted the same cycle in ST_OFF,
+--   i_start wins and s_cfg_write_pending_r latches. After the init path
+--   returns to ST_OFF, the pending cfg_write is auto-consumed so the SW
+--   pulse is not silently lost.
+--
+-- Timeout-exit safe state (Round 2 #8):
+--   ST_CFG_WR_WAIT and ST_MR_WAIT timeout exits drop s_stopdis_r <= '0'
+--   so the chip ends in the same post-init pin state as a normal
+--   ST_STOPDIS_LOW completion. Prevents "stops disabled" hangovers after
+--   bus-hang timeouts.
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 

@@ -10,6 +10,16 @@
 -- Extracted processes: p_timestamp, p_error_cnt, p_err_sticky
 -- Plus concurrent status aggregation assignments.
 --
+-- SW-initiated sticky/count clear (Q&A #40, Round 4):
+--   i_soft_clear (default '0') clears s_err_drain_sticky_r,
+--   s_err_seq_sticky_r, and s_error_count_r (resync baseline) without
+--   a hard reset. Shared with err_handler.i_soft_clear via top-level
+--   s_err_soft_clear so SW sees consistent error-history clearing.
+--
+-- Port rename (Round 3 #39):
+--   o_error_count → o_error_cycle_count (the value is cycle count, not
+--   event count — matches the signal's actual semantic).
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 

@@ -12,6 +12,13 @@
 --   p_face_seq, p_global_shot_seq, p_frame_abort_cnt, p_face_shot_cnt,
 --   p_geometry, p_face_cfg_latch, p_frame_done_both
 --
+-- Pulse-retention latches (Round 3):
+--   s_cmd_start_pending_r — cmd_start arriving while the pipeline is busy
+--     is latched and re-evaluated every ST_IDLE cycle. Cleared on config
+--     rejection, accept-into-ST_WAIT_SHOT, cmd_stop, and pipeline_abort.
+--   Prevents silent loss of 1-cycle cmd_start pulses when upstream races
+--     against the pipeline-idle check.
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 
