@@ -639,7 +639,8 @@ begin
             o_cmd_reg_addr_out   => s_cmd_reg_addr_out,
             o_reg_timeout        => s_reg_arb_timeout,
             o_reg_timeout_mask   => open,  -- per-chip mask available but not surfaced yet
-            o_reg_rejected       => open   -- Round 5 #10 queue-overflow sticky; not yet surfaced to CSR
+            o_reg_rejected       => open,  -- Round 5 #10 queue-overflow sticky; not yet surfaced to CSR
+            o_reg_zero_mask      => open   -- Round 5 #17 zero-mask sticky; not yet surfaced to CSR
         );
 
     -- =========================================================================
@@ -669,7 +670,8 @@ begin
             o_err_active         => s_err_active,
             o_err_chip_mask      => o_err_chip_mask,
             o_err_cause          => o_err_cause,
-            o_err_fatal          => o_err_fatal
+            o_err_fatal          => o_err_fatal,
+            o_err_read_timeout   => open  -- Round 5 #13 read-timeout sticky; not yet surfaced to CSR
         );
 
     -- =========================================================================
@@ -1089,6 +1091,7 @@ begin
                 o_err_sequence      => s_err_sequence(i),
                 o_err_rsp_mismatch  => s_err_rsp_mismatch(i),
                 o_err_raw_overflow  => s_err_raw_overflow(i),
+                o_err_reg_overflow  => open,  -- Round 5 #12 chip_reg queue-overflow sticky; not yet surfaced to CSR
                 o_run_timeout       => s_run_timeout(i)
             );
 

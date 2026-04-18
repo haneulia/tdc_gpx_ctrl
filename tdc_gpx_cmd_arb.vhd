@@ -79,7 +79,13 @@ entity tdc_gpx_cmd_arb is
         --   another transaction is still in flight. A second overlapping
         --   request (queue already occupied) raises o_reg_rejected sticky so
         --   SW knows at least one request was lost.
-        o_reg_rejected       : out std_logic
+        o_reg_rejected       : out std_logic;
+
+        -- Zero-mask status (Round 5 #17 — was sim-only)
+        --   Sticky: a reg read/write request arrived with i_cmd_reg_chip_address
+        --   = 0. Previously ignored with a sim-only assert; now also surfaced
+        --   as a runtime-observable flag. Cleared only by reset.
+        o_reg_zero_mask      : out std_logic
     );
 end entity tdc_gpx_cmd_arb;
 
@@ -134,6 +140,7 @@ architecture rtl of tdc_gpx_cmd_arb is
     signal s_reg_queue_rw_r      : std_logic := '0';
     signal s_reg_queue_addr_r    : std_logic_vector(3 downto 0) := (others => '0');
     signal s_reg_rejected_r      : std_logic := '0';  -- sticky: 2nd overlap lost
+    signal s_reg_zero_mask_r     : std_logic := '0';  -- sticky: zero-mask request observed (Round 5 #17)
 
 begin
 
@@ -213,6 +220,7 @@ begin
                 s_reg_queue_rw_r     <= '0';
                 s_reg_queue_addr_r   <= (others => '0');
                 s_reg_rejected_r     <= '0';
+                s_reg_zero_mask_r    <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_dispatch_pulse_r <= (others => '0');
@@ -284,7 +292,9 @@ begin
                 -- ---- Accept new multi-chip request ----
                 elsif v_new_request = '1' and s_reg_active_r = '0' then
                   if i_cmd_reg_chip_address = C_ZEROS then
-                    -- Zero mask: silently ignore to prevent permanent lockup
+                    -- Zero mask: silently ignore to prevent permanent lockup.
+                    -- Raise runtime sticky (Round 5 #17) so SW sees the event.
+                    s_reg_zero_mask_r <= '1';
                     -- synthesis translate_off
                     assert false
                         report "cmd_arb: reg request with zero chip mask ignored"
@@ -411,5 +421,6 @@ begin
     o_reg_timeout        <= s_reg_timeout_r;
     o_reg_timeout_mask   <= s_reg_timeout_mask_r;
     o_reg_rejected       <= s_reg_rejected_r;
+    o_reg_zero_mask      <= s_reg_zero_mask_r;
 
 end architecture rtl;

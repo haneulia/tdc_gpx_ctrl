@@ -275,6 +275,7 @@ begin
             o_err_sequence      => s_err_sequence,
             o_err_rsp_mismatch  => open,
             o_err_raw_overflow  => open,
+            o_err_reg_overflow  => open,
             o_run_timeout       => open
         );
 

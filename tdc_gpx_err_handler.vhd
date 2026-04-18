@@ -77,7 +77,13 @@ entity tdc_gpx_err_handler is
         o_err_active        : out std_logic;
         o_err_chip_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_cause         : out std_logic_vector(2 downto 0);
-        o_err_fatal         : out std_logic
+        o_err_fatal         : out std_logic;
+        -- Sticky: ST_WAIT_READ watchdog expired (Round 5 #13 — was internal)
+        --   Set whenever the watchdog on reg-read completion pulse fires,
+        --   forcing the recovery FSM to classify the error without the read
+        --   result. Indicates the reg-access subsystem failed to respond;
+        --   cleared only by reset.
+        o_err_read_timeout  : out std_logic
     );
 end entity tdc_gpx_err_handler;
 
@@ -366,5 +372,6 @@ begin
     o_err_chip_mask     <= s_err_chip_mask_r;
     o_err_cause         <= s_err_cause_r;
     o_err_fatal         <= s_err_fatal_r;
+    o_err_read_timeout  <= s_err_read_timeout_r;
 
 end architecture rtl;

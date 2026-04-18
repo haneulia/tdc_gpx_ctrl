@@ -135,7 +135,8 @@ begin
             o_err_active         => eh_err_active,
             o_err_chip_mask      => eh_err_chip_mask,
             o_err_cause          => eh_err_cause,
-            o_err_fatal          => eh_err_fatal
+            o_err_fatal          => eh_err_fatal,
+            o_err_read_timeout   => open
         );
 
     -- =========================================================================

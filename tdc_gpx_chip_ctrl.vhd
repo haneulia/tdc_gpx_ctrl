@@ -167,6 +167,7 @@ entity tdc_gpx_chip_ctrl is
         o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
         o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
         o_err_raw_overflow  : out std_logic;    -- sticky: raw hold+skid both full (beat dropped)
+        o_err_reg_overflow  : out std_logic;    -- sticky: chip_reg 3rd-pulse queue overflow (Round 5 #12)
         o_run_timeout       : out std_logic     -- 1-clk pulse: chip_run abnormal drain exit
     );
 end entity tdc_gpx_chip_ctrl;
@@ -418,7 +419,8 @@ begin
             o_bus_req_addr  => s_reg_bus_addr,
             o_bus_req_wdata => s_reg_bus_wdata,
             i_bus_rsp_valid => s_reg_rsp_valid,
-            i_bus_rsp_rdata => s_reg_rsp_rdata
+            i_bus_rsp_rdata => s_reg_rsp_rdata,
+            o_err_req_overflow => o_err_reg_overflow
         );
 
     -- =========================================================================

@@ -58,7 +58,13 @@ entity tdc_gpx_chip_reg is
 
         -- Bus response (from coordinator, gated)
         i_bus_rsp_valid : in  std_logic;
-        i_bus_rsp_rdata : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0)
+        i_bus_rsp_rdata : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+
+        -- Sticky: 3rd-pulse queue overflow (Round 5 #12 — was internal only)
+        --   Asserts '1' whenever a new i_start_read / i_start_write arrives
+        --   while ST_ACTIVE AND the 1-depth pending queue is already full
+        --   (i.e. a request was actually dropped). Cleared only by reset.
+        o_err_req_overflow : out std_logic
     );
 end entity tdc_gpx_chip_reg;
 
@@ -224,5 +230,6 @@ begin
     o_done          <= s_done_r;
     o_timeout       <= s_timeout_out_r;
     o_busy          <= s_busy_r;
+    o_err_req_overflow <= s_err_req_overflow_r;
 
 end architecture rtl;
