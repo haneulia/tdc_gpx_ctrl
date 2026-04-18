@@ -49,6 +49,7 @@ architecture sim of tb_tdc_gpx_scenarios is
     signal eh_reg11_data_2      : std_logic_vector(31 downto 0) := (others => '0');
     signal eh_reg11_data_3      : std_logic_vector(31 downto 0) := (others => '0');
     signal eh_cmd_reg_done_pulse: std_logic := '0';
+    signal eh_cmd_reg_rvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal eh_reg_outstanding   : std_logic := '0';
     signal eh_frame_done        : std_logic := '0';
     signal eh_shot_start        : std_logic := '0';
@@ -100,6 +101,10 @@ begin
     -- =========================================================================
     clk <= not clk after C_CLK_PERIOD / 2 when not sim_done else '0';
 
+    -- Broadcast rvalid together with done_pulse (all chips report valid reads).
+    -- Test scenarios rely on the classifier seeing rvalid='1' to latch causes.
+    eh_cmd_reg_rvalid <= (others => eh_cmd_reg_done_pulse);
+
     -- =========================================================================
     -- DUT: err_handler (g_DEBOUNCE_CLKS=2 for fast sim, g_MAX_RETRIES=2)
     -- =========================================================================
@@ -118,6 +123,7 @@ begin
             i_reg11_data_2       => eh_reg11_data_2,
             i_reg11_data_3       => eh_reg11_data_3,
             i_cmd_reg_done_pulse => eh_cmd_reg_done_pulse,
+            i_cmd_reg_rvalid     => eh_cmd_reg_rvalid,
             i_reg_outstanding    => eh_reg_outstanding,
             i_frame_done         => eh_frame_done,
             i_shot_start         => eh_shot_start,

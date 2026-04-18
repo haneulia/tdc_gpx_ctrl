@@ -171,6 +171,11 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_cstate_r     : t_collect_state := ST_C_IDLE;
     signal s_wr_buf_r     : std_logic := '0';
 
+    -- Pending shot_start: set when shot_start arrives but cannot be consumed
+    -- this cycle (DROP state, or simultaneous with drain_done in ACTIVE).
+    -- Processed on the next cycle where the blocking condition clears.
+    signal s_shot_pending_r : std_logic := '0';
+
     -- p_collect -> p_output handshake
     signal s_output_req_r  : std_logic := '0';
     signal s_rd_buf_idx_r  : std_logic := '0';
@@ -183,7 +188,8 @@ architecture rtl of tdc_gpx_cell_builder is
     -- =========================================================================
     -- Output FSM (p_output)
     -- =========================================================================
-    type t_output_state is (ST_O_IDLE, ST_O_LOAD, ST_O_ACTIVE, ST_O_WAIT_IFIFO2);
+    type t_output_state is (ST_O_IDLE, ST_O_LOAD, ST_O_ACTIVE, ST_O_WAIT_IFIFO2,
+                            ST_O_TIMEOUT_EOS);
     signal s_ostate_r     : t_output_state := ST_O_IDLE;
     signal s_rd_buf_r     : std_logic := '0';       -- latched read buffer index
 
@@ -303,6 +309,7 @@ begin
                 s_hit_dropped_r  <= '0';
                 s_shot_dropped_r <= '0';
                 s_timeout_cnt_r  <= (others => '0');
+                s_shot_pending_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r   <= '0';
@@ -316,6 +323,7 @@ begin
                     s_buf_state_r <= (others => BUF_FREE);
                     s_buf_full_r  <= "00";
                     s_cstate_r    <= ST_C_IDLE;
+                    s_shot_pending_r <= '0';  -- drop any pending shot on abort
                     -- Do NOT clear cell_buf (unnecessary, will be cleared on next shot_start)
                 else
                     -- ---------------------------------------------------------
@@ -345,7 +353,10 @@ begin
                     case s_cstate_r is
 
                         when ST_C_IDLE =>
-                            if i_shot_start = '1' then
+                            -- Accept new shot_start OR a pending one latched earlier
+                            -- (e.g. from DROP state that just completed its final_done).
+                            if i_shot_start = '1' or s_shot_pending_r = '1' then
+                                s_shot_pending_r <= '0';  -- consume
                                 -- Find a FREE buffer
                                 if s_buf_state_r(0) = BUF_FREE then
                                     s_wr_buf_r        <= '0';
@@ -444,9 +455,12 @@ begin
                             end if;
 
                             -- shot_start during active: switch to other buffer for next shot.
-                            -- Guard: skip if drain_done fires same cycle (priority to drain_done).
-                            if i_shot_start = '1'
-                               and not (i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1') then
+                            -- Same-cycle drain_done defers shot_start to a pending latch,
+                            -- and any previously-latched pending shot is consumed here.
+                            if (i_shot_start = '1'
+                                  and not (i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1'))
+                               or s_shot_pending_r = '1' then
+                                s_shot_pending_r <= '0';  -- consume
                                 -- Find the OTHER buffer
                                 if v_wr = 0 then v_other := 1; else v_other := 0; end if;
                                 if s_buf_state_r(v_other) = BUF_FREE then
@@ -461,10 +475,19 @@ begin
                                     s_shot_dropped_r <= '1';  -- distinct from hit overflow
                                     s_timeout_cnt_r  <= (others => '0');
                                 end if;
+                            elsif i_shot_start = '1' then
+                                -- Same-cycle drain_done blocks shot_start: latch as pending
+                                -- so the next cycle can switch buffers without losing the shot.
+                                s_shot_pending_r <= '1';
                             end if;
 
                         when ST_C_DROP =>
                             -- Silently discard all incoming data until final drain_done.
+                            -- A new shot_start arriving during DROP is latched so the next
+                            -- shot is not lost (ST_C_IDLE handler will pick it up).
+                            if i_shot_start = '1' then
+                                s_shot_pending_r <= '1';
+                            end if;
                             if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1'
                                and i_s_axis_tuser(6) = '1' then
                                 s_cstate_r     <= ST_C_IDLE;
@@ -640,6 +663,17 @@ begin
                                 end if;
                             end if;
 
+                        when ST_O_TIMEOUT_EOS =>
+                            -- Synthetic EOS beat: wait for tready, then signal
+                            -- output_done and return to idle. p_collect picks up
+                            -- s_output_done_r and releases the buffer normally.
+                            if i_m_axis_tready = '1' then
+                                s_tvalid_r      <= '0';
+                                s_tlast_r       <= '0';
+                                s_output_done_r <= '1';
+                                s_ostate_r      <= ST_O_IDLE;
+                            end if;
+
                         when ST_O_WAIT_IFIFO2 =>
                             -- Stall: stops 0~3 output done, waiting for IFIFO2 data.
                             if s_buf_full_r(fn_buf_idx(s_rd_buf_r)) = '1' then
@@ -650,12 +684,17 @@ begin
                                 s_out_timeout_r <= (others => '0');
                                 s_ostate_r      <= ST_O_LOAD;
                             elsif s_out_timeout_r = x"FFFF" then
-                                -- Timeout: IFIFO2 data never arrived, force slice done
-                                s_tvalid_r        <= '0';
-                                s_output_done_r   <= '1';
-                                s_slice_timeout_r <= '1';  -- distinct from normal slice_done
+                                -- Timeout: IFIFO2 data never arrived. Emit a
+                                -- synthetic final beat with tlast so downstream
+                                -- (face_assembler) completes this chip slice.
+                                -- Data is zeroed; s_slice_timeout_r flags the
+                                -- truncation for SW visibility via status.
+                                s_tdata_r         <= (others => '0');
+                                s_tvalid_r        <= '1';
+                                s_tlast_r         <= '1';
+                                s_slice_timeout_r <= '1';
                                 s_out_timeout_r   <= (others => '0');
-                                s_ostate_r        <= ST_O_IDLE;
+                                s_ostate_r        <= ST_O_TIMEOUT_EOS;
                             else
                                 s_out_timeout_r <= s_out_timeout_r + 1;
                             end if;

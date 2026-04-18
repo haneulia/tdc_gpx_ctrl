@@ -262,9 +262,10 @@ begin
                             s_range_active_r     <= '1';
                             s_drain_cnt_ififo1_r <= (others => '0');
                             s_drain_cnt_ififo2_r <= (others => '0');
-                            -- Snapshot expected counts at shot entry for stability check
-                            s_expected_ififo1_r  <= i_expected_ififo1;
-                            s_expected_ififo2_r  <= i_expected_ififo2;
+                            -- Expected IFIFO counts are latched at ST_DRAIN_LATCH
+                            -- (after stop_cfg_decode has finished accumulating
+                            -- stop events during the shot window). Do not snapshot
+                            -- here — that value would be pre-stop and stale.
                             s_ififo1_done_sent_r <= '0';
                             s_state_r            <= ST_CAPTURE;
                         end if;
@@ -302,15 +303,10 @@ begin
                         end if;
 
                     when ST_DRAIN_LATCH =>
-                        -- Re-sample and verify stability since shot_start
-                        -- synthesis translate_off
-                        assert i_expected_ififo1 = s_expected_ififo1_r
-                            report "chip_run: expected_ififo1 changed between shot_start and drain_latch"
-                            severity error;
-                        assert i_expected_ififo2 = s_expected_ififo2_r
-                            report "chip_run: expected_ififo2 changed between shot_start and drain_latch"
-                            severity error;
-                        -- synthesis translate_on
+                        -- Latch final expected IFIFO counts after irflag.
+                        -- By this point stop_cfg_decode has finished accumulating
+                        -- stop events for this shot, so i_expected_ififo1/2 hold
+                        -- the final per-shot totals used to drive drain bursts.
                         s_expected_ififo1_r <= i_expected_ififo1;
                         s_expected_ififo2_r <= i_expected_ififo2;
                         s_state_r           <= ST_DRAIN_CHECK;
@@ -427,6 +423,7 @@ begin
                         s_wait_cnt_r <= s_wait_cnt_r + 1;
                         if s_wait_cnt_r = x"FFFF" then
                             s_oen_permanent_r <= '0';
+                            s_range_active_r  <= '0';
                             s_drain_done_r    <= '1';
                             s_ififo_id_r      <= '1';
                             s_timeout_r       <= '1';
@@ -450,6 +447,7 @@ begin
                             if s_wait_cnt_r = x"FFFF" then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
                                 s_drain_done_r    <= '1';
                                 s_ififo_id_r      <= '1';
                                 s_timeout_r       <= '1';
@@ -473,6 +471,7 @@ begin
                             if s_wait_cnt_r = x"FFFF" then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
                                 s_drain_done_r    <= '1';
                                 s_ififo_id_r      <= '1';
                                 s_timeout_r       <= '1';
@@ -503,6 +502,7 @@ begin
                                 s_req_burst_r     <= '0';
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
                                 s_drain_done_r    <= '1';
                                 s_ififo_id_r      <= '1';
                                 s_timeout_r       <= '1';
@@ -530,6 +530,7 @@ begin
                         elsif s_wait_cnt_r = x"FFFF" then
                             -- Bus hung during flush: force completion
                             s_oen_permanent_r <= '0';
+                            s_range_active_r  <= '0';
                             s_drain_done_r    <= '1';
                             s_ififo_id_r      <= '1';
                             s_timeout_r       <= '1';

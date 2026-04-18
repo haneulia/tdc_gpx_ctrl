@@ -272,6 +272,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_drain_to_fired_r : std_logic := '0';
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
+    signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: raw hold+skid both full, beat dropped
     -- 2-FF CDC synchronizer for i_stop_tdc (may cross clock domains)
     signal s_stop_tdc_sync1_r     : std_logic := '0';
     signal s_stop_tdc_sync2_r     : std_logic := '0';
@@ -692,6 +693,7 @@ begin
                 s_raw_skid_tdata_r <= (others => '0');
                 s_raw_skid_tuser_r <= (others => '0');
                 s_raw_skid_drain_r <= '0';
+                s_err_raw_overflow_r <= '0';
             else
                 -- Capture new beat from chip_run
                 v_new_valid := '0';
@@ -742,8 +744,20 @@ begin
                         s_raw_skid_tuser_r <= v_new_tuser;
                         s_raw_skid_drain_r <= v_new_drain;
                         v_skid_next_valid := '1';
+                    else
+                        -- Both hold+skid full: beat is dropped. This should not
+                        -- happen given the 1-cycle-late busy backpressure plus
+                        -- 2-deep absorption, but if it does (e.g. control beat
+                        -- inserted during worst-case concurrency), flag it so
+                        -- SW can see the loss instead of corrupting silently.
+                        s_err_raw_overflow_r <= '1';
+                        -- synthesis translate_off
+                        assert false
+                            report "chip_ctrl: raw beat DROPPED (hold+skid full, drain=" &
+                                   std_logic'image(v_new_drain) & ")"
+                            severity error;
+                        -- synthesis translate_on
                     end if;
-                    -- else: both full after step 1 → should not happen with backpressure
                 end if;
 
                 -- Commit valid flags
