@@ -454,6 +454,22 @@ begin
 
     -- =========================================================================
     -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
+    --
+    -- Policy (#38, documented intent):
+    --   While s_err_active='1', SW-initiated reg read/write requests are
+    --   blocked (read muxed to err_handler's address, write forced to '0').
+    --   This is intentional — err_handler must own the bus during its
+    --   Reg12 read classification sequence. Without bounded recovery,
+    --   manual SW reg access could be starved indefinitely.
+    --
+    --   Starvation is bounded by:
+    --     - err_handler.ST_WAIT_READ watchdog (Round 2 #2) — forces
+    --       recovery progression even if reg read never completes.
+    --     - i_soft_clear (Round 3 #10 / Round 4 #40) — lets SW clear
+    --       fatal state and restore the mux to SW ownership without a
+    --       hard reset.
+    --   SW should check o_err_active before issuing reg commands and
+    --   retry after recovery, or use i_soft_clear for emergency access.
     -- =========================================================================
     s_cmd_reg_read_mux         <= s_err_cmd_reg_read      when s_err_active = '1'
                                   else s_cmd_reg_read;

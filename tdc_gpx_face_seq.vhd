@@ -109,6 +109,11 @@ architecture rtl of tdc_gpx_face_seq is
 
     signal s_face_id_r        : unsigned(7 downto 0)  := (others => '0');
     signal s_frame_id_r       : unsigned(31 downto 0) := (others => '0');
+    -- #31: s_shot_overrun_r here is currently set/cleared but NOT read inside
+    -- this module. The exposed overrun flag to SW is face_assembler's own
+    -- s_shot_overrun_r routed via o_shot_overrun → s_status.pipeline_overrun.
+    -- Retained as an internal latch for possible future aggregate diagnostics
+    -- (face-boundary clear would be added here if/when read usage is added).
     signal s_shot_overrun_r   : std_logic := '0';
     signal s_cmd_start_accepted_r : std_logic := '0';
 

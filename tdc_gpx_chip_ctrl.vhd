@@ -672,8 +672,22 @@ begin
 
     -- =========================================================================
     -- StopDis output: override OR FSM-controlled
-    -- INTENTIONALLY LIVE: debug/emergency override that must take effect
-    -- immediately, even mid-run. NOT snapshotted at cmd_start.
+    --
+    -- Policy (#24, documented intent):
+    --   INTENTIONALLY LIVE — debug/emergency override must take effect
+    --   immediately, even mid-run. NOT snapshotted at cmd_start.
+    --   SW implication: asserting i_cfg.stopdis_override(4) mid-shot forces
+    --   the stops pin state on the next clock, independently of the internal
+    --   FSM state. This can interrupt an in-flight shot at arbitrary
+    --   positions; SW should treat any frame that straddles an override
+    --   transition as potentially corrupt and correlate with status
+    --   registers (chip_error_mask, shot_overrun, err_drain_timeout) to
+    --   decide discard vs retain.
+    --   No internal FSM recovery is triggered by the override — chip_run /
+    --   chip_init continue on their own, so the pin state may briefly
+    --   disagree with the FSM's notion of "stops enabled/disabled". This is
+    --   intentional (debug takes priority); normal operation should keep
+    --   stopdis_override inactive.
     -- =========================================================================
     o_stopdis <= i_cfg.stopdis_override(g_CHIP_ID)
                  when i_cfg.stopdis_override(4) = '1'
@@ -793,6 +807,16 @@ begin
     o_m_raw_axis_tvalid <= s_raw_hold_valid_r;
     o_m_raw_axis_tdata  <= s_raw_hold_tdata_r;
     o_m_raw_axis_tuser  <= s_raw_hold_tuser_r;
+
+    -- o_drain_done semantic (#27):
+    --   Pulses when the final drain-done control beat HANDSHAKES to
+    --   downstream (tvalid='1' AND tready='1'), NOT at the moment chip_run
+    --   internally finishes draining. This means downstream backpressure
+    --   can delay o_drain_done relative to the actual IFIFO drain completion
+    --   inside chip_run.
+    --   Upstream modules (face_seq, err_handler, status_agg) consuming this
+    --   pulse must interpret it as "chip_run's drain_done beat was accepted
+    --   by the raw-path consumer", not as "chip_run exited the drain state".
     o_drain_done        <= s_raw_hold_drain_r and s_raw_hold_valid_r and i_m_raw_axis_tready;
 
     -- Backpressure: registered for 200MHz timing closure.

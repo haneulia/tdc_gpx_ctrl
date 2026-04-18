@@ -579,6 +579,14 @@ begin
                 if i_face_abort = '1' then
                     -- Abort cancels any queued face_start (SW must re-arm).
                     s_face_start_pending_r <= '0';
+                    -- #34: if face_start was accepted SAME cycle, the face_start
+                    -- block above already set s_hdr_rom_pending_r <= '1' and
+                    -- s_state_r <= ST_PREFIX. Abort runs after face_start in
+                    -- the same process (last-assignment wins) so s_state_r
+                    -- gets re-routed here. Explicitly drop the ROM build
+                    -- trigger too, preventing a stale ROM write on the next
+                    -- cycle when we're supposed to be in ST_IDLE.
+                    s_hdr_rom_pending_r <= '0';
                     if s_out_tvalid_r = '0' or i_m_axis_tready = '1' then
                         -- No pending beat (or consumed this cycle)
                         s_out_tvalid_r <= '0';
