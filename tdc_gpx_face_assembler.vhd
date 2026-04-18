@@ -453,7 +453,12 @@ begin
                         -- Strict in-order: start from lowest active chip
                         s_next_chip_r     <= (others => '0');
                         if i_active_chip_mask = "0000" then
-                            s_state_r     <= ST_IDLE;  -- degenerate: no active chips
+                            -- Zero active mask: emit row_done immediately so
+                            -- upstream seq sees this shot as completed. Module
+                            -- becomes self-consistent without relying on
+                            -- face_seq to pre-gate zero-mask shots.
+                            s_row_done_r <= '1';
+                            s_state_r    <= ST_IDLE;
                         else
                             s_state_r     <= ST_SCAN;
                         end if;

@@ -27,6 +27,23 @@
 | 7 | `tdc_gpx_chip_run.vhd` | deferred stop latch 대상에 `ST_OVERRUN_FLUSH` 추가 |
 | 8 | `tdc_gpx_chip_init.vhd` | `ST_CFG_WR_WAIT` / `ST_MR_WAIT` timeout exit에서 `s_stopdis_r <= '0'` 추가 (정상 완료 경로와 일치) |
 
+## ✅ Round 3 추가 수정 항목
+
+| 보고서 # | 파일 | 수정 내용 |
+|---------|------|-----------|
+| 9 | `tdc_gpx_chip_ctrl.vhd` | `PH_RESP_DRAIN` hard cap(15 cycle) 도달 시 bus 여전히 활성이면 `s_err_drain_cap_r` sticky → `o_err_raw_overflow`에 OR 합류 |
+| 10 | `tdc_gpx_err_handler.vhd` | `i_soft_clear` 입력 포트 추가 (기본값 '0'). SW가 fatal 상태를 hard reset 없이 clear 가능 |
+| 14 | `tdc_gpx_header_inserter.vhd` | `s_face_start_pending_r` 도입. non-IDLE `face_start` pulse를 latch, 다음 IDLE에서 소비. abort는 pending drop |
+| 15 | `tdc_gpx_header_inserter.vhd` | reset 블록에 `s_hdr_rom_pending_r`, `s_hdr_rom_r` 명시 초기화 |
+| 16 | `tdc_gpx_cell_builder.vhd` | `p_collect` reset 블록에 `s_buf_seq_r`, `s_buf_age_r` 명시 초기화 |
+| 17 | `tdc_gpx_cell_builder.vhd` | `p_output` reset 블록에 `s_rt_last_beat_r`, `s_rt_max_hits_r` 명시 초기화 |
+| 19 | `tdc_gpx_face_assembler.vhd` | zero active mask 진입 시 즉시 `s_row_done_r <= '1'` pulse 후 IDLE (self-consistent) |
+| 21 | `tdc_gpx_chip_init.vhd` | `i_start`와 `i_cfg_write_req` 동시 cycle 시 cfg_write를 pending으로 latch. ST_OFF 복귀 시 자동 처리 |
+| 32 | `tdc_gpx_face_seq.vhd` | `s_cmd_start_pending_r` 도입. busy 중 cmd_start pulse를 latch, pipeline idle 시 재처리 |
+| 20, 37 | `tdc_gpx_chip_reg.vhd` | 1-depth pending queue (`s_pend_valid_r`/`rw`/`addr`/`wdata`). 동시 read+write 또는 ST_ACTIVE 중 신규 요청을 저장. 오버플로는 `s_err_req_overflow_r` sticky |
+| 39 | `tdc_gpx_status_agg.vhd`, `tdc_gpx_top.vhd` | `o_error_count` → `o_error_cycle_count`로 rename (실제 의미와 일치) |
+| 33 | (이미 연결됨) | `o_shot_drop_cnt` → `s_status.shot_drop_count`로 top에서 이미 aggregation됨 — 문서만 업데이트 |
+
 ---
 
 ## 📋 높음 우선순위 (remaining)
@@ -261,3 +278,32 @@ when ST_OFF =>
 ## 회귀 검증 (Round 2 수정 후)
 
 이번 세션에서 Round 2 8개 fix 적용 후 xsim 회귀는 "Run compile check + regression tests" 항목에서 수행.
+
+## 회귀 검증 (Round 3 수정 후)
+
+Round 3 12개 fix 적용 후 전체 TB 재실행 결과:
+
+| TB | 결과 |
+|----|------|
+| cell_pipe | ✅ PASS |
+| chip_ctrl | ✅ ALL TESTS PASSED (total_raw_words=200) |
+| bus_phy | ✅ ALL TESTS PASSED (total_rsp=85) |
+| config_ctrl | ✅ PASS (init/smoke) |
+| decode_pipe | ✅ ALL TESTS PASSED (5 checks) |
+| downstream | ✅ T1-T4 PASS |
+| output_stage | ✅ PASS |
+| scenarios | ✅ ALL SCENARIO TESTS PASSED |
+
+**8/8 TB 통과, 비의도 error 0건.**
+
+## 보류(Deferred) 항목 — 사유
+
+| 보고서 # | 사유 |
+|---------|------|
+| 30 (packet_start registered) | 6개 소비처 downstream에 1-cycle shift 파급 효과, 정확성 검증 전 변경 리스크 큼 — formal proof 후 진행 권고 |
+| 22 (cross-slope abort 전파) | 정책 결정 필요 (fail-fast 유지 vs healthy 유지) |
+| 11 (stop_cfg_decode overwrite 정책) | 상위 모듈의 "1회 aggregate beat" 계약 확정 필요 — SW 팀 확인 후 progress/누적 결정 |
+| 13 (stop_tdc CDC handshake) | 현재 2-FF sync는 현행 clock ratio에서 동작, 엄격 CDC 전환은 별도 RTL timing 재검증 필요 |
+| 23 (bus_phy burst live dependency) | chip_run이 mid-burst burst 취소를 의도적으로 가능케 한 설계 — 변경 시 상위 제어 재설계 필요 |
+| 18, 25, 29, 35, 36 | 설계 의도/SW 정책에 의존 — 확정 후 적용 권고 |
+| 24, 27, 34, 38, 40 | 문서/주석 정리 수준, 기능상 문제 없음 |

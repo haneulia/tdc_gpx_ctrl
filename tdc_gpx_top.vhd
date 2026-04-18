@@ -718,7 +718,7 @@ begin
             i_shot_fall_overrun    => s_shot_fall_overrun,
             o_status               => s_status,
             o_timestamp            => s_timestamp_r,
-            o_error_count          => s_error_count_r,
+            o_error_cycle_count    => s_error_count_r,
             o_err_drain_sticky     => s_err_drain_to_sticky_r,
             o_err_seq_sticky       => s_err_seq_sticky_r
         );

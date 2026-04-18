@@ -310,6 +310,8 @@ begin
                 s_shot_dropped_r <= '0';
                 s_timeout_cnt_r  <= (others => '0');
                 s_shot_pending_r <= '0';
+                s_buf_seq_r      <= (others => '0');
+                s_buf_age_r      <= (others => (others => '0'));
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r   <= '0';
@@ -567,6 +569,8 @@ begin
                 s_output_done_r   <= '0';
                 s_slice_timeout_r <= '0';
                 s_out_timeout_r   <= (others => '0');
+                s_rt_last_beat_r  <= to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
+                s_rt_max_hits_r   <= to_unsigned(c_MAX_HITS_PER_STOP, 3);
             else
                 s_output_done_r  <= '0';
                 s_slice_timeout_r <= '0';

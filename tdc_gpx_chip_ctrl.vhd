@@ -275,6 +275,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: raw hold+skid both full, beat dropped
+    signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
     -- 2-FF CDC synchronizer for i_stop_tdc (may cross clock domains)
     signal s_stop_tdc_sync1_r     : std_logic := '0';
     signal s_stop_tdc_sync2_r     : std_logic := '0';
@@ -468,6 +469,7 @@ begin
                 s_n_drain_cap_snap_r <= (others => '0');
                 s_bus_clk_div_snap_r <= to_unsigned(2, 6);
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
+                s_err_drain_cap_r    <= '0';
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
             else
@@ -580,6 +582,12 @@ begin
                             end if;
                             s_drain_to_init_r <= '0';  -- always clear on drain exit
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
+                            -- Hard cap: bus still busy or response pending after
+                            -- 15 cycles. Forcing onward could leak stale responses
+                            -- into the next phase; flag sticky so SW can diagnose.
+                            if i_bus_busy = '1' or i_bus_rsp_pending = '1' then
+                                s_err_drain_cap_r <= '1';
+                            end if;
                             if s_drain_to_init_r = '1' then
                                 s_phase_r    <= PH_INIT;
                                 s_init_start <= '1';
@@ -806,7 +814,13 @@ begin
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
-    o_err_raw_overflow  <= s_err_raw_overflow_r;
+    -- raw_overflow aggregates multiple "integrity compromised" events so SW
+    -- only needs to observe one flag per chip. Individual cause codes can be
+    -- split into dedicated ports later if needed:
+    --   s_err_raw_overflow_r -> raw hold/skid full (beat dropped)
+    --                         OR chip_run overrun override dropped response
+    --   s_err_drain_cap_r    -> PH_RESP_DRAIN hard cap hit while bus busy
+    o_err_raw_overflow  <= s_err_raw_overflow_r or s_err_drain_cap_r;
     o_run_timeout       <= s_run_timeout;
 
     -- =========================================================================

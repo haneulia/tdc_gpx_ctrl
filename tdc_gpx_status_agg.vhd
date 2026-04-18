@@ -55,7 +55,7 @@ entity tdc_gpx_status_agg is
         -- Outputs
         o_status             : out t_tdc_status;
         o_timestamp          : out unsigned(63 downto 0);
-        o_error_count        : out unsigned(31 downto 0);  -- error-active cycle count (not event count)
+        o_error_cycle_count  : out unsigned(31 downto 0);  -- error-active cycle count (not event count)
         o_err_drain_sticky   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_seq_sticky     : out std_logic_vector(c_N_CHIPS - 1 downto 0)
     );
@@ -156,7 +156,7 @@ begin
     o_status.pipeline_overrun <= i_shot_overrun or i_shot_fall_overrun;
 
     o_timestamp       <= s_timestamp_r;
-    o_error_count     <= s_error_count_r;
+    o_error_cycle_count <= s_error_count_r;
     o_err_drain_sticky <= s_err_drain_sticky_r;
     o_err_seq_sticky   <= s_err_seq_sticky_r;
 

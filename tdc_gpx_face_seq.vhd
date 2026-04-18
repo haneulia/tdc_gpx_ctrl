@@ -132,6 +132,11 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_shot_start_gated  : std_logic;
     signal s_pipeline_abort    : std_logic;
     signal s_abort_quiesce_r   : std_logic := '0';  -- 1-cycle guard after abort
+
+    -- Pending cmd_start: accepted when pipeline reports busy. Re-evaluated
+    -- every cycle in ST_IDLE. Cleared on cmd_stop or abort (SW must re-arm
+    -- after abort). Prevents silent loss of 1-cycle cmd_start pulses.
+    signal s_cmd_start_pending_r : std_logic := '0';
     signal s_all_shots_fired   : std_logic;
     signal s_face_closing      : std_logic;
 
@@ -152,6 +157,7 @@ begin
                 s_shot_overrun_r      <= '0';
                 s_cmd_start_accepted_r <= '0';
                 s_abort_quiesce_r     <= '0';
+                s_cmd_start_pending_r <= '0';
             else
                 s_cmd_start_accepted_r <= '0';
                 s_cfg_rejected_r       <= '0';
@@ -164,13 +170,14 @@ begin
 
                 case s_face_state_r is
                     when ST_IDLE =>
-                        if i_cmd_start = '1' then
+                        if i_cmd_start = '1' or s_cmd_start_pending_r = '1' then
                             -- Config validation: reject if geometry is degenerate
                             if i_cfg.active_chip_mask = "0000"
                                or i_cfg.stops_per_chip < 2
                                or i_cfg.cols_per_face < 1 then
                                 -- Invalid config: reject start, pulse cfg_rejected
-                                s_cfg_rejected_r <= '1';
+                                s_cfg_rejected_r      <= '1';
+                                s_cmd_start_pending_r <= '0';  -- drop pending on config error
                             elsif i_chip_busy = C_ZEROS_CHIPS
                                and i_reg_outstanding = '0'
                                and i_face_asm_idle = '1'
@@ -186,15 +193,23 @@ begin
                                 s_face_id_r            <= (others => '0');
                                 s_shot_overrun_r       <= '0';
                                 s_cmd_start_accepted_r <= '1';
+                                s_cmd_start_pending_r  <= '0';  -- consume
                                 s_face_state_r         <= ST_WAIT_SHOT;
                             else
-                                -- Pipeline busy: start not accepted (not a config error).
+                                -- Pipeline busy: latch pending so the next
+                                -- IDLE cycle can retry without needing SW to
+                                -- re-pulse cmd_start.
+                                s_cmd_start_pending_r <= '1';
                                 -- synthesis translate_off
                                 assert false
-                                    report "face_seq: cmd_start ignored (pipeline busy)"
+                                    report "face_seq: cmd_start pending-latched (pipeline busy)"
                                     severity note;
                                 -- synthesis translate_on
                             end if;
+                        end if;
+                        -- cmd_stop / abort cancels any queued start.
+                        if i_cmd_stop = '1' or s_pipeline_abort = '1' then
+                            s_cmd_start_pending_r <= '0';
                         end if;
 
                     when ST_WAIT_SHOT =>

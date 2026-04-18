@@ -135,6 +135,12 @@ architecture rtl of tdc_gpx_header_inserter is
     -- not visible until next delta/edge).
     signal s_hdr_rom_pending_r : std_logic := '0';
 
+    -- Pending face_start: arrives in non-IDLE is latched so the next
+    -- ST_IDLE can consume it. Prevents silent loss of 1-cycle pulses
+    -- when upstream issues face_start before hdr_idle reports.
+    -- Dropped on face_abort (abort cancels any queued restart).
+    signal s_face_start_pending_r : std_logic := '0';
+
     -- =========================================================================
     -- Latched header fields (captured at face_start)
     -- =========================================================================
@@ -325,6 +331,9 @@ begin
                 s_timestamp_ns_r    <= (others => '0');
                 s_chip_error_mask_r <= (others => '0');
                 s_chip_error_cnt_r  <= (others => '0');
+                s_hdr_rom_pending_r <= '0';
+                s_hdr_rom_r         <= (others => (others => '0'));
+                s_face_start_pending_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_frame_done_r <= '0';
@@ -454,15 +463,21 @@ begin
                 -- ONLY accepted in ST_IDLE (hardware guard).
                 -- Non-IDLE face_start is silently ignored.
                 -- =============================================================
-                -- synthesis translate_off
+                -- Non-IDLE face_start: latch as pending so the next IDLE entry
+                -- picks it up. Prevents silent loss of 1-cycle pulses when
+                -- upstream issues face_start before hdr_idle actually shows.
                 if i_face_start = '1' and s_state_r /= ST_IDLE then
+                    s_face_start_pending_r <= '1';
+                    -- synthesis translate_off
                     assert false
-                        report "header_inserter: face_start IGNORED (not IDLE, state=" &
+                        report "header_inserter: face_start pending-latched (not IDLE, state=" &
                                t_state'image(s_state_r) & ")"
-                        severity error;
+                        severity note;
+                    -- synthesis translate_on
                 end if;
-                -- synthesis translate_on
-                if i_face_start = '1' and s_state_r = ST_IDLE then
+                if (i_face_start = '1' or s_face_start_pending_r = '1')
+                   and s_state_r = ST_IDLE then
+                    s_face_start_pending_r <= '0';  -- consume
                     -- Hardware guard: face_start is only accepted in ST_IDLE.
                     -- Non-IDLE face_start is silently ignored (upstream contract
                     -- guarantees hdr_idle check before issuing face_start).
@@ -545,6 +560,8 @@ begin
                 -- Higher priority than face_start (last-assignment wins).
                 -- =============================================================
                 if i_face_abort = '1' then
+                    -- Abort cancels any queued face_start (SW must re-arm).
+                    s_face_start_pending_r <= '0';
                     if s_out_tvalid_r = '0' or i_m_axis_tready = '1' then
                         -- No pending beat (or consumed this cycle)
                         s_out_tvalid_r <= '0';

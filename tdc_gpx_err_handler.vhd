@@ -49,6 +49,10 @@ entity tdc_gpx_err_handler is
         i_frame_done        : in  std_logic;
         -- Shot start (for sync recovery to shot boundary)
         i_shot_start        : in  std_logic;
+        -- SW-initiated soft clear for fatal state (1-clk pulse)
+        -- Allows SW to reset err_fatal + retry count without needing a hard reset.
+        -- Tie to '0' if no SW clear path is needed.
+        i_soft_clear        : in  std_logic := '0';
         -- Command outputs (OR'd in config_ctrl)
         o_cmd_soft_reset    : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_cmd_reg_read      : out std_logic;
@@ -147,7 +151,7 @@ begin
         variable v_reg12         : std_logic_vector(31 downto 0);
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' then
+            if i_rst_n = '0' or i_soft_clear = '1' then
                 s_state_r            <= ST_IDLE;
                 s_debounce_cnt_r     <= (others => (others => '0'));
                 s_err_chip_mask_r    <= (others => '0');

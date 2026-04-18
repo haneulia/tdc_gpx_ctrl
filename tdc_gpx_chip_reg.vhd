@@ -72,6 +72,17 @@ architecture rtl of tdc_gpx_chip_reg is
     signal s_busy_r         : std_logic := '0';
     signal s_timeout_r      : unsigned(15 downto 0) := (others => '0');
 
+    -- 1-depth pending queue: if a request pulse arrives while s_state_r =
+    -- ST_ACTIVE, latch it (plus addr/wdata/rw) so the request is not silently
+    -- dropped. Also protects against concurrent read+write in the same cycle
+    -- (read wins, write queued).
+    signal s_pend_valid_r : std_logic := '0';
+    signal s_pend_rw_r    : std_logic := '0';
+    signal s_pend_addr_r  : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_pend_wdata_r : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
+    -- Sticky: 2nd request arrived while pending queue was already occupied.
+    signal s_err_req_overflow_r : std_logic := '0';
+
 begin
 
     p_fsm : process(i_clk)
@@ -90,6 +101,11 @@ begin
                 s_timeout_out_r  <= '0';
                 s_busy_r         <= '0';
                 s_timeout_r      <= (others => '0');
+                s_pend_valid_r   <= '0';
+                s_pend_rw_r      <= '0';
+                s_pend_addr_r    <= (others => '0');
+                s_pend_wdata_r   <= (others => '0');
+                s_err_req_overflow_r <= '0';
             else
                 s_rvalid_r      <= '0';
                 s_done_r        <= '0';
@@ -99,7 +115,24 @@ begin
 
                     when ST_OFF =>
                         s_busy_r <= '0';
-                        if i_start_read = '1' then
+                        -- Prefer pending over live input so queued SW requests
+                        -- are honored in arrival order.
+                        if s_pend_valid_r = '1' then
+                            s_req_valid_r <= '1';
+                            s_req_rw_r    <= s_pend_rw_r;
+                            s_req_addr_r  <= s_pend_addr_r;
+                            if s_pend_rw_r = '1' and s_pend_addr_r = x"E" then
+                                s_req_wdata_r    <= s_pend_wdata_r;
+                                s_req_wdata_r(4) <= '0';
+                            else
+                                s_req_wdata_r <= s_pend_wdata_r;
+                            end if;
+                            s_is_read_r   <= not s_pend_rw_r;
+                            s_timeout_r   <= (others => '0');
+                            s_busy_r      <= '1';
+                            s_pend_valid_r <= '0';
+                            s_state_r     <= ST_ACTIVE;
+                        elsif i_start_read = '1' then
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '0';
                             s_req_addr_r  <= i_addr;
@@ -107,6 +140,14 @@ begin
                             s_timeout_r   <= (others => '0');  -- rearm watchdog
                             s_busy_r      <= '1';
                             s_state_r     <= ST_ACTIVE;
+                            -- Same-cycle write is queued so neither pulse is
+                            -- lost (previous behavior silently dropped write).
+                            if i_start_write = '1' then
+                                s_pend_valid_r <= '1';
+                                s_pend_rw_r    <= '1';
+                                s_pend_addr_r  <= i_addr;
+                                s_pend_wdata_r <= i_wdata;
+                            end if;
                         elsif i_start_write = '1' then
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '1';
@@ -127,6 +168,19 @@ begin
                         end if;
 
                     when ST_ACTIVE =>
+                        -- Queue incoming pulse while busy instead of dropping it.
+                        -- If the queue is already occupied, raise sticky error
+                        -- so SW can see that a request was lost.
+                        if i_start_read = '1' or i_start_write = '1' then
+                            if s_pend_valid_r = '0' then
+                                s_pend_valid_r <= '1';
+                                s_pend_rw_r    <= i_start_write;  -- read=0, write=1
+                                s_pend_addr_r  <= i_addr;
+                                s_pend_wdata_r <= i_wdata;
+                            else
+                                s_err_req_overflow_r <= '1';
+                            end if;
+                        end if;
                         if i_bus_rsp_valid = '1' then
                             s_req_valid_r <= '0';
                             s_busy_r      <= '0';

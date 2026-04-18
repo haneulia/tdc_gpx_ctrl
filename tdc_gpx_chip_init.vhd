@@ -84,6 +84,10 @@ architecture rtl of tdc_gpx_chip_init is
     signal s_cfg_idx_r       : unsigned(3 downto 0)  := (others => '0');
     signal s_cfg_image_snap_r : t_cfg_image := (others => (others => '0'));
     signal s_init_mode_r     : std_logic := '1';  -- '1' = powerup (full), '0' = runtime cfg_write
+    -- Pending cfg_write: set when i_cfg_write_req arrives same cycle as i_start
+    -- (start wins). Processed automatically after the init sequence returns to
+    -- ST_OFF, preventing silent loss of SW cfg_write commands.
+    signal s_cfg_write_pending_r : std_logic := '0';
 
     signal s_req_valid_r     : std_logic := '0';
     signal s_req_rw_r        : std_logic := '0';
@@ -123,6 +127,7 @@ begin
                 s_timeout_out_r  <= '0';
                 s_init_mode_r    <= '1';
                 s_cfg_image_snap_r <= (others => (others => '0'));
+                s_cfg_write_pending_r <= '0';
             else
                 s_done_r        <= '0';
                 s_timeout_out_r <= '0';
@@ -136,8 +141,14 @@ begin
                             s_cfg_image_snap_r <= i_cfg_image;
                             s_rsp_timeout_r    <= (others => '0');  -- rearm watchdog
                             s_busy_r           <= '1';
+                            -- If a cfg_write was requested the same cycle, queue
+                            -- it so the SW pulse is not lost when init wins.
+                            if i_cfg_write_req = '1' then
+                                s_cfg_write_pending_r <= '1';
+                            end if;
                             s_state_r          <= ST_POWERUP;
-                        elsif i_cfg_write_req = '1' then
+                        elsif i_cfg_write_req = '1' or s_cfg_write_pending_r = '1' then
+                            s_cfg_write_pending_r <= '0';  -- consume
                             s_init_mode_r      <= '0';
                             s_cfg_image_snap_r <= i_cfg_image;
                             s_cfg_idx_r        <= (others => '0');
