@@ -391,8 +391,17 @@ begin
 
     -- =========================================================================
     -- Packet start (combinational, from internal FSM state)
-    -- NOTE: kept combinational for zero-latency face start. Assertions below
-    -- guard against unexpected double-fire or illegal-state glitches.
+    --
+    -- Review item #30 (deferred):
+    --   This combinational definition has ~6 downstream consumers inside this
+    --   module (state transition at ST_WAIT_SHOT, frame_done_both resets,
+    --   shot deferral, s_face_start_r register input, assertion check).
+    --   Converting to a registered one-shot eliminates combinational glitch
+    --   risk but shifts all consumers by 1 cycle — requires formal proof of
+    --   equivalence plus regression on timing-sensitive cases (same-cycle
+    --   hdr_idle ↔ packet_start handshake). Scheduled for a dedicated
+    --   sprint; until then, assertions guard against glitch-induced
+    --   double-fire or illegal-state triggers.
     -- =========================================================================
     s_packet_start <= '1' when s_face_state_r = ST_WAIT_SHOT
                                and (i_shot_start_raw = '1' or s_shot_deferred_r = '1')

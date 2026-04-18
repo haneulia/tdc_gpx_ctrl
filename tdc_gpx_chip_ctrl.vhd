@@ -85,14 +85,14 @@ entity tdc_gpx_chip_ctrl is
         -- Max range clock budget (from cfg, latched at shot_start)
         i_max_range_clks    : in  unsigned(15 downto 0);
 
-        -- External stop signal (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
+        -- External stop signal (from laser_ctrl, already CDC'd to TDC domain).
+        -- #13: wrapper config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse, DEST_SYNC_FF=4)
+        -- converts the i_axis_aclk-domain source pulse into a clean 1-cycle
+        -- pulse in i_clk (TDC) domain before it reaches this port.
         -- Used for ERROR DETECTION ONLY — NOT a drain trigger.
-        -- Detects rising edge of stop_tdc during ANY active run phase
-        -- (capture + drain + ALU), i.e. while armed='0' and busy='1'.
-        -- This means the next shot deadline arrived before the current shot
-        -- finished processing — indicating a timing mismatch between the
-        -- laser repetition rate and the TDC measurement/drain/ALU cycle.
-        -- 2-FF synchronized internally (ASYNC_REG).
+        -- Signals a sequence error during any active run phase (capture +
+        -- drain + ALU), i.e. while armed='0' and busy='1', meaning the next
+        -- shot deadline arrived before the current shot finished.
         i_stop_tdc          : in  std_logic;
 
         -- Per-IFIFO expected drain counts (from echo_receiver via tdc_gpx_top)
@@ -291,13 +291,9 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: raw hold+skid both full, beat dropped
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
-    -- 2-FF CDC synchronizer for i_stop_tdc (may cross clock domains)
-    signal s_stop_tdc_sync1_r     : std_logic := '0';
-    signal s_stop_tdc_sync2_r     : std_logic := '0';
-    signal s_stop_tdc_prev_r      : std_logic := '0';
-    attribute ASYNC_REG : string;
-    attribute ASYNC_REG of s_stop_tdc_sync1_r : signal is "TRUE";
-    attribute ASYNC_REG of s_stop_tdc_sync2_r : signal is "TRUE";
+    -- #13: i_stop_tdc CDC moved to config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse);
+    -- arrives here as a clean 1-cycle pulse in the TDC clock domain, so no
+    -- internal 2-FF sync or edge-detect is needed.
 
     -- Effective reset for ALL sub-FSMs: hard reset OR soft_reset
     signal s_sub_rst_n            : std_logic;
@@ -641,16 +637,9 @@ begin
                 s_err_drain_timeout_r  <= '0';
                 s_err_drain_to_fired_r <= '0';
                 s_err_sequence_r       <= '0';
-                s_stop_tdc_sync1_r     <= '0';
-                s_stop_tdc_sync2_r     <= '0';
-                s_stop_tdc_prev_r      <= '0';
             else
                 s_err_drain_timeout_r <= '0';
                 s_err_sequence_r      <= '0';
-                -- 2-FF CDC sync chain
-                s_stop_tdc_sync1_r    <= i_stop_tdc;
-                s_stop_tdc_sync2_r    <= s_stop_tdc_sync1_r;
-                s_stop_tdc_prev_r     <= s_stop_tdc_sync2_r;
                 s_range_active_prev_r <= s_range_active_r;
 
                 if s_range_active_r = '1' and s_range_active_prev_r = '0' then
@@ -667,11 +656,13 @@ begin
                     end if;
                 end if;
 
-                -- Sequence error: stop_tdc↑ while run is active (armed already cleared).
+                -- Sequence error: stop_tdc pulse while run is active (armed already cleared).
                 -- Covers capture + drain + ALU: any stop_tdc during active processing
                 -- means the next shot deadline arrived before current shot finished.
+                -- #13: i_stop_tdc is now a clean 1-cycle pulse from xpm_cdc_pulse in
+                -- config_ctrl (no internal 2-FF / edge detect needed).
                 if s_phase_r = PH_RUN and s_run_armed = '0' and s_run_busy = '1' then
-                    if s_stop_tdc_sync2_r = '1' and s_stop_tdc_prev_r = '0' then
+                    if i_stop_tdc = '1' then
                         s_err_sequence_r <= '1';
                     end if;
                 end if;

@@ -343,6 +343,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_stop_tdc        : std_logic;
     signal s_cmd_soft_reset_tdc  : std_logic;
     signal s_cmd_cfg_write_g_tdc : std_logic;
+    signal s_stop_tdc_tdc        : std_logic;  -- stop_tdc after xpm_cdc_pulse (#13)
     -- Per-chip command pulses
     signal s_err_cmd_soft_reset_tdc : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_shot_start_tdc         : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -667,6 +668,20 @@ begin
             dest_pulse => s_cmd_cfg_write_g_tdc
         );
 
+    -- #13: stop_tdc crosses AXI-Stream → TDC clock. Previously a bare 2-FF
+    -- synchronizer in chip_ctrl; now routed through xpm_cdc_pulse for
+    -- proper short-pulse capture (DEST_SYNC_FF=4 for higher MTBF).
+    u_cdc_stop_tdc : xpm_cdc_pulse
+        generic map (DEST_SYNC_FF => 4, RST_USED => 0, SIM_ASSERT_CHK => 0)
+        port map (
+            src_clk    => i_axis_aclk,
+            src_rst    => '0',
+            src_pulse  => i_stop_tdc,
+            dest_clk   => i_tdc_clk,
+            dest_rst   => '0',
+            dest_pulse => s_stop_tdc_tdc
+        );
+
     -- =========================================================================
     -- CDC Stage 3: Quasi-static config snapshot (AXI-Stream -> TDC)
     --
@@ -949,7 +964,7 @@ begin
                 o_cmd_reg_done      => s_cmd_reg_done(i),
                 i_shot_start        => s_shot_start_tdc(i),
                 i_max_range_clks    => s_cfg_tdc.max_range_clks,
-                i_stop_tdc          => i_stop_tdc,
+                i_stop_tdc          => s_stop_tdc_tdc,
                 i_expected_ififo1   => s_expected_ififo1_tdc(i),
                 i_expected_ififo2   => s_expected_ififo2_tdc(i),
                 o_bus_req_valid     => s_bus_req_valid(i),

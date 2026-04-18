@@ -522,9 +522,16 @@ begin
                                 s_cstate_r     <= ST_C_IDLE;
                                 s_timeout_cnt_r <= (others => '0');
                             elsif s_timeout_cnt_r = x"FFFF" then
-                                -- Timeout: drain_done never came, force IDLE
-                                s_cstate_r     <= ST_C_IDLE;
-                                s_timeout_cnt_r <= (others => '0');
+                                -- Timeout: drain_done never came. Force IDLE so
+                                -- the FSM can accept the next shot, but raise
+                                -- s_shot_dropped_r sticky so SW sees recovery
+                                -- was incomplete (#25). Any late stale beats
+                                -- arriving after the transition will backpressure
+                                -- upstream via tready='0' in IDLE — SW should
+                                -- soft_reset the pipeline if that stalls.
+                                s_cstate_r      <= ST_C_IDLE;
+                                s_shot_dropped_r <= '1';  -- re-assert to flag incomplete drop
+                                s_timeout_cnt_r  <= (others => '0');
                             else
                                 s_timeout_cnt_r <= s_timeout_cnt_r + 1;
                             end if;

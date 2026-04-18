@@ -555,8 +555,17 @@ begin
                                 -- satisfying tPW-RH >= 6 ns even at div=1
                                 -- (2 × 5 ns = 10 ns >= 6 ns).
                                 -- CSN, OEN, ADR unchanged throughout burst.
-                                -- Burst: oen uses latched value, burst uses live
-                                -- (chip_run lowers i_req_burst to stop burst)
+                                -- Asymmetric by design (#23):
+                                --   - s_oen_perm_r : LATCHED at burst start so a
+                                --     transient drop of i_req_oen_permanent mid-
+                                --     burst cannot unlatch output enable.
+                                --   - i_req_burst  : LIVE, so chip_run can abort
+                                --     a burst cleanly by lowering it one cycle
+                                --     before the final beat.
+                                -- Do NOT latch i_req_burst — doing so removes
+                                -- chip_run's mid-burst-abort capability and has
+                                -- no functional benefit. Concern raised in #23
+                                -- was module independence, not correctness.
                                 if s_oen_perm_r = '1'
                                    and i_req_burst = '1' then
                                     -- Burst mode: continue only if response was consumed

@@ -740,6 +740,10 @@ begin
     o_row_done         <= s_row_done_r;
     o_chip_error_flags <= s_chip_error_r;
     o_shot_overrun     <= s_shot_overrun_r;
+    -- #18: o_face_abort is retained as a port for backward compatibility but
+    -- s_face_abort_r is never asserted after Round 4 (c-simplified overrun).
+    -- Overrun no longer triggers face_abort → pipeline_abort; the tight
+    -- 1-cycle feedback path concern from #18 is therefore moot.
     o_face_abort       <= s_face_abort_r;
     o_idle             <= '1' when s_state_r = ST_IDLE else '0';
 
