@@ -97,7 +97,8 @@ entity tdc_gpx_chip_run is
         o_timeout           : out std_logic;           -- 1-clk pulse: abnormal drain exit
         o_timeout_cause     : out std_logic_vector(2 downto 0);  -- cause code (valid with o_timeout)
         -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
-        --              "100"=burst_rsp, "101"=flush_rsp, "110"=overrun_flush
+        --              "100"=burst_rsp, "101"=flush_rsp, "110"=overrun_flush,
+        --              "111"=capture_stop_fallback (irflag missing after cmd_stop)
         o_err_overrun_drop  : out std_logic;  -- sticky: overrun override dropped bus response beat
 
         -- Pin outputs
@@ -283,25 +284,22 @@ begin
                         end if;
 
                     when ST_CAPTURE =>
+                        -- Graceful stop (Q&A #29, Option A):
+                        -- On cmd_stop, latch pending + enable chip-level stopdis
+                        -- and start a local fallback watchdog. Let the natural
+                        -- irflag path drive the drain so the CURRENT shot's
+                        -- already-captured data is preserved (no purge). The
+                        -- pending flag is honored at ALU_RECOVERY exit → ST_OFF.
+                        --
+                        -- Fallback: if irflag never arrives (chip malfunction),
+                        -- the watchdog below forces the original purge path.
                         if i_cmd_stop = '1' then
-                            s_stopdis_r          <= '1';
-                            s_stop_pending_r     <= '1';
-                            s_range_active_r     <= '0';
-                            s_raw_valid_r        <= '0';
-                            s_drain_cnt_ififo1_r <= (others => '0');
-                            s_drain_cnt_ififo2_r <= (others => '0');
-                            s_expected_ififo1_r  <= (others => '0');
-                            s_expected_ififo2_r  <= (others => '0');
-                            s_drain_done_r       <= '0';
-                            s_purge_mode_r       <= '1';
-                            if i_drain_mode = '1' then
-                                s_oen_permanent_r <= '1';
-                            else
-                                s_oen_permanent_r <= '0';
-                            end if;
-                            s_wait_cnt_r <= (others => '0');
-                            s_state_r    <= ST_DRAIN_SETTLE;
-                        elsif i_irflag_sync = '1' and s_irflag_prev_r = '0' then
+                            s_stop_pending_r <= '1';
+                            s_stopdis_r      <= '1';
+                            s_wait_cnt_r     <= (others => '0');  -- start watchdog
+                        end if;
+
+                        if i_irflag_sync = '1' and s_irflag_prev_r = '0' then
                             s_fill_r <= unsigned(i_cfg_image(6)(
                                 c_REG6_LF_THRESH_HI downto c_REG6_LF_THRESH_LO));
                             if i_drain_mode = '1' then
@@ -312,6 +310,31 @@ begin
                             s_expected_ififo1_r  <= (others => '0');
                             s_expected_ififo2_r  <= (others => '0');
                             s_state_r <= ST_DRAIN_LATCH;
+                        elsif s_stop_pending_r = '1' then
+                            -- Fallback watchdog: irflag never arrived after
+                            -- cmd_stop (chip malfunction). Fall back to the
+                            -- original immediate-purge path so we don't hang.
+                            if s_wait_cnt_r = x"FFFF" then
+                                s_range_active_r     <= '0';
+                                s_raw_valid_r        <= '0';
+                                s_drain_cnt_ififo1_r <= (others => '0');
+                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_expected_ififo1_r  <= (others => '0');
+                                s_expected_ififo2_r  <= (others => '0');
+                                s_drain_done_r       <= '0';
+                                s_purge_mode_r       <= '1';
+                                s_timeout_r          <= '1';
+                                s_timeout_cause_r    <= "111";  -- capture-stop fallback
+                                s_wait_cnt_r         <= (others => '0');
+                                if i_drain_mode = '1' then
+                                    s_oen_permanent_r <= '1';
+                                else
+                                    s_oen_permanent_r <= '0';
+                                end if;
+                                s_state_r <= ST_DRAIN_SETTLE;
+                            else
+                                s_wait_cnt_r <= s_wait_cnt_r + 1;
+                            end if;
                         end if;
 
                     when ST_DRAIN_LATCH =>

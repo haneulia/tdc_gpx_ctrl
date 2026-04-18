@@ -173,6 +173,11 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_stop         : std_logic;
     signal s_cmd_soft_reset   : std_logic;
     signal s_cmd_cfg_write    : std_logic;
+    -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
+    -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
+    -- Currently tied to '0' — future CSR bit will pulse this to clear error
+    -- history without a hard reset.
+    signal s_err_soft_clear   : std_logic := '0';
     signal s_cmd_cfg_write_g  : std_logic;
     signal s_cmd_start_accepted : std_logic;
 
@@ -425,6 +430,7 @@ begin
             i_cmd_stop           => s_cmd_stop,
             i_cmd_soft_reset     => s_cmd_soft_reset,
             i_cmd_cfg_write      => s_cmd_cfg_write,
+            i_err_soft_clear     => s_err_soft_clear,
             i_shot_start_per_chip => s_shot_start_per_chip,
             i_shot_start_gated   => s_shot_start_gated,
             i_cfg_pipeline       => s_cfg_pipeline,
@@ -694,6 +700,7 @@ begin
             i_rst_n                => i_axis_aresetn,
             i_cmd_soft_reset       => s_cmd_soft_reset,
             i_cmd_start_accepted   => s_cmd_start_accepted,
+            i_soft_clear           => s_err_soft_clear,
             i_face_state_idle      => s_face_state_idle,
             i_chip_busy            => s_chip_busy,
             i_reg_outstanding      => s_reg_outstanding,

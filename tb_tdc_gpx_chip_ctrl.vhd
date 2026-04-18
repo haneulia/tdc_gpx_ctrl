@@ -1146,11 +1146,11 @@ begin
         wait_clk(10);
 
         -- =============================================================
-        -- [13] Issue 3 check: cmd_stop during ST_CAPTURE -> purge+ALU cleanup
+        -- [13] cmd_stop during ST_CAPTURE -> graceful drain (Q&A #29 Option A)
         -- =============================================================
-        pr_info("[13] cmd_stop in ST_CAPTURE -> purge + ALU + recovery -> IDLE");
+        pr_info("[13] cmd_stop in ST_CAPTURE -> graceful drain + ALU + recovery -> IDLE");
 
-        -- Fill FIFOs so there's data to purge after capture-stop
+        -- Fill FIFOs so there's data to drain (graceful mode preserves it)
         fill_fifos(8, 4);
         wait_clk(5);
 
@@ -1162,12 +1162,20 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
-        -- Issue cmd_stop DURING ST_CAPTURE (before IrFlag/drain)
-        -- FSM should enter purge path: DRAIN_SETTLE -> DRAIN_CHECK -> ALU -> IDLE
+        -- Issue cmd_stop DURING ST_CAPTURE (before IrFlag).
+        -- Graceful policy: latch stop_pending + stopdis, let natural irflag
+        -- drive the normal drain so captured data is preserved. After drain
+        -- + ALU_RECOVERY, stop_pending routes FSM to ST_OFF.
         pulse(s_cmd_stop);
+        wait_clk(5);
 
-        -- Wait for FSM to complete purge + ALU + recovery.
-        -- Purge drain reads all 12 words (bus_ticks ~5 each) + settle + ALU + recovery.
+        -- Provide irflag so the current shot drains normally (the chip would
+        -- naturally assert this after its internal processing completes).
+        s_irflag_pin <= '1';
+        wait_clk(10);
+        s_irflag_pin <= '0';
+
+        -- Wait for FSM to complete drain + ALU + recovery.
         wait_ctrl_idle(c_TIMEOUT, v_found);
         if not v_found then
             pr_fail("[13] capture-stop cleanup timeout", v_fail);

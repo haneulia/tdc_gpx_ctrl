@@ -25,6 +25,11 @@ entity tdc_gpx_status_agg is
         i_rst_n              : in  std_logic;
         i_cmd_soft_reset     : in  std_logic;
         i_cmd_start_accepted : in  std_logic;
+        -- SW-initiated clear for sticky errors + error cycle counter.
+        -- Shared with err_handler.i_soft_clear (same bit drives both so SW
+        -- sees consistent "clear all error history" semantics). Default '0'
+        -- keeps legacy behavior unchanged until top wires it up.
+        i_soft_clear         : in  std_logic := '0';
 
         -- Pipeline state inputs
         i_face_state_idle    : in  std_logic;
@@ -99,6 +104,10 @@ begin
             if i_rst_n = '0' or i_cmd_soft_reset = '1' then
                 s_error_count_r     <= (others => '0');
                 s_chip_error_prev_r <= (others => '0');
+            elsif i_soft_clear = '1' then
+                -- SW-initiated counter clear (Q&A #40)
+                s_error_count_r     <= (others => '0');
+                s_chip_error_prev_r <= i_chip_error_merged;  -- resync baseline
             else
                 v_merged_rising := i_chip_error_merged and (not s_chip_error_prev_r);
                 s_chip_error_prev_r <= i_chip_error_merged;
@@ -121,9 +130,10 @@ begin
     p_err_sticky : process(i_clk)
     begin
         if rising_edge(i_clk) then
-            -- Sticky errors: cleared on reset only (not on start_accepted).
-            -- SW must explicitly read before reset to observe error history.
-            if i_rst_n = '0' then
+            -- Sticky errors: cleared on hard reset or SW-initiated soft_clear.
+            -- SW can read sticky history then pulse soft_clear to resume fresh
+            -- observation without a hard reset.
+            if i_rst_n = '0' or i_soft_clear = '1' then
                 s_err_drain_sticky_r <= (others => '0');
                 s_err_seq_sticky_r   <= (others => '0');
             else

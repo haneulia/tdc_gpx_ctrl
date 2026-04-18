@@ -119,6 +119,9 @@ entity tdc_gpx_config_ctrl is
         i_cmd_stop           : in  std_logic;
         i_cmd_soft_reset     : in  std_logic;
         i_cmd_cfg_write      : in  std_logic;
+        -- SW-initiated clear for err_handler fatal state + error history
+        -- (shared with status_agg soft_clear). Default '0' keeps legacy.
+        i_err_soft_clear     : in  std_logic := '0';
         i_shot_start_per_chip : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_shot_start_gated   : in  std_logic;
         i_cfg_pipeline       : in  t_tdc_cfg;
@@ -584,6 +587,7 @@ begin
             i_reg_outstanding    => s_reg_outstanding,
             i_frame_done         => s_frame_done_both,
             i_shot_start         => i_shot_start_gated,
+            i_soft_clear         => i_err_soft_clear,
             o_cmd_soft_reset     => s_err_cmd_soft_reset,
             o_cmd_reg_read       => s_err_cmd_reg_read,
             o_cmd_reg_addr       => s_err_cmd_reg_addr,

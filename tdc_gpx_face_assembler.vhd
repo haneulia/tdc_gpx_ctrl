@@ -166,6 +166,13 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_last_stop_r     : unsigned(2 downto 0) := (others => '0');  -- pre-computed: stops-1
     signal s_rt_last_beat_r  : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
 
+    -- Forward position trackers for current chip (Q&A #36).
+    -- Separately track (stop_idx, beat_idx_in_cell) during ST_FORWARD real-chip
+    -- path so shot_start overrun can hand off to blank mode at the exact cell
+    -- boundary (works for any runtime cell size = s_rt_last_beat_r + 1).
+    signal s_fwd_stop_r      : unsigned(2 downto 0) := (others => '0');
+    signal s_fwd_beat_r      : unsigned(2 downto 0) := (others => '0');
+
     -- Latched config: snapshot at shot_start to prevent mid-frame changes
     -- from corrupting priority encoder / is_last_chip computation.
     signal s_active_mask_r   : std_logic_vector(3 downto 0) := (others => '0');
@@ -375,6 +382,8 @@ begin
                 s_blank_stop_r    <= (others => '0');
                 s_blank_beat_r    <= (others => '0');
                 s_last_stop_r     <= (others => '0');
+                s_fwd_stop_r      <= (others => '0');
+                s_fwd_beat_r      <= (others => '0');
                 s_pipe_tdata_r    <= (others => '0');
                 s_pipe_tvalid_r   <= '0';
                 s_pipe_tlast_r    <= '0';
@@ -524,9 +533,11 @@ begin
                         s_is_last_chip_r <= '0';
                     end if;
 
-                    s_blank_stop_r <= (others => '0');
-                    s_blank_beat_r <= (others => '0');
-                    s_state_r      <= ST_FORWARD;
+                    s_blank_stop_r   <= (others => '0');
+                    s_blank_beat_r   <= (others => '0');
+                    s_fwd_stop_r     <= (others => '0');  -- reset position for new chip
+                    s_fwd_beat_r     <= (others => '0');
+                    s_state_r        <= ST_FORWARD;
 
                 -- ==============================================================
                 -- ST_FORWARD: produce beats into output pipe
@@ -588,6 +599,14 @@ begin
                             if s_in_tvalid(v_chip_idx) = '1' then
                                 s_pipe_tdata_r  <= s_in_tdata(v_chip_idx);
                                 s_pipe_tvalid_r <= '1';
+                                -- Track (stop_idx, beat_idx) position for Q&A #36
+                                -- overrun hand-off to blank mode.
+                                if s_fwd_beat_r = s_rt_last_beat_r then
+                                    s_fwd_beat_r <= (others => '0');
+                                    s_fwd_stop_r <= s_fwd_stop_r + 1;
+                                else
+                                    s_fwd_beat_r <= s_fwd_beat_r + 1;
+                                end if;
 
                                 -- Detect chip last from cell_builder's tlast
                                 if s_in_tlast(v_chip_idx) = '1' then
@@ -622,26 +641,46 @@ begin
                 end case;
 
                 -- =============================================================
-                -- shot_start override: ABORT the current face.
+                -- shot_start override: BLANK-FILL current line (Q&A #36, c-simplified)
                 --
-                -- Partial beats already consumed by header_inserter cannot
-                -- be reclaimed, so blank-filling would produce an oversized
-                -- line.  Instead we abort immediately: go to ST_IDLE, flush
-                -- the output skid (discard any partial beats still in it),
-                -- and pulse o_face_abort.  Top treats this as frame_done for
-                -- the frame_done_both combiner, closing the face.  SW uses
-                -- shot_overrun status to identify and discard corrupted frames.
+                -- The current shot's line is completed by generating blank
+                -- (error_fill=1) cells for the remainder of the chip in progress
+                -- and for all not-yet-started chips. Line size is preserved so
+                -- VDMA frame alignment stays intact (SW parses by fixed offset).
+                --
+                -- s_fwd_beat_cnt_r gives the exact position where overrun hit
+                -- in the current chip's real-chip forward; blank mode resumes
+                -- from that (stop_idx, beat_idx_in_cell) to backfill cleanly.
+                --
+                -- Subsequent chips enter blank via ST_SCAN's hard-cap path:
+                -- setting s_shot_cnt_r = x"FFFF" forces ST_SCAN to immediately
+                -- declare the next chip timed out → ST_RESOLVE → ST_FORWARD blank.
+                --
+                -- NOTE: face_abort is NOT pulsed here. The line is completed
+                -- in-place; header_inserter sees a normal tlast and the face
+                -- continues naturally. shot_pending latches the new shot so
+                -- ST_IDLE picks it up as the next line.
                 -- =============================================================
                 if i_shot_start = '1' and s_state_r /= ST_IDLE
                                        and not v_row_completing then
-                    s_chip_ready_r    <= (others => '0');
-                    s_chip_done_r     <= (others => '0');
-                    s_chip_error_r    <= (others => '0');
-                    s_shot_overrun_r  <= '1';
-                    s_face_abort_r    <= '1';
-                    s_pipe_tvalid_r   <= '0';
-                    s_pipe_tlast_r    <= '0';
-                    s_state_r         <= ST_IDLE;
+                    s_shot_overrun_r <= '1';
+                    s_shot_pending_r <= '1';  -- new shot becomes next line
+
+                    -- Mark all chips not yet finished as error_fill carriers
+                    s_chip_error_r <= s_chip_error_r or (not s_chip_done_r);
+
+                    -- Force upcoming chips (after current) into blank mode via
+                    -- ST_SCAN's hard safety cap.
+                    s_shot_cnt_r <= x"FFFF";
+
+                    -- If we were mid ST_FORWARD real-chip, resume as blank
+                    -- from the current position so the chip's expected beat
+                    -- count stays exact.
+                    if s_state_r = ST_FORWARD and s_is_blank_r = '0' then
+                        s_is_blank_r   <= '1';
+                        s_blank_stop_r <= s_fwd_stop_r;
+                        s_blank_beat_r <= s_fwd_beat_r;
+                    end if;
                 end if;
 
                 -- =============================================================

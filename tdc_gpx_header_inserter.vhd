@@ -8,6 +8,23 @@
 --   First line of each face contains actual header metadata;
 --   subsequent lines have zero-filled prefix.
 --
+-- Header vs cell metadata roles (Q&A #35):
+--   Header (THIS module's prefix, 12 beats @32b on line 0):
+--     Face-level SNAPSHOT at face_start. Carries static-configuration info
+--     (geometry, calibration, frame/face id, timestamp, pre-face error
+--     snapshot). Intentionally pre-frame; post-drain errors surface in the
+--     NEXT header or via status registers / cell metadata.
+--   Cell metadata (one beat inside each cell, emitted by cell_builder):
+--     Per-stop-channel diagnostic. Carries hit_valid bitmap, slope_vec,
+--     hit_count_actual, hit_dropped, error_fill, chip_id. These act as the
+--     "per-cell footer" — SW iterates cells to detect per-chip/per-stop
+--     problems without needing a separate frame-level footer.
+--
+--   SW reads VDMA frame as a raw data blob (Zybo-style VDMA→framebuffer);
+--   SW uses cell metadata for validation, CSR status registers for
+--   out-of-band state, and the header for face-level configuration.
+--   No additional frame-level footer is needed.
+--
 -- Generics:
 --   g_TDATA_WIDTH : 32 or 64 (output bus width)
 --     32-bit: 12 beats × 4B = 48B header prefix
