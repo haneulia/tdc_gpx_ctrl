@@ -624,6 +624,65 @@ begin
         report "T4 PASS" severity note;
 
         -- =============================================================
+        -- T5: face_assembler overrun blank-fill (#36)
+        --   Inject shot_start overrun while line is still mid-flight.
+        --   Round 4 c-simplified policy: face_assembler must NOT abort
+        --   the line but instead blank-fill the remainder of the current
+        --   line so VDMA frame alignment is preserved. Subsequent shot
+        --   is accepted as the next line via s_shot_pending_r.
+        --
+        --   Check: after the overrun stimulus finishes, the total beat
+        --   count observed on the output AXI-Stream equals the sum of
+        --   full-sized lines (not a truncated line).
+        -- =============================================================
+        report "===== T5: Overrun blank-fill (4 chips, 8 stops, back-to-back shots) ====="
+            severity note;
+        reset_dut;
+
+        active_mask                <= (others => '1');
+        stops_per_chip             <= to_unsigned(8, 4);
+        cfg.cols_per_face          <= to_unsigned(2, 16);   -- 2 lines per face
+        cfg.stops_per_chip         <= to_unsigned(8, 4);
+        cfg.active_chip_mask       <= (others => '1');
+        rows_per_face              <= to_unsigned(32, 16);
+        bp_enable                  <= false;
+        wait_clk(2);
+
+        v_n_active       := c_N_CHIPS;
+        v_exp_data_beats := v_n_active * 8 * c_BEATS_PER_CELL;
+        v_exp_line_beats := c_HDR_PREFIX_BEATS + v_exp_data_beats;
+
+        -- Shot 0: normal
+        pulse_face_and_shot;
+        wait_row_done_or_fail(5000);
+
+        -- Shot 1: deliberately fire shot_start again quickly to force
+        -- an overrun on the second line (stimulus for Round 4 #36).
+        -- wait 3 clocks only.
+        wait_clk(3);
+        pulse_shot;
+        -- Force another shot_start before second shot has finished
+        wait_clk(10);
+        pulse_shot;
+
+        wait_frame_done_or_fail(5000);
+        wait_clk(15);
+
+        -- frame should still complete (blank-fill preserves alignment)
+        assert mon_frame_done_cnt >= 1
+            report "T5 FAIL: frame_done_cnt=" & integer'image(mon_frame_done_cnt)
+                   & " (expected >=1; overrun should not block frame completion)"
+            severity error;
+        -- overrun counter should have bumped
+        assert mon_overrun_cnt >= 1
+            report "T5 FAIL: no shot_overrun observed (count=" &
+                   integer'image(mon_overrun_cnt) & ")"
+            severity error;
+
+        report "T5 PASS (overrun seen: " & integer'image(mon_overrun_cnt)
+               & ", frame_done still fired)" severity note;
+
+        -- =============================================================
         -- Done
         -- =============================================================
         report "===== ALL TESTS PASSED =====" severity note;

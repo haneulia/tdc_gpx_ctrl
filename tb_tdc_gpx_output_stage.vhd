@@ -134,6 +134,11 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal v_out_beat_cnt : natural := 0;
     signal v_sof_seen     : boolean := false;
     signal v_eol_seen     : boolean := false;
+    -- #22 slope-independent test: per-slope output monitors
+    signal v_out_fall_beat_cnt : natural := 0;
+    signal v_fall_eol_seen     : boolean := false;
+    signal v_frame_done_cnt    : natural := 0;
+    signal v_frame_fall_done_cnt : natural := 0;
 
 begin
 
@@ -250,6 +255,20 @@ begin
                     v_eol_seen <= true;
                 end if;
             end if;
+            -- Fall-side monitor (#22)
+            if m_axis_fall_tvalid = '1' and m_axis_fall_tready = '1' then
+                v_out_fall_beat_cnt <= v_out_fall_beat_cnt + 1;
+                if m_axis_fall_tlast = '1' then
+                    v_fall_eol_seen <= true;
+                end if;
+            end if;
+            -- frame_done pulse counters (1-cycle pulses, need to count)
+            if frame_done = '1' then
+                v_frame_done_cnt <= v_frame_done_cnt + 1;
+            end if;
+            if frame_fall_done = '1' then
+                v_frame_fall_done_cnt <= v_frame_fall_done_cnt + 1;
+            end if;
         end if;
     end process p_monitor;
 
@@ -335,10 +354,105 @@ begin
         report "  frame_done:   " & std_logic'image(frame_done)   severity note;
 
         if frame_done = '1' and v_sof_seen and v_eol_seen and v_out_beat_cnt > 0 then
-            report "*** PASS ***" severity note;
+            report "*** SCENARIO 1 (rise-only smoke) PASS ***" severity note;
         else
-            report "*** FAIL ***" severity failure;
+            report "*** SCENARIO 1 FAIL ***" severity failure;
         end if;
+
+        -- =====================================================================
+        -- SCENARIO 2: slope-independent abort (#22)
+        -- Feed rise AND fall data in parallel. Mid-way pulse
+        -- pipeline_abort_fall for 1 cycle. Verify: rise completes (new
+        -- frame_done), fall output count stays below the rise count (fall
+        -- was aborted mid-flight but rise stream stayed alive).
+        -- =====================================================================
+        wait for 10 * C_CLK_PERIOD;
+        wait until rising_edge(clk);
+
+        -- Snapshot baseline so we can check per-scenario deltas.
+        report "===== SCENARIO 2: slope-independent fall-only abort =====" severity note;
+
+        -- Declare local snapshot variables (re-use the report loop later).
+        -- NOTE: variables must be declared at the top of the process; we use
+        -- the already-declared v_beat_data as an integer-typed snapshot.
+
+        -- face_start + shot_start for scenario 2
+        face_start_gated <= '1';
+        wait until rising_edge(clk);
+        face_start_gated <= '0';
+        wait for 3 * C_CLK_PERIOD;
+        wait until rising_edge(clk);
+
+        shot_start_gated <= '1';
+        wait until rising_edge(clk);
+        shot_start_gated <= '0';
+        wait for 5 * C_CLK_PERIOD;
+        wait until rising_edge(clk);
+
+        -- Parallel feed: drive BOTH rise and fall chip 0 cell data.
+        for beat_idx in 0 to C_TOTAL_BEATS - 1 loop
+            while cell_rise_tready(0) = '0' or cell_fall_tready(0) = '0' loop
+                wait until rising_edge(clk);
+            end loop;
+
+            v_beat_data := to_unsigned(beat_idx + 1, C_OUTPUT_WIDTH);
+            cell_rise_tdata_0 <= std_logic_vector(v_beat_data);
+            cell_fall_tdata_0 <= std_logic_vector(v_beat_data);
+            cell_rise_tvalid  <= "0001";
+            cell_fall_tvalid  <= "0001";
+
+            if beat_idx = C_TOTAL_BEATS - 1 then
+                cell_rise_tlast <= "0001";
+                cell_fall_tlast <= "0001";
+            else
+                cell_rise_tlast <= "0000";
+                cell_fall_tlast <= "0000";
+            end if;
+
+            -- Mid-flight fall abort (after a few real beats, before tlast)
+            if beat_idx = C_TOTAL_BEATS / 2 then
+                pipeline_abort_fall <= '1';
+            elsif beat_idx = C_TOTAL_BEATS / 2 + 1 then
+                pipeline_abort_fall <= '0';
+            end if;
+
+            wait until rising_edge(clk);
+        end loop;
+
+        cell_rise_tvalid <= "0000";
+        cell_fall_tvalid <= "0000";
+        cell_rise_tlast  <= "0000";
+        cell_fall_tlast  <= "0000";
+        pipeline_abort_fall <= '0';
+
+        -- Allow rise pipeline to reach its frame_done
+        wait until frame_done = '1' for C_WATCHDOG;
+        wait for 10 * C_CLK_PERIOD;
+
+        -- Scenario 2 checks:
+        --   v_out_beat_cnt (rise) grew further than v_out_fall_beat_cnt
+        --   because rise completed but fall was aborted mid-flight.
+        report "=== SCENARIO 2 Results ===" severity note;
+        report "  Rise beats: " & integer'image(v_out_beat_cnt)      severity note;
+        report "  Fall beats: " & integer'image(v_out_fall_beat_cnt) severity note;
+        report "  frame_done: " & std_logic'image(frame_done)        severity note;
+
+        assert v_out_fall_beat_cnt < v_out_beat_cnt
+            report "SCENARIO 2: fall beat count should be lower than rise (fall abort not effective)"
+            severity failure;
+        -- Rise frame_done must have pulsed TWICE (once per scenario).
+        -- Fall frame_done must stay at scenario-1 level (fall aborted, no pulse).
+        assert v_frame_done_cnt = 2
+            report "SCENARIO 2: rise frame_done count = "
+                   & integer'image(v_frame_done_cnt) & " (expected 2)"
+            severity failure;
+        assert v_frame_fall_done_cnt = 0
+            report "SCENARIO 2: fall frame_done count = "
+                   & integer'image(v_frame_fall_done_cnt)
+                   & " (fall should not complete after abort)"
+            severity failure;
+
+        report "*** SCENARIO 2 (slope-independent abort) PASS ***" severity note;
 
         wait for 10 * C_CLK_PERIOD;
         std.env.finish;

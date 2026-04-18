@@ -1220,6 +1220,65 @@ begin
         wait_clk(10);
 
         -- =============================================================
+        -- [14] cmd_stop in ST_CAPTURE with NO irflag -> fallback watchdog
+        -- (#29 Q&A A graceful stop + fallback)
+        -- =============================================================
+        pr_info("[14] cmd_stop in ST_CAPTURE without irflag -> fallback watchdog");
+
+        fill_fifos(8, 4);
+        wait_clk(5);
+
+        pulse(s_cmd_start);
+        wait_clk(2);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        -- DO NOT raise irflag here — graceful stop latches pending and waits.
+        -- The 16-bit fallback watchdog should fire after ~65535 cycles and
+        -- fall through to the original purge path with timeout_cause "111".
+        pulse(s_cmd_stop);
+
+        -- Long wait: 65535 + drain settle + ALU + recovery margin.
+        wait_ctrl_idle(70000, v_found);
+        if not v_found then
+            pr_fail("[14] fallback watchdog did not complete in 70000 cycles", v_fail);
+        else
+            pr_pass("[14] fallback watchdog recovered FSM to IDLE");
+        end if;
+
+        if s_ctrl_busy = '0' then
+            pr_pass("[14] busy='0' after fallback watchdog");
+        else
+            pr_fail("[14] busy stuck high after fallback watchdog", v_fail);
+        end if;
+
+        -- Verify restart works after fallback recovery
+        fill_fifos(4, 4);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_cnt_snap := sv_raw_word_cnt;
+        wait_drain_done(c_TIMEOUT, v_found);
+        if v_found then
+            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            pr_pass("[14] Post-fallback restart: drain_done, words="
+                    & nat_img(v_drain_words));
+        else
+            pr_fail("[14] Post-fallback restart: drain_done timeout", v_fail);
+        end if;
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        pulse(s_cmd_stop);
+        wait_clk(10);
+
+        -- =============================================================
         -- Summary
         -- =============================================================
         pr_sep;
