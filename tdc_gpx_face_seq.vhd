@@ -142,7 +142,16 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_shot_drop_cnt_r   : unsigned(15 downto 0) := (others => '0');
     signal s_cfg_rejected_r    : std_logic := '0';
     signal s_shot_start_gated  : std_logic;
-    signal s_pipeline_abort    : std_logic;
+    -- #22 Sprint 1: rise/fall abort infrastructure (values still coupled)
+    -- s_pipeline_abort_rise : gates all logic that protects rise-side primary
+    --                         data (FSM state, packet_start, counters, etc.)
+    -- s_pipeline_abort_fall : gates fall-side completion in frame_done_both
+    -- s_pipeline_abort      : legacy alias = s_pipeline_abort_rise; Sprint 3
+    --                         will separate fall from rise so a fall-only
+    --                         abort no longer kills the rise pipeline.
+    signal s_pipeline_abort      : std_logic;
+    signal s_pipeline_abort_rise : std_logic;
+    signal s_pipeline_abort_fall : std_logic;
     signal s_abort_quiesce_r   : std_logic := '0';  -- 1-cycle guard after abort
 
     -- Pending cmd_start: accepted when pipeline reports busy. Re-evaluated
@@ -347,7 +356,15 @@ begin
     end process;
 
     -- =========================================================================
-    -- Frame done combiner
+    -- Frame done combiner (#22 Sprint 1: per-slope abort)
+    --
+    -- Each side's "done" latch is satisfied by either (a) its own frame_done
+    -- pulse or (b) its own slope's pipeline_abort.  s_frame_done_both fires
+    -- once BOTH sides have reported done/abort.
+    --
+    -- With Sprint 1's coupled aborts this is byte-for-byte identical to the
+    -- previous behavior.  Sprint 3 will decouple fall — a fall-only abort
+    -- will release only the fall side, letting rise complete normally.
     -- =========================================================================
     p_frame_done_both : process(i_clk)
     begin
@@ -356,18 +373,18 @@ begin
                 s_frame_rise_done_r <= '0';
                 s_frame_fall_done_r <= '0';
             else
-                if i_frame_done = '1' or s_pipeline_abort = '1' then
+                if i_frame_done = '1' or s_pipeline_abort_rise = '1' then
                     s_frame_rise_done_r <= '1';
                 end if;
-                if i_frame_fall_done = '1' or s_pipeline_abort = '1' then
+                if i_frame_fall_done = '1' or s_pipeline_abort_fall = '1' then
                     s_frame_fall_done_r <= '1';
                 end if;
             end if;
         end if;
     end process;
 
-    s_frame_done_both <= '1' when (s_frame_rise_done_r = '1' or i_frame_done = '1' or s_pipeline_abort = '1')
-                                  and (s_frame_fall_done_r = '1' or i_frame_fall_done = '1' or s_pipeline_abort = '1')
+    s_frame_done_both <= '1' when (s_frame_rise_done_r = '1' or i_frame_done = '1' or s_pipeline_abort_rise = '1')
+                                  and (s_frame_fall_done_r = '1' or i_frame_fall_done = '1' or s_pipeline_abort_fall = '1')
                          else '0';
 
     s_all_shots_fired <= '1' when s_face_shot_cnt_r >= s_face_cols_per_face_r
@@ -441,9 +458,20 @@ begin
         end if;
     end process;
 
-    -- Pipeline abort
-    s_pipeline_abort <= i_face_abort or i_face_fall_abort
-                        or i_cmd_stop or i_cmd_soft_reset;
+    -- Pipeline abort (#22 Sprint 1: rise/fall coupled; Sprint 3 will separate)
+    --
+    -- Current (Sprint 1): both slopes see the combined abort so existing
+    -- behavior is byte-for-byte identical.  Sprint 3 will change to:
+    --   s_pipeline_abort_rise <= i_face_abort or i_cmd_stop or i_cmd_soft_reset;
+    --   s_pipeline_abort_fall <= i_face_abort or i_face_fall_abort
+    --                             or i_cmd_stop or i_cmd_soft_reset;
+    -- Rise propagates to fall (rise is the primary lane); fall does NOT
+    -- propagate to rise (fall-only abort keeps rise alive).
+    s_pipeline_abort_rise <= i_face_abort or i_face_fall_abort
+                             or i_cmd_stop or i_cmd_soft_reset;
+    s_pipeline_abort_fall <= i_face_abort or i_face_fall_abort
+                             or i_cmd_stop or i_cmd_soft_reset;
+    s_pipeline_abort      <= s_pipeline_abort_rise;  -- legacy alias
 
     -- =========================================================================
     -- Face start delay + shot deferral (absorbed from top p_face_start_delay)
