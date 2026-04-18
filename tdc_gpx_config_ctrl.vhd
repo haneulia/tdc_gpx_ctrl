@@ -1085,6 +1085,7 @@ begin
                 o_m_raw_axis_tuser  => s_raw_axis_tuser(i),
                 i_m_raw_axis_tready => s_raw_axis_tready(i),
                 o_drain_done        => s_drain_done(i),
+                o_run_drain_complete => open,  -- Round 5 #11 internal drain-complete pulse; not yet surfaced
                 o_shot_seq          => s_chip_shot_seq(i),
                 o_busy              => s_chip_busy(i),
                 o_err_drain_timeout => s_err_drain_timeout(i),

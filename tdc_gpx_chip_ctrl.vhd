@@ -156,7 +156,8 @@ entity tdc_gpx_chip_ctrl is
         o_m_raw_axis_tdata  : out std_logic_vector(31 downto 0);
         o_m_raw_axis_tuser  : out std_logic_vector(7 downto 0);
         i_m_raw_axis_tready : in  std_logic;
-        o_drain_done        : out std_logic;           -- 1-clk pulse (for cell_builder)
+        o_drain_done        : out std_logic;           -- 1-clk pulse when drain_done beat handshakes to downstream
+        o_run_drain_complete : out std_logic;          -- 1-clk pulse when chip_run internally finishes drain (Round 5 #11)
 
         -- Status
         o_shot_seq          : out unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
@@ -213,6 +214,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_raw_valid   : std_logic;
     signal s_run_ififo_id    : std_logic;
     signal s_run_drain_done  : std_logic;
+    signal s_run_drain_done_prev_r : std_logic := '0';  -- rising-edge detect for o_run_drain_complete
     signal s_run_ififo1_beat : std_logic;
     signal s_run_stopdis     : std_logic;
     signal s_run_alutrigger  : std_logic;
@@ -838,6 +840,25 @@ begin
     --   by the raw-path consumer", not as "chip_run exited the drain state".
     o_drain_done        <= s_raw_fifo_r(0).drain and s_raw_fifo_r(0).valid
                            and i_m_raw_axis_tready;
+
+    -- o_run_drain_complete (Round 5 #11):
+    --   Pulses for 1 cycle on the rising edge of chip_run's internal drain
+    --   completion — i.e. the cycle chip_run finishes draining its IFIFOs,
+    --   independent of downstream backpressure on the raw AXI stream. Use
+    --   this when the consumer needs to know "chip_run exited drain" rather
+    --   than "the drain_done control beat was accepted downstream".
+    p_run_drain_edge : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if s_sub_rst_n = '0' then
+                s_run_drain_done_prev_r <= '0';
+            else
+                s_run_drain_done_prev_r <= s_run_drain_done;
+            end if;
+        end if;
+    end process p_run_drain_edge;
+
+    o_run_drain_complete <= s_run_drain_done and (not s_run_drain_done_prev_r);
 
     -- Backpressure: registered for 200MHz timing closure.
     -- 1-cycle late busy is safe because depth > 1 slots absorb the delay.
