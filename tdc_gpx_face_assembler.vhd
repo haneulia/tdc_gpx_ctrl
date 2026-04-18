@@ -117,7 +117,10 @@ entity tdc_gpx_face_assembler is
         o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_shot_overrun       : out std_logic;    -- 1-clk pulse: shot truncated (was not idle)
         o_face_abort         : out std_logic;    -- 1-clk pulse: face aborted (overrun → ST_IDLE)
-        o_idle               : out std_logic     -- '1' when FSM is in ST_IDLE
+        o_idle               : out std_logic;    -- '1' when FSM is in ST_IDLE
+        -- Trace / status (Round 5 #15 #16)
+        o_shot_flush_drop    : out std_logic;    -- sticky: shot_start flush dropped old-shot input FIFO data
+        o_shot_overrun_count : out unsigned(7 downto 0)  -- wrapping count of mid-shot overruns (blank-fill invocations)
     );
 end entity tdc_gpx_face_assembler;
 
@@ -220,6 +223,9 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_shot_overrun_r  : std_logic := '0';
     signal s_face_abort_r    : std_logic := '0';
     signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
+    -- Round 5 #15/#16 trace counters / stickies
+    signal s_shot_flush_drop_r  : std_logic := '0';  -- sticky: shot_start flushed non-empty FIFO
+    signal s_shot_overrun_cnt_r : unsigned(7 downto 0) := (others => '0');  -- wrapping mid-shot overrun count
 
     -- =========================================================================
     -- Blank beat data: all zeros except metadata beat has error_fill + chip_id
@@ -420,11 +426,22 @@ begin
                 s_shot_overrun_r  <= '0';
                 s_face_abort_r   <= '0';
                 s_shot_pending_r <= '0';
+                s_shot_flush_drop_r  <= '0';
+                s_shot_overrun_cnt_r <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_row_done_r     <= '0';
                 s_shot_overrun_r <= '0';
                 s_face_abort_r   <= '0';
+
+                -- Round 5 #15 trace: if shot_start flushes input FIFOs while
+                -- any of them still holds data, the old-shot tail is being
+                -- dropped. Record as sticky so SW can correlate with shot
+                -- timing anomalies. (abort-triggered flushes are excluded —
+                -- they are explicit SW intent, not boundary drift.)
+                if i_shot_start = '1' and s_in_tvalid /= "0000" then
+                    s_shot_flush_drop_r <= '1';
+                end if;
 
                 -- Default: deassert pipe valid after handshake
                 if s_pipe_tvalid_r = '1' and s_pipe_tready = '1' then
@@ -694,6 +711,9 @@ begin
                     s_shot_overrun_r <= '1';
                     s_shot_pending_r <= '1';  -- new shot becomes next line
 
+                    -- Round 5 #16 trace: wrap-counter for blank-fill invocations
+                    s_shot_overrun_cnt_r <= s_shot_overrun_cnt_r + 1;
+
                     -- Mark all chips not yet finished as error_fill carriers
                     s_chip_error_r <= s_chip_error_r or (not s_chip_done_r);
 
@@ -746,5 +766,7 @@ begin
     -- 1-cycle feedback path concern from #18 is therefore moot.
     o_face_abort       <= s_face_abort_r;
     o_idle             <= '1' when s_state_r = ST_IDLE else '0';
+    o_shot_flush_drop    <= s_shot_flush_drop_r;
+    o_shot_overrun_count <= s_shot_overrun_cnt_r;
 
 end architecture rtl;

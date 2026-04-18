@@ -213,7 +213,9 @@ begin
             o_chip_error_flags => o_chip_error_flags,
             o_shot_overrun     => o_shot_overrun,
             o_face_abort       => o_face_abort,
-            o_idle             => o_face_asm_idle
+            o_idle             => o_face_asm_idle,
+            o_shot_flush_drop    => open,  -- Round 5 #15 sticky; not yet surfaced
+            o_shot_overrun_count => open   -- Round 5 #16 wrap-count; not yet surfaced
         );
 
     -- =========================================================================
@@ -248,7 +250,9 @@ begin
             o_chip_error_flags => o_chip_fall_error,
             o_shot_overrun     => o_shot_fall_overrun,
             o_face_abort       => o_face_fall_abort,
-            o_idle             => o_face_asm_fall_idle
+            o_idle             => o_face_asm_fall_idle,
+            o_shot_flush_drop    => open,  -- Round 5 #15 sticky; not yet surfaced
+            o_shot_overrun_count => open   -- Round 5 #16 wrap-count; not yet surfaced
         );
 
     -- =========================================================================

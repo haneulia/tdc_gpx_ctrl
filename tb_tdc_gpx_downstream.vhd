@@ -145,7 +145,9 @@ begin
             o_chip_error_flags => chip_error,
             o_shot_overrun     => shot_overrun,
             o_face_abort       => open,
-            o_idle             => open
+            o_idle             => open,
+            o_shot_flush_drop    => open,
+            o_shot_overrun_count => open
         );
 
     -- =========================================================================
