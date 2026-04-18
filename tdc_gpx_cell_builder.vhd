@@ -188,7 +188,14 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_buf_age_r   : t_buf_age_array := (others => (others => '0'));  -- per-buffer age tag
     signal s_buf_full_r  : std_logic_vector(1 downto 0) := "00";
 
-    type t_collect_state is (ST_C_IDLE, ST_C_ACTIVE, ST_C_DROP);
+    -- ST_C_QUARANTINE (Round 5 #6):
+    --   Entered from ST_C_DROP when the 65K-cycle watchdog expires before the
+    --   final drain_done arrives. Keeps tready='1' so late-arriving stale
+    --   beats from the DROP'd shot are silently absorbed instead of stalling
+    --   upstream. Exits on the drain_done marker (tuser[7]='1' and tuser[6]=
+    --   '1') or on i_abort. Any i_shot_start arriving here is latched into
+    --   s_shot_pending_r and picked up by ST_C_IDLE.
+    type t_collect_state is (ST_C_IDLE, ST_C_ACTIVE, ST_C_DROP, ST_C_QUARANTINE);
     signal s_cstate_r     : t_collect_state := ST_C_IDLE;
     signal s_wr_buf_r     : std_logic := '0';
 
@@ -301,8 +308,12 @@ architecture rtl of tdc_gpx_cell_builder is
 
 begin
 
-    -- AXI-Stream slave: accept during collect or drop (drop silently discards)
-    o_s_axis_tready <= '1' when s_cstate_r = ST_C_ACTIVE or s_cstate_r = ST_C_DROP
+    -- AXI-Stream slave: accept during collect, drop, or quarantine.
+    -- QUARANTINE continues to absorb late stale beats after a DROP timeout
+    -- so upstream doesn't stall (Round 5 #6).
+    o_s_axis_tready <= '1' when s_cstate_r = ST_C_ACTIVE
+                           or s_cstate_r = ST_C_DROP
+                           or s_cstate_r = ST_C_QUARANTINE
                   else '0';
 
     -- =========================================================================
@@ -522,18 +533,30 @@ begin
                                 s_cstate_r     <= ST_C_IDLE;
                                 s_timeout_cnt_r <= (others => '0');
                             elsif s_timeout_cnt_r = x"FFFF" then
-                                -- Timeout: drain_done never came. Force IDLE so
-                                -- the FSM can accept the next shot, but raise
-                                -- s_shot_dropped_r sticky so SW sees recovery
-                                -- was incomplete (#25). Any late stale beats
-                                -- arriving after the transition will backpressure
-                                -- upstream via tready='0' in IDLE — SW should
-                                -- soft_reset the pipeline if that stalls.
-                                s_cstate_r      <= ST_C_IDLE;
-                                s_shot_dropped_r <= '1';  -- re-assert to flag incomplete drop
+                                -- Timeout: drain_done never came (Round 5 #6).
+                                -- Transition to ST_C_QUARANTINE so late stale
+                                -- beats keep being absorbed (tready='1') while
+                                -- we wait for an explicit drain marker or
+                                -- i_abort. s_shot_dropped_r sticky records
+                                -- that recovery was incomplete (#25).
+                                s_cstate_r      <= ST_C_QUARANTINE;
+                                s_shot_dropped_r <= '1';
                                 s_timeout_cnt_r  <= (others => '0');
                             else
                                 s_timeout_cnt_r <= s_timeout_cnt_r + 1;
+                            end if;
+
+                        when ST_C_QUARANTINE =>
+                            -- Absorb stale beats after a DROP timeout. Exit on
+                            -- the drain_done marker (ifo2 final control beat)
+                            -- or on i_abort (handled above). shot_start arriving
+                            -- here latches as pending — ST_C_IDLE consumes it.
+                            if i_shot_start = '1' then
+                                s_shot_pending_r <= '1';
+                            end if;
+                            if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1'
+                               and i_s_axis_tuser(6) = '1' then
+                                s_cstate_r <= ST_C_IDLE;
                             end if;
 
                     end case;
