@@ -709,19 +709,21 @@ begin
                 end case;
 
                 -- Shot overrun handler (POST-CASE OVERRIDE — highest priority)
-                -- This intentionally overwrites state/req/raw set by the main
-                -- case above in the same cycle. If a bus response and shot_start
-                -- coincide, the overrun wins and the response beat may be lost.
-                -- This is the intended design: immediate overrun recovery takes
-                -- priority over completing the current drain transaction.
+                -- Overwrites state/req set by the main case above. Same-cycle
+                -- bus-response handling (Round 5 #5):
+                --   * ST_DRAIN_EF1/EF2/BURST/FLUSH: the main case has just
+                --     captured a legitimate same-shot drain beat into
+                --     s_raw_word_r / s_raw_valid_r and incremented the drain
+                --     counter. Preserve that beat (do NOT clear s_raw_valid_r)
+                --     so drain accounting stays consistent. Only the state
+                --     transitions to ST_OVERRUN_FLUSH.
+                --   * ST_CAPTURE/LATCH/CHECK/SETTLE: no request is outstanding
+                --     in these states, so any fire here would be stale. Keep
+                --     the defensive clear of s_raw_valid_r.
+                -- s_err_overrun_drop_r kept in the declaration for backward
+                -- compatibility but is no longer set (drop is eliminated).
                 if i_shot_start = '1' and s_state_r /= ST_OFF
                    and s_state_r /= ST_ARMED then
-                    -- If a bus response arrives in the same cycle we override,
-                    -- s_raw_valid_r will be forced to '0' and the beat is lost.
-                    -- Flag this sticky so SW can correlate drain accounting.
-                    if i_bus_rsp_valid = '1' then
-                        s_err_overrun_drop_r <= '1';
-                    end if;
                     case s_state_r is
                         when ST_CAPTURE | ST_DRAIN_LATCH
                            | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
@@ -735,7 +737,10 @@ begin
                             s_state_r            <= ST_OVERRUN_FLUSH;
                         when ST_DRAIN_EF1 | ST_DRAIN_EF2
                            | ST_DRAIN_BURST | ST_DRAIN_FLUSH =>
-                            s_raw_valid_r        <= '0';
+                            -- Preserve same-cycle fired beat; otherwise clear.
+                            if i_bus_rsp_valid = '0' then
+                                s_raw_valid_r    <= '0';
+                            end if;
                             s_req_burst_r        <= '0';
                             s_req_valid_r        <= '0';
                             s_oen_permanent_r    <= '0';
