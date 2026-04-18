@@ -81,10 +81,13 @@ entity tdc_gpx_chip_run is
         -- Shot trigger
         i_shot_start        : in  std_logic;
 
-        -- Expected IFIFO counts (from echo_receiver)
-        -- CONTRACT: must be stable from i_shot_start through ST_DRAIN_LATCH.
-        -- Sampled in ST_DRAIN_LATCH (1 cycle after IrFlag-based drain entry).
-        -- If upstream changes these during capture/drain, results are undefined.
+        -- Expected IFIFO counts (from echo_receiver).
+        -- Sampled ONCE at ST_DRAIN_LATCH (1 cycle after IrFlag-based drain
+        -- entry). Stability before that moment is NOT required — the file-
+        -- header note explains the prior stability assertion was removed
+        -- because it conflicts with stop_cfg_decode's continuous update
+        -- during capture. Upstream may safely change these during capture /
+        -- drain phases; only the ST_DRAIN_LATCH-cycle value is used.
         i_expected_ififo1   : in  unsigned(7 downto 0);
         i_expected_ififo2   : in  unsigned(7 downto 0);
 

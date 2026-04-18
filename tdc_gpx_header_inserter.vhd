@@ -477,12 +477,14 @@ begin
 
                 -- =============================================================
                 -- face_start: latch fields and start first line prefix.
-                -- ONLY accepted in ST_IDLE (hardware guard).
-                -- Non-IDLE face_start is silently ignored.
+                --
+                -- Accept window: ST_IDLE only.
+                -- Non-IDLE pulse handling: 1-depth pending latch
+                --   (s_face_start_pending_r) absorbs the pulse so the next
+                --   ST_IDLE entry consumes it. No silent drop — the stale
+                --   "non-IDLE face_start ignored" contract was replaced by
+                --   this pending-latch behavior in Round 5 #21.
                 -- =============================================================
-                -- Non-IDLE face_start: latch as pending so the next IDLE entry
-                -- picks it up. Prevents silent loss of 1-cycle pulses when
-                -- upstream issues face_start before hdr_idle actually shows.
                 if i_face_start = '1' and s_state_r /= ST_IDLE then
                     s_face_start_pending_r <= '1';
                     -- synthesis translate_off
@@ -495,12 +497,6 @@ begin
                 if (i_face_start = '1' or s_face_start_pending_r = '1')
                    and s_state_r = ST_IDLE then
                     s_face_start_pending_r <= '0';  -- consume
-                    -- Hardware guard: face_start is only accepted in ST_IDLE.
-                    -- Non-IDLE face_start is silently ignored (upstream contract
-                    -- guarantees hdr_idle check before issuing face_start).
-                    -- synthesis translate_off
-                    -- (assertion moved to process default for non-IDLE detect)
-                    -- synthesis translate_on
 
                     -- All fields latched at face_start (= s_face_start_r in top).
                     -- Error fields (chip_error_mask, chip_error_cnt) are a

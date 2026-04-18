@@ -217,14 +217,22 @@ begin
     gen_chip : for i in 0 to c_N_CHIPS-1 generate
     begin
 
-        -- Simulation-only drop detection (synthesis-ignored)
+        -- Simulation-only drop detection (Round 5 #22):
+        -- Moved from concurrent-region assertions that used rising_edge()
+        -- (tool-fragile / lint-unfriendly) to a proper clocked process so
+        -- the same edge-triggered check uses the standard synchronous form.
         -- synthesis translate_off
-        assert not (rising_edge(i_clk) and s_rise_valid_r(i) = '1' and s_rise_tready(i) = '0')
-            report "WARN: cell_builder rise(" & integer'image(i) & ") not ready when data valid"
-            severity warning;
-        assert not (rising_edge(i_clk) and s_fall_valid_r(i) = '1' and s_fall_tready(i) = '0')
-            report "WARN: cell_builder fall(" & integer'image(i) & ") not ready when data valid"
-            severity warning;
+        p_drop_assert : process(i_clk)
+        begin
+            if rising_edge(i_clk) then
+                assert not (s_rise_valid_r(i) = '1' and s_rise_tready(i) = '0')
+                    report "WARN: cell_builder rise(" & integer'image(i) & ") not ready when data valid"
+                    severity warning;
+                assert not (s_fall_valid_r(i) = '1' and s_fall_tready(i) = '0')
+                    report "WARN: cell_builder fall(" & integer'image(i) & ") not ready when data valid"
+                    severity warning;
+            end if;
+        end process p_drop_assert;
         -- synthesis translate_on
 
         -- Rising-slope cell builder

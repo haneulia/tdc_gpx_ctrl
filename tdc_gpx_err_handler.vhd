@@ -48,13 +48,18 @@ entity tdc_gpx_err_handler is
         i_errflag_sync      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         -- Chip status
         i_chip_busy         : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Reg read results (from csr_chip STAT, per-chip)
-        -- NOTE: despite port name "reg11", this now reads Reg12 (actual status).
-        -- Port name kept for backward compatibility with config_ctrl wiring.
-        i_reg11_data_0      : in  std_logic_vector(31 downto 0);
-        i_reg11_data_1      : in  std_logic_vector(31 downto 0);
-        i_reg11_data_2      : in  std_logic_vector(31 downto 0);
-        i_reg11_data_3      : in  std_logic_vector(31 downto 0);
+        -- Reg read results (from csr_chip STAT, per-chip).
+        --
+        -- NAMING DEBT (Round 5 #23): the port prefix "reg11" is historical;
+        -- this path actually carries the TDC-GPX Reg12 (chip status) read
+        -- result. Renaming ripples into config_ctrl and csr_chip wiring, so
+        -- the port name is intentionally retained until a broader interface
+        -- pass sweeps the chain. Treat the *_reg11_* inputs as "status read
+        -- data" — read /Reg12/, not /Reg11/.
+        i_reg11_data_0      : in  std_logic_vector(31 downto 0);  -- chip status (Reg12)
+        i_reg11_data_1      : in  std_logic_vector(31 downto 0);  -- chip status (Reg12)
+        i_reg11_data_2      : in  std_logic_vector(31 downto 0);  -- chip status (Reg12)
+        i_reg11_data_3      : in  std_logic_vector(31 downto 0);  -- chip status (Reg12)
         i_cmd_reg_done_pulse: in  std_logic;
         i_cmd_reg_rvalid    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip read valid
         i_reg_outstanding   : in  std_logic;   -- cmd_arb has active reg access

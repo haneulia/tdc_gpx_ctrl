@@ -116,7 +116,14 @@ entity tdc_gpx_face_assembler is
         o_row_done           : out std_logic;    -- 1-clk pulse: packed row complete
         o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_shot_overrun       : out std_logic;    -- 1-clk pulse: shot truncated (was not idle)
-        o_face_abort         : out std_logic;    -- 1-clk pulse: face aborted (overrun → ST_IDLE)
+        -- DEPRECATED (Round 5 #19): o_face_abort is retained for backward
+        -- compatibility with existing instantiations but is never asserted
+        -- in this architecture. After Round 4's c-simplified overrun policy
+        -- the face self-completes in place (blank-fill) instead of issuing
+        -- a face-level abort, so the port permanently reads '0'. Do not
+        -- add new consumers — treat this as a stub and wire to 'open'.
+        -- Planned removal once every instantiation migrates to 'open'.
+        o_face_abort         : out std_logic;    -- stub '0' (see DEPRECATED note above)
         o_idle               : out std_logic;    -- '1' when FSM is in ST_IDLE
         -- Trace / status (Round 5 #15 #16)
         o_shot_flush_drop    : out std_logic;    -- sticky: shot_start flush dropped old-shot input FIFO data

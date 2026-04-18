@@ -111,12 +111,9 @@ architecture rtl of tdc_gpx_face_seq is
 
     signal s_face_id_r        : unsigned(7 downto 0)  := (others => '0');
     signal s_frame_id_r       : unsigned(31 downto 0) := (others => '0');
-    -- #31: s_shot_overrun_r here is currently set/cleared but NOT read inside
-    -- this module. The exposed overrun flag to SW is face_assembler's own
-    -- s_shot_overrun_r routed via o_shot_overrun → s_status.pipeline_overrun.
-    -- Retained as an internal latch for possible future aggregate diagnostics
-    -- (face-boundary clear would be added here if/when read usage is added).
-    signal s_shot_overrun_r   : std_logic := '0';
+    -- s_shot_overrun_r removed (Round 5 #20): was set/cleared but never read
+    -- inside this module — true dead logic. The overrun flag SW consumes comes
+    -- from face_assembler's own s_shot_overrun / s_status.pipeline_overrun.
     signal s_cmd_start_accepted_r : std_logic := '0';
 
     signal s_global_shot_seq_r : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
@@ -185,7 +182,6 @@ begin
                 s_face_state_r        <= ST_IDLE;
                 s_face_id_r           <= (others => '0');
                 s_frame_id_r          <= (others => '0');
-                s_shot_overrun_r      <= '0';
                 s_cmd_start_accepted_r <= '0';
                 s_abort_quiesce_r     <= '0';
                 s_cmd_start_pending_r <= '0';
@@ -194,10 +190,6 @@ begin
                 s_cfg_rejected_r       <= '0';
                 -- 1-cycle quiesce guard: latch abort, clear next cycle
                 s_abort_quiesce_r <= s_pipeline_abort;
-
-                if i_shot_overrun = '1' or i_shot_fall_overrun = '1' then
-                    s_shot_overrun_r <= '1';
-                end if;
 
                 case s_face_state_r is
                     when ST_IDLE =>
@@ -222,7 +214,6 @@ begin
                                and i_m_axis_tvalid = '0'
                                and i_m_axis_fall_tvalid = '0' then
                                 s_face_id_r            <= (others => '0');
-                                s_shot_overrun_r       <= '0';
                                 s_cmd_start_accepted_r <= '1';
                                 s_cmd_start_pending_r  <= '0';  -- consume
                                 s_face_state_r         <= ST_WAIT_SHOT;
