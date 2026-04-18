@@ -758,8 +758,19 @@ begin
     o_m_raw_axis_tuser  <= s_raw_hold_tuser_r;
     o_drain_done        <= s_raw_hold_drain_r and s_raw_hold_valid_r and i_m_raw_axis_tready;
 
-    -- Backpressure: both slots full and downstream not accepting
-    s_raw_hold_busy     <= s_raw_hold_valid_r and s_raw_skid_valid_r and (not i_m_raw_axis_tready);
+    -- Backpressure: registered for 200MHz timing closure.
+    -- 1-cycle late busy is safe because 2-deep hold+skid absorbs the delay.
+    p_raw_busy_reg : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if s_sub_rst_n = '0' then
+                s_raw_hold_busy <= '0';
+            else
+                s_raw_hold_busy <= s_raw_hold_valid_r and s_raw_skid_valid_r
+                                   and (not i_m_raw_axis_tready);
+            end if;
+        end if;
+    end process;
 
     o_shot_seq       <= s_run_shot_seq;
     -- Busy includes PH_RESP_DRAIN and PH_INIT to prevent premature dispatch
