@@ -8,112 +8,166 @@
 --   Inactive chips are skipped. Timed-out chips receive blank cells
 --   with error_fill=1.
 --
---   FCFS (First-Come First-Served: 먼저 준비된 chip부터 출력) scheduling:
---     Ready chips are forwarded in arrival order (lowest index breaks ties).
---     While forwarding one chip, remaining chips continue accumulating
---     in their cell_builders, hiding drain latency.
---     Each cell carries a chip_id tag (beat 4, bits [9:8]) so downstream
---     can identify chip origin regardless of output order.
+-- Generics:
+--   g_TDATA_WIDTH : 32 or 64 (output bus width, affects beats/cell)
+--
+-- Input FIFOs:
+--   4× xpm_fifo_axis (Xilinx XPM, 16-deep, distributed RAM).
+--   Standard AXI-Stream interface — no manual bundle/unbundle.
+--   Per-chip inputs via individual ports (i_s_axis_tdata_0..3).
+--
+-- Output FIFO:
+--   1× xpm_fifo_axis (16-deep) for backpressure decoupling.
+--
+--   Strict In-Order scheduling:
+--     Chips are always output in ascending order (chip0 → chip1 → chip2 → chip3).
+--     Inactive chips are skipped. Timed-out chips receive blank cells.
+--     Deterministic output order eliminates SW reordering overhead.
+--     Each cell carries a chip_id tag in metadata beat for verification.
 --
 --   Per-shot flow:
---     1. shot_start → ST_SCAN
+--     1. shot_start → ST_SCAN (or row_done immediate-pulse if zero active mask)
 --     2. ST_SCAN: priority encode undone chip (ready first, timeout blank)
---     3. ST_RESOLVE: compute is_last_chip from registered result (1 clk)
---     4. ST_FORWARD: produce beats into output skid buffer
+--     3. ST_RESOLVE: compute is_last_chip (1 clk)
+--     4. ST_FORWARD: produce beats to output FIFO
 --     5. Chip done → mark s_chip_done_r, back to ST_SCAN
 --     6. All active chips done → row_done, ST_IDLE
 --
---   Packed Row: only active chips contribute rows. Chip order within
---   the row is non-deterministic (FCFS). SW uses chip_id tag to parse.
+-- Zero active_chip_mask policy (Round 3 #19):
+--   If i_active_chip_mask = "0000" at shot_start, row_done pulses
+--   immediately and the FSM returns to ST_IDLE (self-consistent without
+--   needing face_seq to pre-gate zero-mask shots).
 --
---   Timing closure (200MHz+):
---     5 skid buffers (4 input + 1 output) provide fully registered
---     ready paths at all module boundaries.
---     ST_SCAN/ST_RESOLVE pipeline split: priority encoder (ST_SCAN) and
---     is_last_chip computation (ST_RESOLVE) run in separate clock cycles.
---     Pre-computed s_last_stop_r eliminates runtime subtraction.
+-- shot_start overrun policy — BLANK-FILL (Q&A #36, Round 4):
+--   If shot_start arrives while still in ST_SCAN/ST_RESOLVE/ST_FORWARD
+--   (current line not finished), we do NOT face-abort. Instead:
+--     - s_shot_pending_r <= '1' (new shot becomes next line)
+--     - s_shot_overrun_r <= '1' (SW visibility)
+--     - s_chip_error_r OR'd with un-done chips (SW sees error_fill per
+--       affected chip's cells)
+--     - s_shot_cnt_r <= FFFF so subsequent chips enter blank via ST_SCAN
+--       hard-cap
+--     - If mid-ST_FORWARD real-chip: switch s_is_blank_r='1' and resume
+--       blank generation from (s_fwd_stop_r, s_fwd_beat_r) position so
+--       the chip's beat count stays exact
+--     - face_abort is NOT pulsed; line completes in-place and the face
+--       continues naturally.
+--   Net effect: VDMA frame size is preserved; SW detects per-cell errors
+--   via error_fill bit in cell metadata; next shot becomes the next line.
 --
---   All outputs are registered (module boundary = FF).
+-- Forward position tracking (Round 4 #36 support):
+--   s_fwd_stop_r / s_fwd_beat_r (both 3-bit) track (stop_idx, beat_idx_in_cell)
+--   during ST_FORWARD real-chip forwarding. Reset at ST_RESOLVE → ST_FORWARD
+--   transition, incremented per forwarded beat, handed off to blank
+--   generator on overrun.
 --
--- Standard: VHDL-93 compatible
+-- All outputs are registered (module boundary = FF).
+--
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+library xpm;
+use xpm.vcomponents.all;
+
 use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_face_assembler is
     generic (
-        g_ALU_PULSE_CLKS     : natural := 4
+        g_ALU_PULSE_CLKS     : natural := 4;
+        g_TDATA_WIDTH        : natural := c_TDATA_WIDTH   -- 32 or 64
     );
     port (
         i_clk                : in  std_logic;
         i_rst_n              : in  std_logic;
 
-        -- 4 chip cell AXI-Stream inputs (from cell_builders)
-        i_s_axis_tdata       : in  t_axis_tdata_array;
+        -- 4 chip cell AXI-Stream inputs (from cell_builders, g_TDATA_WIDTH per chip)
+        i_s_axis_tdata_0     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata_1     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata_2     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata_3     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         i_s_axis_tvalid      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_s_axis_tlast       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_s_axis_tready      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
         -- Shot control
         i_shot_start         : in  std_logic;
+        i_abort              : in  std_logic;    -- cmd_stop/soft_reset: flush + ST_IDLE
 
         -- Configuration (latched at packet_start)
         i_active_chip_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_stops_per_chip     : in  unsigned(3 downto 0);
-        i_max_range_clks     : in  unsigned(15 downto 0);   -- capture timeout (SW: 2*dist/c*fclk)
-        i_bus_ticks          : in  unsigned(2 downto 0);    -- capture timeout
-        i_bus_clk_div        : in  unsigned(7 downto 0);    -- capture timeout
+        i_max_hits_cfg       : in  unsigned(2 downto 0);   -- runtime max_hits (1~7)
+        -- Scan timeout: max clock cycles before declaring a chip's cell blank.
+        -- SW must bake in all margins (bus roundtrip + drain + ALU service).
+        -- 0 = disabled (no timeout, wait indefinitely for chip data).
+        i_max_scan_clks     : in  unsigned(15 downto 0);
 
         -- AXI-Stream master (packed row output)
-        o_m_axis_tdata       : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tdata       : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         o_m_axis_tvalid      : out std_logic;
         o_m_axis_tlast       : out std_logic;
         i_m_axis_tready      : in  std_logic;
 
         -- Status
         o_row_done           : out std_logic;    -- 1-clk pulse: packed row complete
-        o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0)
+        o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_shot_overrun       : out std_logic;    -- 1-clk pulse: shot truncated (was not idle)
+        -- DEPRECATED (Round 5 #19): o_face_abort is retained for backward
+        -- compatibility with existing instantiations but is never asserted
+        -- in this architecture. After Round 4's c-simplified overrun policy
+        -- the face self-completes in place (blank-fill) instead of issuing
+        -- a face-level abort, so the port permanently reads '0'. Do not
+        -- add new consumers — treat this as a stub and wire to 'open'.
+        -- Planned removal once every instantiation migrates to 'open'.
+        o_face_abort         : out std_logic;    -- stub '0' (see DEPRECATED note above)
+        o_idle               : out std_logic;    -- '1' when FSM is in ST_IDLE
+        -- Trace / status (Round 5 #15 #16)
+        o_shot_flush_drop    : out std_logic;    -- sticky: shot_start flush dropped old-shot input FIFO data
+        o_shot_overrun_count : out unsigned(7 downto 0)  -- wrapping count of mid-shot overruns (blank-fill invocations)
     );
 end entity tdc_gpx_face_assembler;
 
 architecture rtl of tdc_gpx_face_assembler is
 
-    -- =========================================================================
-    -- Skid buffer data width: tdata + tlast bundled
-    -- =========================================================================
-    constant c_SKID_WIDTH : natural := c_TDATA_WIDTH + 1;
+    -- Per-chip tdata array type
+    type t_tdata_arr is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+    -- Input port mapping (before FIFO)
+    signal s_in_tdata_src : t_tdata_arr;
+    -- FIFO output (after FIFO, to FSM)
+    signal s_in_tdata     : t_tdata_arr;
 
-    -- Bundle/unbundle types for input skid buffer array
-    type t_skid_data_array is array (0 to c_N_CHIPS - 1)
-        of std_logic_vector(c_SKID_WIDTH - 1 downto 0);
+    -- =========================================================================
+    -- Derived constants
+    -- =========================================================================
+    constant c_G_BEATS_PER_CELL : natural := fn_beats_per_cell(g_TDATA_WIDTH);
 
     -- =========================================================================
-    -- Input skid buffer interface signals (from skid_buffer outputs)
+    -- Input FIFO output signals (xpm_fifo_axis → FSM)
     -- =========================================================================
-    signal s_in_tdata    : t_axis_tdata_array;
+    -- s_in_tdata: defined above as t_tdata_arr (g_TDATA_WIDTH per chip)
     signal s_in_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_in_bundle   : t_skid_data_array;  -- skid_buffer m_data output
 
     -- =========================================================================
     -- Output pipe signals (FSM → output skid buffer)
     -- =========================================================================
-    signal s_pipe_tdata_r  : std_logic_vector(c_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_pipe_tdata_r  : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_pipe_tvalid_r : std_logic := '0';
     signal s_pipe_tlast_r  : std_logic := '0';
-    signal s_pipe_tready   : std_logic;  -- from output skid buffer (registered)
-    signal s_pipe_bundle   : std_logic_vector(c_SKID_WIDTH - 1 downto 0);
-    signal s_out_bundle    : std_logic_vector(c_SKID_WIDTH - 1 downto 0);
+    signal s_pipe_tready   : std_logic;  -- from output FIFO
 
     -- =========================================================================
-    -- Synchronous flush for skid buffers (on shot_start)
+    -- Synchronous flush for FIFOs (active-low aresetn pulse)
     -- =========================================================================
-    signal s_flush : std_logic;
+    signal s_flush        : std_logic;  -- input FIFO flush (every shot_start/abort)
+    signal s_fifo_rst_n   : std_logic;  -- active-low reset for input FIFOs
+    signal s_out_fifo_rst_n : std_logic;  -- active-low reset for output FIFO (abort only)
 
     -- =========================================================================
     -- FSM
@@ -140,6 +194,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- Forwarding state
     -- =========================================================================
     signal s_cur_chip_r      : unsigned(1 downto 0) := (others => '0');
+    signal s_next_chip_r     : unsigned(1 downto 0) := (others => '0');  -- strict in-order pointer
     signal s_is_blank_r      : std_logic := '0';   -- current chip is timed out
     signal s_is_last_chip_r  : std_logic := '0';   -- no more undone active chips after this
 
@@ -147,6 +202,14 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_blank_stop_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
     signal s_blank_beat_r    : unsigned(2 downto 0) := (others => '0');  -- 0..7
     signal s_last_stop_r     : unsigned(2 downto 0) := (others => '0');  -- pre-computed: stops-1
+    signal s_rt_last_beat_r  : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
+
+    -- Forward position trackers for current chip (Q&A #36).
+    -- Separately track (stop_idx, beat_idx_in_cell) during ST_FORWARD real-chip
+    -- path so shot_start overrun can hand off to blank mode at the exact cell
+    -- boundary (works for any runtime cell size = s_rt_last_beat_r + 1).
+    signal s_fwd_stop_r      : unsigned(2 downto 0) := (others => '0');
+    signal s_fwd_beat_r      : unsigned(2 downto 0) := (others => '0');
 
     -- Latched config: snapshot at shot_start to prevent mid-frame changes
     -- from corrupting priority encoder / is_last_chip computation.
@@ -164,18 +227,27 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     signal s_row_done_r      : std_logic := '0';
     signal s_chip_error_r    : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_shot_overrun_r  : std_logic := '0';
+    signal s_face_abort_r    : std_logic := '0';
+    signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
+    -- Round 5 #15/#16 trace counters / stickies
+    signal s_shot_flush_drop_r  : std_logic := '0';  -- sticky: shot_start flushed non-empty FIFO
+    signal s_shot_overrun_cnt_r : unsigned(7 downto 0) := (others => '0');  -- wrapping mid-shot overrun count
 
     -- =========================================================================
-    -- Blank beat data: all zeros except beat 4 has error_fill + chip_id
+    -- Blank beat data: all zeros except metadata beat has error_fill + chip_id
+    -- Metadata beat index = c_META_BEAT_IDX (auto-derived from c_MAX_HITS_PER_STOP)
     -- =========================================================================
     function fn_blank_beat(
-        beat_idx : unsigned(2 downto 0);
-        chip_id  : unsigned(1 downto 0)
+        beat_idx  : unsigned(2 downto 0);
+        last_beat : unsigned(2 downto 0);
+        chip_id   : unsigned(1 downto 0)
     ) return std_logic_vector is
-        variable v_result : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        variable v_result : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
     begin
         v_result := (others => '0');
-        if to_integer(beat_idx) = 4 then
+        -- Metadata on last beat (matches cell_builder fn_cell_beat convention)
+        if beat_idx = last_beat then
             v_result(10)          := '1';   -- error_fill
             v_result(9 downto 8)  := std_logic_vector(chip_id);
         end if;
@@ -184,59 +256,126 @@ architecture rtl of tdc_gpx_face_assembler is
 
 begin
 
+    -- Map individual tdata ports to internal array
+    s_in_tdata_src(0) <= i_s_axis_tdata_0;
+    s_in_tdata_src(1) <= i_s_axis_tdata_1;
+    s_in_tdata_src(2) <= i_s_axis_tdata_2;
+    s_in_tdata_src(3) <= i_s_axis_tdata_3;
+
     -- =========================================================================
-    -- Input skid buffers (×4): registered tready to cell_builders
+    -- Input AXI-Stream FIFOs (×4): xpm_fifo_axis, 16-deep
+    -- Standard AXI-Stream interface — no manual bundle/unbundle.
     -- =========================================================================
-    gen_in_skid : for i in 0 to c_N_CHIPS - 1 generate
-        u_skid_in : entity work.tdc_gpx_skid_buffer
-            generic map (g_DATA_WIDTH => c_SKID_WIDTH)
+    gen_in_fifo : for i in 0 to c_N_CHIPS - 1 generate
+        u_fifo_in : xpm_fifo_axis
+            generic map (
+                CASCADE_HEIGHT    => 0,
+                CDC_SYNC_STAGES   => 2,
+                CLOCKING_MODE     => "common_clock",
+                ECC_MODE          => "no_ecc",
+                FIFO_DEPTH        => 16,
+                FIFO_MEMORY_TYPE  => "distributed",
+                PACKET_FIFO       => "false",
+                TDATA_WIDTH       => g_TDATA_WIDTH,
+                TDEST_WIDTH       => 1,
+                TID_WIDTH         => 1,
+                TUSER_WIDTH       => 1,
+                USE_ADV_FEATURES  => "0000"
+            )
             port map (
-                i_clk     => i_clk,
-                i_rst_n   => i_rst_n,
-                i_flush   => s_flush,
-                i_s_valid => i_s_axis_tvalid(i),
-                o_s_ready => o_s_axis_tready(i),
-                i_s_data  => i_s_axis_tdata(i) & i_s_axis_tlast(i),
-                o_m_valid => s_in_tvalid(i),
-                i_m_ready => s_in_tready(i),
-                o_m_data  => s_in_bundle(i)
+                s_aclk          => i_clk,
+                s_aresetn       => s_fifo_rst_n,
+                s_axis_tdata    => s_in_tdata_src(i),
+                s_axis_tvalid   => i_s_axis_tvalid(i),
+                s_axis_tready   => o_s_axis_tready(i),
+                s_axis_tlast    => i_s_axis_tlast(i),
+                s_axis_tkeep    => (others => '1'),
+                s_axis_tstrb    => (others => '1'),
+                s_axis_tuser    => "0",
+                s_axis_tid      => "0",
+                s_axis_tdest    => "0",
+                m_axis_tdata    => s_in_tdata(i),
+                m_axis_tvalid   => s_in_tvalid(i),
+                m_axis_tready   => s_in_tready(i),
+                m_axis_tlast    => s_in_tlast(i),
+                m_axis_tkeep    => open,
+                m_axis_tstrb    => open,
+                m_axis_tuser    => open,
+                m_axis_tid      => open,
+                m_axis_tdest    => open,
+                m_aclk          => '0',
+                injectsbiterr_axis => '0',
+                injectdbiterr_axis => '0'
             );
-        -- Unbundle: tdata(31:0) & tlast(0)
-        s_in_tdata(i) <= s_in_bundle(i)(c_SKID_WIDTH - 1 downto 1);
-        s_in_tlast(i) <= s_in_bundle(i)(0);
-    end generate gen_in_skid;
+    end generate gen_in_fifo;
 
     -- =========================================================================
-    -- Output skid buffer (×1): registered tready from downstream
+    -- Output AXI-Stream FIFO (×1): xpm_fifo_axis, 16-deep
     -- =========================================================================
-    s_pipe_bundle <= s_pipe_tdata_r & s_pipe_tlast_r;
-
-    u_skid_out : entity work.tdc_gpx_skid_buffer
-        generic map (g_DATA_WIDTH => c_SKID_WIDTH)
+    u_fifo_out : xpm_fifo_axis
+        generic map (
+            CASCADE_HEIGHT    => 0,
+            CDC_SYNC_STAGES   => 2,
+            CLOCKING_MODE     => "common_clock",
+            ECC_MODE          => "no_ecc",
+            FIFO_DEPTH        => 16,
+            FIFO_MEMORY_TYPE  => "distributed",
+            PACKET_FIFO       => "false",
+            TDATA_WIDTH       => g_TDATA_WIDTH,
+            TDEST_WIDTH       => 1,
+            TID_WIDTH         => 1,
+            TUSER_WIDTH       => 1,
+            USE_ADV_FEATURES  => "0000"
+        )
         port map (
-            i_clk     => i_clk,
-            i_rst_n   => i_rst_n,
-            i_flush   => s_flush,
-            i_s_valid => s_pipe_tvalid_r,
-            o_s_ready => s_pipe_tready,
-            i_s_data  => s_pipe_bundle,
-            o_m_valid => o_m_axis_tvalid,
-            i_m_ready => i_m_axis_tready,
-            o_m_data  => s_out_bundle
+            s_aclk          => i_clk,
+            s_aresetn       => s_out_fifo_rst_n,  -- flush on abort ONLY (not shot_start)
+            s_axis_tdata    => s_pipe_tdata_r,
+            s_axis_tvalid   => s_pipe_tvalid_r,
+            s_axis_tready   => s_pipe_tready,
+            s_axis_tlast    => s_pipe_tlast_r,
+            s_axis_tkeep    => (others => '1'),
+            s_axis_tstrb    => (others => '1'),
+            s_axis_tuser    => "0",
+            s_axis_tid      => "0",
+            s_axis_tdest    => "0",
+            m_axis_tdata    => o_m_axis_tdata,
+            m_axis_tvalid   => o_m_axis_tvalid,
+            m_axis_tready   => i_m_axis_tready,
+            m_axis_tlast    => o_m_axis_tlast,
+            m_axis_tkeep    => open,
+            m_axis_tstrb    => open,
+            m_axis_tuser    => open,
+            m_axis_tid      => open,
+            m_axis_tdest    => open,
+            m_aclk          => '0',
+            injectsbiterr_axis => '0',
+            injectdbiterr_axis => '0'
         );
-
-    o_m_axis_tdata <= s_out_bundle(c_SKID_WIDTH - 1 downto 1);
-    o_m_axis_tlast <= s_out_bundle(0);
 
     -- =========================================================================
     -- Concurrent signals
     -- =========================================================================
 
     -- Timeout limit: max_range_clks only (drain/ALU margins TBD after bench)
-    s_timeout_limit <= i_max_range_clks;
+    s_timeout_limit <= i_max_scan_clks;
 
-    -- Flush all skid buffers on shot_start
-    s_flush <= i_shot_start;
+    -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset).
+    -- Late-arriving beats from previous shot are intentionally dropped.
+    -- This policy prioritizes shot boundary integrity over data completeness.
+    -- Drops are reflected in top-level frame_abort_count / shot_drop_count.
+    s_flush          <= i_shot_start or i_abort;
+    s_fifo_rst_n     <= i_rst_n and (not s_flush);         -- input FIFOs: flush on shot_start + abort
+    s_out_fifo_rst_n <= i_rst_n and (not i_abort);         -- output FIFO: flush on abort ONLY
+    -- NOTE: shot_start must NOT flush the output FIFO — there may be
+    -- tail beats from the previous row still in transit to header_inserter.
+
+    -- Flush output skid on face_abort only (registered, 1-cycle after
+    -- overrun detection).  Uses s_face_abort_r which is only set in the
+    -- overrun override (guarded by not v_row_completing), so it never
+    -- fires on a normal row-completion edge.  The depth-16 FIFO between
+    -- assembler and header absorbs any 1-cycle delay window.
+    -- (output FIFO flush handled by s_aresetn in xpm_fifo_axis)
 
     -- Pipe capacity: can FSM produce? (all inputs registered → ~0.5ns)
     s_can_produce <= '1' when (s_pipe_tvalid_r = '0')
@@ -268,6 +407,7 @@ begin
         variable v_blank_last     : boolean;
         variable v_done_after     : std_logic_vector(3 downto 0);
         variable v_chip_idx       : natural range 0 to 3;
+        variable v_row_completing : boolean;  -- row finishes on this edge
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -277,36 +417,61 @@ begin
                 s_shot_cnt_r      <= (others => '0');
                 s_timeout_limit_r <= (others => '0');
                 s_cur_chip_r      <= (others => '0');
+                s_next_chip_r     <= (others => '0');
                 s_is_blank_r      <= '0';
                 s_is_last_chip_r  <= '0';
                 s_blank_stop_r    <= (others => '0');
                 s_blank_beat_r    <= (others => '0');
                 s_last_stop_r     <= (others => '0');
+                s_fwd_stop_r      <= (others => '0');
+                s_fwd_beat_r      <= (others => '0');
                 s_pipe_tdata_r    <= (others => '0');
                 s_pipe_tvalid_r   <= '0';
                 s_pipe_tlast_r    <= '0';
                 s_row_done_r      <= '0';
                 s_chip_error_r    <= (others => '0');
+                s_shot_overrun_r  <= '0';
+                s_face_abort_r   <= '0';
+                s_shot_pending_r <= '0';
+                s_shot_flush_drop_r  <= '0';
+                s_shot_overrun_cnt_r <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
-                s_row_done_r <= '0';
+                s_row_done_r     <= '0';
+                s_shot_overrun_r <= '0';
+                s_face_abort_r   <= '0';
+
+                -- Round 5 #15 trace: if shot_start flushes input FIFOs while
+                -- any of them still holds data, the old-shot tail is being
+                -- dropped. Record as sticky so SW can correlate with shot
+                -- timing anomalies. (abort-triggered flushes are excluded —
+                -- they are explicit SW intent, not boundary drift.)
+                if i_shot_start = '1' and s_in_tvalid /= "0000" then
+                    s_shot_flush_drop_r <= '1';
+                end if;
 
                 -- Default: deassert pipe valid after handshake
                 if s_pipe_tvalid_r = '1' and s_pipe_tready = '1' then
                     s_pipe_tvalid_r <= '0';
                 end if;
 
+                v_row_completing := false;
+
                 -- =============================================================
                 -- Common logic for ST_SCAN / ST_FORWARD:
                 --   shot counter + tvalid latch (runs until back to ST_IDLE)
                 -- =============================================================
-                if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE
-                   or s_state_r = ST_FORWARD then
-                    -- Increment shot counter (saturate at max)
+                -- Timeout counter: chip-ready deadline only (excludes
+                -- forwarding/backpressure time in ST_FORWARD).
+                if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE then
                     if s_shot_cnt_r /= x"FFFF" then
                         s_shot_cnt_r <= s_shot_cnt_r + 1;
                     end if;
-                    -- Latch tvalid from input skid buffer outputs
+                end if;
+
+                -- Latch tvalid from input skid buffers (all active states)
+                if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE
+                   or s_state_r = ST_FORWARD then
                     for i in 0 to c_N_CHIPS - 1 loop
                         if s_active_mask_r(i) = '1'
                            and s_in_tvalid(i) = '1' then
@@ -323,58 +488,86 @@ begin
                 -- ST_IDLE: wait for shot_start
                 -- ==============================================================
                 when ST_IDLE =>
-                    if i_shot_start = '1' then
+                    if i_shot_start = '1' or s_shot_pending_r = '1' then
+                        s_shot_pending_r <= '0';  -- consume pending
                         s_timeout_limit_r <= s_timeout_limit;
                         s_chip_ready_r    <= (others => '0');
                         s_chip_done_r     <= (others => '0');
                         s_shot_cnt_r      <= (others => '0');
                         s_chip_error_r    <= (others => '0');
                         s_active_mask_r   <= i_active_chip_mask;    -- latch config
-                        s_last_stop_r     <= i_stops_per_chip(2 downto 0) - 1;
-                        s_state_r         <= ST_SCAN;
+                        if i_stops_per_chip >= 2 then
+                            s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
+                        else
+                            s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
+                        end if;
+                        -- Runtime beats/cell for blank generation
+                        case i_max_hits_cfg is
+                            when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
+                            when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
+                            when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
+                            when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
+                            when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
+                            when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
+                            when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
+                        end case;
+                        -- Strict in-order: start from lowest active chip
+                        s_next_chip_r     <= (others => '0');
+                        if i_active_chip_mask = "0000" then
+                            -- Zero active mask: emit row_done immediately so
+                            -- upstream seq sees this shot as completed. Module
+                            -- becomes self-consistent without relying on
+                            -- face_seq to pre-gate zero-mask shots.
+                            s_row_done_r <= '1';
+                            s_state_r    <= ST_IDLE;
+                        else
+                            s_state_r     <= ST_SCAN;
+                        end if;
                     end if;
 
                 -- ==============================================================
-                -- ST_SCAN: find any undone active chip to forward
-                --   Priority 1: ready chip (tvalid latched, lowest index)
-                --   Priority 2: timeout → blank any undone chip
-                --   Result registered → ST_RESOLVE computes is_last_chip
+                -- ST_SCAN: strict in-order chip selection
+                --   Always processes s_next_chip_r in ascending order.
+                --   Skips inactive chips. Waits for current chip's data
+                --   or blanks on timeout.
+                --   Output order guaranteed: chip0 → chip1 → chip2 → chip3
                 -- ==============================================================
                 when ST_SCAN =>
-                    -- Priority 1: find undone + ready chip
-                    v_found := false;
-                    v_cur_chip := (others => '0');
-                    for i in 0 to 3 loop
-                        if s_active_mask_r(i) = '1'
-                           and s_chip_done_r(i) = '0'
-                           and (s_chip_ready_r(i) = '1'
-                                or s_in_tvalid(i) = '1')
-                           and not v_found then
-                            v_cur_chip := to_unsigned(i, 2);
-                            v_found := true;
-                        end if;
-                    end loop;
+                    v_chip_idx := to_integer(s_next_chip_r);
 
-                    if v_found then
-                        s_is_blank_r <= '0';
-                        s_cur_chip_r <= v_cur_chip;
-                        s_state_r    <= ST_RESOLVE;
-                    elsif s_shot_cnt_r >= s_timeout_limit_r then
-                        -- Priority 2: timeout → pick any undone chip
-                        for i in 0 to 3 loop
-                            if s_active_mask_r(i) = '1'
-                               and s_chip_done_r(i) = '0'
-                               and not v_found then
-                                v_cur_chip := to_unsigned(i, 2);
-                                v_found := true;
-                            end if;
-                        end loop;
-                        if v_found then
-                            s_is_blank_r <= '1';
-                            s_cur_chip_r <= v_cur_chip;
-                            s_chip_error_r(to_integer(v_cur_chip)) <= '1';
-                            s_state_r    <= ST_RESOLVE;
+                    -- Skip inactive chips (not in mask): advance pointer
+                    if s_active_mask_r(v_chip_idx) = '0'
+                       or s_chip_done_r(v_chip_idx) = '1' then
+                        -- This chip is inactive or already done → skip
+                        -- Check if all done
+                        v_done_after := s_chip_done_r;
+                        v_done_after(v_chip_idx) := '1';  -- treat skipped as done
+                        if (v_done_after or (not s_active_mask_r)) = "1111" then
+                            -- All chips processed → row complete, go to IDLE
+                            s_state_r <= ST_IDLE;
+                        else
+                            s_next_chip_r <= s_next_chip_r + 1;
                         end if;
+                    elsif s_chip_ready_r(v_chip_idx) = '1'
+                          or s_in_tvalid(v_chip_idx) = '1' then
+                        -- Current chip has data ready → forward
+                        s_is_blank_r <= '0';
+                        s_cur_chip_r <= s_next_chip_r;
+                        s_state_r    <= ST_RESOLVE;
+                    elsif s_timeout_limit_r /= 0
+                          and s_shot_cnt_r >= s_timeout_limit_r then
+                        -- Timeout: current chip didn't deliver → blank cell
+                        s_is_blank_r <= '1';
+                        s_cur_chip_r <= s_next_chip_r;
+                        s_chip_error_r(v_chip_idx) <= '1';
+                        s_state_r    <= ST_RESOLVE;
+                    elsif s_shot_cnt_r = x"FFFF" then
+                        -- Hard safety cap: even if timeout_limit=0 (disabled),
+                        -- don't wait forever. Force blank after ~330us @200MHz.
+                        s_is_blank_r <= '1';
+                        s_cur_chip_r <= s_next_chip_r;
+                        s_chip_error_r(v_chip_idx) <= '1';
+                        s_state_r    <= ST_RESOLVE;
                     end if;
 
                 -- ==============================================================
@@ -392,9 +585,11 @@ begin
                         s_is_last_chip_r <= '0';
                     end if;
 
-                    s_blank_stop_r <= (others => '0');
-                    s_blank_beat_r <= (others => '0');
-                    s_state_r      <= ST_FORWARD;
+                    s_blank_stop_r   <= (others => '0');
+                    s_blank_beat_r   <= (others => '0');
+                    s_fwd_stop_r     <= (others => '0');  -- reset position for new chip
+                    s_fwd_beat_r     <= (others => '0');
+                    s_state_r        <= ST_FORWARD;
 
                 -- ==============================================================
                 -- ST_FORWARD: produce beats into output pipe
@@ -408,13 +603,13 @@ begin
                             -- --------------------------------------------------
                             -- Blank chip: generate beat data
                             -- --------------------------------------------------
-                            s_pipe_tdata_r  <= fn_blank_beat(s_blank_beat_r, s_cur_chip_r);
+                            s_pipe_tdata_r  <= fn_blank_beat(s_blank_beat_r, s_rt_last_beat_r, s_cur_chip_r);
                             s_pipe_tvalid_r <= '1';
 
                             -- Check if this is the last blank beat (s_last_stop_r pre-computed)
                             v_blank_last :=
                                 (s_blank_stop_r = s_last_stop_r)
-                                and (s_blank_beat_r = c_BEATS_PER_CELL - 1);
+                                and (s_blank_beat_r = s_rt_last_beat_r);
 
                             if v_blank_last and s_is_last_chip_r = '1' then
                                 s_pipe_tlast_r <= '1';  -- row tlast
@@ -423,7 +618,7 @@ begin
                             end if;
 
                             -- Advance blank counters
-                            if s_blank_beat_r = c_BEATS_PER_CELL - 1 then
+                            if s_blank_beat_r = s_rt_last_beat_r then
                                 s_blank_beat_r <= (others => '0');
                                 s_blank_stop_r <= s_blank_stop_r + 1;
                             else
@@ -434,10 +629,16 @@ begin
                             if v_blank_last then
                                 s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
                                 if s_is_last_chip_r = '1' then
-                                    s_row_done_r <= '1';
-                                    s_state_r    <= ST_IDLE;
+                                    s_row_done_r     <= '1';
+                                    v_row_completing := true;
+                                    if i_shot_start = '1' then
+                                        s_shot_pending_r <= '1';
+                                    end if;
+                                    s_state_r        <= ST_IDLE;
                                 else
-                                    s_state_r    <= ST_SCAN;
+                                    s_next_chip_r <= s_next_chip_r + 1;
+                                    s_shot_cnt_r  <= (others => '0');  -- reset timeout for next chip
+                                    s_state_r     <= ST_SCAN;
                                 end if;
                             end if;
 
@@ -450,6 +651,14 @@ begin
                             if s_in_tvalid(v_chip_idx) = '1' then
                                 s_pipe_tdata_r  <= s_in_tdata(v_chip_idx);
                                 s_pipe_tvalid_r <= '1';
+                                -- Track (stop_idx, beat_idx) position for Q&A #36
+                                -- overrun hand-off to blank mode.
+                                if s_fwd_beat_r = s_rt_last_beat_r then
+                                    s_fwd_beat_r <= (others => '0');
+                                    s_fwd_stop_r <= s_fwd_stop_r + 1;
+                                else
+                                    s_fwd_beat_r <= s_fwd_beat_r + 1;
+                                end if;
 
                                 -- Detect chip last from cell_builder's tlast
                                 if s_in_tlast(v_chip_idx) = '1' then
@@ -462,10 +671,16 @@ begin
                                     -- Chip done: transition immediately
                                     s_chip_done_r(v_chip_idx) <= '1';
                                     if s_is_last_chip_r = '1' then
-                                        s_row_done_r <= '1';
-                                        s_state_r    <= ST_IDLE;
+                                        s_row_done_r     <= '1';
+                                        v_row_completing := true;
+                                        if i_shot_start = '1' then
+                                            s_shot_pending_r <= '1';
+                                        end if;
+                                        s_state_r        <= ST_IDLE;
                                     else
-                                        s_state_r    <= ST_SCAN;
+                                        s_next_chip_r <= s_next_chip_r + 1;
+                                        s_shot_cnt_r  <= (others => '0');  -- reset timeout for next chip
+                                        s_state_r     <= ST_SCAN;
                                     end if;
                                 else
                                     s_pipe_tlast_r <= '0';
@@ -478,18 +693,69 @@ begin
                 end case;
 
                 -- =============================================================
-                -- shot_start override for ST_SCAN/ST_FORWARD only.
-                -- Skid buffers are flushed via s_flush (concurrent signal).
+                -- shot_start override: BLANK-FILL current line (Q&A #36, c-simplified)
+                --
+                -- The current shot's line is completed by generating blank
+                -- (error_fill=1) cells for the remainder of the chip in progress
+                -- and for all not-yet-started chips. Line size is preserved so
+                -- VDMA frame alignment stays intact (SW parses by fixed offset).
+                --
+                -- s_fwd_beat_cnt_r gives the exact position where overrun hit
+                -- in the current chip's real-chip forward; blank mode resumes
+                -- from that (stop_idx, beat_idx_in_cell) to backfill cleanly.
+                --
+                -- Subsequent chips enter blank via ST_SCAN's hard-cap path:
+                -- setting s_shot_cnt_r = x"FFFF" forces ST_SCAN to immediately
+                -- declare the next chip timed out → ST_RESOLVE → ST_FORWARD blank.
+                --
+                -- NOTE: face_abort is NOT pulsed here. The line is completed
+                -- in-place; header_inserter sees a normal tlast and the face
+                -- continues naturally. shot_pending latches the new shot so
+                -- ST_IDLE picks it up as the next line.
                 -- =============================================================
-                if i_shot_start = '1' and s_state_r /= ST_IDLE then
-                    s_timeout_limit_r <= s_timeout_limit;
+                if i_shot_start = '1' and s_state_r /= ST_IDLE
+                                       and not v_row_completing then
+                    s_shot_overrun_r <= '1';
+                    s_shot_pending_r <= '1';  -- new shot becomes next line
+
+                    -- Round 5 #16 trace: wrap-counter for blank-fill invocations
+                    s_shot_overrun_cnt_r <= s_shot_overrun_cnt_r + 1;
+
+                    -- Mark all chips not yet finished as error_fill carriers
+                    s_chip_error_r <= s_chip_error_r or (not s_chip_done_r);
+
+                    -- Force upcoming chips (after current) into blank mode via
+                    -- ST_SCAN's hard safety cap.
+                    s_shot_cnt_r <= x"FFFF";
+
+                    -- If we were mid ST_FORWARD real-chip, resume as blank
+                    -- from the current position so the chip's expected beat
+                    -- count stays exact.
+                    if s_state_r = ST_FORWARD and s_is_blank_r = '0' then
+                        s_is_blank_r   <= '1';
+                        s_blank_stop_r <= s_fwd_stop_r;
+                        s_blank_beat_r <= s_fwd_beat_r;
+                    end if;
+                end if;
+
+                -- =============================================================
+                -- External abort (cmd_stop / cmd_soft_reset from top).
+                -- Flush everything and go to ST_IDLE.  Highest priority.
+                -- =============================================================
+                if i_abort = '1' then
                     s_chip_ready_r    <= (others => '0');
                     s_chip_done_r     <= (others => '0');
-                    s_shot_cnt_r      <= (others => '0');
                     s_chip_error_r    <= (others => '0');
                     s_pipe_tvalid_r   <= '0';
                     s_pipe_tlast_r    <= '0';
-                    s_state_r         <= ST_SCAN;
+                    s_shot_pending_r  <= '0';
+                    -- NOTE: do NOT set s_face_abort_r here.
+                    -- o_face_abort is only for self-overrun notification.
+                    -- External abort (i_abort) comes from top's s_pipeline_abort
+                    -- which top already uses directly for frame_done_both.
+                    -- Setting face_abort_r here would create a feedback loop:
+                    -- A.o_face_abort → top → B.i_abort → B.o_face_abort → top → A.i_abort → ...
+                    s_state_r         <= ST_IDLE;
                 end if;
             end if;
         end if;
@@ -500,5 +766,14 @@ begin
     -- =========================================================================
     o_row_done         <= s_row_done_r;
     o_chip_error_flags <= s_chip_error_r;
+    o_shot_overrun     <= s_shot_overrun_r;
+    -- #18: o_face_abort is retained as a port for backward compatibility but
+    -- s_face_abort_r is never asserted after Round 4 (c-simplified overrun).
+    -- Overrun no longer triggers face_abort → pipeline_abort; the tight
+    -- 1-cycle feedback path concern from #18 is therefore moot.
+    o_face_abort       <= s_face_abort_r;
+    o_idle             <= '1' when s_state_r = ST_IDLE else '0';
+    o_shot_flush_drop    <= s_shot_flush_drop_r;
+    o_shot_overrun_count <= s_shot_overrun_cnt_r;
 
 end architecture rtl;

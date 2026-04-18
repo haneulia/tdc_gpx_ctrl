@@ -19,6 +19,12 @@
 --   CTL[5..20]  = cfg_image[0..15]
 --   CTL[21..31] = reserved
 --
+--   TDC-GPX chip register bitfield constants (for cfg_image override):
+--     Reg0: TRiseEn[0:8], TFallEn[0:8] (edge sensitivity per stop)
+--     Reg5: StartOff1[17:0]
+--     Reg6: LF threshold[7:0] (Fill value for burst drain)
+--     Reg7: HSDiv, RefClkDiv, MTimer (via CTL4 override)
+--
 -- Standard: VHDL-93 compatible
 -- =============================================================================
 
@@ -51,13 +57,13 @@ package tdc_gpx_cfg_pkg is
     -- CTL0 bitfield positions
     constant c_MC_ACTIVE_MASK_HI     : natural := 3;    -- [3:0]   active_chip_mask
     constant c_MC_ACTIVE_MASK_LO     : natural := 0;
-    constant c_MC_PACKET_SCOPE       : natural := 4;    -- [4]     packet_scope
-    constant c_MC_HIT_STORE_HI       : natural := 6;    -- [6:5]   hit_store_mode
+    constant c_MC_PACKET_SCOPE       : natural := 4;    -- [4]     packet_scope   (HEADER-ONLY)
+    constant c_MC_HIT_STORE_HI       : natural := 6;    -- [6:5]   hit_store_mode (HEADER-ONLY)
     constant c_MC_HIT_STORE_LO       : natural := 5;
-    constant c_MC_DIST_SCALE_HI      : natural := 9;    -- [9:7]   dist_scale
+    constant c_MC_DIST_SCALE_HI      : natural := 9;    -- [9:7]   dist_scale     (HEADER-ONLY)
     constant c_MC_DIST_SCALE_LO      : natural := 7;
     constant c_MC_DRAIN_MODE         : natural := 10;   -- [10]    drain_mode
-    constant c_MC_PIPELINE_EN        : natural := 11;   -- [11]    pipeline_en
+    constant c_MC_PIPELINE_EN        : natural := 11;   -- [11]    pipeline_en    (HEADER-ONLY)
     constant c_MC_N_FACES_HI         : natural := 14;   -- [14:12] n_faces
     constant c_MC_N_FACES_LO         : natural := 12;
     constant c_MC_STOPS_HI           : natural := 18;   -- [18:15] stops_per_chip
@@ -81,6 +87,16 @@ package tdc_gpx_cfg_pkg is
     constant c_BT_CLK_DIV_LO        : natural := 0;
     constant c_BT_TICKS_HI          : natural := 8;    -- [8:6]   bus_ticks
     constant c_BT_TICKS_LO          : natural := 6;
+    -- [9] reserved
+    constant c_BT_REG_ADDR_HI       : natural := 13;   -- [13:10] reg_target_addr
+    constant c_BT_REG_ADDR_LO       : natural := 10;
+    constant c_BT_REG_CHIP_HI       : natural := 15;   -- [15:14] reg_target_chip_id (단일 칩 모드)
+    constant c_BT_REG_CHIP_LO       : natural := 14;
+    constant c_BT_REG_CHIP_ADDR_HI  : natural := 19;   -- [19:16] reg_chip_address (멀티칩 대상 선택)
+    constant c_BT_REG_CHIP_ADDR_LO  : natural := 16;
+    -- [29:20] reserved
+    constant c_BT_REG_READ_TRIG     : natural := 30;   -- [30] reg_read trigger (edge)
+    constant c_BT_REG_WRITE_TRIG    : natural := 31;   -- [31] reg_write trigger (edge)
 
     -- =========================================================================
     -- CTL2: RANGE_COLS (max_range_clks + cols_per_face)
@@ -102,6 +118,15 @@ package tdc_gpx_cfg_pkg is
     -- =========================================================================
     constant c_ADDR_CFG_REG7         : natural := 16#10#;   -- CTL4 [31:0]
 
+    -- =========================================================================
+    -- CTL21: SCAN_TIMEOUT
+    -- =========================================================================
+    constant c_ADDR_SCAN_TIMEOUT     : natural := 16#54#;   -- CTL21
+    constant c_ST_MAX_SCAN_HI        : natural := 15;   -- [15:0] max_scan_clks
+    constant c_ST_MAX_SCAN_LO        : natural := 0;
+    constant c_ST_MAX_HITS_HI        : natural := 18;   -- [18:16] max_hits_cfg (1~7, 0=default 7)
+    constant c_ST_MAX_HITS_LO        : natural := 16;
+
     -- CFG_REG7 bitfields
     constant c_REG7_HSDIV_HI        : natural := 7;
     constant c_REG7_HSDIV_LO        : natural := 0;
@@ -109,6 +134,37 @@ package tdc_gpx_cfg_pkg is
     constant c_REG7_REFCLKDIV_LO    : natural := 8;
     constant c_REG7_MTIMER_HI       : natural := 27;
     constant c_REG7_MTIMER_LO       : natural := 15;
+
+    -- =========================================================================
+    -- cfg_image Reg0 bitfields (TDC-GPX Register 0: edge sensitivity)
+    --   [10:18] TRiseEn — bit10=TStart, bit11=TStop1 .. bit18=TStop8
+    --   [19:27] TFallEn — bit19=TStart, bit20=TStop1 .. bit27=TStop8
+    -- =========================================================================
+    constant c_REG0_TRISEEN_LO      : natural := 10;   -- TRiseEn[0]=TStart
+    constant c_REG0_TRISEEN_HI      : natural := 18;   -- TRiseEn[8]=TStop8
+    constant c_REG0_TFALLEN_LO      : natural := 19;   -- TFallEn[0]=TStart
+    constant c_REG0_TFALLEN_HI      : natural := 27;   -- TFallEn[8]=TStop8
+    -- Stop channel offset: TRiseEn[1]=TStop1 = bit 11, ..., TRiseEn[8]=TStop8 = bit 18
+    --                       TFallEn[1]=TStop1 = bit 20, ..., TFallEn[8]=TStop8 = bit 27
+    constant c_REG0_STOP_OFFSET     : natural := 1;    -- bit index offset: stop N = base + N
+
+    -- =========================================================================
+    -- cfg_image Reg5 bitfields (TDC-GPX Register 5: StartOff1 + control)
+    -- =========================================================================
+    constant c_REG5_STARTOFF1_HI    : natural := 17;
+    constant c_REG5_STARTOFF1_LO    : natural := 0;
+    -- Reg5 bit23: MasterAluTrig — AluTrigger pin causes master reset
+    --   (clears IFIFOs + ALU state). Required for overrun/shot-boundary cleanup.
+    -- Reg5 bit24: PartialAluTrig — AluTrigger pin causes partial reset
+    --   (clears ALU state only, keeps IFIFOs). Not used by this controller.
+    constant c_REG5_MASTER_ALU_TRIG : natural := 23;
+    constant c_REG5_PARTIAL_ALU_TRIG : natural := 24;
+
+    -- =========================================================================
+    -- cfg_image Reg6 bitfields (TDC-GPX Register 6: FIFO threshold)
+    -- =========================================================================
+    constant c_REG6_LF_THRESH_HI    : natural := 7;
+    constant c_REG6_LF_THRESH_LO    : natural := 0;
 
     -- =========================================================================
     -- cfg_image (R/W) : CTL5~CTL20 → 0x14 ~ 0x50  (Reg0..Reg15 x 32-bit)
@@ -149,13 +205,60 @@ package tdc_gpx_cfg_pkg is
     constant c_ADDR_ERROR_COUNT      : natural := 16#A0#;   -- STAT8
     constant c_ADDR_BIN_PS           : natural := 16#A4#;   -- STAT9
     constant c_ADDR_K_DIST           : natural := 16#A8#;   -- STAT10
+    constant c_ADDR_REG_RDATA        : natural := 16#AC#;   -- STAT11: reg access read data
 
     -- STATUS bitfields (STAT5)
     constant c_STAT_BUSY             : natural := 0;
     constant c_STAT_OVERRUN          : natural := 1;
-    constant c_STAT_BIN_MISMATCH     : natural := 2;
+    constant c_STAT_ERR_FATAL        : natural := 2;  -- err_handler fatal recovery failure
     constant c_STAT_CHIP_ERR_HI      : natural := 7;
     constant c_STAT_CHIP_ERR_LO      : natural := 4;
+    constant c_STAT_DRAIN_TO_HI      : natural := 11;   -- drain_timeout_mask[3:0]
+    constant c_STAT_DRAIN_TO_LO      : natural := 8;
+    constant c_STAT_SEQ_ERR_HI       : natural := 15;   -- sequence_error_mask[3:0]
+    constant c_STAT_SEQ_ERR_LO       : natural := 12;
+
+    -- =========================================================================
+    -- Bus timing constraints (TDC-GPX datasheet @ 200 MHz, T_clk = 5 ns)
+    --
+    -- Datasheet parameters:
+    --   tS-AD  >= 2 ns    address setup before strobe low
+    --   tPW-RL >= 6 ns    RDN/WRN low pulse width
+    --   tV-DR  <= 11.8 ns data valid delay after RDN low (worst case 40pF)
+    --   tPW-RH >= 6 ns    RDN high pulse width (burst inter-read gap)
+    --
+    -- bus_phy read sample path:
+    --   RDN low at tick 1, sample_en at tick (ticks-2), IOB FF at +1 clk
+    --   => capture delay = ((ticks-3) * div + 1) * T_clk from RDN low
+    --
+    -- bus_phy burst path:
+    --   Burst restarts at tick 0 (Phase A gap included).
+    --   RDN high = 2 ticks = 2 * div * T_clk (Phase H + Phase A).
+    --   Per-burst-read cost = (ticks + 1) ticks total.
+    --
+    -- Combined constraint: (ticks - 3) * div >= 2
+    --   div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
+    --
+    -- Legal combination table (T_clk = 5 ns):
+    --   div  ticks  capture   tPW-RL   tPW-RH(burst)  rate      status
+    --   ---  -----  --------  -------  -------------  --------  --------
+    --    1     4     10 ns     10 ns    10 ns          50 MHz    ILLEGAL (tV-DR)
+    --    1     5     15 ns     15 ns    10 ns          40 MHz    OK (fastest)
+    --    1     6     25 ns     20 ns    10 ns          33 MHz    OK
+    --    1     7     35 ns     25 ns    10 ns          29 MHz    OK
+    --    2     4     15 ns     20 ns    20 ns          25 MHz    OK
+    --    2     5     25 ns     30 ns    20 ns          20 MHz    OK (default)
+    --    3     4     20 ns     30 ns    30 ns          17 MHz    OK
+    --    2     7     45 ns     50 ns    20 ns          14 MHz    OK (slowest 3-bit)
+    -- =========================================================================
+    constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum
+    constant c_BUS_CLK_DIV_MIN      : natural := 2;     -- div=1 prohibited per review/datasheet
+
+    -- Design clock frequency assumption.
+    -- All timeout constants (x"FFFF" watchdogs, powerup/recovery clocks,
+    -- err_handler recovery timeout 9999) assume this frequency.
+    -- If the actual system clock differs, these must be rescaled.
+    constant c_ASSUMED_CLK_FREQ_HZ  : natural := 200_000_000;  -- 200 MHz
 
     -- =========================================================================
     -- Init values
@@ -167,9 +270,9 @@ package tdc_gpx_cfg_pkg is
     -- breakdown: n_faces=5→[14:12]=101=0x5000, stops=8→[18:15]=1000_0=0x40000
     --            0x00040000 + 0x00005000 + 0x0000000F = 0x0004500F
 
-    -- CTL1: BUS_TIMING init: clk_div=1→[5:0]=000001, ticks=5→[8:6]=101
-    constant c_INIT_BUS_TIMING       : std_logic_vector(31 downto 0) := x"00000141";
-    -- breakdown: ticks=5→101<<6=0x140, clk_div=1→0x01 → 0x141
+    -- CTL1: BUS_TIMING init: clk_div=2→[5:0]=000010, ticks=5→[8:6]=101
+    constant c_INIT_BUS_TIMING       : std_logic_vector(31 downto 0) := x"00000142";
+    -- breakdown: ticks=5→101<<6=0x140, clk_div=2→0x02 → 0x142
 
     -- CTL2: RANGE_COLS init: max_range=267→[15:0]=0x010B, cols=2400→[31:16]=0x0960
     constant c_INIT_RANGE_COLS       : std_logic_vector(31 downto 0) := x"0960010B";

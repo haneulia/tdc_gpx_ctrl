@@ -4,24 +4,23 @@
 -- =============================================================================
 --
 -- Purpose:
---   Instantiates and connects all TDC-GPX controller submodules:
---     CSR (AXI-Lite + CDC)
---     Per-chip pipeline x4: bus_phy → chip_ctrl → decode_i →
---                           raw_event_builder → cell_builder
---     face_assembler (4 chip inputs → packed row)
---     header_inserter (header + SOF/EOL → VDMA frame)
+--   Instantiates and connects the 4 cluster wrappers plus face_seq and
+--   status_agg.  No processes -- pure structural + concurrent assignments.
 --
---   Includes glue logic:
---     Face sequencer (shot counting, face/frame ID management)
---     Status aggregation (t_tdc_status assembly)
---     Timestamp counter (free-running cycle counter)
---     Error counter
+--   [1] csr_pipeline    : Pipeline CSR (AXI4-Lite #2, 7-bit address)
+--   [2] config_ctrl     : Cluster 1 - Chip CSR + cmd_arb + stop_cfg_decode +
+--                         bus_phy x4 + chip_ctrl x4 + skid buffers
+--   [3] decode_pipe     : Cluster 2 - decoder_i_mode + raw_event_builder + skids
+--   [4] cell_pipe       : Cluster 3 - slope demux + cell_builder x8
+--   [5] output_stage    : Cluster 4 - face_asm x2 + sync_fifo x2 + header x2
+--   [6] face_seq        : Face/shot sequencer
+--   [7] status_agg      : Status aggregation + timestamp + error counter
 --
 -- Clock domains:
 --   i_axis_aclk  : TDC processing / AXI-Stream domain (~200 MHz)
 --   s_axi_aclk   : AXI4-Lite PS domain
 --
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;
@@ -33,21 +32,30 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_top is
     generic (
-        g_HW_VERSION     : std_logic_vector(31 downto 0) := x"00010000";
-        g_POWERUP_CLKS   : natural := 48;
-        g_RECOVERY_CLKS  : natural := 8;
-        g_ALU_PULSE_CLKS : natural := 4
+        g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
+        g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32 or 64)
+        g_POWERUP_CLKS    : positive := 48;
+        g_RECOVERY_CLKS   : positive := 8;
+        g_ALU_PULSE_CLKS  : positive := 4;
+        -- Stop event AXI-Stream interface parameters
+        g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;
+        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH
     );
     port (
-        -- Processing / AXI-Stream clock and reset
+        -- Processing / AXI-Stream clock and reset (150 MHz)
         i_axis_aclk      : in  std_logic;
         i_axis_aresetn   : in  std_logic;
 
-        -- AXI-Lite clock / reset (PS domain)
+        -- TDC-GPX bus control clock (200 MHz)
+        -- Drives bus_phy and chip_ctrl (same clock group).
+        -- May be same as i_axis_aclk for single-clock designs.
+        i_tdc_clk        : in  std_logic;
+
+        -- AXI-Lite clock / reset (PS domain, 100 MHz)
         s_axi_aclk       : in  std_logic;
         s_axi_aresetn    : in  std_logic;
 
-        -- AXI4-Lite Slave (CSR, 9-bit address)
+        -- AXI4-Lite Slave #1: Chip CSR (9-bit address)
         s_axi_awvalid    : in  std_logic;
         s_axi_awready    : out std_logic;
         s_axi_awaddr     : in  std_logic_vector(c_CSR_ADDR_WIDTH - 1 downto 0);
@@ -68,12 +76,43 @@ entity tdc_gpx_top is
         s_axi_rdata      : out std_logic_vector(31 downto 0);
         s_axi_rresp      : out std_logic_vector(1 downto 0);
 
+        -- AXI4-Lite Slave #2: Pipeline CSR (7-bit address)
+        s_axi_pipe_awvalid    : in  std_logic;
+        s_axi_pipe_awready    : out std_logic;
+        s_axi_pipe_awaddr     : in  std_logic_vector(6 downto 0);
+        s_axi_pipe_awprot     : in  std_logic_vector(2 downto 0);
+        s_axi_pipe_wvalid     : in  std_logic;
+        s_axi_pipe_wready     : out std_logic;
+        s_axi_pipe_wdata      : in  std_logic_vector(31 downto 0);
+        s_axi_pipe_wstrb      : in  std_logic_vector(3 downto 0);
+        s_axi_pipe_bvalid     : out std_logic;
+        s_axi_pipe_bready     : in  std_logic;
+        s_axi_pipe_bresp      : out std_logic_vector(1 downto 0);
+        s_axi_pipe_arvalid    : in  std_logic;
+        s_axi_pipe_arready    : out std_logic;
+        s_axi_pipe_araddr     : in  std_logic_vector(6 downto 0);
+        s_axi_pipe_arprot     : in  std_logic_vector(2 downto 0);
+        s_axi_pipe_rvalid     : out std_logic;
+        s_axi_pipe_rready     : in  std_logic;
+        s_axi_pipe_rdata      : out std_logic_vector(31 downto 0);
+        s_axi_pipe_rresp      : out std_logic_vector(1 downto 0);
+
         -- laser_ctrl_result stream input (i_axis_aclk domain)
         i_lsr_tvalid     : in  std_logic;
         i_lsr_tdata      : in  std_logic_vector(31 downto 0);
 
         -- Shot trigger (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         i_shot_start     : in  std_logic;
+
+        -- Stop TDC pulse (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
+        i_stop_tdc        : in  std_logic;
+
+        -- Stop event AXI Stream slave (from echo_receiver, i_axis_aclk domain)
+        i_stop_evt_tvalid : in  std_logic;
+        i_stop_evt_tdata  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
+        i_stop_evt_tkeep  : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
+        i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
+        o_stop_evt_tready : out std_logic;
 
         -- TDC-GPX physical pins (per chip, x4)
         io_tdc_d         : inout t_tdc_bus_array;
@@ -92,593 +131,654 @@ entity tdc_gpx_top is
         i_tdc_irflag     : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_tdc_errflag    : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-        -- AXI-Stream master output (to CDC FIFO / VDMA)
-        o_m_axis_tdata   : out std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        -- AXI-Stream master output: RISING pipeline (to CDC FIFO / VDMA)
+        o_m_axis_tdata   : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         o_m_axis_tvalid  : out std_logic;
         o_m_axis_tlast   : out std_logic;
         o_m_axis_tuser   : out std_logic_vector(0 downto 0);
         i_m_axis_tready  : in  std_logic;
 
+        -- AXI-Stream master output: FALLING pipeline (to CDC FIFO / VDMA)
+        o_m_axis_fall_tdata  : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        o_m_axis_fall_tvalid : out std_logic;
+        o_m_axis_fall_tlast  : out std_logic;
+        o_m_axis_fall_tuser  : out std_logic_vector(0 downto 0);
+        i_m_axis_fall_tready : in  std_logic;
+
         -- Calibration inputs (from external computation, i_axis_aclk domain)
         i_bin_resolution_ps : in  unsigned(15 downto 0);
         i_k_dist_fixed      : in  unsigned(31 downto 0);
 
-        -- Interrupt
-        o_irq            : out std_logic
+        -- Interrupts
+        o_irq            : out std_logic;
+        o_irq_pipe       : out std_logic
     );
 end entity tdc_gpx_top;
 
 architecture rtl of tdc_gpx_top is
 
     -- =========================================================================
-    -- Architecture-local array types (per-chip pipeline signals)
+    -- Configuration signals
     -- =========================================================================
-    type t_slv28_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-    type t_slv4_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(3 downto 0);
-    type t_raw_hit_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
-    type t_u2_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(1 downto 0);
-    type t_u3_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(2 downto 0);
-    type t_raw_event_array is array(0 to c_N_CHIPS - 1)
-        of t_raw_event;
-    type t_shot_seq_array is array(0 to c_N_CHIPS - 1)
-        of unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    signal s_cfg              : t_tdc_cfg;
+    signal s_cfg_pipeline     : t_tdc_cfg;
+    signal s_cfg_image        : t_cfg_image;
+    signal s_cfg_face_r       : t_tdc_cfg;
+    signal s_cdc_idle         : std_logic;
 
     -- =========================================================================
-    -- Zero constants
+    -- Command signals (from csr_pipeline)
     -- =========================================================================
-    constant C_ZEROS_CHIPS : std_logic_vector(c_N_CHIPS - 1 downto 0)
-        := (others => '0');
+    signal s_cmd_start        : std_logic;
+    signal s_cmd_stop         : std_logic;
+    signal s_cmd_soft_reset   : std_logic;
+    signal s_cmd_cfg_write    : std_logic;
+    -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
+    -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
+    -- Currently tied to '0' — future CSR bit will pulse this to clear error
+    -- history without a hard reset.
+    signal s_err_soft_clear   : std_logic := '0';
+    signal s_cmd_cfg_write_g  : std_logic;
+    signal s_cmd_start_accepted : std_logic;
 
     -- =========================================================================
-    -- CSR outputs (i_axis_aclk domain)
+    -- Cluster 1 -> Cluster 2 (AXI-Stream x4)
     -- =========================================================================
-    signal s_cfg            : t_tdc_cfg;
-    signal s_cfg_image      : t_cfg_image;
-    signal s_cmd_start      : std_logic;
-    signal s_cmd_stop       : std_logic;
-    signal s_cmd_soft_reset : std_logic;
-    signal s_cmd_cfg_write  : std_logic;
-    signal s_status         : t_tdc_status := c_TDC_STATUS_INIT;
+    signal s_raw_sk_tvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_sk_tdata     : t_slv32_array;
+    signal s_raw_sk_tuser     : t_slv8_array;
+    signal s_raw_sk_tready    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
-    -- Per-chip: bus_phy <-> chip_ctrl
+    -- Cluster 2 -> Cluster 3 (AXI-Stream x4)
     -- =========================================================================
-    signal s_bus_req_valid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_req_rw      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_req_addr    : t_slv4_array;
-    signal s_bus_req_wdata   : t_slv28_array;
-    signal s_bus_oen_perm    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_rsp_valid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_rsp_rdata   : t_slv28_array;
-    signal s_bus_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-    -- Per-chip: bus_phy synchronized status
-    signal s_ef1_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_ef2_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_lf1_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_lf2_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_irflag_sync     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_errflag_sync    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-    -- Per-chip: chip_ctrl -> decode_i
-    signal s_raw_word        : t_slv28_array;
-    signal s_raw_word_valid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_ififo_id        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_drain_done      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_shot_seq   : t_shot_seq_array;
-    signal s_chip_busy       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_tick_en         : std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-    -- Per-chip: decode_i -> raw_event_builder (combinational)
-    signal s_dec_raw_hit     : t_raw_hit_array;
-    signal s_dec_slope       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_dec_cha_code    : t_u2_array;
-    signal s_dec_stop_id     : t_u3_array;
-    signal s_dec_valid       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-    -- Per-chip: raw_event_builder -> cell_builder
-    signal s_raw_event       : t_raw_event_array;
-    signal s_raw_event_valid : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_stop_id_error   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-    -- Per-chip: cell_builder -> face_assembler (AXI-Stream)
-    signal s_cell_tdata      : t_axis_tdata_array;
-    signal s_cell_tvalid     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cell_tlast      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cell_tready     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_slice_done      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_hit_dropped     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_evt_sk_tvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_evt_sk_tdata     : t_slv32_array;
+    signal s_evt_sk_tuser     : t_slv16_array;
+    signal s_evt_sk_tready    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
-    -- face_assembler -> header_inserter (AXI-Stream)
+    -- Cluster 3 -> Cluster 4 (AXI-Stream x4, dual slope)
     -- =========================================================================
-    signal s_face_tdata      : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
-    signal s_face_tvalid     : std_logic;
-    signal s_face_tlast      : std_logic;
-    signal s_face_tready     : std_logic;
-    signal s_row_done        : std_logic;
-    signal s_chip_error_flags: std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_rise_tdata_0 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_rise_tdata_1 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_rise_tdata_2 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_rise_tdata_3 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_rise_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_rise_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_rise_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_fall_tdata_0 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_fall_tdata_1 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_fall_tdata_2 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_fall_tdata_3 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_cell_fall_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_fall_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_fall_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
-    -- VDMA line geometry (computed once, shared with header_inserter & VDMA)
+    -- Chip status (config_ctrl -> face_seq + status_agg)
     -- =========================================================================
-    signal s_rows_per_face_r : unsigned(15 downto 0) := (others => '0');
-    signal s_hsize_bytes_r   : unsigned(15 downto 0) := (others => '0');
+    signal s_chip_busy          : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_shot_seq      : t_shot_seq_array;
+    signal s_errflag_sync       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_drain_timeout  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_sequence       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_reg_outstanding    : std_logic;
 
     -- =========================================================================
-    -- Face sequencer
+    -- Output stage status (-> face_seq + status_agg)
     -- =========================================================================
-    type t_face_state is (ST_IDLE, ST_WAIT_SHOT, ST_IN_FACE);
-    signal s_face_state_r    : t_face_state := ST_IDLE;
-    signal s_face_start_r    : std_logic := '0';
-    signal s_face_id_r       : unsigned(7 downto 0) := (others => '0');
-    signal s_frame_id_r      : unsigned(31 downto 0) := (others => '0');
-    signal s_frame_done      : std_logic;
+    signal s_face_asm_idle        : std_logic;
+    signal s_face_asm_fall_idle   : std_logic;
+    signal s_hdr_idle             : std_logic;
+    signal s_hdr_fall_idle        : std_logic;
+    signal s_hdr_draining         : std_logic;
+    signal s_hdr_fall_draining    : std_logic;
+    signal s_row_done             : std_logic;
+    signal s_row_fall_done        : std_logic;
+    signal s_chip_error_flags     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_fall_error      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_overrun         : std_logic;
+    signal s_shot_fall_overrun    : std_logic;
+    signal s_face_abort           : std_logic;
+    signal s_face_fall_abort      : std_logic;
+    signal s_frame_done           : std_logic;
+    signal s_frame_fall_done      : std_logic;
+
+    -- Pipeline tvalid monitors (from output_stage)
+    signal s_face_tvalid          : std_logic;
+    signal s_face_fall_tvalid     : std_logic;
+    signal s_face_buf_tvalid      : std_logic;
+    signal s_face_fall_buf_tvalid : std_logic;
 
     -- =========================================================================
-    -- Gated shot_start: only active when face sequencer is in run state.
-    -- Prevents downstream FSMs from reacting to stray shot pulses before
-    -- cmd_start or after cmd_stop.
+    -- Decode pipe status
     -- =========================================================================
-    signal s_shot_start_gated : std_logic;
+    signal s_stop_id_error    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_hit_dropped      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_hit_fall_dropped : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_dropped     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_fall_dropped : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_slice_timeout    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_slice_fall_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
-    -- Timestamp (free-running cycle counter, i_axis_aclk domain)
+    -- Face sequencer signals
     -- =========================================================================
-    signal s_timestamp_r     : unsigned(63 downto 0) := (others => '0');
+    signal s_shot_start_gated       : std_logic;
+    signal s_face_start_gated       : std_logic;
+    signal s_pipeline_abort         : std_logic;
+    -- #22 Sprint 2: per-slope abort signals for slope-independent pipelines.
+    -- Sprint 2 keeps both equal to the global pipeline_abort (legacy
+    -- behavior). Sprint 3 will drive them from face_seq's separate rise/fall
+    -- outputs so a fall-only abort no longer kills the rise side.
+    signal s_pipeline_abort_rise    : std_logic;
+    signal s_pipeline_abort_fall    : std_logic;
+    signal s_shot_start_per_chip    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_face_id_r              : unsigned(7 downto 0);
+    signal s_frame_id_r             : unsigned(31 downto 0);
+    signal s_global_shot_seq_r      : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    signal s_face_active_mask_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_face_stops_per_chip_r  : unsigned(3 downto 0);
+    signal s_face_cols_per_face_r   : unsigned(15 downto 0);
+    signal s_rows_per_face_r        : unsigned(15 downto 0);
+    signal s_hsize_bytes_r          : unsigned(15 downto 0);
+    signal s_face_state_idle        : std_logic;
+    signal s_face_closing           : std_logic;
+    signal s_packet_start           : std_logic;
+    signal s_face_start_r           : std_logic;
+    signal s_shot_drop_cnt_r        : unsigned(15 downto 0);
+    signal s_cfg_rejected_r         : std_logic;
+    signal s_frame_abort_cnt_r      : unsigned(15 downto 0);
+    signal s_frame_done_both        : std_logic;
+    signal s_face_n_faces_r         : unsigned(3 downto 0);
 
     -- =========================================================================
-    -- Unified error mask: physical ErrFlag OR assembler timeout (blank insert)
-    -- Single source for header, status, and error counter.
+    -- Status signals
     -- =========================================================================
-    signal s_chip_error_merged : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_status               : t_tdc_status := c_TDC_STATUS_INIT;
+    signal s_timestamp_r          : unsigned(63 downto 0);
+    signal s_error_count_r        : unsigned(31 downto 0);
+    signal s_err_drain_to_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_seq_sticky_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_merged    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_raw       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- unmasked: all chips
+    signal s_err_rsp_mismatch     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_raw_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_timeout          : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_reg_arb_timeout      : std_logic;
+    signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
-    -- =========================================================================
-    -- Error counter (edge-detected: counts error events, not level duration)
-    -- =========================================================================
-    signal s_error_count_r       : unsigned(31 downto 0) := (others => '0');
-    signal s_chip_error_prev_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-
-    -- =========================================================================
-    -- Face-start latched config: snapshot at face_start for downstream modules
-    -- that must see a stable config throughout the face.
-    -- =========================================================================
-    signal s_face_stops_per_chip_r : unsigned(3 downto 0) := to_unsigned(8, 4);
-    signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
-
-    -- =========================================================================
-    -- Shot overrun detection
-    -- =========================================================================
-    signal s_shot_overrun_r : std_logic := '0';
+    -- Error handler status (from config_ctrl)
+    signal s_err_active    : std_logic;
+    signal s_err_fatal     : std_logic;
+    signal s_err_chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_cause     : std_logic_vector(2 downto 0);
 
 begin
 
     -- =========================================================================
-    -- [0] Gated shot_start: suppress when face sequencer is not in run state
+    -- Chip error merged (concurrent glue)
     -- =========================================================================
-    s_shot_start_gated <= i_shot_start
-                          when s_face_state_r /= ST_IDLE
-                          else '0';
+    -- Unmasked: all chip errors visible for SW diagnostics / status
+    s_chip_error_raw    <= s_errflag_sync or s_chip_error_flags or s_chip_fall_error;
+    -- Masked: only active chips, used for recovery gating and header
+    s_chip_error_merged <= s_chip_error_raw and s_face_active_mask_r;
 
     -- =========================================================================
-    -- [0b] Unified chip error mask: ErrFlag (physical) OR timeout (assembler)
+    -- [1] csr_pipeline (Pipeline CSR, separate AXI4-Lite port)
     -- =========================================================================
-    s_chip_error_merged <= s_errflag_sync or s_chip_error_flags;
-
-    -- =========================================================================
-    -- [1] CSR instance (AXI-Lite + CDC)
-    -- =========================================================================
-    u_csr : entity work.tdc_gpx_csr
+    u_csr_pipeline : entity work.tdc_gpx_csr_pipeline
         generic map (
-            g_HW_VERSION     => g_HW_VERSION
+            g_HW_VERSION     => g_HW_VERSION,
+            g_OUTPUT_WIDTH   => g_OUTPUT_WIDTH
         )
         port map (
-            s_axi_aclk       => s_axi_aclk,
-            s_axi_aresetn    => s_axi_aresetn,
-            s_axi_awvalid    => s_axi_awvalid,
-            s_axi_awready    => s_axi_awready,
-            s_axi_awaddr     => s_axi_awaddr,
-            s_axi_awprot     => s_axi_awprot,
-            s_axi_wvalid     => s_axi_wvalid,
-            s_axi_wready     => s_axi_wready,
-            s_axi_wdata      => s_axi_wdata,
-            s_axi_wstrb      => s_axi_wstrb,
-            s_axi_bvalid     => s_axi_bvalid,
-            s_axi_bready     => s_axi_bready,
-            s_axi_bresp      => s_axi_bresp,
-            s_axi_arvalid    => s_axi_arvalid,
-            s_axi_arready    => s_axi_arready,
-            s_axi_araddr     => s_axi_araddr,
-            s_axi_arprot     => s_axi_arprot,
-            s_axi_rvalid     => s_axi_rvalid,
-            s_axi_rready     => s_axi_rready,
-            s_axi_rdata      => s_axi_rdata,
-            s_axi_rresp      => s_axi_rresp,
-            i_axis_aclk      => i_axis_aclk,
-            i_axis_aresetn   => i_axis_aresetn,
-            i_lsr_tvalid     => i_lsr_tvalid,
-            i_lsr_tdata      => i_lsr_tdata,
-            o_cfg            => s_cfg,
-            o_cfg_image      => s_cfg_image,
-            o_cmd_start      => s_cmd_start,
-            o_cmd_stop       => s_cmd_stop,
-            o_cmd_soft_reset => s_cmd_soft_reset,
-            o_cmd_cfg_write  => s_cmd_cfg_write,
+            s_axi_aclk          => s_axi_aclk,
+            s_axi_aresetn       => s_axi_aresetn,
+            s_axi_awvalid       => s_axi_pipe_awvalid,
+            s_axi_awready       => s_axi_pipe_awready,
+            s_axi_awaddr        => s_axi_pipe_awaddr,
+            s_axi_awprot        => s_axi_pipe_awprot,
+            s_axi_wvalid        => s_axi_pipe_wvalid,
+            s_axi_wready        => s_axi_pipe_wready,
+            s_axi_wdata         => s_axi_pipe_wdata,
+            s_axi_wstrb         => s_axi_pipe_wstrb,
+            s_axi_bvalid        => s_axi_pipe_bvalid,
+            s_axi_bready        => s_axi_pipe_bready,
+            s_axi_bresp         => s_axi_pipe_bresp,
+            s_axi_arvalid       => s_axi_pipe_arvalid,
+            s_axi_arready       => s_axi_pipe_arready,
+            s_axi_araddr        => s_axi_pipe_araddr,
+            s_axi_arprot        => s_axi_pipe_arprot,
+            s_axi_rvalid        => s_axi_pipe_rvalid,
+            s_axi_rready        => s_axi_pipe_rready,
+            s_axi_rdata         => s_axi_pipe_rdata,
+            s_axi_rresp         => s_axi_pipe_rresp,
+            i_axis_aclk         => i_axis_aclk,
+            i_axis_aresetn      => i_axis_aresetn,
+            i_lsr_tvalid        => i_lsr_tvalid,
+            i_lsr_tdata         => i_lsr_tdata,
+            i_chip_csr_cdc_idle => s_cdc_idle,
+            o_cfg               => s_cfg_pipeline,
+            o_cmd_start         => s_cmd_start,
+            i_cmd_start_accepted => s_cmd_start_accepted,
+            o_cmd_stop          => s_cmd_stop,
+            o_cmd_soft_reset    => s_cmd_soft_reset,
+            o_cmd_cfg_write     => s_cmd_cfg_write,
             i_status            => s_status,
-            i_bin_resolution_ps => i_bin_resolution_ps,
-            i_k_dist_fixed      => i_k_dist_fixed,
-            o_irq            => o_irq
+            o_irq               => o_irq_pipe
         );
 
     -- =========================================================================
-    -- [2] Per-chip pipeline (generate x4)
-    --     bus_phy -> chip_ctrl -> decode_i -> raw_event_builder -> cell_builder
+    -- [2] config_ctrl (Cluster 1)
     -- =========================================================================
-    gen_chip : for i in 0 to c_N_CHIPS - 1 generate
-
-        -- ----- bus_phy: physical bus timing FSM + IOBUF + 2-FF sync -----
-        u_bus_phy : entity work.tdc_gpx_bus_phy
-            port map (
-                i_clk           => i_axis_aclk,
-                i_rst_n         => i_axis_aresetn,
-                i_tick_en       => s_tick_en(i),
-                i_bus_ticks     => s_cfg.bus_ticks,
-                i_req_valid     => s_bus_req_valid(i),
-                i_req_rw        => s_bus_req_rw(i),
-                i_req_addr      => s_bus_req_addr(i),
-                i_req_wdata     => s_bus_req_wdata(i),
-                i_oen_permanent => s_bus_oen_perm(i),
-                i_req_burst     => s_bus_req_burst(i),
-                o_rsp_valid     => s_bus_rsp_valid(i),
-                o_rsp_rdata     => s_bus_rsp_rdata(i),
-                o_busy          => s_bus_busy(i),
-                o_adr           => o_tdc_adr(i),
-                o_csn           => o_tdc_csn(i),
-                o_rdn           => o_tdc_rdn(i),
-                o_wrn           => o_tdc_wrn(i),
-                o_oen           => o_tdc_oen(i),
-                io_d            => io_tdc_d(i),
-                i_ef1_pin       => i_tdc_ef1(i),
-                i_ef2_pin       => i_tdc_ef2(i),
-                i_lf1_pin       => i_tdc_lf1(i),
-                i_lf2_pin       => i_tdc_lf2(i),
-                i_irflag_pin    => i_tdc_irflag(i),
-                i_errflag_pin   => i_tdc_errflag(i),
-                o_ef1_sync      => s_ef1_sync(i),
-                o_ef2_sync      => s_ef2_sync(i),
-                o_lf1_sync      => s_lf1_sync(i),
-                o_lf2_sync      => s_lf2_sync(i),
-                o_irflag_sync   => s_irflag_sync(i),
-                o_errflag_sync  => s_errflag_sync(i)
-            );
-
-        -- ----- chip_ctrl: single-shot FSM (powerup/cfg/arm/capture/drain) -----
-        u_chip_ctrl : entity work.tdc_gpx_chip_ctrl
-            generic map (
-                g_CHIP_ID        => i,
-                g_POWERUP_CLKS   => g_POWERUP_CLKS,
-                g_RECOVERY_CLKS  => g_RECOVERY_CLKS,
-                g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
-            )
-            port map (
-                i_clk               => i_axis_aclk,
-                i_rst_n             => i_axis_aresetn,
-                i_cfg               => s_cfg,
-                i_cfg_image         => s_cfg_image,
-                i_cmd_start         => s_cmd_start,
-                i_cmd_stop          => s_cmd_stop,
-                i_cmd_soft_reset    => s_cmd_soft_reset,
-                i_cmd_cfg_write     => s_cmd_cfg_write,
-                i_shot_start        => s_shot_start_gated,
-                o_bus_req_valid     => s_bus_req_valid(i),
-                o_bus_req_rw        => s_bus_req_rw(i),
-                o_bus_req_addr      => s_bus_req_addr(i),
-                o_bus_req_wdata     => s_bus_req_wdata(i),
-                o_bus_oen_permanent => s_bus_oen_perm(i),
-                o_bus_req_burst     => s_bus_req_burst(i),
-                i_bus_rsp_valid     => s_bus_rsp_valid(i),
-                i_bus_rsp_rdata     => s_bus_rsp_rdata(i),
-                i_bus_busy          => s_bus_busy(i),
-                i_ef1_sync          => s_ef1_sync(i),
-                i_ef2_sync          => s_ef2_sync(i),
-                i_irflag_sync       => s_irflag_sync(i),
-                i_lf1_sync          => s_lf1_sync(i),
-                i_lf2_sync          => s_lf2_sync(i),
-                o_tick_en           => s_tick_en(i),
-                o_stopdis           => o_tdc_stopdis(i),
-                o_alutrigger        => o_tdc_alutrigger(i),
-                o_puresn            => o_tdc_puresn(i),
-                o_raw_word          => s_raw_word(i),
-                o_raw_word_valid    => s_raw_word_valid(i),
-                o_ififo_id          => s_ififo_id(i),
-                o_drain_done        => s_drain_done(i),
-                o_shot_seq          => s_chip_shot_seq(i),
-                o_busy              => s_chip_busy(i)
-            );
-
-        -- ----- decode_i: combinational 28-bit I-Mode field extraction -----
-        u_decode : entity work.tdc_gpx_decode_i
-            port map (
-                i_raw_word       => s_raw_word(i),
-                i_raw_word_valid => s_raw_word_valid(i),
-                i_ififo_id       => s_ififo_id(i),
-                o_raw_hit        => s_dec_raw_hit(i),
-                o_slope          => s_dec_slope(i),
-                o_cha_code_raw   => s_dec_cha_code(i),
-                o_stop_id_local  => s_dec_stop_id(i),
-                o_decoded_valid  => s_dec_valid(i)
-            );
-
-        -- ----- raw_event_builder: enrich with chip/shot context -----
-        u_event_bld : entity work.tdc_gpx_raw_event_builder
-            port map (
-                i_clk             => i_axis_aclk,
-                i_rst_n           => i_axis_aresetn,
-                i_raw_hit         => s_dec_raw_hit(i),
-                i_slope           => s_dec_slope(i),
-                i_cha_code_raw    => s_dec_cha_code(i),
-                i_stop_id_local   => s_dec_stop_id(i),
-                i_decoded_valid   => s_dec_valid(i),
-                i_ififo_id        => s_ififo_id(i),
-                i_chip_id         => to_unsigned(i, 2),
-                i_shot_seq        => s_chip_shot_seq(i),
-                i_drain_done      => s_drain_done(i),
-                i_stops_per_chip  => s_face_stops_per_chip_r,
-                o_raw_event       => s_raw_event(i),
-                o_raw_event_valid => s_raw_event_valid(i),
-                o_stop_id_error   => s_stop_id_error(i)
-            );
-
-        -- ----- cell_builder: sparse events -> dense cell -> AXI-Stream -----
-        u_cell_bld : entity work.tdc_gpx_cell_builder
-            generic map (
-                g_CHIP_ID => i
-            )
-            port map (
-                i_clk             => i_axis_aclk,
-                i_rst_n           => i_axis_aresetn,
-                i_raw_event       => s_raw_event(i),
-                i_raw_event_valid => s_raw_event_valid(i),
-                i_shot_start      => s_shot_start_gated,
-                i_drain_done      => s_drain_done(i),
-                i_stops_per_chip  => s_face_stops_per_chip_r,
-                o_m_axis_tdata    => s_cell_tdata(i),
-                o_m_axis_tvalid   => s_cell_tvalid(i),
-                o_m_axis_tlast    => s_cell_tlast(i),
-                i_m_axis_tready   => s_cell_tready(i),
-                o_slice_done      => s_slice_done(i),
-                o_hit_dropped_any => s_hit_dropped(i)
-            );
-
-    end generate gen_chip;
-
-    -- =========================================================================
-    -- [3] Face assembler (4 chip streams -> packed row)
-    -- =========================================================================
-    u_face_asm : entity work.tdc_gpx_face_assembler
+    u_config_ctrl : entity work.tdc_gpx_config_ctrl
         generic map (
-            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+            g_HW_VERSION      => g_HW_VERSION,
+            g_POWERUP_CLKS    => g_POWERUP_CLKS,
+            g_RECOVERY_CLKS   => g_RECOVERY_CLKS,
+            g_ALU_PULSE_CLKS  => g_ALU_PULSE_CLKS,
+            g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH
         )
         port map (
-            i_clk              => i_axis_aclk,
-            i_rst_n            => i_axis_aresetn,
-            i_s_axis_tdata     => s_cell_tdata,
-            i_s_axis_tvalid    => s_cell_tvalid,
-            i_s_axis_tlast     => s_cell_tlast,
-            o_s_axis_tready    => s_cell_tready,
-            i_shot_start       => s_shot_start_gated,
-            i_active_chip_mask => s_face_active_mask_r,
-            i_stops_per_chip   => s_face_stops_per_chip_r,
-            i_max_range_clks   => s_cfg.max_range_clks,
-            i_bus_ticks        => s_cfg.bus_ticks,
-            i_bus_clk_div      => resize(s_cfg.bus_clk_div, 8),
-            o_m_axis_tdata     => s_face_tdata,
-            o_m_axis_tvalid    => s_face_tvalid,
-            o_m_axis_tlast     => s_face_tlast,
-            i_m_axis_tready    => s_face_tready,
-            o_row_done         => s_row_done,
-            o_chip_error_flags => s_chip_error_flags
+            i_axis_aclk          => i_axis_aclk,
+            i_axis_aresetn       => i_axis_aresetn,
+            i_tdc_clk            => i_tdc_clk,
+            s_axi_aclk           => s_axi_aclk,
+            s_axi_aresetn        => s_axi_aresetn,
+            -- AXI4-Lite pass-through (chip CSR)
+            s_axi_awvalid        => s_axi_awvalid,
+            s_axi_awready        => s_axi_awready,
+            s_axi_awaddr         => s_axi_awaddr,
+            s_axi_awprot         => s_axi_awprot,
+            s_axi_wvalid         => s_axi_wvalid,
+            s_axi_wready         => s_axi_wready,
+            s_axi_wdata          => s_axi_wdata,
+            s_axi_wstrb          => s_axi_wstrb,
+            s_axi_bvalid         => s_axi_bvalid,
+            s_axi_bready         => s_axi_bready,
+            s_axi_bresp          => s_axi_bresp,
+            s_axi_arvalid        => s_axi_arvalid,
+            s_axi_arready        => s_axi_arready,
+            s_axi_araddr         => s_axi_araddr,
+            s_axi_arprot         => s_axi_arprot,
+            s_axi_rvalid         => s_axi_rvalid,
+            s_axi_rready         => s_axi_rready,
+            s_axi_rdata          => s_axi_rdata,
+            s_axi_rresp          => s_axi_rresp,
+            -- TDC-GPX physical pins
+            io_tdc_d             => io_tdc_d,
+            o_tdc_adr            => o_tdc_adr,
+            o_tdc_csn            => o_tdc_csn,
+            o_tdc_rdn            => o_tdc_rdn,
+            o_tdc_wrn            => o_tdc_wrn,
+            o_tdc_oen            => o_tdc_oen,
+            o_tdc_stopdis        => o_tdc_stopdis,
+            o_tdc_alutrigger     => o_tdc_alutrigger,
+            o_tdc_puresn         => o_tdc_puresn,
+            i_tdc_ef1            => i_tdc_ef1,
+            i_tdc_ef2            => i_tdc_ef2,
+            i_tdc_lf1            => i_tdc_lf1,
+            i_tdc_lf2            => i_tdc_lf2,
+            i_tdc_irflag         => i_tdc_irflag,
+            i_tdc_errflag        => i_tdc_errflag,
+            -- Stop event stream
+            i_stop_evt_tvalid    => i_stop_evt_tvalid,
+            i_stop_evt_tdata     => i_stop_evt_tdata,
+            i_stop_evt_tkeep     => i_stop_evt_tkeep,
+            i_stop_evt_tuser     => i_stop_evt_tuser,
+            o_stop_evt_tready    => o_stop_evt_tready,
+            i_stop_tdc           => i_stop_tdc,
+            -- Control inputs
+            i_cmd_start          => s_cmd_start,
+            i_cmd_start_accepted => s_cmd_start_accepted,
+            i_cmd_stop           => s_cmd_stop,
+            i_cmd_soft_reset     => s_cmd_soft_reset,
+            i_cmd_cfg_write      => s_cmd_cfg_write,
+            i_err_soft_clear     => s_err_soft_clear,
+            i_shot_start_per_chip => s_shot_start_per_chip,
+            i_shot_start_gated   => s_shot_start_gated,
+            i_cfg_pipeline       => s_cfg_pipeline,
+            -- Cluster 4 idle inputs (for cmd_arb)
+            i_face_asm_idle      => s_face_asm_idle,
+            i_face_asm_fall_idle => s_face_asm_fall_idle,
+            i_hdr_idle           => s_hdr_idle,
+            i_hdr_fall_idle      => s_hdr_fall_idle,
+            -- Frame done (for err_handler)
+            i_frame_done         => s_frame_done,
+            i_frame_fall_done    => s_frame_fall_done,
+            -- Pipeline abort (flush raw skid buffers)
+            i_pipeline_abort     => s_pipeline_abort,
+            -- Error handler status
+            o_err_active         => s_err_active,
+            o_err_fatal          => s_err_fatal,
+            o_err_chip_mask      => s_err_chip_mask,
+            o_err_cause          => s_err_cause,
+            -- AXI-Stream output to Cluster 2
+            o_raw_sk_tvalid      => s_raw_sk_tvalid,
+            o_raw_sk_tdata       => s_raw_sk_tdata,
+            o_raw_sk_tuser       => s_raw_sk_tuser,
+            i_raw_sk_tready      => s_raw_sk_tready,
+            -- Configuration outputs
+            o_cfg                => s_cfg,
+            o_cfg_image          => s_cfg_image,
+            -- Command outputs
+            o_cmd_start          => open,
+            o_cmd_cfg_write_g    => s_cmd_cfg_write_g,
+            -- Chip status outputs
+            o_chip_busy          => s_chip_busy,
+            o_chip_shot_seq      => s_chip_shot_seq,
+            o_errflag_sync       => s_errflag_sync,
+            o_err_drain_timeout  => s_err_drain_timeout,
+            o_err_sequence       => s_err_sequence,
+            o_err_rsp_mismatch   => s_err_rsp_mismatch,
+            o_err_raw_overflow   => s_err_raw_overflow,
+            o_reg_outstanding    => s_reg_outstanding,
+            o_reg_loop_resume    => open,  -- reserved: future use for gating face_seq resume
+            o_run_timeout        => s_run_timeout,
+            o_reg_arb_timeout    => s_reg_arb_timeout,
+            o_cdc_idle           => s_cdc_idle,
+            -- Interrupt
+            o_irq                => o_irq
         );
 
     -- =========================================================================
-    -- [4] Header inserter (header + SOF/EOL -> VDMA frame)
+    -- [3] decode_pipe (Cluster 2)
     -- =========================================================================
-    u_header : entity work.tdc_gpx_header_inserter
+    u_decode_pipe : entity work.tdc_gpx_decode_pipe
         port map (
             i_clk               => i_axis_aclk,
             i_rst_n             => i_axis_aresetn,
-            i_face_start        => s_face_start_r,
-            i_cfg               => s_cfg,
-            i_vdma_frame_id     => s_frame_id_r,
-            i_face_id           => s_face_id_r,
-            i_shot_seq_start    => s_chip_shot_seq(0),
-            i_timestamp_ns      => s_timestamp_r,
-            i_chip_error_mask   => s_chip_error_merged,
-            i_chip_error_cnt    => std_logic_vector(s_error_count_r),
-            i_bin_resolution_ps => i_bin_resolution_ps,
-            i_k_dist_fixed      => i_k_dist_fixed,
-            i_rows_per_face     => s_rows_per_face_r,
-            i_s_axis_tdata      => s_face_tdata,
-            i_s_axis_tvalid     => s_face_tvalid,
-            i_s_axis_tlast      => s_face_tlast,
-            o_s_axis_tready     => s_face_tready,
-            o_m_axis_tdata      => o_m_axis_tdata,
-            o_m_axis_tvalid     => o_m_axis_tvalid,
-            o_m_axis_tlast      => o_m_axis_tlast,
-            o_m_axis_tuser      => o_m_axis_tuser,
-            i_m_axis_tready     => i_m_axis_tready,
-            o_frame_done        => s_frame_done
+            -- Input from Cluster 1
+            i_raw_sk_tvalid     => s_raw_sk_tvalid,
+            i_raw_sk_tdata      => s_raw_sk_tdata,
+            i_raw_sk_tuser      => s_raw_sk_tuser,
+            o_raw_sk_tready     => s_raw_sk_tready,
+            -- Context from Cluster 1
+            i_chip_shot_seq     => s_chip_shot_seq,
+            i_face_stops_per_chip => s_face_stops_per_chip_r,
+            -- Output to Cluster 3
+            o_evt_sk_tvalid     => s_evt_sk_tvalid,
+            o_evt_sk_tdata      => s_evt_sk_tdata,
+            o_evt_sk_tuser      => s_evt_sk_tuser,
+            i_evt_sk_tready     => s_evt_sk_tready,
+            -- Status
+            o_stop_id_error     => s_stop_id_error,
+            -- Pipeline abort: flush internal skid buffers
+            i_flush             => s_pipeline_abort
         );
 
     -- =========================================================================
-    -- [5] VDMA line geometry
-    --   Computed from CSR config, shared with header_inserter and VDMA.
-    --   rows_per_face = active_chips × stops_per_chip (clamp >= 2)
-    --   hsize_bytes   = (data_beats + c_HDR_PREFIX_BEATS) × TDATA_BYTES
-    --   Latched at face_start to prevent mid-frame geometry changes.
+    -- [4] cell_pipe (Cluster 3)
     -- =========================================================================
-    p_geometry : process(i_axis_aclk)
-        variable v_active_cnt  : natural range 0 to c_N_CHIPS;
-        variable v_rows        : natural range 0 to c_MAX_ROWS_PER_FACE;
-        variable v_data_beats  : natural range 0 to c_DATA_BEATS_MAX;
+    u_cell_pipe : entity work.tdc_gpx_cell_pipe
+        generic map (
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+        )
+        port map (
+            i_clk                   => i_axis_aclk,
+            i_rst_n                 => i_axis_aresetn,
+            -- Event input from Cluster 2
+            i_evt_sk_tvalid         => s_evt_sk_tvalid,
+            i_evt_sk_tdata          => s_evt_sk_tdata,
+            i_evt_sk_tuser          => s_evt_sk_tuser,
+            o_evt_sk_tready         => s_evt_sk_tready,
+            -- Control / Config
+            i_shot_start_per_chip   => s_shot_start_per_chip,
+            i_abort                 => s_pipeline_abort,       -- global (legacy)
+            i_abort_rise            => s_pipeline_abort_rise,  -- #22 Sprint 2
+            i_abort_fall            => s_pipeline_abort_fall,  -- #22 Sprint 2
+            i_face_stops_per_chip   => s_face_stops_per_chip_r,
+            i_max_hits_cfg          => s_cfg.max_hits_cfg,
+            -- Rising cell output
+            o_cell_rise_tdata_0     => s_cell_rise_tdata_0,
+            o_cell_rise_tdata_1     => s_cell_rise_tdata_1,
+            o_cell_rise_tdata_2     => s_cell_rise_tdata_2,
+            o_cell_rise_tdata_3     => s_cell_rise_tdata_3,
+            o_cell_rise_tvalid      => s_cell_rise_tvalid,
+            o_cell_rise_tlast       => s_cell_rise_tlast,
+            i_cell_rise_tready      => s_cell_rise_tready,
+            -- Falling cell output
+            o_cell_fall_tdata_0     => s_cell_fall_tdata_0,
+            o_cell_fall_tdata_1     => s_cell_fall_tdata_1,
+            o_cell_fall_tdata_2     => s_cell_fall_tdata_2,
+            o_cell_fall_tdata_3     => s_cell_fall_tdata_3,
+            o_cell_fall_tvalid      => s_cell_fall_tvalid,
+            o_cell_fall_tlast       => s_cell_fall_tlast,
+            i_cell_fall_tready      => s_cell_fall_tready,
+            -- Status
+            o_hit_dropped           => s_hit_dropped,
+            o_hit_fall_dropped      => s_hit_fall_dropped,
+            o_shot_dropped          => s_shot_dropped,
+            o_shot_fall_dropped     => s_shot_fall_dropped,
+            o_slice_timeout         => s_slice_timeout,
+            o_slice_fall_timeout    => s_slice_fall_timeout
+        );
+
+    -- =========================================================================
+    -- [5] output_stage (Cluster 4)
+    -- =========================================================================
+    u_output_stage : entity work.tdc_gpx_output_stage
+        generic map (
+            g_OUTPUT_WIDTH   => g_OUTPUT_WIDTH,
+            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+        )
+        port map (
+            i_clk                => i_axis_aclk,
+            i_rst_n              => i_axis_aresetn,
+            -- Rising cell input from Cluster 3
+            i_cell_rise_tdata_0  => s_cell_rise_tdata_0,
+            i_cell_rise_tdata_1  => s_cell_rise_tdata_1,
+            i_cell_rise_tdata_2  => s_cell_rise_tdata_2,
+            i_cell_rise_tdata_3  => s_cell_rise_tdata_3,
+            i_cell_rise_tvalid   => s_cell_rise_tvalid,
+            i_cell_rise_tlast    => s_cell_rise_tlast,
+            o_cell_rise_tready   => s_cell_rise_tready,
+            -- Falling cell input from Cluster 3
+            i_cell_fall_tdata_0  => s_cell_fall_tdata_0,
+            i_cell_fall_tdata_1  => s_cell_fall_tdata_1,
+            i_cell_fall_tdata_2  => s_cell_fall_tdata_2,
+            i_cell_fall_tdata_3  => s_cell_fall_tdata_3,
+            i_cell_fall_tvalid   => s_cell_fall_tvalid,
+            i_cell_fall_tlast    => s_cell_fall_tlast,
+            o_cell_fall_tready   => s_cell_fall_tready,
+            -- Control from face_seq
+            i_shot_start_gated   => s_shot_start_gated,
+            i_pipeline_abort     => s_pipeline_abort,       -- legacy global
+            i_pipeline_abort_rise => s_pipeline_abort_rise,  -- #22 Sprint 3
+            i_pipeline_abort_fall => s_pipeline_abort_fall,  -- #22 Sprint 3
+            i_face_start_gated   => s_face_start_gated,
+            -- Configuration (latched at face_start)
+            i_face_active_mask   => s_face_active_mask_r,
+            i_face_stops_per_chip => s_face_stops_per_chip_r,
+            i_max_hits_cfg       => s_cfg.max_hits_cfg,
+            i_max_scan_clks      => s_cfg.max_scan_clks,
+            i_rows_per_face      => s_rows_per_face_r,
+            -- Header metadata
+            i_cfg_face           => s_cfg_face_r,
+            i_frame_id           => s_frame_id_r,
+            i_face_id            => s_face_id_r,
+            i_global_shot_seq    => s_global_shot_seq_r,
+            i_timestamp          => s_timestamp_r,
+            i_chip_error_merged  => s_chip_error_merged,
+            i_error_count        => s_error_count_r,
+            i_bin_resolution_ps  => i_bin_resolution_ps,
+            i_k_dist_fixed       => i_k_dist_fixed,
+            -- VDMA output: Rising
+            o_m_axis_tdata       => o_m_axis_tdata,
+            o_m_axis_tvalid      => o_m_axis_tvalid,
+            o_m_axis_tlast       => o_m_axis_tlast,
+            o_m_axis_tuser       => o_m_axis_tuser,
+            i_m_axis_tready      => i_m_axis_tready,
+            -- VDMA output: Falling
+            o_m_axis_fall_tdata  => o_m_axis_fall_tdata,
+            o_m_axis_fall_tvalid => o_m_axis_fall_tvalid,
+            o_m_axis_fall_tlast  => o_m_axis_fall_tlast,
+            o_m_axis_fall_tuser  => o_m_axis_fall_tuser,
+            i_m_axis_fall_tready => i_m_axis_fall_tready,
+            -- Status outputs
+            o_row_done           => s_row_done,
+            o_row_fall_done      => s_row_fall_done,
+            o_chip_error_flags   => s_chip_error_flags,
+            o_chip_fall_error    => s_chip_fall_error,
+            o_shot_overrun       => s_shot_overrun,
+            o_shot_fall_overrun  => s_shot_fall_overrun,
+            o_face_abort         => s_face_abort,
+            o_face_fall_abort    => s_face_fall_abort,
+            o_face_asm_idle      => s_face_asm_idle,
+            o_face_asm_fall_idle => s_face_asm_fall_idle,
+            o_frame_done         => s_frame_done,
+            o_frame_fall_done    => s_frame_fall_done,
+            o_hdr_draining       => s_hdr_draining,
+            o_hdr_fall_draining  => s_hdr_fall_draining,
+            o_hdr_idle           => s_hdr_idle,
+            o_hdr_fall_idle      => s_hdr_fall_idle,
+            -- Pipeline tvalid monitors
+            o_face_tvalid          => s_face_tvalid,
+            o_face_fall_tvalid     => s_face_fall_tvalid,
+            o_face_buf_tvalid      => s_face_buf_tvalid,
+            o_face_fall_buf_tvalid => s_face_fall_buf_tvalid
+        );
+
+    -- =========================================================================
+    -- [6] face_seq (face/shot sequencer)
+    -- =========================================================================
+    u_face_seq : entity work.tdc_gpx_face_seq
+        generic map (
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+        )
+        port map (
+            i_clk                  => i_axis_aclk,
+            i_rst_n                => i_axis_aresetn,
+            i_cmd_start            => s_cmd_start,
+            i_cmd_stop             => s_cmd_stop,
+            i_cmd_soft_reset       => s_cmd_soft_reset,
+            i_chip_busy            => s_chip_busy,
+            i_reg_outstanding      => s_reg_outstanding,
+            i_face_asm_idle        => s_face_asm_idle,
+            i_face_asm_fall_idle   => s_face_asm_fall_idle,
+            i_hdr_idle             => s_hdr_idle,
+            i_hdr_fall_idle        => s_hdr_fall_idle,
+            i_face_tvalid          => s_face_tvalid,
+            i_face_fall_tvalid     => s_face_fall_tvalid,
+            i_face_buf_tvalid      => s_face_buf_tvalid,
+            i_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
+            i_m_axis_tvalid        => o_m_axis_tvalid,        -- VHDL-2008: read output port
+            i_m_axis_fall_tvalid   => o_m_axis_fall_tvalid,   -- VHDL-2008: read output port
+            i_shot_start_raw       => i_shot_start,
+            i_frame_done           => s_frame_done,
+            i_frame_fall_done      => s_frame_fall_done,
+            i_face_abort           => s_face_abort,
+            i_face_fall_abort      => s_face_fall_abort,
+            i_shot_overrun         => s_shot_overrun,
+            i_shot_fall_overrun    => s_shot_fall_overrun,
+            i_hdr_draining         => s_hdr_draining,
+            i_hdr_fall_draining    => s_hdr_fall_draining,
+            i_cfg                  => s_cfg,
+            o_cmd_start_accepted   => s_cmd_start_accepted,
+            o_face_state_idle      => s_face_state_idle,
+            o_packet_start         => s_packet_start,
+            o_face_start           => s_face_start_r,
+            o_face_start_gated     => s_face_start_gated,
+            o_shot_start_gated     => s_shot_start_gated,
+            o_face_closing         => s_face_closing,
+            o_pipeline_abort       => s_pipeline_abort,
+            o_pipeline_abort_rise  => s_pipeline_abort_rise,
+            o_pipeline_abort_fall  => s_pipeline_abort_fall,
+            o_shot_drop_cnt        => s_shot_drop_cnt_r,
+            o_cfg_rejected         => s_cfg_rejected_r,
+            o_shot_start_per_chip  => s_shot_start_per_chip,
+            o_face_id              => s_face_id_r,
+            o_frame_id             => s_frame_id_r,
+            o_global_shot_seq      => s_global_shot_seq_r,
+            o_frame_abort_cnt      => s_frame_abort_cnt_r,
+            o_frame_done_both      => s_frame_done_both,
+            o_face_active_mask     => s_face_active_mask_r,
+            o_face_stops_per_chip  => s_face_stops_per_chip_r,
+            o_face_cols_per_face   => s_face_cols_per_face_r,
+            o_face_n_faces         => s_face_n_faces_r,
+            o_rows_per_face        => s_rows_per_face_r,
+            o_hsize_bytes          => s_hsize_bytes_r,
+            o_cfg_face             => s_cfg_face_r
+        );
+
+    -- =========================================================================
+    -- [7] status_agg (status aggregation + timestamp + error counter)
+    -- =========================================================================
+    u_status_agg : entity work.tdc_gpx_status_agg
+        port map (
+            i_clk                  => i_axis_aclk,
+            i_rst_n                => i_axis_aresetn,
+            i_cmd_soft_reset       => s_cmd_soft_reset,
+            i_cmd_start_accepted   => s_cmd_start_accepted,
+            i_soft_clear           => s_err_soft_clear,
+            i_face_state_idle      => s_face_state_idle,
+            i_chip_busy            => s_chip_busy,
+            i_reg_outstanding      => s_reg_outstanding,
+            i_face_asm_idle        => s_face_asm_idle,
+            i_face_asm_fall_idle   => s_face_asm_fall_idle,
+            i_hdr_idle             => s_hdr_idle,
+            i_hdr_fall_idle        => s_hdr_fall_idle,
+            i_face_tvalid          => s_face_tvalid,
+            i_face_fall_tvalid     => s_face_fall_tvalid,
+            i_face_buf_tvalid      => s_face_buf_tvalid,
+            i_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
+            i_m_axis_tvalid        => o_m_axis_tvalid,        -- VHDL-2008: read output port
+            i_m_axis_fall_tvalid   => o_m_axis_fall_tvalid,   -- VHDL-2008: read output port
+            i_stop_id_error        => s_stop_id_error,
+            i_hit_dropped          => s_hit_dropped,
+            i_hit_fall_dropped     => s_hit_fall_dropped,
+            i_err_drain_timeout    => s_err_drain_timeout,
+            i_err_sequence         => s_err_sequence,
+            i_chip_error_merged    => s_chip_error_merged,
+            i_face_active_mask     => s_face_active_mask_r,
+            i_shot_overrun         => s_shot_overrun,
+            i_shot_fall_overrun    => s_shot_fall_overrun,
+            o_status               => s_status,
+            o_timestamp            => s_timestamp_r,
+            o_error_cycle_count    => s_error_count_r,
+            o_err_drain_sticky     => s_err_drain_to_sticky_r,
+            o_err_seq_sticky       => s_err_seq_sticky_r
+        );
+
+    -- =========================================================================
+    -- Status field assignments (remaining fields not populated by status_agg)
+    -- =========================================================================
+    s_status.err_fatal        <= s_err_fatal;  -- repurposed: err_handler fatal recovery failure
+    s_status.chip_error_mask     <= s_chip_error_raw;  -- unmasked: SW sees all chips
+    s_status.drain_timeout_mask  <= s_err_drain_to_sticky_r;
+    s_status.sequence_error_mask <= s_err_seq_sticky_r;
+    s_status.shot_seq_current    <= s_global_shot_seq_r;
+    s_status.vdma_frame_count    <= s_frame_id_r;
+    s_status.error_cycle_count         <= s_error_count_r;
+    s_status.shot_drop_count     <= s_shot_drop_cnt_r;
+    s_status.frame_abort_count   <= s_frame_abort_cnt_r;
+    s_status.err_active          <= s_err_active;
+    s_status.err_chip_mask       <= s_err_chip_mask;
+    s_status.err_cause           <= s_err_cause;
+    s_status.rsp_mismatch_mask   <= s_err_rsp_mismatch;
+    s_status.raw_overflow_mask   <= s_err_raw_overflow;
+    s_status.cfg_rejected        <= s_cfg_rejected_r;
+    s_status.run_timeout_mask    <= s_run_timeout_sticky_r;
+    s_status.reg_arb_timeout     <= s_reg_arb_timeout;
+    s_status.shot_drop_any       <= '1' when (s_shot_dropped or s_shot_fall_dropped)
+                                              /= (s_shot_dropped'range => '0') else '0';
+    s_status.slice_timeout_any   <= '1' when (s_slice_timeout or s_slice_fall_timeout)
+                                              /= (s_slice_timeout'range => '0') else '0';
+
+    -- =========================================================================
+    -- Sticky latch for run_timeout (1-clk pulses -> persistent mask)
+    -- =========================================================================
+    p_run_timeout_sticky : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
-                s_hsize_bytes_r   <= to_unsigned(c_HSIZE_MAX, 16);
-            elsif s_face_start_r = '1' then
-                v_active_cnt := fn_count_ones(s_cfg.active_chip_mask);
-                v_rows := v_active_cnt * to_integer(s_cfg.stops_per_chip);
-                if v_rows < 2 then
-                    v_rows := 2;
-                end if;
-                s_rows_per_face_r <= to_unsigned(v_rows, 16);
-                v_data_beats := v_rows * c_BEATS_PER_CELL;
-                s_hsize_bytes_r <= to_unsigned(
-                    (v_data_beats + c_HDR_PREFIX_BEATS) * c_TDATA_BYTES, 16);
-            end if;
-        end if;
-    end process p_geometry;
-
-    -- =========================================================================
-    -- [5b] Face-start config latch: snapshot for downstream data-path modules
-    --   These feed raw_event_builder, cell_builder, face_assembler so they
-    --   all see the same config throughout the face — consistent with header
-    --   and geometry which also latch at face_start.
-    -- =========================================================================
-    p_face_cfg_latch : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_face_stops_per_chip_r <= to_unsigned(8, 4);
-                s_face_active_mask_r    <= (others => '1');
-            elsif s_face_start_r = '1' then
-                s_face_stops_per_chip_r <= s_cfg.stops_per_chip;
-                s_face_active_mask_r    <= s_cfg.active_chip_mask;
-            end if;
-        end if;
-    end process p_face_cfg_latch;
-
-    -- =========================================================================
-    -- [6] Face sequencer
-    --   ST_IDLE → cmd_start → ST_WAIT_SHOT
-    --   ST_WAIT_SHOT → shot_start → face_start pulse → ST_IN_FACE
-    --   ST_IN_FACE → frame_done → advance face_id → ST_WAIT_SHOT (or wrap)
-    -- =========================================================================
-    p_face_seq : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_face_state_r  <= ST_IDLE;
-                s_face_start_r  <= '0';
-                s_face_id_r     <= (others => '0');
-                s_frame_id_r    <= (others => '0');
-                s_shot_overrun_r <= '0';
+                s_run_timeout_sticky_r <= (others => '0');
             else
-                -- Default: clear pulse
-                s_face_start_r <= '0';
-
-                case s_face_state_r is
-
-                    when ST_IDLE =>
-                        if s_cmd_start = '1' then
-                            s_face_id_r      <= (others => '0');
-                            s_shot_overrun_r <= '0';
-                            s_face_state_r   <= ST_WAIT_SHOT;
-                        end if;
-
-                    when ST_WAIT_SHOT =>
-                        if s_cmd_stop = '1' then
-                            s_face_state_r <= ST_IDLE;
-                        elsif i_shot_start = '1' then
-                            s_face_start_r <= '1';
-                            s_face_state_r <= ST_IN_FACE;
-                        end if;
-
-                    when ST_IN_FACE =>
-                        -- Detect shot overrun: new shot while face not done
-                        if i_shot_start = '1' then
-                            s_shot_overrun_r <= '1';    -- sticky until cmd_start
-                        end if;
-
-                        if s_cmd_stop = '1' then
-                            s_face_state_r <= ST_IDLE;
-                        elsif s_frame_done = '1' then
-                            s_frame_id_r <= s_frame_id_r + 1;
-                            if s_face_id_r >= resize(s_cfg.n_faces, 8) - 1 then
-                                -- All faces done: wrap to face 0 (continuous)
-                                s_face_id_r    <= (others => '0');
-                            else
-                                s_face_id_r <= s_face_id_r + 1;
-                            end if;
-                            s_face_state_r <= ST_WAIT_SHOT;
-                        end if;
-
-                end case;
+                s_run_timeout_sticky_r <= s_run_timeout_sticky_r or s_run_timeout;
             end if;
         end if;
-    end process p_face_seq;
-
-    -- =========================================================================
-    -- [7] Timestamp counter (free-running, i_axis_aclk domain)
-    --   SW interprets as cycles; multiply by clock period for nanoseconds.
-    -- =========================================================================
-    p_timestamp : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_timestamp_r <= (others => '0');
-            else
-                s_timestamp_r <= s_timestamp_r + 1;
-            end if;
-        end if;
-    end process p_timestamp;
-
-    -- =========================================================================
-    -- [8] Error counter (increments on error events, not level duration)
-    --   - stop_id_error: 1-clk pulse from raw_event_builder
-    --   - hit_dropped:   1-clk pulse from cell_builder
-    --   - chip_error_merged: level → edge-detected (rising only)
-    -- =========================================================================
-    p_error_cnt : process(i_axis_aclk)
-        variable v_merged_rising : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or s_cmd_soft_reset = '1' then
-                s_error_count_r     <= (others => '0');
-                s_chip_error_prev_r <= (others => '0');
-            else
-                -- Edge detect: new bits that just went high
-                v_merged_rising := s_chip_error_merged
-                                   and (not s_chip_error_prev_r);
-                s_chip_error_prev_r <= s_chip_error_merged;
-
-                if s_stop_id_error /= C_ZEROS_CHIPS or
-                   s_hit_dropped /= C_ZEROS_CHIPS or
-                   v_merged_rising /= C_ZEROS_CHIPS then
-                    s_error_count_r <= s_error_count_r + 1;
-                end if;
-            end if;
-        end if;
-    end process p_error_cnt;
-
-    -- =========================================================================
-    -- [9] Status aggregation (-> CSR -> STAT registers)
-    -- =========================================================================
-    s_status.busy              <= '1' when s_face_state_r /= ST_IDLE else '0';
-    s_status.pipeline_overrun  <= '1' when s_chip_error_flags /= C_ZEROS_CHIPS
-                                           or s_shot_overrun_r = '1'
-                                      else '0';
-    s_status.bin_mismatch      <= '0';  -- Phase 2: calibration check
-    s_status.chip_error_mask   <= s_chip_error_merged;
-    s_status.shot_seq_current  <= s_chip_shot_seq(0);
-    s_status.vdma_frame_count  <= s_frame_id_r;
-    s_status.error_count       <= s_error_count_r;
+    end process p_run_timeout_sticky;
 
 end architecture rtl;

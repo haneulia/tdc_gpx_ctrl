@@ -5,7 +5,7 @@
 -- =============================================================================
 --
 -- Function:
---   AXI4-Lite register interface wrapping tdc_gpx_axil_csr32 (32 CTL + 11 STAT)
+--   AXI4-Lite register interface wrapping tdc_gpx_axil_csr32 (32 CTL + 12 STAT)
 --   with cross-clock-domain transfer to the TDC processing domain (i_axis_aclk).
 --
 -- Register map (9-bit address, 32 CTL + 11 STAT):
@@ -20,7 +20,8 @@
 --   CTL3  (0x0C) START_OFF1    [17:0]
 --   CTL4  (0x10) CFG_REG7      [31:0]
 --   CTL5..20 (0x14~0x50) CFG_IMAGE[0..15] [31:0] each
---   CTL21..31 reserved
+--   CTL21 (0x54) SCAN_TIMEOUT   [15:0] max_scan_clks, [18:16] max_hits_cfg (1~7, 0→7)
+--   CTL22..31 reserved
 --
 --   STAT0  (0x80) HW_VERSION       [31:0] (constant)
 --   STAT1  (0x84) HW_CONFIG        packed generics (constant)
@@ -33,18 +34,33 @@
 --   STAT8  (0xA0) ERROR_COUNT      [31:0]
 --   STAT9  (0xA4) BIN_PS           [15:0]
 --   STAT10 (0xA8) K_DIST           [31:0]
+--   STAT11 (0xAC) REG_RDATA       [27:0] chip register read data
 --
 -- CDC structure:
 --   CTL: 5 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for CTL0~4
 --        16 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) for cfg_image CTL5~20
---   STAT: 6 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) for STAT5~10
---   Total: 27 CDC instances
+--        1 x xpm_cdc_handshake for CTL21 (SCAN_TIMEOUT + MAX_HITS, dedicated)
+--   STAT: 7 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) for STAT5~11
+--   CDC idle flag: 2-FF sync of NOR(src_send_ctl, src_send_img, src_send_ctl21)
+--
+-- Command safety:
+--   All command outputs (start, cfg_write, reg_read, reg_write) are AND-gated
+--   with s_cdc_all_idle_ff (CDC idle synchronizer). Commands issued while CDC
+--   handshakes are in flight are either held (pending latch) or dropped.
+--
+--   Pending latches:
+--     s_start_pending_r     — holds cmd_start until CDC idle, then auto-releases
+--     s_cfg_write_pending_r — holds cmd_cfg_write until CDC idle
+--     Both cleared on stop/soft_reset to prevent stale commands after abort.
+--
+--   i_cmd_start_accepted: feedback from top (actual start acceptance).
+--     Used to clear laser_ctrl cols_per_face override (not raw o_cmd_start).
 --
 -- Clock domains:
 --   s_axi_aclk : AXI4-Lite domain (PS clock)
 --   i_axis_aclk : TDC processing / AXI-Stream domain (200 MHz)
 --
--- Standard: VHDL-93 compatible
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;
@@ -102,9 +118,22 @@ entity tdc_gpx_csr is
 
         -- Command pulses (i_axis_aclk domain, 1-clk, rising-edge detect)
         o_cmd_start         : out std_logic;
+        i_cmd_start_accepted : in  std_logic;  -- feedback from top: start was actually accepted
         o_cmd_stop          : out std_logic;
         o_cmd_soft_reset    : out std_logic;
         o_cmd_cfg_write     : out std_logic;
+
+        -- Individual TDC-GPX register access (i_axis_aclk domain)
+        -- Trigger: edge-detected from CTL1[31:30]
+        -- Addr/chip: from CTL1[13:10] / CTL1[15:14]
+        -- Write data: from cfg_image[target_addr] (routed in TOP)
+        -- Read data: from chip_ctrl response → STAT11
+        o_cmd_reg_read      : out std_logic;        -- 1-clk pulse
+        o_cmd_reg_write     : out std_logic;         -- 1-clk pulse
+        o_cmd_reg_addr      : out std_logic_vector(3 downto 0);
+        o_cmd_reg_chip      : out unsigned(1 downto 0);
+        i_cmd_reg_rdata     : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        i_cmd_reg_rvalid    : in  std_logic;
 
         -- Status input (i_axis_aclk domain)
         i_status            : in  t_tdc_status;
@@ -119,7 +148,7 @@ end entity tdc_gpx_csr;
 architecture rtl of tdc_gpx_csr is
 
     -- =========================================================================
-    -- tdc_gpx_axil_csr32 component (Vivado IP: 32 CTL, 11 STAT, 1 IRQ)
+    -- tdc_gpx_axil_csr32 component (Vivado IP: 32 CTL, 12 STAT, 1 IRQ)
     -- =========================================================================
     component tdc_gpx_axil_csr32 is
         port (
@@ -210,7 +239,7 @@ architecture rtl of tdc_gpx_csr is
             ctl29_out           : out std_logic_vector(31 downto 0);
             ctl30_out           : out std_logic_vector(31 downto 0);
             ctl31_out           : out std_logic_vector(31 downto 0);
-            -- STAT inputs (11)
+            -- STAT inputs (12)
             stat0_in            : in  std_logic_vector(31 downto 0);
             stat1_in            : in  std_logic_vector(31 downto 0);
             stat2_in            : in  std_logic_vector(31 downto 0);
@@ -222,6 +251,7 @@ architecture rtl of tdc_gpx_csr is
             stat8_in            : in  std_logic_vector(31 downto 0);
             stat9_in            : in  std_logic_vector(31 downto 0);
             stat10_in           : in  std_logic_vector(31 downto 0);
+            stat11_in           : in  std_logic_vector(31 downto 0);
             -- Interrupt
             intrpt_src_in       : in  std_logic_vector(0 downto 0);
             irq                 : out std_logic
@@ -231,7 +261,7 @@ architecture rtl of tdc_gpx_csr is
     -- =========================================================================
     -- Constants
     -- =========================================================================
-    constant C_NUM_STAT_CDC : natural := 6;     -- STAT5~10: live status CDC
+    constant C_NUM_STAT_CDC : natural := 7;     -- STAT5~11: live status CDC
     constant C_ZERO32       : std_logic_vector(31 downto 0) := (others => '0');
 
     -- =========================================================================
@@ -255,6 +285,13 @@ architecture rtl of tdc_gpx_csr is
     signal s_src_rcv_ctl  : std_logic_vector(c_NUM_CTL_CDC - 1 downto 0);
     signal s_dest_req_ctl : std_logic_vector(c_NUM_CTL_CDC - 1 downto 0);
     signal s_ctl_d1       : t_cdc_data_array(0 to c_NUM_CTL_CDC - 1) := (others => (others => '1'));
+
+    -- CTL21 (SCAN_TIMEOUT) dedicated CDC — outside gen_ctl_cdc loop
+    signal s_ctl21_out       : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_src_send_ctl21  : std_logic := '0';
+    signal s_src_rcv_ctl21   : std_logic;
+    signal s_dest_req_ctl21  : std_logic;
+    signal s_ctl21_d1        : std_logic_vector(31 downto 0) := (others => '1');
 
     -- cfg_image CDC handshake (CTL5~20, per-register)
     signal s_src_send_img : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0) := (others => '0');
@@ -281,9 +318,29 @@ architecture rtl of tdc_gpx_csr is
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_pulse_r : std_logic_vector(3 downto 0) := (others => '0');
 
+    -- cfg_write pending latch (i_axis_aclk domain)
+    signal s_cfg_write_pending_r : std_logic := '0';
+    signal s_start_pending_r     : std_logic := '0';
+
+    -- CDC-idle flag: '1' when all CTL + cfg_image handshakes are quiescent.
+    -- Source (s_axi_aclk), synced to i_axis_aclk via 2-FF chain.
+    signal s_cdc_all_idle_src  : std_logic := '1';
+    signal s_cdc_all_idle_ff   : std_logic_vector(1 downto 0) := "11";
+
+    -- Reg access edge detect: CTL1[31:30] (i_axis_aclk domain)
+    signal s_reg_cmd_prev_r  : std_logic_vector(1 downto 0) := (others => '0');
+    signal s_reg_cmd_pulse_r : std_logic_vector(1 downto 0) := (others => '0');
+
+    -- Reg access read data latch (i_axis_aclk domain)
+    signal s_reg_rdata_r     : std_logic_vector(31 downto 0) := (others => '0');
+
     -- laser_ctrl cols_per_face latch (i_axis_aclk domain)
     signal s_lsr_cols_r  : unsigned(15 downto 0) := (others => '0');
     signal s_lsr_valid_r : std_logic := '0';    -- '1' after first tvalid
+
+    -- Bus timing combined constraint intermediates
+    signal s_div_clamped   : unsigned(5 downto 0);
+    signal s_ticks_min     : unsigned(2 downto 0);
 
 begin
 
@@ -305,7 +362,7 @@ begin
     s_hw_config(31 downto c_HWCFG_CELL_FMT_HI + 1) <= (others => '0');
 
     -- =========================================================================
-    -- [2] tdc_gpx_axil_csr32 instantiation (32 CTL, 11 STAT)
+    -- [2] tdc_gpx_axil_csr32 instantiation (32 CTL, 12 STAT)
     -- =========================================================================
     u_csr : tdc_gpx_axil_csr32
         port map (
@@ -380,7 +437,9 @@ begin
             stat8_in  => s_stat_out(3),
             stat9_in  => s_stat_out(4),
             stat10_in => s_stat_out(5),
-            -- Interrupt
+            stat11_in => s_stat_out(6),  -- REG_RDATA: chip register readback
+            -- Interrupt: currently tied low (dead path).
+            -- Phase 2: connect error/frame-done interrupt sources.
             intrpt_src_in => "0",
             irq           => o_irq
         );
@@ -389,18 +448,18 @@ begin
     -- [3] STAT source packing (i_axis_aclk domain)
     -- =========================================================================
     -- STAT5 = STATUS word
-    s_stat_src(0)(c_STAT_BUSY)       <= i_status.busy;
-    s_stat_src(0)(c_STAT_OVERRUN)    <= i_status.pipeline_overrun;
-    s_stat_src(0)(c_STAT_BIN_MISMATCH) <= i_status.bin_mismatch;
+    s_stat_src(0)(c_STAT_BUSY)          <= i_status.busy;
+    s_stat_src(0)(c_STAT_OVERRUN)       <= i_status.pipeline_overrun;
+    s_stat_src(0)(c_STAT_BIN_MISMATCH)  <= i_status.bin_mismatch;
     s_stat_src(0)(3) <= '0';
-    s_stat_src(0)(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO)
-        <= i_status.chip_error_mask;
-    s_stat_src(0)(31 downto c_STAT_CHIP_ERR_HI + 1) <= (others => '0');
+    s_stat_src(0)(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO) <= i_status.chip_error_mask;
+    s_stat_src(0)(c_STAT_DRAIN_TO_HI downto c_STAT_DRAIN_TO_LO) <= i_status.drain_timeout_mask;
+    s_stat_src(0)(c_STAT_SEQ_ERR_HI downto c_STAT_SEQ_ERR_LO)   <= i_status.sequence_error_mask;
+    s_stat_src(0)(31 downto c_STAT_SEQ_ERR_HI + 1) <= (others => '0');
 
     -- STAT6 = SHOT_SEQ
-    s_stat_src(1)(c_SHOT_SEQ_WIDTH - 1 downto 0)
-        <= std_logic_vector(i_status.shot_seq_current);
-    s_stat_src(1)(31 downto c_SHOT_SEQ_WIDTH) <= (others => '0');
+    s_stat_src(1)(c_SHOT_SEQ_WIDTH - 1 downto 0)    <= std_logic_vector(i_status.shot_seq_current);
+    s_stat_src(1)(31 downto c_SHOT_SEQ_WIDTH)       <= (others => '0');
 
     -- STAT7 = FRAME_COUNT
     s_stat_src(2) <= std_logic_vector(i_status.vdma_frame_count);
@@ -409,14 +468,17 @@ begin
     s_stat_src(3) <= std_logic_vector(i_status.error_count);
 
     -- STAT9 = BIN_PS
-    s_stat_src(4)(15 downto 0) <= std_logic_vector(i_bin_resolution_ps);
+    s_stat_src(4)(15 downto 0)  <= std_logic_vector(i_bin_resolution_ps);
     s_stat_src(4)(31 downto 16) <= (others => '0');
 
     -- STAT10 = K_DIST
     s_stat_src(5) <= std_logic_vector(i_k_dist_fixed);
 
+    -- STAT11 = REG_RDATA (chip register read data, latched by p_reg_rdata_latch)
+    s_stat_src(6) <= s_reg_rdata_r;
+
     -- =========================================================================
-    -- [4] STAT CDC: i_axis_aclk -> s_axi_aclk (6 live registers)
+    -- [4] STAT CDC: i_axis_aclk -> s_axi_aclk (7 live registers)
     -- =========================================================================
     gen_stat_cdc : for i in 0 to C_NUM_STAT_CDC - 1 generate
         u_cdc_stat : xpm_cdc_handshake
@@ -500,6 +562,46 @@ begin
     end generate gen_ctl_cdc;
 
     -- =========================================================================
+    -- [5b] CTL21 CDC: s_axi_aclk -> i_axis_aclk (SCAN_TIMEOUT, dedicated)
+    -- =========================================================================
+    u_cdc_ctl21 : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK   => 1,
+            DEST_SYNC_FF   => 4,
+            INIT_SYNC_FF   => 0,
+            SIM_ASSERT_CHK => 0,
+            SRC_SYNC_FF    => 4,
+            WIDTH          => 32
+        )
+        port map (
+            src_clk   => s_axi_aclk,
+            src_in    => s_ctl_src(21),
+            src_send  => s_src_send_ctl21,
+            src_rcv   => s_src_rcv_ctl21,
+            dest_clk  => i_axis_aclk,
+            dest_req  => s_dest_req_ctl21,
+            dest_ack  => s_dest_req_ctl21,
+            dest_out  => s_ctl21_out
+        );
+
+    p_send_ctl21 : process(s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' then
+                s_src_send_ctl21 <= '0';
+                s_ctl21_d1       <= (others => '1');
+            else
+                if s_src_send_ctl21 = '0' and s_ctl_src(21) /= s_ctl21_d1 then
+                    s_src_send_ctl21 <= '1';
+                    s_ctl21_d1       <= s_ctl_src(21);
+                elsif s_src_rcv_ctl21 = '1' then
+                    s_src_send_ctl21 <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_send_ctl21;
+
+    -- =========================================================================
     -- [6] cfg_image CDC: s_axi_aclk -> i_axis_aclk (CTL5~20, per-register)
     -- =========================================================================
     gen_img_cdc : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
@@ -542,6 +644,39 @@ begin
     end generate gen_img_cdc;
 
     -- =========================================================================
+    -- [6a] CDC-idle flag: all CTL + img handshakes quiescent
+    --   Source in s_axi_aclk, synchronized to i_axis_aclk via 2-FF.
+    --   Used to gate cfg_write: ensures all config data has arrived
+    --   before chip_ctrl starts writing registers to TDC hardware.
+    -- =========================================================================
+    p_cdc_idle_src : process(s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' then
+                s_cdc_all_idle_src <= '1';
+            elsif s_src_send_img = (s_src_send_img'range => '0')
+              and s_src_send_ctl = (s_src_send_ctl'range => '0')
+              and s_src_send_ctl21 = '0' then
+                s_cdc_all_idle_src <= '1';
+            else
+                s_cdc_all_idle_src <= '0';
+            end if;
+        end if;
+    end process p_cdc_idle_src;
+
+    p_cdc_idle_sync : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_cdc_all_idle_ff <= "11";
+            else
+                s_cdc_all_idle_ff(0) <= s_cdc_all_idle_src;
+                s_cdc_all_idle_ff(1) <= s_cdc_all_idle_ff(0);
+            end if;
+        end if;
+    end process p_cdc_idle_sync;
+
+    -- =========================================================================
     -- [7] Command edge detect (i_axis_aclk domain)
     --   CTL0[31:28] = {cfg_write, soft_reset, stop, start}
     --   Rising edge in i_axis_aclk domain → 1-clk pulse
@@ -559,10 +694,93 @@ begin
         end if;
     end process p_cmd_edge;
 
-    o_cmd_start      <= s_cmd_pulse_r(0);   -- CTL0[28]
+    -- start pending latch: hold pulse until CDC is idle, then release.
+    -- Prevents cmd_start loss when CDC handshakes are still in flight.
+    p_start_pending : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0'
+               or s_cmd_pulse_r(1) = '1'      -- stop clears pending
+               or s_cmd_pulse_r(2) = '1' then  -- soft_reset clears pending
+                s_start_pending_r <= '0';
+            elsif s_cmd_pulse_r(0) = '1' and s_cdc_all_idle_ff(1) = '0' then
+                s_start_pending_r <= '1';
+            elsif s_start_pending_r = '1' and s_cdc_all_idle_ff(1) = '1' then
+                s_start_pending_r <= '0';
+            end if;
+        end if;
+    end process p_start_pending;
+
+    o_cmd_start      <= (s_cmd_pulse_r(0) and s_cdc_all_idle_ff(1))
+                     or (s_start_pending_r and s_cdc_all_idle_ff(1));
     o_cmd_stop       <= s_cmd_pulse_r(1);   -- CTL0[29]
     o_cmd_soft_reset <= s_cmd_pulse_r(2);   -- CTL0[30]
-    o_cmd_cfg_write  <= s_cmd_pulse_r(3);   -- CTL0[31]
+
+    -- cfg_write pending latch: hold pulse until CDC is idle, then release.
+    -- Prevents cfg_write loss when CDC handshakes are still in flight.
+    p_cfg_write_pending : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0'
+               or s_cmd_pulse_r(1) = '1'
+               or s_cmd_pulse_r(2) = '1' then
+                s_cfg_write_pending_r <= '0';
+            elsif s_cmd_pulse_r(3) = '1' and s_cdc_all_idle_ff(1) = '0' then
+                -- CDC busy: latch the request
+                s_cfg_write_pending_r <= '1';
+            elsif s_cfg_write_pending_r = '1' and s_cdc_all_idle_ff(1) = '1' then
+                -- CDC idle: release pending (output fires this cycle)
+                s_cfg_write_pending_r <= '0';
+            end if;
+        end if;
+    end process p_cfg_write_pending;
+
+    o_cmd_cfg_write <= (s_cmd_pulse_r(3) and s_cdc_all_idle_ff(1))       -- immediate pass-through
+                    or (s_cfg_write_pending_r and s_cdc_all_idle_ff(1));  -- deferred release
+
+    -- =========================================================================
+    -- [7a] Reg access edge detect (i_axis_aclk domain)
+    --   CTL1[30] = reg_read trigger, CTL1[31] = reg_write trigger
+    --   Uses existing CTL1 CDC path — no additional CDC instance needed.
+    -- =========================================================================
+    p_reg_cmd_edge : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_reg_cmd_prev_r  <= (others => '0');
+                s_reg_cmd_pulse_r <= (others => '0');
+            else
+                s_reg_cmd_prev_r  <= s_ctl_out(1)(31 downto 30);
+                s_reg_cmd_pulse_r <= s_ctl_out(1)(31 downto 30) and (not s_reg_cmd_prev_r);
+            end if;
+        end if;
+    end process p_reg_cmd_edge;
+
+    -- Mutual exclusion: if both CTL1[31:30] rise simultaneously, write wins.
+    -- CDC idle gating: ensures cfg_image data is stable before reg access.
+    o_cmd_reg_read  <= s_reg_cmd_pulse_r(0) and (not s_reg_cmd_pulse_r(1))
+                       and s_cdc_all_idle_ff(1);
+    o_cmd_reg_write <= s_reg_cmd_pulse_r(1)
+                       and s_cdc_all_idle_ff(1);
+    o_cmd_reg_addr  <= s_ctl_out(1)(c_BT_REG_ADDR_HI downto c_BT_REG_ADDR_LO);
+    o_cmd_reg_chip  <= unsigned(s_ctl_out(1)(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO));
+
+    -- Reg read data latch (i_axis_aclk domain): capture for STAT11 readback.
+    -- SW reads 0xAC (STAT11) to get the last chip register read result.
+    -- CDC path: s_reg_rdata_r → s_stat_src(6) → xpm_cdc → stat11_in.
+    p_reg_rdata_latch : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_reg_rdata_r <= (others => '0');
+            else
+                if i_cmd_reg_rvalid = '1' then
+                    s_reg_rdata_r(c_TDC_BUS_WIDTH - 1 downto 0) <= i_cmd_reg_rdata;
+                    s_reg_rdata_r(31 downto c_TDC_BUS_WIDTH)     <= (others => '0');
+                end if;
+            end if;
+        end if;
+    end process p_reg_rdata_latch;
 
     -- =========================================================================
     -- [8] laser_ctrl cols_per_face latch (i_axis_aclk domain)
@@ -576,6 +794,12 @@ begin
                 s_lsr_cols_r  <= (others => '0');
                 s_lsr_valid_r <= '0';
             else
+                -- Clear override only on ACCEPTED start (not raw pulse).
+                -- Prevents unaccepted start from prematurely clearing override.
+                if i_cmd_start_accepted = '1' then
+                    s_lsr_valid_r <= '0';
+                end if;
+                -- Set override on laser_ctrl input
                 if i_lsr_tvalid = '1' then
                     s_lsr_cols_r  <= unsigned(i_lsr_tdata(15 downto 0));
                     s_lsr_valid_r <= '1';
@@ -590,11 +814,11 @@ begin
     -- Safety clamping applied at CSR boundary so all downstream modules
     -- receive valid values.  Minimum constraints:
     --   active_chip_mask != 0  (face_assembler deadlocks on zero mask)
-    --   stops_per_chip  >= 2  (cell_builder/assembler do stops-1)
-    --   n_faces         >= 1  (face_seq does n_faces-1)
-    --   bus_ticks       >= 3  (bus_phy does ticks-2)
-    --   bus_clk_div     >= 1  (tick divider modulo)
-    --   cols_per_face   >= 1  (header_inserter does cols-1)
+    --   stops_per_chip  [2..8] (cell_builder/assembler use low 3 bits)
+    --   n_faces         >= 1   (face_seq does n_faces-1)
+    --   bus_ticks       >= 4|5 (combined: (ticks-3)*div >= 2; see timing)
+    --   bus_clk_div     >= 1   (div=1 OK with ticks>=5 for tV-DR)
+    --   cols_per_face   >= 1   (header_inserter does cols-1)
     -- =========================================================================
     -- CTL0: MAIN_CTRL packed fields
     -- active_chip_mask: clamp >= "0001" (at least 1 chip must be active,
@@ -602,6 +826,8 @@ begin
     o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO)
                               when s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO) /= "0000"
                               else "0001";
+    -- HEADER-ONLY fields: embedded in frame header by header_inserter.
+    -- No effect on chip_ctrl, assembler, or builder datapath.
     o_cfg.packet_scope     <= s_ctl_out(0)(c_MC_PACKET_SCOPE);
     o_cfg.hit_store_mode   <= unsigned(s_ctl_out(0)(c_MC_HIT_STORE_HI downto c_MC_HIT_STORE_LO));
     o_cfg.dist_scale       <= unsigned(s_ctl_out(0)(c_MC_DIST_SCALE_HI downto c_MC_DIST_SCALE_LO));
@@ -613,24 +839,57 @@ begin
                               when unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO)) >= 1
                               else to_unsigned(1, 3);
 
-    -- stops_per_chip: clamp >= 2 (cell_builder/assembler do stops-1)
+    -- stops_per_chip: clamp [2..8] (cell_builder/assembler use stops(2:0)-1;
+    --   values 9..15 alias to 1..7 after truncation, breaking IFIFO routing)
     o_cfg.stops_per_chip   <= unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO))
                               when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) >= 2
+                                   and unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) <= 8
+                              else to_unsigned(8, 4)
+                              when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) > 8
                               else to_unsigned(2, 4);
 
     o_cfg.n_drain_cap      <= unsigned(s_ctl_out(0)(c_MC_N_DRAIN_CAP_HI downto c_MC_N_DRAIN_CAP_LO));
     o_cfg.stopdis_override <= s_ctl_out(0)(c_MC_STOPDIS_HI downto c_MC_STOPDIS_LO);
 
     -- CTL1: BUS_TIMING
-    -- bus_clk_div: clamp >= 1 (tick divider uses modulo)
-    o_cfg.bus_clk_div      <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
-                              when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO)) >= 1
-                              else to_unsigned(1, 6);
+    --
+    -- Safety clamping rationale (200 MHz, T_clk = 5 ns):
+    --
+    --   bus_clk_div (tick divider):
+    --     div=0 → clamped to 1 (p_tick_en treats 0 as 1)
+    --     div=1 → tick=5ns; tPW-RL OK at ticks>=4 (15ns), but tV-DR
+    --             requires ticks>=5. Burst tPW-RH=2*5=10ns >= 6ns OK.
+    --     div=2 → tick=10ns; all constraints met at ticks>=4.
+    --     Clamp: div >= c_BUS_CLK_DIV_MIN (1)
+    --
+    --   bus_ticks (ticks per transaction):
+    --     Combined constraint from tV-DR: (ticks-3) * div >= 2
+    --       div=1 => ticks >= 5 (c_BUS_TICKS_MIN_DIV1)
+    --       div>=2 => ticks >= 4 (c_BUS_TICKS_MIN)
+    --     s_ticks_min selects the correct minimum based on clamped div.
+    --
+    --   Legal combinations (div, ticks) → effective bus rate:
+    --     (1, 5) → 40 MHz    fastest safe (TDC-GPX max)
+    --     (2, 4) → 25 MHz
+    --     (2, 5) → 20 MHz    default, conservative
+    --     (3, 4) → 16.7 MHz
+    --     (2, 7) → 14.3 MHz  slowest with 3-bit ticks
+    --
+    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN (1)
+    s_div_clamped          <= unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
+                              when unsigned(s_ctl_out(1)(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
+                                   >= c_BUS_CLK_DIV_MIN
+                              else to_unsigned(c_BUS_CLK_DIV_MIN, 6);
+    o_cfg.bus_clk_div      <= s_div_clamped;
 
-    -- bus_ticks: clamp >= 3 (bus_phy does ticks-2, needs Phase A+L+H minimum)
+    -- bus_ticks: combined constraint — div=1 needs ticks>=5, div>=2 needs ticks>=4
+    s_ticks_min            <= to_unsigned(c_BUS_TICKS_MIN_DIV1, 3)
+                              when s_div_clamped = 1
+                              else to_unsigned(c_BUS_TICKS_MIN, 3);
     o_cfg.bus_ticks        <= unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))
-                              when unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO)) >= 3
-                              else to_unsigned(3, 3);
+                              when unsigned(s_ctl_out(1)(c_BT_TICKS_HI downto c_BT_TICKS_LO))
+                                   >= s_ticks_min
+                              else s_ticks_min;
 
     -- CTL2: RANGE_COLS (cols_per_face overridden by laser_ctrl when valid)
     o_cfg.max_range_clks   <= unsigned(s_ctl_out(2)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));
@@ -647,6 +906,14 @@ begin
 
     -- CTL4: CFG_REG7
     o_cfg.cfg_reg7         <= s_ctl_out(4);
+
+    -- CTL21: SCAN_TIMEOUT
+    o_cfg.max_scan_clks    <= unsigned(s_ctl21_out(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO));
+
+    -- max_hits_cfg: 0 = default 7, 1~7 = literal
+    o_cfg.max_hits_cfg     <= to_unsigned(c_MAX_HITS_PER_STOP, 3)
+                              when unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO)) = 0
+                              else unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO));
 
     -- =========================================================================
     -- [10] CSR output: t_cfg_image (i_axis_aclk domain)

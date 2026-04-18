@@ -11,7 +11,11 @@
 --     t_cell       : Dense hit storage for one stop/shot (cell_builder internal)
 --
 --   Design constants for TDC-GPX I-Mode (4-chip, 8-stop, SINGLE_SHOT).
---   Helper functions for cell size calculation and bit manipulation.
+--   Helper functions:
+--     fn_ceil_div          : integer ceiling division (replaces (a+b-1)/b)
+--     fn_cell_size_bytes   : cell size in bytes (ceil_pow2)
+--     fn_cell_beat         : cell-to-AXI beat serialization MUX
+--     fn_stop_evt_valid_bytes : stop event AXI-Stream tkeep width
 --
 --   Each record has a matching c_*_INIT reset constant.
 --
@@ -30,15 +34,47 @@ use ieee.numeric_std.all;
 package tdc_gpx_pkg is
 
     -- =========================================================================
+    -- Utility: integer ceiling division  ceil(a / b)
+    -- Declared first so that derived constants below can use it.
+    -- =========================================================================
+    function fn_ceil_div(a : natural; b : positive) return natural;
+
+    -- =========================================================================
     -- Design constants (defaults — entity generics override where needed)
     -- =========================================================================
     constant c_N_CHIPS              : natural := 4;
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
-    constant c_MAX_HITS_PER_STOP    : natural := 8;
+    constant c_MAX_HITS_PER_STOP    : natural := 7;
     constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;   -- Zynq-7000 (17 for MPSoC)
-    constant c_TDATA_WIDTH          : natural := 32;
-    constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;   -- bytes per beat
+    constant c_TDATA_WIDTH          : natural := 32;    -- default, overridden by g_TDATA_WIDTH
+    constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
+
+    -- Derived cell layout constants (auto-calculated from MAX_HITS / TDATA_WIDTH)
+    -- These use c_TDATA_WIDTH=32 defaults. Modules with g_TDATA_WIDTH generic
+    -- should use fn_slots_per_beat/fn_beats_per_cell instead.
+    constant c_SLOTS_PER_BEAT       : natural := c_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH;  -- 2
+    constant c_HIT_DATA_BEATS       : natural := fn_ceil_div(c_MAX_HITS_PER_STOP,
+                                                              c_SLOTS_PER_BEAT);          -- 4
+    constant c_META_BEAT_IDX        : natural := c_HIT_DATA_BEATS;                        -- 4
+
+    -- Generic-width helper functions (for modules with g_TDATA_WIDTH)
+    function fn_slots_per_beat(tdata_width : natural) return natural;
+    function fn_hit_data_beats(tdata_width : natural) return natural;
+    function fn_meta_beat_idx(tdata_width : natural) return natural;
+    function fn_beats_per_cell(tdata_width : natural) return natural;
+    function fn_hdr_prefix_beats(tdata_width : natural) return natural;
+
+    -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
+    function fn_cell_size_rt(max_hits : natural) return natural;
+    function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
+
+    -- Stop event AXI-Stream constants
+    constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
+    constant c_STOP_CNT_WIDTH       : natural := 4;     -- FIXED: p_stop_decode hardcodes 4-bit
+    -- Layout: per-chip packed [chip3(8b)|chip2(8b)|chip1(8b)|chip0(8b)]
+    --   Each 8-bit chip slice: [IFIFO2(4b) | IFIFO1(4b)]
+    -- tkeep: reserved (always "1111", not consumed by p_stop_decode)
 
     constant c_SHOT_SEQ_WIDTH       : natural := 16;
     constant c_TDC_BUS_WIDTH        : natural := 28;
@@ -91,24 +127,37 @@ package tdc_gpx_pkg is
 
     function fn_count_ones(v : std_logic_vector) return natural;
 
-    -- Default cell_size_bytes (for c_HIT_SLOT_DATA_WIDTH=17, c_MAX_HITS=8)
-    -- 158 bits -> 20 bytes -> align_pow2 = 32 bytes
-    constant c_CELL_SIZE_BYTES      : natural := 32;
+    -- Stop event AXI-Stream helpers
+    -- valid_bytes = ceil(n_stops * cnt_width / 8)
+    function fn_stop_evt_valid_bytes(
+        n_stops   : natural;
+        cnt_width : natural
+    ) return natural;
 
-    -- Header prefix (embedded in each VDMA line)
-    constant c_HDR_PREFIX_BEATS     : natural := 12;    -- 12 beats × 4B = 48 bytes
-    constant c_HDR_PREFIX_BYTES     : natural := c_HDR_PREFIX_BEATS * (c_TDATA_WIDTH / 8);  -- 48
+    -- Generate tkeep mask: lower valid_bytes bits = '1', rest = '0'
+    function fn_stop_evt_tkeep(
+        n_stops    : natural;
+        cnt_width  : natural;
+        tkeep_width : natural
+    ) return std_logic_vector;
 
-    -- VDMA line constants (default generics)
-    -- "Beat" = one AXI-Stream transfer (tvalid & tready handshake), TDATA_WIDTH bits wide
-    constant c_BEATS_PER_CELL       : natural := c_CELL_SIZE_BYTES / (c_TDATA_BYTES);       -- 8
-    constant c_DATA_BEATS_MAX       : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;    -- 256
-    constant c_HSIZE_BEATS_MAX      : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;     -- 268
-    constant c_HSIZE_MAX            : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);   -- 1072
+    -- Cell size and derived constants: auto-calculated from MAX_HITS
+    -- (deferred constants — full definitions in package body using fn_cell_size_bytes)
+    constant c_CELL_SIZE_BYTES      : natural;
+    constant c_BEATS_PER_CELL       : natural;
+    constant c_DATA_BEATS_MAX       : natural;
+    constant c_HSIZE_BEATS_MAX      : natural;
+    constant c_HSIZE_MAX            : natural;
+
+    -- Header prefix (embedded in each VDMA line, 48 bytes fixed)
+    constant c_HDR_PREFIX_BYTES     : natural := 48;
+    constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_TDATA_BYTES;  -- 12@32b, 6@64b
 
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
     -- =========================================================================
+    type t_expected_array is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
+
     type t_axis_tdata_array is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
 
@@ -119,6 +168,29 @@ package tdc_gpx_pkg is
         of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     type t_tdc_adr_array is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(3 downto 0);
+
+    -- =========================================================================
+    -- Per-chip pipeline array types (package scope)
+    -- Used by cluster wrapper port lists and top-level signal declarations.
+    -- =========================================================================
+    type t_slv32_array    is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(31 downto 0);
+    type t_slv16_array    is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(15 downto 0);
+    type t_slv8_array     is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(7 downto 0);
+    type t_slv4_array     is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(3 downto 0);
+    type t_slv28_array    is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+    type t_u2_array       is array(0 to c_N_CHIPS - 1)
+        of unsigned(1 downto 0);
+    type t_u3_array       is array(0 to c_N_CHIPS - 1)
+        of unsigned(2 downto 0);
+    type t_shot_seq_array is array(0 to c_N_CHIPS - 1)
+        of unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    type t_raw_hit_array  is array(0 to c_N_CHIPS - 1)
+        of unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- cfg_image array type (TDC-GPX register image stored in CSR)
@@ -140,11 +212,11 @@ package tdc_gpx_pkg is
     type t_tdc_cfg is record
         -- CTL0: MAIN_CTRL packed fields
         active_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);     -- CTL0[3:0]
-        packet_scope        : std_logic;                                    -- CTL0[4]
-        hit_store_mode      : unsigned(1 downto 0);                         -- CTL0[6:5]
-        dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]
+        packet_scope        : std_logic;                                    -- CTL0[4]    HEADER-ONLY
+        hit_store_mode      : unsigned(1 downto 0);                         -- CTL0[6:5]  HEADER-ONLY
+        dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]  HEADER-ONLY
         drain_mode          : std_logic;                                    -- CTL0[10]
-        pipeline_en         : std_logic;                                    -- CTL0[11]
+        pipeline_en         : std_logic;                                    -- CTL0[11]   HEADER-ONLY
         n_faces             : unsigned(2 downto 0);                         -- CTL0[14:12]
         stops_per_chip      : unsigned(3 downto 0);                         -- CTL0[18:15]
         n_drain_cap         : unsigned(3 downto 0);                         -- CTL0[22:19]
@@ -159,6 +231,9 @@ package tdc_gpx_pkg is
         start_off1          : unsigned(17 downto 0);                        -- CTL3[17:0]
         -- CTL4: CFG_REG7
         cfg_reg7            : std_logic_vector(31 downto 0);                -- CTL4[31:0]
+        -- CTL21: SCAN_TIMEOUT + MAX_HITS
+        max_scan_clks       : unsigned(15 downto 0);                        -- CTL21[15:0]
+        max_hits_cfg        : unsigned(2 downto 0);                         -- CTL21[18:16] (1~7, 0→7)
     end record;
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
@@ -172,12 +247,14 @@ package tdc_gpx_pkg is
         stops_per_chip      => to_unsigned(8, 4),
         n_drain_cap         => (others => '0'),         -- unlimited
         stopdis_override    => (others => '0'),
-        bus_clk_div         => to_unsigned(1, 6),
+        bus_clk_div         => to_unsigned(2, 6),  -- min=2 per review/datasheet
         bus_ticks           => to_unsigned(5, 3),
         max_range_clks      => to_unsigned(267, 16),    -- ~200m @200MHz
         cols_per_face       => to_unsigned(2400, 16),
         start_off1          => (others => '0'),
-        cfg_reg7            => (others => '0')
+        cfg_reg7            => (others => '0'),
+        max_scan_clks       => to_unsigned(0, 16),          -- 0 = disabled (no timeout)
+        max_hits_cfg        => to_unsigned(7, 3)            -- default: 7 (full capacity)
     );
 
     -- =========================================================================
@@ -186,25 +263,60 @@ package tdc_gpx_pkg is
     type t_tdc_status is record
         busy                : std_logic;
         pipeline_overrun    : std_logic;
-        bin_mismatch        : std_logic;
+        err_fatal           : std_logic;  -- err_handler fatal recovery failure
         chip_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        drain_timeout_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip drain timeout
+        sequence_error_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip sequence error
         shot_seq_current    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         vdma_frame_count    : unsigned(31 downto 0);
-        error_count         : unsigned(31 downto 0);
+        error_cycle_count         : unsigned(31 downto 0);
+        shot_drop_count     : unsigned(15 downto 0);  -- deferred-shot overflow drops
+        frame_abort_count   : unsigned(15 downto 0);  -- frames discarded by abort
+        err_active          : std_logic;               -- err_handler recovery in progress
+        err_chip_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chips under recovery
+        err_cause           : std_logic_vector(2 downto 0);  -- [0]=HitFIFO [1]=IFIFO [2]=PLL
+        rsp_mismatch_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- bus response tuser mismatch
+        raw_overflow_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_ctrl raw hold+skid overflow (beat dropped)
+        cfg_rejected        : std_logic;  -- cmd_start rejected due to invalid config
+        run_timeout_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip chip_run timeout (sticky)
+        reg_arb_timeout     : std_logic;  -- cmd_arb register access timeout (sticky)
+        shot_drop_any       : std_logic;  -- OR of all cell_builder shot_dropped (rise+fall)
+        slice_timeout_any   : std_logic;  -- OR of all cell_builder slice_timeout (rise+fall)
+        -- #22 Sprint 3 — per-slope overrun (rise is primary; fall alone may
+        -- abort without killing rise's dedicated VDMA stream). SW correlates
+        -- the frames per-memory-address with these fields.
+        rise_overrun        : std_logic;  -- rise face_assembler overrun
+        fall_overrun        : std_logic;  -- fall face_assembler overrun only
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
         busy                => '0',
         pipeline_overrun    => '0',
-        bin_mismatch        => '0',
+        err_fatal           => '0',
         chip_error_mask     => (others => '0'),
+        drain_timeout_mask  => (others => '0'),
+        sequence_error_mask => (others => '0'),
         shot_seq_current    => (others => '0'),
         vdma_frame_count    => (others => '0'),
-        error_count         => (others => '0')
+        error_cycle_count         => (others => '0'),
+        shot_drop_count     => (others => '0'),
+        frame_abort_count   => (others => '0'),
+        err_active          => '0',
+        err_chip_mask       => (others => '0'),
+        err_cause           => (others => '0'),
+        rsp_mismatch_mask   => (others => '0'),
+        raw_overflow_mask   => (others => '0'),
+        cfg_rejected        => '0',
+        run_timeout_mask    => (others => '0'),
+        reg_arb_timeout     => '0',
+        shot_drop_any       => '0',
+        slice_timeout_any   => '0',
+        rise_overrun        => '0',
+        fall_overrun        => '0'
     );
 
     -- =========================================================================
-    -- t_raw_event : Decoded IFIFO read (decode_i -> raw_event_builder -> cell)
+    -- t_raw_event : Decoded IFIFO read (decoder_i_mode -> raw_event_builder -> cell)
     -- Key = {chip_id, shot_seq, stop_id_local}
     -- =========================================================================
     type t_raw_event is record
@@ -215,7 +327,7 @@ package tdc_gpx_pkg is
         slope               : std_logic;
         raw_hit             : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);       -- 17-bit (truncation at cell_builder)
         shot_seq            : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
-        hit_seq_local       : unsigned(3 downto 0);         -- 0..15 (>=8 means overflow)
+        hit_seq_local       : unsigned(2 downto 0);         -- 0..7 (per slope, MAX_HITS=7)
     end record;
 
     constant c_RAW_EVENT_INIT : t_raw_event := (
@@ -231,7 +343,7 @@ package tdc_gpx_pkg is
 
     -- =========================================================================
     -- t_cell : Dense hit storage for one stop channel, one shot
-    -- Cell byte layout: hit_slot[0..7] + hit_valid + slope_vec + meta
+    -- Cell byte layout: hit_slot[0..MAX-1] + hit_valid + slope_vec + meta
     -- =========================================================================
     type t_hit_slot_array is array (0 to c_MAX_HITS_PER_STOP - 1)
         of unsigned(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
@@ -240,7 +352,7 @@ package tdc_gpx_pkg is
         hit_slot            : t_hit_slot_array;
         hit_valid           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
         slope_vec           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
-        hit_count_actual    : unsigned(3 downto 0);         -- 0..8
+        hit_count_actual    : unsigned(3 downto 0);         -- 0..c_MAX_HITS_PER_STOP
         hit_dropped         : std_logic;
         error_fill          : std_logic;
     end record;
@@ -275,6 +387,16 @@ end package tdc_gpx_pkg;
 
 package body tdc_gpx_pkg is
 
+    -- =========================================================================
+    -- Deferred constants: cell size and derived VDMA line metrics
+    -- =========================================================================
+    constant c_CELL_SIZE_BYTES : natural := -- 32
+        fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, c_MAX_HITS_PER_STOP);
+    constant c_BEATS_PER_CELL  : natural := c_CELL_SIZE_BYTES / c_TDATA_BYTES;  -- 32/ 4 = 8
+    constant c_DATA_BEATS_MAX  : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;
+    constant c_HSIZE_BEATS_MAX : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;
+    constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);
+
     -- Cell payload bits (Format 0, Zynq-7000)
     -- hit_slot[MAX] + hit_valid + slope_vec + hit_count(4) + dropped(1) + error_fill(1)
     function fn_cell_payload_bits(
@@ -285,7 +407,13 @@ package body tdc_gpx_pkg is
         return hit_slot_width * max_hits    -- hit_slot
              + max_hits                     -- hit_valid
              + max_hits                     -- slope_vec
-             + 4 + 1 + 1;                  -- hit_count_actual + hit_dropped + error_fill
+             + 4 + 1 + 1;                   -- hit_count_actual + hit_dropped + error_fill
+    end function;
+
+    -- Integer ceiling division: ceil(a / b)
+    function fn_ceil_div(a : natural; b : positive) return natural is
+    begin
+        return (a + b - 1) / b;
     end function;
 
     -- Round up to next power of 2
@@ -307,7 +435,7 @@ package body tdc_gpx_pkg is
         variable raw_bytes    : natural;
     begin
         payload_bits := fn_cell_payload_bits(hit_slot_width, max_hits);
-        raw_bytes    := (payload_bits + 7) / 8;
+        raw_bytes    := fn_ceil_div(payload_bits, 8);
         return fn_ceil_pow2(raw_bytes);
     end function;
 
@@ -321,6 +449,77 @@ package body tdc_gpx_pkg is
             end if;
         end loop;
         return cnt;
+    end function;
+
+    -- ceil(n_stops * cnt_width / 8)
+    function fn_stop_evt_valid_bytes(
+        n_stops   : natural;
+        cnt_width : natural
+    ) return natural is
+    begin
+        return fn_ceil_div(n_stops * cnt_width, 8);
+    end function;
+
+    -- Generate tkeep mask: lower valid_bytes bits set
+    function fn_stop_evt_tkeep(
+        n_stops    : natural;
+        cnt_width  : natural;
+        tkeep_width : natural
+    ) return std_logic_vector is
+        variable v_bytes : natural;
+        variable mask    : std_logic_vector(tkeep_width - 1 downto 0)
+                            := (others => '0');
+    begin
+        v_bytes := fn_stop_evt_valid_bytes(n_stops, cnt_width);
+        for i in 0 to tkeep_width - 1 loop
+            if i < v_bytes then
+                mask(i) := '1';
+            end if;
+        end loop;
+        return mask;
+    end function;
+
+    -- =========================================================================
+    -- Generic-width helper functions (32/64-bit output bus support)
+    -- =========================================================================
+    function fn_slots_per_beat(tdata_width : natural) return natural is
+    begin
+        return tdata_width / c_HIT_SLOT_DATA_WIDTH;
+    end function;
+
+    function fn_hit_data_beats(tdata_width : natural) return natural is
+    begin
+        return fn_ceil_div(c_MAX_HITS_PER_STOP, fn_slots_per_beat(tdata_width));
+    end function;
+
+    function fn_meta_beat_idx(tdata_width : natural) return natural is
+    begin
+        return fn_hit_data_beats(tdata_width);
+    end function;
+
+    function fn_beats_per_cell(tdata_width : natural) return natural is
+    begin
+        return c_CELL_SIZE_BYTES / (tdata_width / 8);
+    end function;
+
+    function fn_hdr_prefix_beats(tdata_width : natural) return natural is
+    begin
+        return c_HDR_PREFIX_BYTES / (tdata_width / 8);
+    end function;
+
+    -- Runtime cell size: same algorithm as fn_cell_size_bytes but with variable max_hits
+    function fn_cell_size_rt(max_hits : natural) return natural is
+    begin
+        return fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, max_hits);
+    end function;
+
+    function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural is
+        variable v_hit_beats : natural;
+    begin
+        -- hit data beats = ceil(max_hits / slots_per_beat)
+        v_hit_beats := fn_ceil_div(max_hits, tdata_width / c_HIT_SLOT_DATA_WIDTH);
+        -- total = hit beats + 1 metadata beat (always present)
+        return v_hit_beats + 1;
     end function;
 
 end package body tdc_gpx_pkg;

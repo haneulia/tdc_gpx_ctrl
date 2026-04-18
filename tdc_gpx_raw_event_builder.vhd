@@ -4,16 +4,28 @@
 -- =============================================================================
 --
 -- Purpose:
---   Enriches decoded IFIFO fields with context (chip_id, shot_seq) and
---   assigns per-stop hit_seq_local counter. Outputs t_raw_event record.
+--   Enriches decoded IFIFO fields with context (chip_id) and assigns
+--   per-stop hit_seq_local counter (3-bit, 0..7 per stop, shared across slopes).
+--   Registered pipeline with AXI-Stream input and output.
+--   Supports downstream backpressure via i_m_axis_tready: output register
+--   holds valid+data until consumed; input is stalled when output is busy.
+--   i_shot_seq lower 5 bits are mapped to tuser[15:11] for shot identity tagging.
 --
---   hit_seq_local: sequential index for hits on the same {chip, shot, stop}.
---   FIFO ordering guarantees time-sorted sequence within each stop channel.
---   Counter resets on drain_done (shot boundary).
+--   drain_done propagation: input tuser[7]='1' control beat resets hit
+--   counters and is forwarded on the output AXI-Stream as tuser[7]='1'.
 --
---   Range check: stop_id_local >= stops_per_chip => discard + error count.
+--   Range check: stop_id_local >= stops_per_chip => discard + error pulse.
 --
--- Standard: VHDL-93 compatible
+-- AXI-Stream slave (from decoder_i_mode):
+--   tdata[16:0] = raw_hit,  tuser[7] = drain_done
+--   tuser[0] = slope, [2:1] = cha_code, [5:3] = stop_id, [6] = ififo_id
+--
+-- AXI-Stream master (to cell_builder via skid buffer):
+--   tdata[16:0] = raw_hit
+--   tuser[0] = slope, [2:1] = chip_id, [5:3] = stop_id, [6] = ififo_id,
+--   tuser[7] = drain_done, [10:8] = hit_seq_local
+--
+-- Standard: VHDL-2008
 -- =============================================================================
 
 library ieee;
@@ -26,26 +38,41 @@ entity tdc_gpx_raw_event_builder is
     port (
         i_clk             : in  std_logic;
         i_rst_n           : in  std_logic;
+        i_abort           : in  std_logic;   -- pipeline abort: clear counters + output
 
-        -- Decoded fields (from decode_i, combinational)
-        i_raw_hit         : in  unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
-        i_slope           : in  std_logic;
-        i_cha_code_raw    : in  unsigned(1 downto 0);
-        i_stop_id_local   : in  unsigned(2 downto 0);
-        i_decoded_valid   : in  std_logic;
-        i_ififo_id        : in  std_logic;
+        -- AXI-Stream slave (from decoder_i_mode, registered)
+        --   tdata[16:0]  = raw_hit (17-bit, 0 for drain_done beat)
+        --   tuser[0]     = slope
+        --   tuser[2:1]   = cha_code_raw
+        --   tuser[5:3]   = stop_id_local
+        --   tuser[6]     = ififo_id
+        --   tuser[7]     = drain_done ('1' = control beat: reset hit counters)
+        i_s_axis_tvalid   : in  std_logic;
+        i_s_axis_tdata    : in  std_logic_vector(31 downto 0);
+        i_s_axis_tuser    : in  std_logic_vector(7 downto 0);
+        o_s_axis_tready   : out std_logic;
 
         -- Context (from chip_ctrl / TOP)
         i_chip_id         : in  unsigned(1 downto 0);
-        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
-        i_drain_done      : in  std_logic;
+        i_shot_seq        : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);  -- lower 5 bits mapped to tuser[15:11]
 
         -- Configuration
         i_stops_per_chip  : in  unsigned(3 downto 0);
 
-        -- Output
-        o_raw_event       : out t_raw_event;
-        o_raw_event_valid : out std_logic;
+        -- AXI-Stream master (to cell_builder via slope demux in top)
+        --   tdata[16:0]  = raw_hit (17-bit measurement)
+        --   tdata[31:17] = 0 (reserved)
+        --   tuser[0]     = slope
+        --   tuser[2:1]   = chip_id
+        --   tuser[5:3]   = stop_id_local (0..7)
+        --   tuser[6]     = ififo_id
+        --   tuser[7]    = drain_done (control beat: no data, triggers output phase)
+        --   tuser[10:8]   = hit_seq_local (0..7 per stop, shared across slopes)
+        --   tuser[15:11] = shot_seq[4:0] (lower 5 bits of shot sequence counter)
+        o_m_axis_tvalid   : out std_logic;
+        o_m_axis_tdata    : out std_logic_vector(31 downto 0);
+        o_m_axis_tuser    : out std_logic_vector(15 downto 0);
+        i_m_axis_tready   : in  std_logic;
 
         -- Error
         o_stop_id_error   : out std_logic    -- 1-clk pulse on out-of-range stop_id
@@ -54,69 +81,97 @@ end entity tdc_gpx_raw_event_builder;
 
 architecture rtl of tdc_gpx_raw_event_builder is
 
-    -- Per-stop hit sequence counters (4-bit: 0..15, >=8 = overflow)
+    -- Per-stop hit sequence counters (3-bit: 0..7 per stop shared across slopes, MAX_HITS=7)
     type t_hit_cnt_array is array (0 to c_MAX_STOPS_PER_CHIP - 1)
-        of unsigned(3 downto 0);
+        of unsigned(2 downto 0);
 
     signal s_hit_cnt_r        : t_hit_cnt_array := (others => (others => '0'));
 
-    -- Output registers
-    signal s_raw_event_r      : t_raw_event := c_RAW_EVENT_INIT;
-    signal s_raw_event_valid_r : std_logic := '0';
+    -- AXI-Stream output registers
+    signal s_tvalid_r         : std_logic := '0';
+    signal s_tdata_r          : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_tuser_r          : std_logic_vector(15 downto 0) := (others => '0');
     signal s_stop_id_error_r  : std_logic := '0';
+
+    -- Backpressure: accept input when output register is free or being consumed
+    signal s_can_accept       : std_logic;
 
 begin
 
+    s_can_accept    <= '1' when s_tvalid_r = '0' else i_m_axis_tready;
+    o_s_axis_tready <= s_can_accept;
+
     p_builder : process(i_clk)
         variable v_stop_idx : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
+        variable v_raw_hit  : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+        variable v_slope    : std_logic;
+        variable v_stop_id  : unsigned(2 downto 0);
+        variable v_ififo_id : std_logic;
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' then
-                s_hit_cnt_r         <= (others => (others => '0'));
-                s_raw_event_r       <= c_RAW_EVENT_INIT;
-                s_raw_event_valid_r <= '0';
-                s_stop_id_error_r   <= '0';
+            if i_rst_n = '0' or i_abort = '1' then
+                s_hit_cnt_r        <= (others => (others => '0'));
+                s_tvalid_r         <= '0';
+                s_tdata_r          <= (others => '0');
+                s_tuser_r          <= (others => '0');
+                s_stop_id_error_r  <= '0';
             else
-                -- Default: clear single-cycle pulses
-                s_raw_event_valid_r <= '0';
-                s_stop_id_error_r   <= '0';
+                -- Default: clear single-cycle status pulse
+                s_stop_id_error_r <= '0';
 
-                -- drain_done: reset all hit counters (shot boundary)
-                if i_drain_done = '1' then
-                    s_hit_cnt_r <= (others => (others => '0'));
+                -- Clear output valid on downstream handshake
+                if s_tvalid_r = '1' and i_m_axis_tready = '1' then
+                    s_tvalid_r <= '0';
                 end if;
 
-                if i_decoded_valid = '1' then
+                if i_s_axis_tvalid = '1' and s_can_accept = '1' and i_s_axis_tuser(7) = '1' then
+                    -- drain_done control beat: forward with ififo_id preserved.
+                    -- ififo_id=0 (ififo1_done): do NOT reset counters (IFIFO2 active)
+                    -- ififo_id=1 (final done):  reset ALL hit counters (shot boundary)
+                    if i_s_axis_tuser(6) = '1' then
+                        s_hit_cnt_r <= (others => (others => '0'));
+                    end if;
+                    s_tdata_r     <= (others => '0');
+                    s_tuser_r     <= (others => '0');
+                    s_tuser_r(7)  <= '1';   -- drain_done flag
+                    s_tuser_r(6)  <= i_s_axis_tuser(6);  -- preserve ififo_id
+                    s_tuser_r(15 downto 11) <= std_logic_vector(i_shot_seq(4 downto 0));
+                    s_tvalid_r    <= '1';
+                elsif i_s_axis_tvalid = '1' and s_can_accept = '1' then
+                    -- Unpack input AXI-Stream sideband
+                    v_raw_hit  := unsigned(i_s_axis_tdata(c_RAW_HIT_WIDTH - 1 downto 0));
+                    v_slope    := i_s_axis_tuser(0);
+                    v_stop_id  := unsigned(i_s_axis_tuser(5 downto 3));
+                    v_ififo_id := i_s_axis_tuser(6);
+
                     -- Range check: stop_id_local < stops_per_chip
-                    if ('0' & i_stop_id_local) >= i_stops_per_chip then
-                        -- Out-of-range stop_id: discard event, flag error
+                    if ('0' & v_stop_id) >= i_stops_per_chip then
                         s_stop_id_error_r <= '1';
                     else
-                        v_stop_idx := to_integer(i_stop_id_local);
+                        v_stop_idx := to_integer(v_stop_id);
 
-                        -- Build raw_event record
-                        s_raw_event_r.valid         <= '1';
-                        s_raw_event_r.chip_id       <= i_chip_id;
-                        s_raw_event_r.ififo_id      <= i_ififo_id;
-                        s_raw_event_r.stop_id_local <= i_stop_id_local;
-                        s_raw_event_r.slope         <= i_slope;
-                        s_raw_event_r.raw_hit       <= i_raw_hit;
-                        s_raw_event_r.shot_seq      <= i_shot_seq;
-                        s_raw_event_r.hit_seq_local <= s_hit_cnt_r(v_stop_idx);
+                        -- Pack output AXI-Stream
+                        s_tdata_r                                     <= (others => '0');
+                        s_tdata_r(c_RAW_HIT_WIDTH - 1 downto 0)      <= std_logic_vector(v_raw_hit);
+                        s_tuser_r(0)            <= v_slope;
+                        s_tuser_r(2 downto 1)   <= std_logic_vector(i_chip_id);
+                        s_tuser_r(5 downto 3)   <= std_logic_vector(v_stop_id);
+                        s_tuser_r(6)            <= v_ififo_id;
+                        s_tuser_r(7)            <= '0';   -- not drain_done
+                        s_tuser_r(10 downto 8)  <= std_logic_vector(s_hit_cnt_r(v_stop_idx));
+                        s_tuser_r(15 downto 11) <= std_logic_vector(i_shot_seq(4 downto 0));
 
-                        -- Increment hit counter for this stop
                         s_hit_cnt_r(v_stop_idx) <= s_hit_cnt_r(v_stop_idx) + 1;
-
-                        s_raw_event_valid_r <= '1';
+                        s_tvalid_r <= '1';
                     end if;
                 end if;
             end if;
         end if;
     end process p_builder;
 
-    -- Output assignments
-    o_raw_event       <= s_raw_event_r;
-    o_raw_event_valid <= s_raw_event_valid_r;
-    o_stop_id_error   <= s_stop_id_error_r;
+    o_m_axis_tvalid <= s_tvalid_r;
+    o_m_axis_tdata  <= s_tdata_r;
+    o_m_axis_tuser  <= s_tuser_r;
+    o_stop_id_error <= s_stop_id_error_r;
 
 end architecture rtl;

@@ -16,7 +16,7 @@
 --   [1] Powerup + cfg_write + master_reset sequence
 --   [2] Arm -> shot_start -> IrFlag -> Legacy drain (drain_mode='0')
 --   [3] Arm -> shot_start -> IrFlag -> Burst drain (drain_mode='1')
---   [4] n_drain_cap enforcement (cap=2 -> max 16 reads)
+--   [4] n_drain_cap enforcement (per-IFIFO cap=n×4, e.g. cap=2 -> max 8/IFIFO)
 --   [5] Soft reset recovery
 --   [6] cfg_write register content verification
 --   [7] EF=1 -> no reads (INV-4)
@@ -84,6 +84,12 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_cmd_stop           : std_logic := '0';
     signal s_cmd_soft_reset     : std_logic := '0';
     signal s_cmd_cfg_write      : std_logic := '0';
+    signal s_cmd_reg_read       : std_logic := '0';
+    signal s_cmd_reg_write      : std_logic := '0';
+    signal s_cmd_reg_addr       : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_cmd_reg_wdata      : std_logic_vector(c_DATA_W - 1 downto 0) := (others => '0');
+    signal s_cmd_reg_rdata      : std_logic_vector(c_DATA_W - 1 downto 0);
+    signal s_cmd_reg_rvalid     : std_logic;
 
     -- =========================================================================
     -- Shot trigger
@@ -99,10 +105,15 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_bus_req_wdata      : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_bus_oen_perm       : std_logic;
     signal s_bus_req_burst      : std_logic;
-    signal s_bus_rsp_valid      : std_logic;
-    signal s_bus_rsp_rdata      : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_bus_busy           : std_logic;
     signal s_tick_en            : std_logic;
+
+    -- bus_phy → chip_ctrl AXI-Stream (response)
+    signal s_brsp_axis_tvalid   : std_logic;
+    signal s_brsp_axis_tdata    : std_logic_vector(31 downto 0);
+    signal s_brsp_axis_tkeep    : std_logic_vector(3 downto 0);
+    signal s_brsp_axis_tuser    : std_logic_vector(7 downto 0);
+    signal s_brsp_axis_tready   : std_logic;
 
     -- =========================================================================
     -- bus_phy physical pins
@@ -136,12 +147,17 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_stopdis            : std_logic;
     signal s_alutrigger         : std_logic;
     signal s_puresn             : std_logic;
-    signal s_raw_word           : std_logic_vector(c_DATA_W - 1 downto 0);
-    signal s_raw_word_valid     : std_logic;
-    signal s_ififo_id           : std_logic;
+    -- chip_ctrl raw AXI-Stream outputs
+    signal s_raw_axis_tvalid    : std_logic;
+    signal s_raw_axis_tdata     : std_logic_vector(31 downto 0);
+    signal s_raw_axis_tuser     : std_logic_vector(7 downto 0);
+    signal s_raw_axis_tready    : std_logic := '1';
     signal s_drain_done         : std_logic;
     signal s_shot_seq           : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal s_ctrl_busy          : std_logic;
+    signal s_stop_tdc           : std_logic := '0';
+    signal s_err_drain_timeout  : std_logic;
+    signal s_err_sequence       : std_logic;
 
     -- =========================================================================
     -- TDC-GPX Chip Model: FIFO state
@@ -212,17 +228,33 @@ begin
             i_cmd_start         => s_cmd_start,
             i_cmd_stop          => s_cmd_stop,
             i_cmd_soft_reset    => s_cmd_soft_reset,
+            i_cmd_soft_reset_err => '0',
             i_cmd_cfg_write     => s_cmd_cfg_write,
+            i_cmd_reg_read      => s_cmd_reg_read,
+            i_cmd_reg_write     => s_cmd_reg_write,
+            i_cmd_reg_addr      => s_cmd_reg_addr,
+            i_cmd_reg_wdata     => s_cmd_reg_wdata,
+            o_cmd_reg_rdata     => s_cmd_reg_rdata,
+            o_cmd_reg_rvalid    => s_cmd_reg_rvalid,
+            o_cmd_reg_done      => open,
             i_shot_start        => s_shot_start,
+            i_max_range_clks    => s_cfg.max_range_clks,
+            i_stop_tdc          => s_stop_tdc,
+            i_expected_ififo1   => (others => '0'),  -- TB: 0 = EF-based fallback
+            i_expected_ififo2   => (others => '0'),
             o_bus_req_valid     => s_bus_req_valid,
             o_bus_req_rw        => s_bus_req_rw,
             o_bus_req_addr      => s_bus_req_addr,
             o_bus_req_wdata     => s_bus_req_wdata,
             o_bus_oen_permanent => s_bus_oen_perm,
             o_bus_req_burst     => s_bus_req_burst,
-            i_bus_rsp_valid     => s_bus_rsp_valid,
-            i_bus_rsp_rdata     => s_bus_rsp_rdata,
+            o_bus_ticks_snap    => open,
+            i_s_axis_tvalid     => s_brsp_axis_tvalid,
+            i_s_axis_tdata      => s_brsp_axis_tdata,
+            i_s_axis_tuser      => s_brsp_axis_tuser,
+            o_s_axis_tready     => s_brsp_axis_tready,
             i_bus_busy          => s_bus_busy,
+            i_bus_rsp_pending   => '0',
             i_ef1_sync          => s_ef1_sync,
             i_ef2_sync          => s_ef2_sync,
             i_irflag_sync       => s_irflag_sync,
@@ -232,12 +264,20 @@ begin
             o_stopdis           => s_stopdis,
             o_alutrigger        => s_alutrigger,
             o_puresn            => s_puresn,
-            o_raw_word          => s_raw_word,
-            o_raw_word_valid    => s_raw_word_valid,
-            o_ififo_id          => s_ififo_id,
+            o_m_raw_axis_tvalid => s_raw_axis_tvalid,
+            o_m_raw_axis_tdata  => s_raw_axis_tdata,
+            o_m_raw_axis_tuser  => s_raw_axis_tuser,
+            i_m_raw_axis_tready => s_raw_axis_tready,
             o_drain_done        => s_drain_done,
             o_shot_seq          => s_shot_seq,
-            o_busy              => s_ctrl_busy
+            o_busy              => s_ctrl_busy,
+            o_err_drain_timeout => s_err_drain_timeout,
+            o_err_sequence      => s_err_sequence,
+            o_err_rsp_mismatch  => open,
+            o_err_raw_overflow  => open,
+            o_err_reg_overflow  => open,
+            o_run_timeout       => open,
+            o_run_drain_complete => open
         );
 
     -- =========================================================================
@@ -255,8 +295,11 @@ begin
             i_req_wdata     => s_bus_req_wdata,
             i_oen_permanent => s_bus_oen_perm,
             i_req_burst     => s_bus_req_burst,
-            o_rsp_valid     => s_bus_rsp_valid,
-            o_rsp_rdata     => s_bus_rsp_rdata,
+            o_m_axis_tvalid => s_brsp_axis_tvalid,
+            o_m_axis_tdata  => s_brsp_axis_tdata,
+            o_m_axis_tkeep  => s_brsp_axis_tkeep,
+            o_m_axis_tuser  => s_brsp_axis_tuser,
+            i_m_axis_tready => s_brsp_axis_tready,
             o_busy          => s_bus_busy,
             o_adr           => s_adr,
             o_csn           => s_csn,
@@ -373,11 +416,11 @@ begin
         if rising_edge(s_clk) then
             v_clk_cnt := v_clk_cnt + 1;
 
-            if s_raw_word_valid = '1' then
+            if s_raw_axis_tvalid = '1' then
                 sv_raw_word_cnt <= sv_raw_word_cnt + 1;
                 pr_info("  @" & nat_img(v_clk_cnt)
-                        & " raw_word=0x" & hex_img(s_raw_word)
-                        & " ififo=" & sl_chr(s_ififo_id));
+                        & " raw_word=0x" & hex_img(s_raw_axis_tdata(c_DATA_W - 1 downto 0))
+                        & " ififo=" & sl_chr(s_raw_axis_tuser(0)));
             end if;
 
             if s_drain_done = '1' then
@@ -613,6 +656,13 @@ begin
 
         s_cfg.drain_mode  <= '1';
         s_cfg.n_drain_cap <= to_unsigned(2, 4);  -- 2 × 8 = 16 max reads
+
+        -- Re-arm with new config (snapshot taken at cmd_start)
+        pulse(s_cmd_stop);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+
         fill_fifos(16, 16);
         wait_clk(5);
 
@@ -978,6 +1028,297 @@ begin
                     & nat_img(to_integer(s_shot_seq)), v_fail);
         end if;
 
+        wait_clk(10);
+
+        -- =============================================================
+        -- [11] Bug 5 check: reg read asserts rvalid, reg write does NOT
+        -- =============================================================
+        pr_info("[11] Reg read -> rvalid=1; Reg write -> rvalid stays 0");
+
+        -- Return to IDLE first (test [10] leaves FSM in ARMED)
+        pulse(s_cmd_stop);
+        wait_clk(5);
+
+        -- First: individual reg read (addr 0x08 = read-only status reg)
+        s_cmd_reg_addr  <= x"8";
+        pulse(s_cmd_reg_read);
+        -- Wait for rvalid
+        tb_wait_sig_value(s_clk, s_cmd_reg_rvalid, '1', c_TIMEOUT, v_found);
+        if v_found then
+            pr_pass("[11a] Reg READ -> rvalid asserted");
+        else
+            pr_fail("[11a] Reg READ -> rvalid timeout", v_fail);
+        end if;
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        wait_clk(5);
+
+        -- Second: individual reg write (addr 0x00)
+        s_cmd_reg_addr  <= x"0";
+        s_cmd_reg_wdata <= s_cfg_image(0)(c_DATA_W - 1 downto 0);
+        pulse(s_cmd_reg_write);
+        -- Wait for idle (write completes)
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[11b] Reg WRITE -> busy timeout", v_fail);
+        else
+            -- rvalid should NOT have pulsed during the write
+            -- (we check it's '0' now; it was default-cleared each cycle)
+            if s_cmd_reg_rvalid = '0' then
+                pr_pass("[11b] Reg WRITE -> rvalid stays 0 (no STAT11 pollution)");
+            else
+                pr_fail("[11b] Reg WRITE -> rvalid unexpectedly asserted", v_fail);
+            end if;
+        end if;
+        wait_clk(10);
+
+        -- =============================================================
+        -- [12] Bug 2 check: cmd_stop during drain -> returns to IDLE
+        -- =============================================================
+        pr_info("[12] cmd_stop during drain -> deferred stop, FSM to IDLE");
+
+        fill_fifos(16, 8);
+        wait_clk(5);
+
+        -- ARM
+        pulse(s_cmd_start);
+        wait_clk(2);
+
+        -- Shot
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        -- Assert IrFlag to trigger drain
+        s_irflag_pin <= '1';
+        wait_clk(10);  -- let drain start
+
+        -- Issue cmd_stop DURING drain (FSM should be in ST_DRAIN_*)
+        pulse(s_cmd_stop);
+
+        -- drain_done should still arrive (drain finishes normally)
+        wait_drain_done(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[12] drain_done timeout (stop during drain)", v_fail);
+        else
+            pr_pass("[12] drain_done received despite mid-drain cmd_stop");
+        end if;
+
+        s_irflag_pin <= '0';
+
+        -- Wait for ALU pulse + recovery to complete
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 20);
+
+        -- After deferred stop: FSM should be IDLE (busy='0'),
+        -- and a new cmd_start should work (proving it's not stuck in ARMED)
+        if s_ctrl_busy = '0' then
+            pr_pass("[12] busy='0' after deferred stop");
+        else
+            pr_fail("[12] busy should be '0' after deferred stop", v_fail);
+        end if;
+
+        -- StopDis should be '1' (stop-disable asserted by deferred stop)
+        if s_stopdis = '1' then
+            pr_pass("[12] StopDis='1' (FSM in IDLE, not ARMED)");
+        else
+            pr_fail("[12] StopDis should be '1' if FSM returned to IDLE", v_fail);
+        end if;
+
+        -- Verify we can start a new cycle (proves FSM is in IDLE, not ARMED)
+        fill_fifos(4, 4);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_cnt_snap := sv_raw_word_cnt;
+        wait_drain_done(c_TIMEOUT, v_found);
+        if v_found then
+            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            pr_pass("[12] Post-stop restart: drain_done, words=" & nat_img(v_drain_words));
+        else
+            pr_fail("[12] Post-stop restart: drain_done timeout", v_fail);
+        end if;
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- Stop again cleanly
+        pulse(s_cmd_stop);
+        wait_clk(10);
+
+        -- =============================================================
+        -- [13] cmd_stop during ST_CAPTURE -> graceful drain (Q&A #29 Option A)
+        -- =============================================================
+        pr_info("[13] cmd_stop in ST_CAPTURE -> graceful drain + ALU + recovery -> IDLE");
+
+        -- Fill FIFOs so there's data to drain (graceful mode preserves it)
+        fill_fifos(8, 4);
+        wait_clk(5);
+
+        -- ARM
+        pulse(s_cmd_start);
+        wait_clk(2);
+
+        -- Shot (enters ST_CAPTURE, but IrFlag NOT asserted yet)
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        -- Issue cmd_stop DURING ST_CAPTURE (before IrFlag).
+        -- Graceful policy: latch stop_pending + stopdis, let natural irflag
+        -- drive the normal drain so captured data is preserved. After drain
+        -- + ALU_RECOVERY, stop_pending routes FSM to ST_OFF.
+        pulse(s_cmd_stop);
+        wait_clk(5);
+
+        -- Provide irflag so the current shot drains normally (the chip would
+        -- naturally assert this after its internal processing completes).
+        s_irflag_pin <= '1';
+        wait_clk(10);
+        s_irflag_pin <= '0';
+
+        -- Wait for FSM to complete drain + ALU + recovery.
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[13] capture-stop cleanup timeout", v_fail);
+        end if;
+
+        -- After cleanup: busy='0', StopDis='1' (FSM in IDLE)
+        if s_ctrl_busy = '0' then
+            pr_pass("[13] busy='0' after capture-stop cleanup");
+        else
+            pr_fail("[13] busy should be '0' after capture-stop cleanup", v_fail);
+        end if;
+
+        if s_stopdis = '1' then
+            pr_pass("[13] StopDis='1' (FSM in IDLE after purge)");
+        else
+            pr_fail("[13] StopDis should be '1' after capture-stop", v_fail);
+        end if;
+
+        -- Verify restart works (FSM really is in IDLE)
+        fill_fifos(4, 4);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_cnt_snap := sv_raw_word_cnt;
+        wait_drain_done(c_TIMEOUT, v_found);
+        if v_found then
+            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            pr_pass("[13] Post-capture-stop restart: drain_done, words=" & nat_img(v_drain_words));
+        else
+            pr_fail("[13] Post-capture-stop restart: drain_done timeout", v_fail);
+        end if;
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- Stop cleanly
+        pulse(s_cmd_stop);
+        wait_clk(10);
+
+        -- =============================================================
+        -- [14] cmd_stop in ST_CAPTURE with NO irflag -> fallback watchdog
+        -- (#29 Q&A A graceful stop + fallback)
+        -- =============================================================
+        pr_info("[14] cmd_stop in ST_CAPTURE without irflag -> fallback watchdog");
+
+        fill_fifos(8, 4);
+        wait_clk(5);
+
+        pulse(s_cmd_start);
+        wait_clk(2);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        -- DO NOT raise irflag here — graceful stop latches pending and waits.
+        -- The 16-bit fallback watchdog should fire after ~65535 cycles and
+        -- fall through to the original purge path with timeout_cause "111".
+        pulse(s_cmd_stop);
+
+        -- Long wait: 65535 + drain settle + ALU + recovery margin.
+        wait_ctrl_idle(70000, v_found);
+        if not v_found then
+            pr_fail("[14] fallback watchdog did not complete in 70000 cycles", v_fail);
+        else
+            pr_pass("[14] fallback watchdog recovered FSM to IDLE");
+        end if;
+
+        if s_ctrl_busy = '0' then
+            pr_pass("[14] busy='0' after fallback watchdog");
+        else
+            pr_fail("[14] busy stuck high after fallback watchdog", v_fail);
+        end if;
+
+        -- Verify restart works after fallback recovery
+        fill_fifos(4, 4);
+        wait_clk(5);
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_cnt_snap := sv_raw_word_cnt;
+        wait_drain_done(c_TIMEOUT, v_found);
+        if v_found then
+            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            pr_pass("[14] Post-fallback restart: drain_done, words="
+                    & nat_img(v_drain_words));
+        else
+            pr_fail("[14] Post-fallback restart: drain_done timeout", v_fail);
+        end if;
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        pulse(s_cmd_stop);
+        wait_clk(10);
+
+        -- =============================================================
+        -- [15] chip_reg 1-depth pending queue (Round 3 #20/#37).
+        -- Issue read + write in the SAME cycle: spec says read wins and
+        -- executes first; write is latched into the pending slot and
+        -- automatically processed when chip_reg returns to ST_OFF.
+        -- Verify both transactions complete (read rvalid pulses, then
+        -- FSM returns busy='0' after write finishes).
+        -- =============================================================
+        pr_info("[15] concurrent reg read+write: read first, write queued");
+
+        -- Make sure we are idle at PH_IDLE
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        wait_clk(5);
+
+        -- Same-cycle read + write pulses
+        s_cmd_reg_addr   <= x"8";  -- read target: status/read-only
+        s_cmd_reg_wdata  <= s_cfg_image(0)(c_DATA_W - 1 downto 0);
+        s_cmd_reg_read   <= '1';
+        s_cmd_reg_write  <= '1';
+        wait_clk(1);
+        s_cmd_reg_read   <= '0';
+        s_cmd_reg_write  <= '0';
+
+        -- Read should fire first and pulse rvalid.
+        tb_wait_sig_value(s_clk, s_cmd_reg_rvalid, '1', c_TIMEOUT, v_found);
+        if v_found then
+            pr_pass("[15] concurrent: read executed first (rvalid asserted)");
+        else
+            pr_fail("[15] concurrent: read never fired (rvalid timeout)", v_fail);
+        end if;
+
+        -- Queued write should then execute; FSM returns to idle when done.
+        wait_clk(2);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if v_found then
+            pr_pass("[15] concurrent: queued write completed (FSM returned to idle)");
+        else
+            pr_fail("[15] concurrent: queued write did not complete", v_fail);
+        end if;
         wait_clk(10);
 
         -- =============================================================
