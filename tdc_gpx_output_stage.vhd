@@ -59,7 +59,12 @@ entity tdc_gpx_output_stage is
 
         -- Control from face_seq
         i_shot_start_gated   : in  std_logic;
-        i_pipeline_abort     : in  std_logic;
+        i_pipeline_abort     : in  std_logic;  -- legacy global abort
+        -- #22 Sprint 3: per-slope abort ports. Default '0' preserves legacy
+        -- "global abort only" behavior for existing instantiations. When
+        -- driven separately, rise/fall pipelines abort independently.
+        i_pipeline_abort_rise : in  std_logic := '0';
+        i_pipeline_abort_fall : in  std_logic := '0';
         i_face_start_gated   : in  std_logic;
 
         -- Configuration (latched at face_start by caller)
@@ -157,13 +162,24 @@ architecture rtl of tdc_gpx_output_stage is
     signal s_face_fall_buf_tlast  : std_logic;
     signal s_face_fall_buf_tready : std_logic;
 
-    -- FIFO reset: active-low, gated by pipeline_abort for flush
-    signal s_fifo_rst_n : std_logic;
+    -- FIFO reset: active-low, per-slope (#22 Sprint 3)
+    signal s_fifo_rst_n_rise : std_logic;
+    signal s_fifo_rst_n_fall : std_logic;
+
+    -- Effective abort per slope (global OR slope-specific)
+    signal s_abort_rise : std_logic;
+    signal s_abort_fall : std_logic;
 
 begin
 
-    -- FIFO flush: pipeline_abort drives reset (active-low)
-    s_fifo_rst_n <= i_rst_n and not i_pipeline_abort;
+    -- Effective per-slope abort: global always aborts both; slope-specific
+    -- aborts independently once Sprint 3 wires them.
+    s_abort_rise <= i_pipeline_abort or i_pipeline_abort_rise;
+    s_abort_fall <= i_pipeline_abort or i_pipeline_abort_fall;
+
+    -- FIFO flush: each slope has its own reset driven by its own abort.
+    s_fifo_rst_n_rise <= i_rst_n and not s_abort_rise;
+    s_fifo_rst_n_fall <= i_rst_n and not s_abort_fall;
 
     -- =========================================================================
     -- Rising face assembler
@@ -184,7 +200,7 @@ begin
             i_s_axis_tlast     => i_cell_rise_tlast,
             o_s_axis_tready    => o_cell_rise_tready,
             i_shot_start       => i_shot_start_gated,
-            i_abort            => i_pipeline_abort,
+            i_abort            => s_abort_rise,
             i_active_chip_mask => i_face_active_mask,
             i_stops_per_chip   => i_face_stops_per_chip,
             i_max_hits_cfg     => i_max_hits_cfg,
@@ -219,7 +235,7 @@ begin
             i_s_axis_tlast     => i_cell_fall_tlast,
             o_s_axis_tready    => o_cell_fall_tready,
             i_shot_start       => i_shot_start_gated,
-            i_abort            => i_pipeline_abort,
+            i_abort            => s_abort_fall,
             i_active_chip_mask => i_face_active_mask,
             i_stops_per_chip   => i_face_stops_per_chip,
             i_max_hits_cfg     => i_max_hits_cfg,
@@ -255,7 +271,7 @@ begin
         )
         port map (
             s_aclk          => i_clk,
-            s_aresetn       => s_fifo_rst_n,
+            s_aresetn       => s_fifo_rst_n_rise,
             s_axis_tvalid   => s_face_tvalid,
             s_axis_tready   => s_face_tready,
             s_axis_tdata    => s_face_tdata,
@@ -299,7 +315,7 @@ begin
         )
         port map (
             s_aclk          => i_clk,
-            s_aresetn       => s_fifo_rst_n,
+            s_aresetn       => s_fifo_rst_n_fall,
             s_axis_tvalid   => s_face_fall_tvalid,
             s_axis_tready   => s_face_fall_tready,
             s_axis_tdata    => s_face_fall_tdata,
@@ -334,7 +350,7 @@ begin
             i_clk               => i_clk,
             i_rst_n             => i_rst_n,
             i_face_start        => i_face_start_gated,
-            i_face_abort        => i_pipeline_abort,
+            i_face_abort        => s_abort_rise,
             i_cfg               => i_cfg_face,
             i_vdma_frame_id     => i_frame_id,
             i_face_id           => i_face_id,
@@ -371,7 +387,7 @@ begin
             i_clk               => i_clk,
             i_rst_n             => i_rst_n,
             i_face_start        => i_face_start_gated,
-            i_face_abort        => i_pipeline_abort,
+            i_face_abort        => s_abort_fall,
             i_cfg               => i_cfg_face,
             i_vdma_frame_id     => i_frame_id,
             i_face_id           => i_face_id,

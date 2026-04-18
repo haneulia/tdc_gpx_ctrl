@@ -460,20 +460,29 @@ begin
         end if;
     end process;
 
-    -- Pipeline abort (#22 Sprint 1: rise/fall coupled; Sprint 3 will separate)
+    -- Pipeline abort (#22 Sprint 3: slope-independent)
     --
-    -- Current (Sprint 1): both slopes see the combined abort so existing
-    -- behavior is byte-for-byte identical.  Sprint 3 will change to:
-    --   s_pipeline_abort_rise <= i_face_abort or i_cmd_stop or i_cmd_soft_reset;
-    --   s_pipeline_abort_fall <= i_face_abort or i_face_fall_abort
-    --                             or i_cmd_stop or i_cmd_soft_reset;
-    -- Rise propagates to fall (rise is the primary lane); fall does NOT
-    -- propagate to rise (fall-only abort keeps rise alive).
-    s_pipeline_abort_rise <= i_face_abort or i_face_fall_abort
-                             or i_cmd_stop or i_cmd_soft_reset;
-    s_pipeline_abort_fall <= i_face_abort or i_face_fall_abort
-                             or i_cmd_stop or i_cmd_soft_reset;
-    s_pipeline_abort      <= s_pipeline_abort_rise;  -- legacy alias
+    -- Rise is the PRIMARY data lane (stop pulse count + timing). Fall is
+    -- SECONDARY (pulse-width verification, optional). Rise abort always
+    -- kills fall too (rise gone → fall has nothing to correlate with).
+    -- Fall abort does NOT kill rise (rise stands alone as valid data).
+    --
+    --   s_pipeline_abort_rise : triggered only by rise-side or system faults
+    --   s_pipeline_abort_fall : triggered by rise abort OR fall abort
+    --
+    -- Each slope has its own dedicated VDMA channel downstream, so a
+    -- fall-only abort leaves the rise VDMA stream intact; SW consumes
+    -- rise and fall from separate memory addresses per Q&A decision.
+    -- Frame metadata carries the per-slope abort status for SW
+    -- correlation.
+    s_pipeline_abort_rise <= i_face_abort  -- rise face_assembler overrun
+                             or i_cmd_stop
+                             or i_cmd_soft_reset;
+    s_pipeline_abort_fall <= i_face_abort       -- rise abort kills fall too
+                             or i_face_fall_abort
+                             or i_cmd_stop
+                             or i_cmd_soft_reset;
+    s_pipeline_abort      <= s_pipeline_abort_rise;  -- legacy alias = rise
 
     -- =========================================================================
     -- Face start delay + shot deferral (absorbed from top p_face_start_delay)

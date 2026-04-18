@@ -282,6 +282,11 @@ package tdc_gpx_pkg is
         reg_arb_timeout     : std_logic;  -- cmd_arb register access timeout (sticky)
         shot_drop_any       : std_logic;  -- OR of all cell_builder shot_dropped (rise+fall)
         slice_timeout_any   : std_logic;  -- OR of all cell_builder slice_timeout (rise+fall)
+        -- #22 Sprint 3 — per-slope overrun (rise is primary; fall alone may
+        -- abort without killing rise's dedicated VDMA stream). SW correlates
+        -- the frames per-memory-address with these fields.
+        rise_overrun        : std_logic;  -- rise face_assembler overrun
+        fall_overrun        : std_logic;  -- fall face_assembler overrun only
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -305,7 +310,9 @@ package tdc_gpx_pkg is
         run_timeout_mask    => (others => '0'),
         reg_arb_timeout     => '0',
         shot_drop_any       => '0',
-        slice_timeout_any   => '0'
+        slice_timeout_any   => '0',
+        rise_overrun        => '0',
+        fall_overrun        => '0'
     );
 
     -- =========================================================================

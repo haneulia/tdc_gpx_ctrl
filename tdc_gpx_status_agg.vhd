@@ -173,7 +173,10 @@ begin
                           or i_reg_outstanding = '1'
                      else '0';
 
+    -- Combined + per-slope overrun flags (#22 Sprint 3)
     o_status.pipeline_overrun <= i_shot_overrun or i_shot_fall_overrun;
+    o_status.rise_overrun     <= i_shot_overrun;
+    o_status.fall_overrun     <= i_shot_fall_overrun;
 
     o_timestamp       <= s_timestamp_r;
     o_error_cycle_count <= s_error_count_r;

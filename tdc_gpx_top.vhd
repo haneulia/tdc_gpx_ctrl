@@ -585,7 +585,9 @@ begin
             o_cell_fall_tready   => s_cell_fall_tready,
             -- Control from face_seq
             i_shot_start_gated   => s_shot_start_gated,
-            i_pipeline_abort     => s_pipeline_abort,
+            i_pipeline_abort     => s_pipeline_abort,       -- legacy global
+            i_pipeline_abort_rise => s_pipeline_abort_rise,  -- #22 Sprint 3
+            i_pipeline_abort_fall => s_pipeline_abort_fall,  -- #22 Sprint 3
             i_face_start_gated   => s_face_start_gated,
             -- Configuration (latched at face_start)
             i_face_active_mask   => s_face_active_mask_r,
