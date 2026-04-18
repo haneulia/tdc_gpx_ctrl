@@ -283,6 +283,18 @@ begin
                         s_state_r   <= ST_OFF;
 
                 end case;
+
+                -- Busy-state cfg_write_req absorb (Round 5 #14):
+                -- The ST_OFF branch handles the start+cfg_write_req coincidence
+                -- above. Any cfg_write_req arriving while we are NOT in ST_OFF
+                -- would otherwise be silently lost; latch it so the SW pulse
+                -- is consumed when the FSM next returns to ST_OFF. 1-depth
+                -- (collapsing) — multiple pulses during one busy window are
+                -- coalesced into a single post-init cfg_write, which matches
+                -- SW expectations since all pulses target the same snapshot.
+                if s_state_r /= ST_OFF and i_cfg_write_req = '1' then
+                    s_cfg_write_pending_r <= '1';
+                end if;
             end if;
         end if;
     end process p_fsm;
