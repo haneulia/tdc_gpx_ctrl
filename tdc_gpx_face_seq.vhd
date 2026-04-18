@@ -152,7 +152,15 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_all_shots_fired   : std_logic;
     signal s_face_closing      : std_logic;
 
-    signal s_packet_start      : std_logic := '0';
+    -- #30 (Round 5): packet_start is now registered.
+    -- s_packet_start_comb = combinational evaluation of all gating conditions.
+    -- s_packet_start_r    = one-shot registered version used by every internal
+    --                       consumer AND the external output o_packet_start.
+    -- Cost: +1 cycle latency from gating-conditions-met to state transition /
+    -- latches / external pulse. Benefit: glitch-proof consumption; every
+    -- consumer sees a clean flip-flop output aligned to the clock edge.
+    signal s_packet_start_comb : std_logic := '0';
+    signal s_packet_start_r    : std_logic := '0';
 
 begin
 
@@ -227,7 +235,7 @@ begin
                     when ST_WAIT_SHOT =>
                         if i_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
-                        elsif s_packet_start = '1' then
+                        elsif s_packet_start_r = '1' then
                             s_face_state_r <= ST_IN_FACE;
                         end if;
 
@@ -276,7 +284,7 @@ begin
     p_face_shot_cnt : process(i_clk)
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' or s_packet_start = '1'
+            if i_rst_n = '0' or s_packet_start_r = '1'
                or s_frame_done_both = '1' then
                 s_face_shot_cnt_r <= (others => '0');
             elsif o_shot_start_gated = '1' then
@@ -297,7 +305,7 @@ begin
             if i_rst_n = '0' then
                 s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
                 s_hsize_bytes_r   <= (others => '0');
-            elsif s_packet_start = '1' then
+            elsif s_packet_start_r = '1' then
                 v_active_cnt := fn_count_ones(i_cfg.active_chip_mask);
                 v_rows := v_active_cnt * to_integer(i_cfg.stops_per_chip);
                 if v_rows < 2 then v_rows := 2; end if;
@@ -328,7 +336,7 @@ begin
                 s_face_cols_per_face_r  <= to_unsigned(1, 16);
                 s_face_n_faces_r        <= to_unsigned(1, 4);
                 s_cfg_face_r            <= i_cfg;
-            elsif s_packet_start = '1' then
+            elsif s_packet_start_r = '1' then
                 s_face_stops_per_chip_r <= i_cfg.stops_per_chip;
                 s_face_active_mask_r    <= i_cfg.active_chip_mask;
                 s_face_cols_per_face_r  <= i_cfg.cols_per_face;
@@ -344,7 +352,7 @@ begin
     p_frame_done_both : process(i_clk)
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' or s_packet_start = '1' then
+            if i_rst_n = '0' or s_packet_start_r = '1' then
                 s_frame_rise_done_r <= '0';
                 s_frame_fall_done_r <= '0';
             else
@@ -379,7 +387,7 @@ begin
     -- =========================================================================
     o_cmd_start_accepted  <= s_cmd_start_accepted_r;
     o_face_state_idle     <= '1' when s_face_state_r = ST_IDLE else '0';
-    o_packet_start        <= s_packet_start;
+    o_packet_start        <= s_packet_start_r;
     o_face_closing        <= s_face_closing;
     o_face_id             <= s_face_id_r;
     o_frame_id            <= s_frame_id_r;
@@ -395,28 +403,43 @@ begin
     o_cfg_face            <= s_cfg_face_r;
 
     -- =========================================================================
-    -- Packet start (combinational, from internal FSM state)
+    -- Packet start — combinational evaluation + registered one-shot (#30).
     --
-    -- Review item #30 (deferred):
-    --   This combinational definition has ~6 downstream consumers inside this
-    --   module (state transition at ST_WAIT_SHOT, frame_done_both resets,
-    --   shot deferral, s_face_start_r register input, assertion check).
-    --   Converting to a registered one-shot eliminates combinational glitch
-    --   risk but shifts all consumers by 1 cycle — requires formal proof of
-    --   equivalence plus regression on timing-sensitive cases (same-cycle
-    --   hdr_idle ↔ packet_start handshake). Scheduled for a dedicated
-    --   sprint; until then, assertions guard against glitch-induced
-    --   double-fire or illegal-state triggers.
+    -- s_packet_start_comb : purely combinational gating condition — visible
+    --   within one cycle but subject to short glitches during input
+    --   transitions (hdr_idle toggle, abort quiesce edge, etc.).
+    --
+    -- s_packet_start_r    : flip-flop captured view used by every internal
+    --   consumer (FSM transition, geometry / face_cfg latches, frame_done
+    --   combiner reset, shot deferral, s_face_start_r re-register, output
+    --   port). One cycle later than _comb, but glitch-free.
+    --
+    -- Assertion below guards the legal state (must be ST_WAIT_SHOT). The
+    -- registered version is guaranteed to still match ST_WAIT_SHOT in the
+    -- capture cycle because the state transition to ST_IN_FACE is driven by
+    -- s_packet_start_r itself (which hasn't fired yet when _comb first
+    -- rises).
     -- =========================================================================
-    s_packet_start <= '1' when s_face_state_r = ST_WAIT_SHOT
-                               and (i_shot_start_raw = '1' or s_shot_deferred_r = '1')
-                               and i_cmd_stop = '0'
-                               and i_cmd_soft_reset = '0'
-                               and s_pipeline_abort = '0'
-                               and s_abort_quiesce_r = '0'
-                               and i_hdr_idle = '1'
-                               and i_hdr_fall_idle = '1'
-                     else '0';
+    s_packet_start_comb <= '1' when s_face_state_r = ST_WAIT_SHOT
+                                    and (i_shot_start_raw = '1' or s_shot_deferred_r = '1')
+                                    and i_cmd_stop = '0'
+                                    and i_cmd_soft_reset = '0'
+                                    and s_pipeline_abort = '0'
+                                    and s_abort_quiesce_r = '0'
+                                    and i_hdr_idle = '1'
+                                    and i_hdr_fall_idle = '1'
+                          else '0';
+
+    p_packet_start_reg : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_cmd_soft_reset = '1' then
+                s_packet_start_r <= '0';
+            else
+                s_packet_start_r <= s_packet_start_comb;
+            end if;
+        end if;
+    end process;
 
     -- Pipeline abort
     s_pipeline_abort <= i_face_abort or i_face_fall_abort
@@ -440,22 +463,22 @@ begin
                 s_shot_pending_r  <= '0';
                 s_shot_deferred_r <= '0';
             else
-                s_face_start_r <= s_packet_start;
+                s_face_start_r <= s_packet_start_r;
 
                 -- synthesis translate_off
-                assert not (s_packet_start = '1' and s_face_state_r /= ST_WAIT_SHOT)
-                    report "face_seq: packet_start while not ST_WAIT_SHOT"
+                assert not (s_packet_start_r = '1' and s_face_state_r /= ST_WAIT_SHOT)
+                    report "face_seq: packet_start_r while not ST_WAIT_SHOT"
                     severity error;
                 -- synthesis translate_on
 
-                if s_packet_start = '1' then
+                if s_packet_start_r = '1' then
                     s_face_active_r <= '1';
                 elsif s_frame_done_both = '1' then
                     s_face_active_r <= '0';
                 end if;
 
                 -- Shot deferral
-                if s_packet_start = '1' then
+                if s_packet_start_r = '1' then
                     if s_shot_deferred_r = '1' and i_shot_start_raw = '1' then
                         s_shot_deferred_r <= '1';
                     else
@@ -463,7 +486,7 @@ begin
                     end if;
                 elsif i_shot_start_raw = '1' and s_shot_deferred_r = '0' then
                     if (s_face_state_r = ST_IN_FACE and s_face_closing = '1')
-                       or (s_face_state_r = ST_WAIT_SHOT and s_packet_start = '0') then
+                       or (s_face_state_r = ST_WAIT_SHOT and s_packet_start_r = '0') then
                         s_shot_deferred_r <= '1';
                     end if;
                 elsif i_shot_start_raw = '1' and s_shot_deferred_r = '1' then
