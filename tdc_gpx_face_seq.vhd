@@ -77,7 +77,9 @@ entity tdc_gpx_face_seq is
         o_face_start_gated   : out std_logic;   -- stop/reset gated face_start
         o_shot_start_gated   : out std_logic;
         o_face_closing       : out std_logic;
-        o_pipeline_abort     : out std_logic;
+        o_pipeline_abort     : out std_logic;  -- legacy alias = rise
+        o_pipeline_abort_rise : out std_logic;
+        o_pipeline_abort_fall : out std_logic;
         o_shot_drop_cnt      : out unsigned(15 downto 0);
         o_cfg_rejected       : out std_logic;  -- 1-clk pulse: cmd_start rejected due to invalid config
         o_shot_start_per_chip : out std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -569,7 +571,9 @@ begin
                                             and s_pipeline_abort = '0' and s_abort_quiesce_r = '0'
                           else '0';
     o_shot_start_gated <= s_shot_start_gated;
-    o_pipeline_abort   <= s_pipeline_abort;
+    o_pipeline_abort      <= s_pipeline_abort;
+    o_pipeline_abort_rise <= s_pipeline_abort_rise;
+    o_pipeline_abort_fall <= s_pipeline_abort_fall;
     o_shot_drop_cnt    <= s_shot_drop_cnt_r;
     o_cfg_rejected     <= s_cfg_rejected_r;
 

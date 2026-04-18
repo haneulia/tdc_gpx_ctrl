@@ -268,6 +268,12 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_start_gated       : std_logic;
     signal s_face_start_gated       : std_logic;
     signal s_pipeline_abort         : std_logic;
+    -- #22 Sprint 2: per-slope abort signals for slope-independent pipelines.
+    -- Sprint 2 keeps both equal to the global pipeline_abort (legacy
+    -- behavior). Sprint 3 will drive them from face_seq's separate rise/fall
+    -- outputs so a fall-only abort no longer kills the rise side.
+    signal s_pipeline_abort_rise    : std_logic;
+    signal s_pipeline_abort_fall    : std_logic;
     signal s_shot_start_per_chip    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_face_id_r              : unsigned(7 downto 0);
     signal s_frame_id_r             : unsigned(31 downto 0);
@@ -520,7 +526,9 @@ begin
             o_evt_sk_tready         => s_evt_sk_tready,
             -- Control / Config
             i_shot_start_per_chip   => s_shot_start_per_chip,
-            i_abort                 => s_pipeline_abort,
+            i_abort                 => s_pipeline_abort,       -- global (legacy)
+            i_abort_rise            => s_pipeline_abort_rise,  -- #22 Sprint 2
+            i_abort_fall            => s_pipeline_abort_fall,  -- #22 Sprint 2
             i_face_stops_per_chip   => s_face_stops_per_chip_r,
             i_max_hits_cfg          => s_cfg.max_hits_cfg,
             -- Rising cell output
@@ -674,6 +682,8 @@ begin
             o_shot_start_gated     => s_shot_start_gated,
             o_face_closing         => s_face_closing,
             o_pipeline_abort       => s_pipeline_abort,
+            o_pipeline_abort_rise  => s_pipeline_abort_rise,
+            o_pipeline_abort_fall  => s_pipeline_abort_fall,
             o_shot_drop_cnt        => s_shot_drop_cnt_r,
             o_cfg_rejected         => s_cfg_rejected_r,
             o_shot_start_per_chip  => s_shot_start_per_chip,

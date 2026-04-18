@@ -33,7 +33,13 @@ entity tdc_gpx_cell_pipe is
 
         -- Control / Config
         i_shot_start_per_chip   : in  std_logic_vector(c_N_CHIPS-1 downto 0);
-        i_abort                 : in  std_logic;   -- pipeline abort: flush all state
+        i_abort                 : in  std_logic;   -- legacy global abort (default)
+        -- #22 Sprint 2: per-slope abort ports. Tie to i_abort if caller wants
+        -- legacy coupling; drive separately when slope-independence is
+        -- activated (Sprint 3). Defaults to i_abort via '0'-default so
+        -- existing instantiations keep compiling.
+        i_abort_rise            : in  std_logic := '0';
+        i_abort_fall            : in  std_logic := '0';
         i_face_stops_per_chip   : in  unsigned(3 downto 0);
         i_max_hits_cfg          : in  unsigned(2 downto 0);
 
@@ -96,6 +102,13 @@ architecture rtl of tdc_gpx_cell_pipe is
     signal s_rise_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_fall_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+    -- #22 Sprint 2: effective abort per slope.
+    -- Global i_abort always forces abort on both slopes; additionally
+    -- i_abort_rise / i_abort_fall allow slope-independent abort once the
+    -- upstream wiring starts driving them (Sprint 3).
+    signal s_abort_rise  : std_logic;
+    signal s_abort_fall  : std_logic;
+
     -- Registered tready for 200MHz timing closure.
     -- Upstream skid buffer (u_sk_evt in decode_pipe) absorbs 1-cycle latency.
     signal s_can_accept_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
@@ -111,6 +124,10 @@ begin
     -- Per-chip tready: for drain_done beats, both rise+fall must be ready.
     -- For hit beats, only the target slope's builder must be ready.
     ---------------------------------------------------------------------------
+
+    -- Effective per-slope abort (Sprint 2): global takes priority, additive OR
+    s_abort_rise <= i_abort or i_abort_rise;
+    s_abort_fall <= i_abort or i_abort_fall;
 
     -- Per-chip: can this chip's demux accept new input?
     -- drain_done goes to both → need both ready
@@ -224,7 +241,7 @@ begin
                 i_s_axis_tuser      => s_rise_tuser_r(i),
                 o_s_axis_tready     => s_rise_tready(i),
                 i_shot_start        => i_shot_start_per_chip(i),
-                i_abort             => i_abort,
+                i_abort             => s_abort_rise,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
                 o_m_axis_tdata      => s_cell_rise_tdata(i),
@@ -251,7 +268,7 @@ begin
                 i_s_axis_tuser      => s_fall_tuser_r(i),
                 o_s_axis_tready     => s_fall_tready(i),
                 i_shot_start        => i_shot_start_per_chip(i),
-                i_abort             => i_abort,
+                i_abort             => s_abort_fall,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
                 o_m_axis_tdata      => s_cell_fall_tdata(i),
