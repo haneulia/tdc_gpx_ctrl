@@ -222,21 +222,37 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_overrun_drop : std_logic;  -- chip_run sticky: overrun dropped bus response
 
     -- =========================================================================
-    -- Raw AXI-Stream 2-deep holding register (skid pattern, tready handshake)
-    -- Slot 0 = output register, Slot 1 = skid (overflow) register.
-    -- Provides 1-cycle backpressure absorption so chip_run burst is less
-    -- sensitive to downstream stalls.
+    -- Raw AXI-Stream N-deep holding FIFO (slot 0 = output, slot N-1 = tail)
+    -- Slot 0 drives the output; new beats enqueue at the first empty slot.
+    -- Provides (N-1) cycles of backpressure absorption so chip_run's burst
+    -- response path is insensitive to short downstream stalls.
+    --
+    -- Depth sizing (Round 5 #3/#4):
+    --   Backpressure to chip_run (s_raw_hold_busy) is registered → 1-cycle
+    --   late. chip_run can still emit 1 more beat after busy deasserts while
+    --   the registered value is stale. For raw beats alone, depth=2 would be
+    --   enough. But control beats (drain_done, ififo1_done) share the same
+    --   path and can be inserted by ST_DRAIN_CHECK between bus responses,
+    --   creating a worst-case 3-beat burst. Depth=3 absorbs this cleanly so
+    --   no control beat is ever dropped by the raw-path buffer.
     -- =========================================================================
-    signal s_raw_hold_valid_r : std_logic := '0';
-    signal s_raw_hold_tdata_r : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_raw_hold_tuser_r : std_logic_vector(7 downto 0)  := (others => '0');
-    signal s_raw_hold_drain_r : std_logic := '0';
-    -- Skid slot (overflow buffer)
-    signal s_raw_skid_valid_r : std_logic := '0';
-    signal s_raw_skid_tdata_r : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_raw_skid_tuser_r : std_logic_vector(7 downto 0)  := (others => '0');
-    signal s_raw_skid_drain_r : std_logic := '0';
-    signal s_raw_hold_busy    : std_logic;  -- backpressure to chip_run
+    constant c_RAW_FIFO_DEPTH : natural := 3;
+
+    type t_raw_entry is record
+        valid : std_logic;
+        tdata : std_logic_vector(31 downto 0);
+        tuser : std_logic_vector(7 downto 0);
+        drain : std_logic;
+    end record;
+    constant c_RAW_ENTRY_EMPTY : t_raw_entry := (
+        valid => '0',
+        tdata => (others => '0'),
+        tuser => (others => '0'),
+        drain => '0'
+    );
+    type t_raw_fifo is array (0 to c_RAW_FIFO_DEPTH - 1) of t_raw_entry;
+    signal s_raw_fifo_r    : t_raw_fifo := (others => c_RAW_ENTRY_EMPTY);
+    signal s_raw_hold_busy : std_logic;  -- backpressure to chip_run (all slots full)
 
     -- =========================================================================
     -- Sub-FSM signals: chip_reg
@@ -713,27 +729,19 @@ begin
     o_puresn         <= s_init_puresn;
     o_alutrigger     <= s_run_alutrigger;
 
-    -- AXI-Stream raw word: 2-deep skid register with tready handshake.
-    -- Slot 0 (hold) = output register. Slot 1 (skid) = overflow buffer.
-    -- chip_run pulses are latched; if hold is busy, skid absorbs 1 beat.
-    p_raw_hold : process(i_clk)
-        variable v_new_valid       : std_logic;
-        variable v_new_tdata       : std_logic_vector(31 downto 0);
-        variable v_new_tuser       : std_logic_vector(7 downto 0);
-        variable v_new_drain       : std_logic;
-        variable v_hold_next_valid : std_logic;
-        variable v_skid_next_valid : std_logic;
+    -- AXI-Stream raw word: N-deep shift-register FIFO with tready handshake.
+    -- Slot 0 drives the output; on accept, all valid entries shift down one
+    -- slot. New beats from chip_run enqueue at the first empty slot.
+    -- Same-cycle consume + enqueue is lossless because Step 1 (consume) feeds
+    -- Step 2 (enqueue) through a variable snapshot.
+    p_raw_fifo : process(i_clk)
+        variable v_new  : t_raw_entry;
+        variable v_fifo : t_raw_fifo;
+        variable v_placed : boolean;
     begin
         if rising_edge(i_clk) then
             if s_sub_rst_n = '0' then
-                s_raw_hold_valid_r <= '0';
-                s_raw_hold_tdata_r <= (others => '0');
-                s_raw_hold_tuser_r <= (others => '0');
-                s_raw_hold_drain_r <= '0';
-                s_raw_skid_valid_r <= '0';
-                s_raw_skid_tdata_r <= (others => '0');
-                s_raw_skid_tuser_r <= (others => '0');
-                s_raw_skid_drain_r <= '0';
+                s_raw_fifo_r <= (others => c_RAW_ENTRY_EMPTY);
                 s_err_raw_overflow_r <= '0';
             else
                 -- Fold chip_run's own overrun-drop sticky into the unified
@@ -742,81 +750,62 @@ begin
                 if s_run_overrun_drop = '1' then
                     s_err_raw_overflow_r <= '1';
                 end if;
-                -- Capture new beat from chip_run
-                v_new_valid := '0';
-                v_new_tdata := (others => '0');
-                v_new_tuser := (others => '0');
-                v_new_drain := '0';
+
+                -- Capture new beat from chip_run (at most one per cycle)
+                v_new := c_RAW_ENTRY_EMPTY;
                 if s_run_raw_valid = '1' then
-                    v_new_valid := '1';
-                    v_new_tdata(g_BUS_DATA_WIDTH - 1 downto 0) := s_run_raw_word;
-                    v_new_tuser := "0000000" & s_run_ififo_id;
+                    v_new.valid := '1';
+                    v_new.tdata(g_BUS_DATA_WIDTH - 1 downto 0) := s_run_raw_word;
+                    v_new.tuser := "0000000" & s_run_ififo_id;
                 elsif s_run_drain_done = '1' or s_run_ififo1_beat = '1' then
-                    v_new_valid := '1';
-                    v_new_tuser := '1' & "000000" & s_run_ififo_id;
-                    v_new_drain := s_run_drain_done;
+                    v_new.valid := '1';
+                    v_new.tuser := '1' & "000000" & s_run_ififo_id;
+                    v_new.drain := s_run_drain_done;
                 end if;
 
-                -- Variable-based next-state to avoid VHDL signal-update ordering issues.
-                -- This ensures same-cycle consume + promote + enqueue is lossless.
-                v_hold_next_valid := s_raw_hold_valid_r;
-                v_skid_next_valid := s_raw_skid_valid_r;
+                -- Snapshot current fifo into a variable so Step 1 feeds Step 2.
+                v_fifo := s_raw_fifo_r;
 
-                -- Step 1: consume hold on downstream accept
-                if s_raw_hold_valid_r = '1' and i_m_raw_axis_tready = '1' then
-                    if s_raw_skid_valid_r = '1' then
-                        -- Promote skid to hold
-                        s_raw_hold_tdata_r <= s_raw_skid_tdata_r;
-                        s_raw_hold_tuser_r <= s_raw_skid_tuser_r;
-                        s_raw_hold_drain_r <= s_raw_skid_drain_r;
-                        v_hold_next_valid := '1';  -- still valid (promoted)
-                        v_skid_next_valid := '0';  -- skid now free
-                    else
-                        s_raw_hold_drain_r <= '0';
-                        v_hold_next_valid := '0';  -- hold now free
-                    end if;
+                -- Step 1: consume slot 0 on downstream accept, shift all down.
+                if v_fifo(0).valid = '1' and i_m_raw_axis_tready = '1' then
+                    for i in 0 to c_RAW_FIFO_DEPTH - 2 loop
+                        v_fifo(i) := v_fifo(i + 1);
+                    end loop;
+                    v_fifo(c_RAW_FIFO_DEPTH - 1) := c_RAW_ENTRY_EMPTY;
                 end if;
 
-                -- Step 2: enqueue new beat using next-state variables
-                if v_new_valid = '1' then
-                    if v_hold_next_valid = '0' then
-                        s_raw_hold_valid_r <= '1';
-                        s_raw_hold_tdata_r <= v_new_tdata;
-                        s_raw_hold_tuser_r <= v_new_tuser;
-                        s_raw_hold_drain_r <= v_new_drain;
-                        v_hold_next_valid := '1';
-                    elsif v_skid_next_valid = '0' then
-                        s_raw_skid_valid_r <= '1';
-                        s_raw_skid_tdata_r <= v_new_tdata;
-                        s_raw_skid_tuser_r <= v_new_tuser;
-                        s_raw_skid_drain_r <= v_new_drain;
-                        v_skid_next_valid := '1';
-                    else
-                        -- Both hold+skid full: beat is dropped. This should not
-                        -- happen given the 1-cycle-late busy backpressure plus
-                        -- 2-deep absorption, but if it does (e.g. control beat
-                        -- inserted during worst-case concurrency), flag it so
-                        -- SW can see the loss instead of corrupting silently.
+                -- Step 2: enqueue new beat at the first empty slot (from head).
+                if v_new.valid = '1' then
+                    v_placed := false;
+                    for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
+                        if not v_placed and v_fifo(i).valid = '0' then
+                            v_fifo(i) := v_new;
+                            v_placed := true;
+                        end if;
+                    end loop;
+                    if not v_placed then
+                        -- All slots full: beat dropped. With depth=3 and
+                        -- 1-cycle-late busy backpressure, this should not
+                        -- occur in practice; flag it so SW can see the loss
+                        -- instead of corrupting silently.
                         s_err_raw_overflow_r <= '1';
                         -- synthesis translate_off
                         assert false
-                            report "chip_ctrl: raw beat DROPPED (hold+skid full, drain=" &
-                                   std_logic'image(v_new_drain) & ")"
+                            report "chip_ctrl: raw beat DROPPED (all slots full, drain=" &
+                                   std_logic'image(v_new.drain) & ")"
                             severity error;
                         -- synthesis translate_on
                     end if;
                 end if;
 
-                -- Commit valid flags
-                s_raw_hold_valid_r <= v_hold_next_valid;
-                s_raw_skid_valid_r <= v_skid_next_valid;
+                s_raw_fifo_r <= v_fifo;
             end if;
         end if;
-    end process p_raw_hold;
+    end process p_raw_fifo;
 
-    o_m_raw_axis_tvalid <= s_raw_hold_valid_r;
-    o_m_raw_axis_tdata  <= s_raw_hold_tdata_r;
-    o_m_raw_axis_tuser  <= s_raw_hold_tuser_r;
+    o_m_raw_axis_tvalid <= s_raw_fifo_r(0).valid;
+    o_m_raw_axis_tdata  <= s_raw_fifo_r(0).tdata;
+    o_m_raw_axis_tuser  <= s_raw_fifo_r(0).tuser;
 
     -- o_drain_done semantic (#27):
     --   Pulses when the final drain-done control beat HANDSHAKES to
@@ -827,18 +816,23 @@ begin
     --   Upstream modules (face_seq, err_handler, status_agg) consuming this
     --   pulse must interpret it as "chip_run's drain_done beat was accepted
     --   by the raw-path consumer", not as "chip_run exited the drain state".
-    o_drain_done        <= s_raw_hold_drain_r and s_raw_hold_valid_r and i_m_raw_axis_tready;
+    o_drain_done        <= s_raw_fifo_r(0).drain and s_raw_fifo_r(0).valid
+                           and i_m_raw_axis_tready;
 
     -- Backpressure: registered for 200MHz timing closure.
-    -- 1-cycle late busy is safe because 2-deep hold+skid absorbs the delay.
+    -- 1-cycle late busy is safe because depth > 1 slots absorb the delay.
     p_raw_busy_reg : process(i_clk)
+        variable v_all_full : std_logic;
     begin
         if rising_edge(i_clk) then
             if s_sub_rst_n = '0' then
                 s_raw_hold_busy <= '0';
             else
-                s_raw_hold_busy <= s_raw_hold_valid_r and s_raw_skid_valid_r
-                                   and (not i_m_raw_axis_tready);
+                v_all_full := '1';
+                for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
+                    v_all_full := v_all_full and s_raw_fifo_r(i).valid;
+                end loop;
+                s_raw_hold_busy <= v_all_full and (not i_m_raw_axis_tready);
             end if;
         end if;
     end process;
