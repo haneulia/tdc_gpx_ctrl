@@ -72,7 +72,14 @@ entity tdc_gpx_cmd_arb is
 
         -- Timeout status
         o_reg_timeout        : out std_logic;                        -- sticky: reg access timeout occurred
-        o_reg_timeout_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0)  -- which chips timed out
+        o_reg_timeout_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- which chips timed out
+
+        -- Overlap handling (Round 5 #10)
+        --   1-depth pending queue absorbs a new reg request that arrives while
+        --   another transaction is still in flight. A second overlapping
+        --   request (queue already occupied) raises o_reg_rejected sticky so
+        --   SW knows at least one request was lost.
+        o_reg_rejected       : out std_logic
     );
 end entity tdc_gpx_cmd_arb;
 
@@ -118,6 +125,15 @@ architecture rtl of tdc_gpx_cmd_arb is
     signal s_reg_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');
     signal s_reg_timeout_r       : std_logic := '0';  -- sticky: timeout occurred
     signal s_reg_timeout_mask_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+
+    -- -------------------------------------------------------------------------
+    -- 1-depth pending queue for overlapping reg requests (Round 5 #10)
+    -- -------------------------------------------------------------------------
+    signal s_reg_queue_valid_r   : std_logic := '0';
+    signal s_reg_queue_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_queue_rw_r      : std_logic := '0';
+    signal s_reg_queue_addr_r    : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_reg_rejected_r      : std_logic := '0';  -- sticky: 2nd overlap lost
 
 begin
 
@@ -192,6 +208,11 @@ begin
                 s_reg_timeout_cnt_r  <= (others => '0');
                 s_reg_timeout_r      <= '0';
                 s_reg_timeout_mask_r <= (others => '0');
+                s_reg_queue_valid_r  <= '0';
+                s_reg_queue_mask_r   <= (others => '0');
+                s_reg_queue_rw_r     <= '0';
+                s_reg_queue_addr_r   <= (others => '0');
+                s_reg_rejected_r     <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_dispatch_pulse_r <= (others => '0');
@@ -228,9 +249,7 @@ begin
 
                 -- ---- All-done: clear and fire IRQ ----
                 if s_all_done = '1' then
-                    s_reg_active_r      <= '0';
                     s_reg_pending_r     <= (others => '0');
-                    s_reg_target_mask_r <= (others => '0');
                     s_reg_done_mask_r   <= (others => '0');
                     s_reg_dispatched_r  <= (others => '0');
                     s_reg_timeout_cnt_r <= (others => '0');
@@ -241,6 +260,25 @@ begin
                     -- not "any historical timeout ever occurred".
                     if s_reg_timeout_r = '0' then
                         s_reg_timeout_mask_r <= (others => '0');
+                    end if;
+
+                    -- Queue kickoff (Round 5 #10): if a pending request was
+                    -- latched during the just-finished transaction, start it
+                    -- immediately instead of going idle. Dispatch happens next
+                    -- cycle through the existing "active + dispatch pending"
+                    -- branch.
+                    if s_reg_queue_valid_r = '1' then
+                        s_reg_queue_valid_r  <= '0';
+                        s_reg_active_r       <= '1';
+                        s_reg_target_mask_r  <= s_reg_queue_mask_r;
+                        s_reg_pending_rw_r   <= s_reg_queue_rw_r;
+                        s_reg_pending_addr_r <= s_reg_queue_addr_r;
+                        s_reg_pending_r      <= s_reg_queue_mask_r;
+                        s_reg_timeout_r      <= '0';
+                        s_reg_timeout_mask_r <= (others => '0');
+                    else
+                        s_reg_active_r      <= '0';
+                        s_reg_target_mask_r <= (others => '0');
                     end if;
 
                 -- ---- Accept new multi-chip request ----
@@ -316,6 +354,28 @@ begin
                             s_done_chip_r <= to_unsigned(i, 2);
                         end if;
                     end loop;
+
+                    -- Queue absorb (Round 5 #10): a new reg request arriving
+                    -- while a transaction is in flight used to be silently
+                    -- dropped. Latch into a 1-depth queue; raise the reject
+                    -- sticky if the queue is already occupied (2+ overlaps).
+                    -- Ignore zero-mask requests (matches the accept path).
+                    if v_new_request = '1'
+                       and i_cmd_reg_chip_address /= C_ZEROS then
+                        if s_reg_queue_valid_r = '0' then
+                            s_reg_queue_valid_r <= '1';
+                            s_reg_queue_mask_r  <= i_cmd_reg_chip_address;
+                            s_reg_queue_rw_r    <= v_rw;
+                            s_reg_queue_addr_r  <= i_cmd_reg_addr;
+                        else
+                            s_reg_rejected_r    <= '1';
+                            -- synthesis translate_off
+                            assert false
+                                report "cmd_arb: overlapping reg request rejected (queue already full)"
+                                severity warning;
+                            -- synthesis translate_on
+                        end if;
+                    end if;
                 end if;
 
                 -- Also collect dones during accept cycle (chip may complete
@@ -350,5 +410,6 @@ begin
     o_cmd_reg_addr_out   <= s_reg_pending_addr_r;
     o_reg_timeout        <= s_reg_timeout_r;
     o_reg_timeout_mask   <= s_reg_timeout_mask_r;
+    o_reg_rejected       <= s_reg_rejected_r;
 
 end architecture rtl;

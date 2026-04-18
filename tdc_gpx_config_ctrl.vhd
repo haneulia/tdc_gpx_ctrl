@@ -638,7 +638,8 @@ begin
             o_reg_loop_resume    => s_reg_loop_resume,
             o_cmd_reg_addr_out   => s_cmd_reg_addr_out,
             o_reg_timeout        => s_reg_arb_timeout,
-            o_reg_timeout_mask   => open   -- per-chip mask available but not surfaced yet
+            o_reg_timeout_mask   => open,  -- per-chip mask available but not surfaced yet
+            o_reg_rejected       => open   -- Round 5 #10 queue-overflow sticky; not yet surfaced to CSR
         );
 
     -- =========================================================================
