@@ -293,6 +293,7 @@ architecture rtl of tdc_gpx_top is
     signal s_chip_error_merged    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_error_raw       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- unmasked: all chips
     signal s_err_rsp_mismatch     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_raw_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout          : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_reg_arb_timeout      : std_logic;
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
@@ -460,6 +461,7 @@ begin
             o_err_drain_timeout  => s_err_drain_timeout,
             o_err_sequence       => s_err_sequence,
             o_err_rsp_mismatch   => s_err_rsp_mismatch,
+            o_err_raw_overflow   => s_err_raw_overflow,
             o_reg_outstanding    => s_reg_outstanding,
             o_reg_loop_resume    => open,  -- reserved: future use for gating face_seq resume
             o_run_timeout        => s_run_timeout,
@@ -737,6 +739,7 @@ begin
     s_status.err_chip_mask       <= s_err_chip_mask;
     s_status.err_cause           <= s_err_cause;
     s_status.rsp_mismatch_mask   <= s_err_rsp_mismatch;
+    s_status.raw_overflow_mask   <= s_err_raw_overflow;
     s_status.cfg_rejected        <= s_cfg_rejected_r;
     s_status.run_timeout_mask    <= s_run_timeout_sticky_r;
     s_status.reg_arb_timeout     <= s_reg_arb_timeout;

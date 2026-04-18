@@ -202,8 +202,12 @@ begin
                                 s_state_r   <= ST_CFG_WRITE;
                             end if;
                         elsif s_rsp_timeout_r = x"FFFF" then
-                            -- Timeout: force done with error (bus hung)
+                            -- Timeout: force done with error (bus hung).
+                            -- Drop stopdis to match the normal completion path
+                            -- (ST_STOPDIS_LOW) so the chip ends in a consistent
+                            -- post-init state regardless of success/failure.
                             s_req_valid_r   <= '0';
+                            s_stopdis_r     <= '0';
                             s_busy_r        <= '0';
                             s_done_r        <= '1';
                             s_timeout_out_r <= '1';
@@ -229,7 +233,9 @@ begin
                             s_rsp_timeout_r <= (others => '0');
                             s_state_r       <= ST_RECOVERY;
                         elsif s_rsp_timeout_r = x"FFFF" then
+                            -- Timeout: match normal completion post-init state.
                             s_req_valid_r   <= '0';
+                            s_stopdis_r     <= '0';
                             s_busy_r        <= '0';
                             s_done_r        <= '1';
                             s_timeout_out_r <= '1';

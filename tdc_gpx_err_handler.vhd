@@ -117,6 +117,15 @@ architecture rtl of tdc_gpx_err_handler is
     signal s_frame_done_seen_r : std_logic := '0';
 
     -- =========================================================================
+    -- ST_WAIT_READ watchdog: guard against lost/never-arriving
+    -- i_cmd_reg_done_pulse. Without this, the recovery FSM would park
+    -- indefinitely if the reg access subsystem never responds.
+    -- =========================================================================
+    constant C_WAIT_READ_TIMEOUT : natural := 16#FFFF#;
+    signal s_wait_read_cnt_r  : unsigned(15 downto 0) := (others => '0');
+    signal s_err_read_timeout_r : std_logic := '0';  -- sticky: reg read timed out
+
+    -- =========================================================================
     -- Reg11 data selection helper
     -- =========================================================================
     type t_reg11_arr is array (0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
@@ -153,6 +162,8 @@ begin
                 s_recov_stable_r     <= (others => '0');
                 s_retry_cnt_r        <= (others => '0');
                 s_frame_done_seen_r  <= '0';
+                s_wait_read_cnt_r    <= (others => '0');
+                s_err_read_timeout_r <= '0';
             else
                 -- Default: clear command pulses every clock
                 s_cmd_soft_reset_r   <= (others => '0');
@@ -205,6 +216,7 @@ begin
                             s_cmd_reg_read_r      <= '1';
                             s_cmd_reg_addr_r      <= c_TDC_REG12;
                             s_cmd_reg_chip_addr_r <= s_err_chip_mask_r;
+                            s_wait_read_cnt_r     <= (others => '0');
                             s_state_r             <= ST_WAIT_READ;
                         end if;
 
@@ -237,7 +249,18 @@ begin
                                     end if;
                                 end if;
                             end loop;
-                            s_state_r <= ST_RECOVERY;
+                            s_wait_read_cnt_r <= (others => '0');
+                            s_state_r         <= ST_RECOVERY;
+                        elsif s_wait_read_cnt_r = to_unsigned(C_WAIT_READ_TIMEOUT, 16) then
+                            -- Reg read never completed. Sticky-flag the loss and
+                            -- proceed to recovery anyway (rvalid was '0' for all
+                            -- chips so no stale cause was latched). This prevents
+                            -- the recovery FSM from parking forever.
+                            s_err_read_timeout_r <= '1';
+                            s_wait_read_cnt_r    <= (others => '0');
+                            s_state_r            <= ST_RECOVERY;
+                        else
+                            s_wait_read_cnt_r <= s_wait_read_cnt_r + 1;
                         end if;
 
                     -- ---------------------------------------------------------

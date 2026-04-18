@@ -169,6 +169,7 @@ entity tdc_gpx_config_ctrl is
         o_err_drain_timeout  : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_sequence       : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_rsp_mismatch   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_raw_overflow   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_reg_outstanding    : out std_logic;
         o_reg_loop_resume    : out std_logic;
         o_cdc_idle           : out std_logic;
@@ -290,6 +291,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_sequence      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_raw_overflow  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout       : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_reg_arb_timeout   : std_logic;
 
@@ -302,6 +304,14 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_cmd_reg_chip_addr : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_fill              : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_active            : std_logic;
+
+    -- err_handler i_frame_done: latch rise+fall frame_done observations
+    -- independently, clear on next shot_start. Combinational AND of two
+    -- 1-clk pulses (previous design) deadlocks when they fire on different
+    -- cycles — err_handler's ST_WAIT_FRAME_DONE would never satisfy.
+    signal s_frame_rise_seen_r : std_logic := '0';
+    signal s_frame_fall_seen_r : std_logic := '0';
+    signal s_frame_done_both   : std_logic;
 
     -- =========================================================================
     -- MUX signals: err_handler / csr_chip -> cmd_arb
@@ -354,6 +364,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_drain_timeout_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_sequence_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_raw_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_errflag_sync_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Per-chip pulse status (xpm_cdc_pulse)
     signal s_cmd_reg_done_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -365,6 +376,31 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_rdata_axi     : t_slv28_array;
 
 begin
+
+    -- =========================================================================
+    -- frame_done latch for err_handler
+    -- Rise and fall frame_done pulses may not coincide; latch each observation
+    -- and hold until next shot_start. err_handler sees the AND, which becomes
+    -- '1' for one cycle per shot after both slopes have reported.
+    -- =========================================================================
+    p_frame_done_latch : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or i_shot_start_gated = '1' then
+                s_frame_rise_seen_r <= '0';
+                s_frame_fall_seen_r <= '0';
+            else
+                if i_frame_done = '1' then
+                    s_frame_rise_seen_r <= '1';
+                end if;
+                if i_frame_fall_done = '1' then
+                    s_frame_fall_seen_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process;
+
+    s_frame_done_both <= s_frame_rise_seen_r and s_frame_fall_seen_r;
 
     -- =========================================================================
     -- Config merging: pipeline fields + chip fields -> s_cfg_merged
@@ -407,6 +443,7 @@ begin
     o_err_sequence      <= s_err_sequence_axi;
     o_reg_outstanding   <= s_reg_outstanding;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_axi;
+    o_err_raw_overflow  <= s_err_raw_overflow_axi;
     o_run_timeout       <= s_run_timeout_axi;
     o_reg_arb_timeout   <= s_reg_arb_timeout;
     o_err_active        <= s_err_active;
@@ -545,7 +582,7 @@ begin
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
             i_cmd_reg_rvalid    => s_cmd_reg_rvalid_axi,
             i_reg_outstanding    => s_reg_outstanding,
-            i_frame_done         => i_frame_done and i_frame_fall_done,
+            i_frame_done         => s_frame_done_both,
             i_shot_start         => i_shot_start_gated,
             o_cmd_soft_reset     => s_err_cmd_soft_reset,
             o_cmd_reg_read       => s_err_cmd_reg_read,
@@ -815,6 +852,15 @@ begin
                 dest_out => s_err_rsp_mismatch_axi(i)
             );
 
+        u_cdc_raw_overflow : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_err_raw_overflow(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_err_raw_overflow_axi(i)
+            );
+
         u_cdc_errflag : xpm_cdc_single
             generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
             port map (
@@ -934,6 +980,7 @@ begin
                 o_err_drain_timeout => s_err_drain_timeout(i),
                 o_err_sequence      => s_err_sequence(i),
                 o_err_rsp_mismatch  => s_err_rsp_mismatch(i),
+                o_err_raw_overflow  => s_err_raw_overflow(i),
                 o_run_timeout       => s_run_timeout(i)
             );
 

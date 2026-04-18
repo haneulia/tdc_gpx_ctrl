@@ -98,6 +98,7 @@ entity tdc_gpx_chip_run is
         o_timeout_cause     : out std_logic_vector(2 downto 0);  -- cause code (valid with o_timeout)
         -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
         --              "100"=burst_rsp, "101"=flush_rsp, "110"=overrun_flush
+        o_err_overrun_drop  : out std_logic;  -- sticky: overrun override dropped bus response beat
 
         -- Pin outputs
         o_stopdis           : out std_logic;
@@ -171,6 +172,12 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_purge_mode_r      : std_logic := '0';
     signal s_stop_pending_r    : std_logic := '0';
     signal s_overrun_deferred_r : std_logic := '0';
+    -- Sticky: overrun override dropped a same-cycle bus response beat.
+    -- Set whenever the overrun post-case override clears s_raw_valid_r
+    -- while i_bus_rsp_valid was high in the same cycle. Visible to SW
+    -- for diagnosing drain accounting anomalies caused by aggressive
+    -- overrun recovery policy.
+    signal s_err_overrun_drop_r : std_logic := '0';
 
 begin
 
@@ -218,6 +225,7 @@ begin
                 s_purge_mode_r      <= '0';
                 s_stop_pending_r    <= '0';
                 s_overrun_deferred_r <= '0';
+                s_err_overrun_drop_r <= '0';
                 s_timeout_r          <= '0';
                 s_timeout_cause_r    <= (others => '0');
             else
@@ -228,13 +236,17 @@ begin
                 s_done_r             <= '0';
 
                 -- Deferred stop latch
+                -- ST_OVERRUN_FLUSH included so a 1-cycle i_cmd_stop during
+                -- overrun recovery is not lost (previously fell through
+                -- `when others => null`).
                 if i_cmd_stop = '1' then
                     case s_state_r is
                         when ST_DRAIN_LATCH | ST_DRAIN_CHECK
                            | ST_DRAIN_EF1   | ST_DRAIN_EF2
                            | ST_DRAIN_BURST | ST_DRAIN_FLUSH
                            | ST_DRAIN_SETTLE
-                           | ST_ALU_PULSE   | ST_ALU_RECOVERY =>
+                           | ST_ALU_PULSE   | ST_ALU_RECOVERY
+                           | ST_OVERRUN_FLUSH =>
                             s_stop_pending_r <= '1';
                         when others =>
                             null;
@@ -627,6 +639,12 @@ begin
                 -- priority over completing the current drain transaction.
                 if i_shot_start = '1' and s_state_r /= ST_OFF
                    and s_state_r /= ST_ARMED then
+                    -- If a bus response arrives in the same cycle we override,
+                    -- s_raw_valid_r will be forced to '0' and the beat is lost.
+                    -- Flag this sticky so SW can correlate drain accounting.
+                    if i_bus_rsp_valid = '1' then
+                        s_err_overrun_drop_r <= '1';
+                    end if;
                     case s_state_r is
                         when ST_CAPTURE | ST_DRAIN_LATCH
                            | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
@@ -676,6 +694,7 @@ begin
     o_range_active      <= s_range_active_r;
     o_timeout           <= s_timeout_r;
     o_timeout_cause     <= s_timeout_cause_r;
+    o_err_overrun_drop  <= s_err_overrun_drop_r;
     o_armed             <= '1' when s_state_r = ST_ARMED else '0';
 
 end architecture rtl;

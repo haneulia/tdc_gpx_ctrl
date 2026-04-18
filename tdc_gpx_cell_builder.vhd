@@ -369,8 +369,14 @@ begin
                                     s_cell_buf_r(1)   <= (others => c_CELL_INIT);
                                     s_cstate_r        <= ST_C_ACTIVE;
                                 else
-                                    -- No free buffer: shot dropped silently at IDLE
+                                    -- No free buffer: enter DROP to actually absorb
+                                    -- the upcoming shot's beats (tready='1'). Staying
+                                    -- in IDLE would leave tready='0' and stall the
+                                    -- upstream decoder even though we declared the
+                                    -- shot dropped.
+                                    s_cstate_r      <= ST_C_DROP;
                                     s_shot_dropped_r <= '1';
+                                    s_timeout_cnt_r  <= (others => '0');
                                 end if;
                             end if;
 

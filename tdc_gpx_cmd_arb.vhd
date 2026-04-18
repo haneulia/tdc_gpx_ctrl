@@ -200,7 +200,12 @@ begin
                 end if;
 
                 -- ---- Timeout: force all-done if chip never responds ----
-                if s_reg_active_r = '1' then
+                -- Start counting only after all target chips have been dispatched
+                -- (no chips still pending). Previous design counted from request
+                -- acceptance, so busy-chip dispatch waits consumed the timeout
+                -- budget before any real response could arrive.
+                if s_reg_active_r = '1'
+                   and s_reg_pending_r = (s_reg_pending_r'range => '0') then
                     if s_reg_timeout_cnt_r = x"FFFF" then
                         -- Timeout: force done for all target chips
                         s_reg_done_mask_r    <= s_reg_target_mask_r;

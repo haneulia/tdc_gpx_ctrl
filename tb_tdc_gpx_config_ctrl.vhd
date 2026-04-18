@@ -281,6 +281,7 @@ begin
             o_err_drain_timeout  => o_err_drain_timeout,
             o_err_sequence       => o_err_sequence,
             o_err_rsp_mismatch   => open,
+            o_err_raw_overflow   => open,
             o_reg_outstanding    => o_reg_outstanding,
             o_reg_loop_resume    => o_reg_loop_resume,
             o_run_timeout        => open,

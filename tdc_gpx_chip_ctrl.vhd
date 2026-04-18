@@ -151,6 +151,7 @@ entity tdc_gpx_chip_ctrl is
         o_err_drain_timeout : out std_logic;    -- max_range_clks expired before drain_done
         o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
         o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
+        o_err_raw_overflow  : out std_logic;    -- sticky: raw hold+skid both full (beat dropped)
         o_run_timeout       : out std_logic     -- 1-clk pulse: chip_run abnormal drain exit
     );
 end entity tdc_gpx_chip_ctrl;
@@ -203,6 +204,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_range_active : std_logic;
     signal s_run_shot_seq    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal s_run_timeout     : std_logic;
+    signal s_run_overrun_drop : std_logic;  -- chip_run sticky: overrun dropped bus response
 
     -- =========================================================================
     -- Raw AXI-Stream 2-deep holding register (skid pattern, tready handshake)
@@ -333,6 +335,7 @@ begin
             o_range_active      => s_run_range_active,
             o_timeout           => s_run_timeout,
             o_timeout_cause     => open,  -- cause code not needed at top level
+            o_err_overrun_drop  => s_run_overrun_drop,
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
             i_n_drain_cap       => s_n_drain_cap_snap_r,
@@ -695,6 +698,12 @@ begin
                 s_raw_skid_drain_r <= '0';
                 s_err_raw_overflow_r <= '0';
             else
+                -- Fold chip_run's own overrun-drop sticky into the unified
+                -- raw_overflow flag so SW only needs to observe one signal
+                -- per chip for "some beat was dropped for diagnostic reasons".
+                if s_run_overrun_drop = '1' then
+                    s_err_raw_overflow_r <= '1';
+                end if;
                 -- Capture new beat from chip_run
                 v_new_valid := '0';
                 v_new_tdata := (others => '0');
@@ -797,6 +806,7 @@ begin
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
+    o_err_raw_overflow  <= s_err_raw_overflow_r;
     o_run_timeout       <= s_run_timeout;
 
     -- =========================================================================
