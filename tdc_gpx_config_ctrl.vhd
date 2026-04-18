@@ -13,13 +13,16 @@
 --     bus_phy x4     : TDC-GPX bus physical layer (IOBUF + timing FSM)
 --     sk_brsp x4     : skid buffer bus_phy -> chip_ctrl (40b)
 --     chip_ctrl x4   : chip FSM coordinator (powerup/cfg/arm/capture/drain)
---     sk_raw x4      : skid buffer chip_ctrl -> decode_pipe (40b)
+--     raw_cdc x4     : xpm_fifo_async CDC chip_ctrl -> decode_pipe (40b)
 --
 --   Config merging: pipeline fields from i_cfg_pipeline, chip fields from
 --   csr_chip outputs.  Merged config drives stop_decode and chip_ctrl.
 --
 -- Clock domains:
---   i_axis_aclk  : TDC processing / AXI-Stream domain (~200 MHz)
+--   i_axis_aclk  : AXI-Stream processing domain (150 MHz)
+--   i_tdc_clk    : TDC-GPX bus control domain (200 MHz)
+--                  Drives bus_phy, sk_brsp, chip_ctrl.
+--                  raw_cdc (xpm_fifo_async) crosses TDC -> AXI-Stream.
 --   s_axi_aclk   : AXI4-Lite PS domain
 --
 -- Standard: VHDL-2008
@@ -28,6 +31,9 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+
+library xpm;
+use xpm.vcomponents.all;
 
 use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
@@ -41,9 +47,13 @@ entity tdc_gpx_config_ctrl is
         g_STOP_EVT_DWIDTH : natural := 32
     );
     port (
-        -- Clock / Reset: processing domain
+        -- Clock / Reset: processing domain (AXI-Stream, 150 MHz)
         i_axis_aclk          : in  std_logic;
         i_axis_aresetn       : in  std_logic;
+
+        -- TDC-GPX bus control clock (200 MHz)
+        -- Drives bus_phy and chip_ctrl (same clock group).
+        i_tdc_clk            : in  std_logic;
 
         -- Clock / Reset: AXI-Lite domain (PS)
         s_axi_aclk           : in  std_logic;
@@ -308,6 +318,52 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_sk_raw_tdata  : t_slv32_array;
     signal s_sk_raw_tuser  : t_slv8_array;
 
+    -- CDC FIFO: chip_ctrl (TDC clock) -> decode_pipe (AXI-Stream clock)
+    signal s_raw_cdc_full  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_cdc_empty : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- =========================================================================
+    -- CDC signals: AXI-Stream -> TDC domain (command pulses)
+    -- =========================================================================
+    -- Common command pulses (CDC'd once, shared across all chip_ctrl)
+    signal s_cmd_start_tdc       : std_logic;
+    signal s_cmd_stop_tdc        : std_logic;
+    signal s_cmd_soft_reset_tdc  : std_logic;
+    signal s_cmd_cfg_write_g_tdc : std_logic;
+    -- Per-chip command pulses
+    signal s_err_cmd_soft_reset_tdc : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_start_tdc         : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_read_tdc       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_write_tdc      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- =========================================================================
+    -- CDC signals: AXI-Stream -> TDC domain (quasi-static config snapshot)
+    -- =========================================================================
+    signal s_cfg_tdc             : t_tdc_cfg;
+    signal s_cfg_image_tdc       : t_cfg_image;
+    signal s_expected_ififo1_tdc : t_expected_array;
+    signal s_expected_ififo2_tdc : t_expected_array;
+    signal s_cmd_reg_addr_tdc    : std_logic_vector(3 downto 0);
+    signal s_cmd_reg_wdata_tdc   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+
+    -- =========================================================================
+    -- CDC signals: TDC -> AXI-Stream domain (status)
+    -- =========================================================================
+    -- Per-chip level status (xpm_cdc_single)
+    signal s_chip_busy_axi         : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_drain_timeout_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_sequence_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_rsp_mismatch_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_errflag_sync_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Per-chip pulse status (xpm_cdc_pulse)
+    signal s_cmd_reg_done_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_rvalid_axi    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_timeout_axi       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Per-chip multi-bit status (xpm_cdc_gray for shot_seq, snapshot for rdata)
+    signal s_chip_shot_seq_axi     : t_shot_seq_array;
+    signal s_chip_shot_seq_axi_slv : t_slv16_array;  -- intermediate for xpm_cdc_gray output
+    signal s_cmd_reg_rdata_axi     : t_slv28_array;
+
 begin
 
     -- =========================================================================
@@ -340,18 +396,18 @@ begin
     o_cfg <= s_cfg_merged;
 
     -- =========================================================================
-    -- Pass-through outputs
+    -- Pass-through outputs (CDC'd versions for TDC->AXI-Stream signals)
     -- =========================================================================
     o_cmd_start         <= i_cmd_start;
     o_reg_loop_resume   <= s_reg_loop_resume;
-    o_chip_busy         <= s_chip_busy;
-    o_chip_shot_seq     <= s_chip_shot_seq;
-    o_errflag_sync      <= s_errflag_sync;
-    o_err_drain_timeout <= s_err_drain_timeout;
-    o_err_sequence      <= s_err_sequence;
+    o_chip_busy         <= s_chip_busy_axi;
+    o_chip_shot_seq     <= s_chip_shot_seq_axi;
+    o_errflag_sync      <= s_errflag_sync_axi;
+    o_err_drain_timeout <= s_err_drain_timeout_axi;
+    o_err_sequence      <= s_err_sequence_axi;
     o_reg_outstanding   <= s_reg_outstanding;
-    o_err_rsp_mismatch  <= s_err_rsp_mismatch;
-    o_run_timeout       <= s_run_timeout;
+    o_err_rsp_mismatch  <= s_err_rsp_mismatch_axi;
+    o_run_timeout       <= s_run_timeout_axi;
     o_reg_arb_timeout   <= s_reg_arb_timeout;
     o_err_active        <= s_err_active;
 
@@ -425,11 +481,11 @@ begin
             o_cmd_reg_write => s_cmd_reg_write,
             o_cmd_reg_addr  => s_cmd_reg_addr,
             o_cmd_reg_chip  => s_cmd_reg_chip,
-            i_cmd_reg_rdata_0    => s_cmd_reg_rdata(0),
-            i_cmd_reg_rdata_1    => s_cmd_reg_rdata(1),
-            i_cmd_reg_rdata_2    => s_cmd_reg_rdata(2),
-            i_cmd_reg_rdata_3    => s_cmd_reg_rdata(3),
-            i_cmd_reg_rvalid     => s_cmd_reg_rvalid,
+            i_cmd_reg_rdata_0    => s_cmd_reg_rdata_axi(0),
+            i_cmd_reg_rdata_1    => s_cmd_reg_rdata_axi(1),
+            i_cmd_reg_rdata_2    => s_cmd_reg_rdata_axi(2),
+            i_cmd_reg_rdata_3    => s_cmd_reg_rdata_axi(3),
+            i_cmd_reg_rvalid     => s_cmd_reg_rvalid_axi,
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
             i_cmd_reg_addr_done  => s_cmd_reg_addr_out,
             o_cmd_reg_chip_address  => s_cmd_reg_chip_address,
@@ -454,12 +510,12 @@ begin
             i_cmd_reg_chip       => s_cmd_reg_chip,
             i_cmd_reg_chip_address  => s_cmd_reg_chip_address_mux,
             i_cmd_reg_addr       => s_cmd_reg_addr_mux,
-            i_chip_busy          => s_chip_busy,
+            i_chip_busy          => s_chip_busy_axi,
             i_face_asm_idle      => i_face_asm_idle,
             i_face_asm_fall_idle => i_face_asm_fall_idle,
             i_hdr_idle           => i_hdr_idle,
             i_hdr_fall_idle      => i_hdr_fall_idle,
-            i_cmd_reg_done       => s_cmd_reg_done,
+            i_cmd_reg_done       => s_cmd_reg_done_axi,
             o_cmd_cfg_write_g    => o_cmd_cfg_write_g,
             o_cmd_reg_read_g     => s_cmd_reg_read_g,
             o_cmd_reg_write_g    => s_cmd_reg_write_g,
@@ -480,14 +536,14 @@ begin
         port map (
             i_clk                => i_axis_aclk,
             i_rst_n              => i_axis_aresetn,
-            i_errflag_sync       => s_errflag_sync,
-            i_chip_busy          => s_chip_busy,
-            i_reg11_data_0       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(0),
-            i_reg11_data_1       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(1),
-            i_reg11_data_2       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(2),
-            i_reg11_data_3       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata(3),
+            i_errflag_sync       => s_errflag_sync_axi,
+            i_chip_busy          => s_chip_busy_axi,
+            i_reg11_data_0       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(0),
+            i_reg11_data_1       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(1),
+            i_reg11_data_2       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(2),
+            i_reg11_data_3       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(3),
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
-            i_cmd_reg_rvalid    => s_cmd_reg_rvalid,
+            i_cmd_reg_rvalid    => s_cmd_reg_rvalid_axi,
             i_reg_outstanding    => s_reg_outstanding,
             i_frame_done         => i_frame_done and i_frame_fall_done,
             i_shot_start         => i_shot_start_gated,
@@ -523,15 +579,97 @@ begin
         );
 
     -- =========================================================================
+    -- CDC Stage 1: Command pulses AXI-Stream -> TDC (common, one instance each)
+    -- =========================================================================
+
+    u_cdc_cmd_start : xpm_cdc_pulse
+        generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+        port map (
+            src_clk    => i_axis_aclk,
+            src_rst    => '0',
+            src_pulse  => i_cmd_start_accepted,
+            dest_clk   => i_tdc_clk,
+            dest_rst   => '0',
+            dest_pulse => s_cmd_start_tdc
+        );
+
+    u_cdc_cmd_stop : xpm_cdc_pulse
+        generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+        port map (
+            src_clk    => i_axis_aclk,
+            src_rst    => '0',
+            src_pulse  => i_cmd_stop,
+            dest_clk   => i_tdc_clk,
+            dest_rst   => '0',
+            dest_pulse => s_cmd_stop_tdc
+        );
+
+    u_cdc_cmd_soft_reset : xpm_cdc_pulse
+        generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+        port map (
+            src_clk    => i_axis_aclk,
+            src_rst    => '0',
+            src_pulse  => i_cmd_soft_reset,
+            dest_clk   => i_tdc_clk,
+            dest_rst   => '0',
+            dest_pulse => s_cmd_soft_reset_tdc
+        );
+
+    u_cdc_cmd_cfg_write : xpm_cdc_pulse
+        generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+        port map (
+            src_clk    => i_axis_aclk,
+            src_rst    => '0',
+            src_pulse  => o_cmd_cfg_write_g,
+            dest_clk   => i_tdc_clk,
+            dest_rst   => '0',
+            dest_pulse => s_cmd_cfg_write_g_tdc
+        );
+
+    -- =========================================================================
+    -- CDC Stage 3: Quasi-static config snapshot (AXI-Stream -> TDC)
+    --
+    -- Config values are set by SW, then a command pulse is issued.
+    -- The command goes through xpm_cdc_pulse (~2-4 cycle latency).
+    -- By the time the CDC'd pulse arrives in TDC domain, config has been
+    -- stable for many cycles. Continuous register capture converges safely.
+    -- =========================================================================
+    p_tdc_cfg_snapshot : process(i_tdc_clk)
+    begin
+        if rising_edge(i_tdc_clk) then
+            s_cfg_tdc             <= s_cfg_merged;
+            s_cfg_image_tdc       <= o_cfg_image;
+            s_expected_ififo1_tdc <= s_expected_ififo1;
+            s_expected_ififo2_tdc <= s_expected_ififo2;
+            s_cmd_reg_addr_tdc    <= s_cmd_reg_addr_mux;
+            s_cmd_reg_wdata_tdc   <= s_cmd_reg_wdata;
+        end if;
+    end process p_tdc_cfg_snapshot;
+
+    -- =========================================================================
+    -- CDC Stage 2c: TDC -> AXI-Stream rdata snapshot
+    -- rdata is stable when rvalid is asserted; rvalid is CDC'd via
+    -- xpm_cdc_pulse, so rdata has settled by the time rvalid_axi arrives.
+    -- =========================================================================
+    p_axi_rdata_snapshot : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            for k in 0 to c_N_CHIPS - 1 loop
+                s_cmd_reg_rdata_axi(k) <= s_cmd_reg_rdata(k);
+            end loop;
+        end if;
+    end process p_axi_rdata_snapshot;
+
+    -- =========================================================================
     -- [4-19] Per-chip pipeline (generate x4)
-    --   bus_phy + sk_brsp + chip_ctrl + sk_raw
+    --   bus_phy + sk_brsp + chip_ctrl + sk_raw + per-chip CDC
     -- =========================================================================
     gen_chip : for i in 0 to c_N_CHIPS - 1 generate
 
         -- ----- bus_phy: physical bus timing FSM + IOBUF + 2-FF sync -----
         u_bus_phy : entity work.tdc_gpx_bus_phy
             port map (
-                i_clk           => i_axis_aclk,
+                i_clk           => i_tdc_clk,
                 i_rst_n         => i_axis_aresetn,
                 i_tick_en       => s_tick_en(i),
                 i_bus_ticks     => s_bus_ticks_snap(i),
@@ -572,10 +710,10 @@ begin
         u_sk_brsp : entity work.tdc_gpx_skid_buffer
             generic map (g_DATA_WIDTH => 40)
             port map (
-                i_clk     => i_axis_aclk,
+                i_clk     => i_tdc_clk,
                 i_rst_n   => i_axis_aresetn,
-                -- Flush on any soft reset (global or per-chip error recovery)
-                i_flush   => i_cmd_soft_reset or s_err_cmd_soft_reset(i),
+                -- Flush on any soft reset (CDC'd to TDC domain)
+                i_flush   => s_cmd_soft_reset_tdc or s_err_cmd_soft_reset_tdc(i),
                 i_s_valid => s_brsp_axis_tvalid(i),
                 o_s_ready => s_brsp_axis_tready(i),
                 i_s_data  => s_brsp_axis_tdata(i) & s_brsp_axis_tuser(i),
@@ -588,7 +726,153 @@ begin
         -- Combined pending: bus_phy internal + brsp skid output
         s_bus_rsp_pending(i) <= s_bus_rsp_pending_raw(i) or s_brsp_sk_tvalid(i);
 
-        -- ----- chip_ctrl: single-shot FSM (powerup/cfg/arm/capture/drain) -----
+        -- =================================================================
+        -- Per-chip CDC Stage 1: Command pulses AXI-Stream -> TDC
+        -- =================================================================
+
+        u_cdc_err_soft_reset : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+            port map (
+                src_clk    => i_axis_aclk,
+                src_rst    => '0',
+                src_pulse  => s_err_cmd_soft_reset(i),
+                dest_clk   => i_tdc_clk,
+                dest_rst   => '0',
+                dest_pulse => s_err_cmd_soft_reset_tdc(i)
+            );
+
+        u_cdc_shot_start : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+            port map (
+                src_clk    => i_axis_aclk,
+                src_rst    => '0',
+                src_pulse  => i_shot_start_per_chip(i),
+                dest_clk   => i_tdc_clk,
+                dest_rst   => '0',
+                dest_pulse => s_shot_start_tdc(i)
+            );
+
+        u_cdc_reg_read : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+            port map (
+                src_clk    => i_axis_aclk,
+                src_rst    => '0',
+                src_pulse  => s_cmd_reg_read_g(i),
+                dest_clk   => i_tdc_clk,
+                dest_rst   => '0',
+                dest_pulse => s_cmd_reg_read_tdc(i)
+            );
+
+        u_cdc_reg_write : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+            port map (
+                src_clk    => i_axis_aclk,
+                src_rst    => '0',
+                src_pulse  => s_cmd_reg_write_g(i),
+                dest_clk   => i_tdc_clk,
+                dest_rst   => '0',
+                dest_pulse => s_cmd_reg_write_tdc(i)
+            );
+
+        -- =================================================================
+        -- Per-chip CDC Stage 2: Status TDC -> AXI-Stream
+        -- =================================================================
+
+        -- Level signals: xpm_cdc_single (1-bit, 2-FF synchronizer)
+        u_cdc_busy : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_chip_busy(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_chip_busy_axi(i)
+            );
+
+        u_cdc_drain_timeout : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_err_drain_timeout(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_err_drain_timeout_axi(i)
+            );
+
+        u_cdc_seq_err : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_err_sequence(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_err_sequence_axi(i)
+            );
+
+        u_cdc_rsp_mismatch : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_err_rsp_mismatch(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_err_rsp_mismatch_axi(i)
+            );
+
+        u_cdc_errflag : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_errflag_sync(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_errflag_sync_axi(i)
+            );
+
+        -- Pulse signals: xpm_cdc_pulse (TDC -> AXI-Stream)
+        u_cdc_reg_done : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+            port map (
+                src_clk    => i_tdc_clk,
+                src_rst    => '0',
+                src_pulse  => s_cmd_reg_done(i),
+                dest_clk   => i_axis_aclk,
+                dest_rst   => '0',
+                dest_pulse => s_cmd_reg_done_axi(i)
+            );
+
+        u_cdc_reg_rvalid : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+            port map (
+                src_clk    => i_tdc_clk,
+                src_rst    => '0',
+                src_pulse  => s_cmd_reg_rvalid(i),
+                dest_clk   => i_axis_aclk,
+                dest_rst   => '0',
+                dest_pulse => s_cmd_reg_rvalid_axi(i)
+            );
+
+        u_cdc_run_timeout : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+            port map (
+                src_clk    => i_tdc_clk,
+                src_rst    => '0',
+                src_pulse  => s_run_timeout(i),
+                dest_clk   => i_axis_aclk,
+                dest_rst   => '0',
+                dest_pulse => s_run_timeout_axi(i)
+            );
+
+        -- Multi-bit counter: xpm_cdc_gray (16-bit shot sequence)
+        u_cdc_shot_seq : xpm_cdc_gray
+            generic map (DEST_SYNC_FF => 2, WIDTH => c_SHOT_SEQ_WIDTH)
+            port map (
+                src_clk       => i_tdc_clk,
+                src_in_bin    => std_logic_vector(s_chip_shot_seq(i)),
+                dest_clk      => i_axis_aclk,
+                dest_out_bin  => s_chip_shot_seq_axi_slv(i)
+            );
+        s_chip_shot_seq_axi(i) <= unsigned(s_chip_shot_seq_axi_slv(i));
+
+        -- =================================================================
+        -- chip_ctrl: single-shot FSM (powerup/cfg/arm/capture/drain)
+        -- All inputs now use CDC'd versions from AXI-Stream domain.
+        -- =================================================================
         u_chip_ctrl : entity work.tdc_gpx_chip_ctrl
             generic map (
                 g_CHIP_ID        => i,
@@ -597,27 +881,27 @@ begin
                 g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
             )
             port map (
-                i_clk               => i_axis_aclk,
+                i_clk               => i_tdc_clk,
                 i_rst_n             => i_axis_aresetn,
-                i_cfg               => s_cfg_merged,
-                i_cfg_image         => o_cfg_image,
-                i_cmd_start         => i_cmd_start_accepted,
-                i_cmd_stop          => i_cmd_stop,
-                i_cmd_soft_reset    => i_cmd_soft_reset,
-                i_cmd_soft_reset_err => s_err_cmd_soft_reset(i),
-                i_cmd_cfg_write     => o_cmd_cfg_write_g,
-                i_cmd_reg_read      => s_cmd_reg_read_g(i),
-                i_cmd_reg_write     => s_cmd_reg_write_g(i),
-                i_cmd_reg_addr      => s_cmd_reg_addr_mux,  -- muxed: err_handler or CSR
-                i_cmd_reg_wdata     => s_cmd_reg_wdata,
+                i_cfg               => s_cfg_tdc,
+                i_cfg_image         => s_cfg_image_tdc,
+                i_cmd_start         => s_cmd_start_tdc,
+                i_cmd_stop          => s_cmd_stop_tdc,
+                i_cmd_soft_reset    => s_cmd_soft_reset_tdc,
+                i_cmd_soft_reset_err => s_err_cmd_soft_reset_tdc(i),
+                i_cmd_cfg_write     => s_cmd_cfg_write_g_tdc,
+                i_cmd_reg_read      => s_cmd_reg_read_tdc(i),
+                i_cmd_reg_write     => s_cmd_reg_write_tdc(i),
+                i_cmd_reg_addr      => s_cmd_reg_addr_tdc,
+                i_cmd_reg_wdata     => s_cmd_reg_wdata_tdc,
                 o_cmd_reg_rdata     => s_cmd_reg_rdata(i),
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
                 o_cmd_reg_done      => s_cmd_reg_done(i),
-                i_shot_start        => i_shot_start_per_chip(i),
-                i_max_range_clks    => s_cfg_merged.max_range_clks,
+                i_shot_start        => s_shot_start_tdc(i),
+                i_max_range_clks    => s_cfg_tdc.max_range_clks,
                 i_stop_tdc          => i_stop_tdc,
-                i_expected_ififo1   => s_expected_ififo1(i),
-                i_expected_ififo2   => s_expected_ififo2(i),
+                i_expected_ififo1   => s_expected_ififo1_tdc(i),
+                i_expected_ififo2   => s_expected_ififo2_tdc(i),
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),
@@ -653,20 +937,55 @@ begin
                 o_run_timeout       => s_run_timeout(i)
             );
 
-        -- ----- skid buffer: chip_ctrl -> decode_pipe (32b + 8b = 40b) -----
-        u_sk_raw : entity work.tdc_gpx_skid_buffer
-            generic map (g_DATA_WIDTH => 40)
+        -- ----- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk) -----
+        -- Replaces skid buffer with async FIFO for clock-domain crossing.
+        -- Write side: TDC clock (i_tdc_clk), read side: AXI-Stream (i_axis_aclk).
+        s_raw_axis_tready(i) <= not s_raw_cdc_full(i);
+        s_sk_raw_tvalid(i)   <= not s_raw_cdc_empty(i);
+
+        u_raw_cdc : xpm_fifo_async
+            generic map (
+                CDC_SYNC_STAGES  => 2,
+                FIFO_MEMORY_TYPE => "distributed",
+                FIFO_READ_LATENCY => 0,
+                FIFO_WRITE_DEPTH => 16,
+                READ_DATA_WIDTH  => 40,
+                READ_MODE        => "fwft",
+                WRITE_DATA_WIDTH => 40
+            )
             port map (
-                i_clk     => i_axis_aclk,
-                i_rst_n   => i_axis_aresetn,
-                i_flush   => i_pipeline_abort,
-                i_s_valid => s_raw_axis_tvalid(i),
-                o_s_ready => s_raw_axis_tready(i),
-                i_s_data  => s_raw_axis_tdata(i) & s_raw_axis_tuser(i),
-                o_m_valid => s_sk_raw_tvalid(i),
-                i_m_ready => i_raw_sk_tready(i),
-                o_m_data(39 downto 8) => s_sk_raw_tdata(i),
-                o_m_data(7 downto 0)  => s_sk_raw_tuser(i)
+                -- Write side (TDC clock domain)
+                wr_clk        => i_tdc_clk,
+                wr_en         => s_raw_axis_tvalid(i) and not s_raw_cdc_full(i),
+                din           => s_raw_axis_tdata(i) & s_raw_axis_tuser(i),
+                full          => s_raw_cdc_full(i),
+                -- Read side (AXI-Stream clock domain)
+                rd_clk        => i_axis_aclk,
+                rd_en         => not s_raw_cdc_empty(i) and i_raw_sk_tready(i),
+                dout(39 downto 8) => s_sk_raw_tdata(i),
+                dout(7 downto 0)  => s_sk_raw_tuser(i),
+                empty         => s_raw_cdc_empty(i),
+                -- Reset (active-high, synchronized internally by XPM)
+                rst           => not i_axis_aresetn,
+                wr_rst_busy   => open,
+                rd_rst_busy   => open,
+                -- Unused status / ECC ports
+                almost_empty  => open,
+                almost_full   => open,
+                data_valid    => open,
+                dbiterr       => open,
+                overflow      => open,
+                prog_empty    => open,
+                prog_full     => open,
+                rd_data_count => open,
+                sbiterr       => open,
+                underflow     => open,
+                wr_ack        => open,
+                wr_data_count => open,
+                -- Unused inputs
+                sleep         => '0',
+                injectdbiterr => '0',
+                injectsbiterr => '0'
             );
 
     end generate gen_chip;

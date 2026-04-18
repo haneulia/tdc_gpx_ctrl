@@ -199,6 +199,7 @@ begin
             -- Clock / Reset
             i_axis_aclk          => clk_axis,
             i_axis_aresetn       => rstn_axis,
+            i_tdc_clk            => clk_axis,  -- same clock for single-clock TB
             s_axi_aclk           => clk_axi,
             s_axi_aresetn        => rstn_axi,
             -- AXI4-Lite

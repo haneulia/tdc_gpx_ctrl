@@ -42,11 +42,16 @@ entity tdc_gpx_top is
         g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH
     );
     port (
-        -- Processing / AXI-Stream clock and reset
+        -- Processing / AXI-Stream clock and reset (150 MHz)
         i_axis_aclk      : in  std_logic;
         i_axis_aresetn   : in  std_logic;
 
-        -- AXI-Lite clock / reset (PS domain)
+        -- TDC-GPX bus control clock (200 MHz)
+        -- Drives bus_phy and chip_ctrl (same clock group).
+        -- May be same as i_axis_aclk for single-clock designs.
+        i_tdc_clk        : in  std_logic;
+
+        -- AXI-Lite clock / reset (PS domain, 100 MHz)
         s_axi_aclk       : in  std_logic;
         s_axi_aresetn    : in  std_logic;
 
@@ -367,6 +372,7 @@ begin
         port map (
             i_axis_aclk          => i_axis_aclk,
             i_axis_aresetn       => i_axis_aresetn,
+            i_tdc_clk            => i_tdc_clk,
             s_axi_aclk           => s_axi_aclk,
             s_axi_aresetn        => s_axi_aresetn,
             -- AXI4-Lite pass-through (chip CSR)
