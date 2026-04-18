@@ -173,7 +173,9 @@ begin
     p_stim : process
         variable v_pass_count : natural := 0;
         variable v_fail_count : natural := 0;
-        variable v_total      : natural := 8;
+        variable v_total      : natural := 10;
+        variable v_cb_timeout_seen : boolean := false;  -- scenario 9
+        variable v_queue_ok         : boolean := false;  -- scenario 10
         variable v_saw_read   : boolean;
     begin
         -- -----------------------------------------------------------------
@@ -435,6 +437,44 @@ begin
                 report "SCENARIO 5 FAIL: shot_dropped NOT asserted when both buffers busy" severity error;
                 v_fail_count := v_fail_count + 1;
             end if;
+        end if;
+
+        -- =================================================================
+        -- SCENARIO 9 (#25): cell_builder ST_C_DROP timeout re-asserts sticky.
+        -- Cell_builder is already in ST_C_DROP after scenario 5 (shot_start
+        -- with no free buffer).  Without a final drain_done, the internal
+        -- 65,535-cycle timeout must fire, exit DROP → IDLE, AND re-pulse
+        -- s_shot_dropped_r so SW sees that recovery was non-clean (Round 5
+        -- Option-1 addition).
+        -- =================================================================
+        report "=== Scenario 9: DROP timeout re-asserts shot_dropped (#25) ===" severity note;
+
+        -- Wait for any in-flight shot_dropped pulse from scenario 5 to clear.
+        clk_wait(clk, 4);
+
+        -- Drain any lingering tvalid; stay silent so the DROP state cannot
+        -- observe final_done and must rely on the timeout.
+        cb_s_axis_tvalid <= '0';
+        cb_shot_start    <= '0';
+
+        -- Poll for the second pulse over the 65535-cycle window.
+        v_cb_timeout_seen := false;
+        for i in 1 to 70000 loop
+            clk_wait(clk, 1);
+            if cb_shot_dropped = '1' then
+                v_cb_timeout_seen := true;
+                exit;
+            end if;
+        end loop;
+
+        if v_cb_timeout_seen then
+            report "SCENARIO 9 PASS: DROP timeout re-pulsed shot_dropped (sticky)"
+                severity note;
+            v_pass_count := v_pass_count + 1;
+        else
+            report "SCENARIO 9 FAIL: DROP timeout did not re-pulse shot_dropped"
+                severity error;
+            v_fail_count := v_fail_count + 1;
         end if;
 
         -- Clean up: re-enable tready to let output drain, then abort

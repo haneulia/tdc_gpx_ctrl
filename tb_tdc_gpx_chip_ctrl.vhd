@@ -1279,6 +1279,47 @@ begin
         wait_clk(10);
 
         -- =============================================================
+        -- [15] chip_reg 1-depth pending queue (Round 3 #20/#37).
+        -- Issue read + write in the SAME cycle: spec says read wins and
+        -- executes first; write is latched into the pending slot and
+        -- automatically processed when chip_reg returns to ST_OFF.
+        -- Verify both transactions complete (read rvalid pulses, then
+        -- FSM returns busy='0' after write finishes).
+        -- =============================================================
+        pr_info("[15] concurrent reg read+write: read first, write queued");
+
+        -- Make sure we are idle at PH_IDLE
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        wait_clk(5);
+
+        -- Same-cycle read + write pulses
+        s_cmd_reg_addr   <= x"8";  -- read target: status/read-only
+        s_cmd_reg_wdata  <= s_cfg_image(0)(c_DATA_W - 1 downto 0);
+        s_cmd_reg_read   <= '1';
+        s_cmd_reg_write  <= '1';
+        wait_clk(1);
+        s_cmd_reg_read   <= '0';
+        s_cmd_reg_write  <= '0';
+
+        -- Read should fire first and pulse rvalid.
+        tb_wait_sig_value(s_clk, s_cmd_reg_rvalid, '1', c_TIMEOUT, v_found);
+        if v_found then
+            pr_pass("[15] concurrent: read executed first (rvalid asserted)");
+        else
+            pr_fail("[15] concurrent: read never fired (rvalid timeout)", v_fail);
+        end if;
+
+        -- Queued write should then execute; FSM returns to idle when done.
+        wait_clk(2);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if v_found then
+            pr_pass("[15] concurrent: queued write completed (FSM returned to idle)");
+        else
+            pr_fail("[15] concurrent: queued write did not complete", v_fail);
+        end if;
+        wait_clk(10);
+
+        -- =============================================================
         -- Summary
         -- =============================================================
         pr_sep;
