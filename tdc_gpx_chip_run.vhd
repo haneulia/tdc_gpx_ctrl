@@ -97,7 +97,16 @@ entity tdc_gpx_chip_run is
         o_bus_req_burst     : out std_logic;
 
         -- Bus response (from coordinator, gated)
+        -- i_bus_rsp_valid = FIRE = tvalid AND tready (response consumed this
+        --                  cycle). Use for capturing rdata and state advance.
+        -- i_bus_rsp_pending = response has arrived at bus_phy/skid but may
+        --                  not have been accepted yet (downstream backpressure
+        --                  on raw hold register can hold tready low during
+        --                  PH_RUN). Use for drain-completion checks and to
+        --                  freeze wait watchdogs so a legitimate pending
+        --                  response is not mistaken for bus hang (Round 5 #1).
         i_bus_rsp_valid     : in  std_logic;
+        i_bus_rsp_pending   : in  std_logic;
         i_bus_rsp_rdata     : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         i_bus_busy          : in  std_logic;
 
@@ -503,6 +512,11 @@ begin
                             s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                             s_wait_cnt_r         <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
+                        elsif i_bus_rsp_pending = '1' then
+                            -- Response already at bus_phy/skid but tready held
+                            -- low by raw hold backpressure. Hold watchdog to
+                            -- avoid a false bus-hang timeout.
+                            null;
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
@@ -527,6 +541,8 @@ begin
                             s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                             s_wait_cnt_r         <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
+                        elsif i_bus_rsp_pending = '1' then
+                            null;  -- downstream backpressure; hold watchdog
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
@@ -557,6 +573,8 @@ begin
                                 s_req_valid_r <= '0';
                                 s_state_r     <= ST_DRAIN_FLUSH;
                             end if;
+                        elsif i_bus_rsp_pending = '1' then
+                            null;  -- downstream backpressure; hold watchdog
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
@@ -582,10 +600,17 @@ begin
                             else
                                 s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                             end if;
-                        else
+                        elsif i_bus_rsp_pending = '0' then
+                            -- Nothing lingering at bus_phy/skid; advance watchdog
+                            -- only when not being stalled by backpressure.
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                         end if;
-                        if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
+                        -- Flush complete only when bus is idle AND no response
+                        -- is still pending anywhere in the bus_phy/skid path.
+                        -- Using i_bus_rsp_pending (not i_bus_rsp_valid) prevents
+                        -- premature exit while downstream backpressure holds a
+                        -- response unfired in the skid (Round 5 #2).
+                        if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
                             s_wait_cnt_r <= (others => '0');
                             s_state_r    <= ST_DRAIN_SETTLE;
                         elsif s_wait_cnt_r = x"FFFF" then
@@ -654,7 +679,10 @@ begin
 
                     when ST_OVERRUN_FLUSH =>
                         s_raw_valid_r <= '0';
-                        if i_bus_busy = '0' and i_bus_rsp_valid = '0' then
+                        -- Use i_bus_rsp_pending (not i_bus_rsp_valid) so flush
+                        -- doesn't exit while a response is still lingering at
+                        -- bus_phy/skid unfired (Round 5 #2).
+                        if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
                             s_purge_mode_r       <= '1';
                             s_drain_cnt_ififo1_r <= (others => '0');
                             s_drain_cnt_ififo2_r <= (others => '0');

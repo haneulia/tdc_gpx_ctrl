@@ -258,6 +258,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- =========================================================================
     signal s_init_rsp_valid  : std_logic;
     signal s_run_rsp_valid   : std_logic;
+    signal s_run_rsp_pending : std_logic;  -- "arrived at bus_phy/skid, not yet consumed"
     signal s_run_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
     signal s_reg_rsp_valid   : std_logic;
     signal s_reg_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
@@ -362,6 +363,7 @@ begin
             o_bus_oen_permanent => s_run_bus_oen,
             o_bus_req_burst     => s_run_bus_burst,
             i_bus_rsp_valid     => s_run_rsp_valid,
+            i_bus_rsp_pending   => s_run_rsp_pending,
             i_bus_rsp_rdata     => s_run_rsp_rdata,
             i_bus_busy          => i_bus_busy,
             i_ef1_sync          => i_ef1_sync,
@@ -437,6 +439,14 @@ begin
     -- Bus response routing (PH_RESP_DRAIN: all routing disabled)
     s_init_rsp_valid <= s_bus_rsp_fire when (s_phase_r = PH_INIT or s_phase_r = PH_CFG_WRITE) else '0';
     s_run_rsp_valid  <= s_bus_rsp_fire when s_phase_r = PH_RUN else '0';
+    -- Pending routed to chip_run: "response arrived at bus_phy/skid but may
+    -- not have fired this cycle." Combines the bus_phy pending flag with
+    -- raw tvalid held high while tready is low (raw hold full during PH_RUN).
+    -- chip_run uses this to:
+    --   - freeze EF1/EF2/BURST wait watchdogs on downstream backpressure
+    --   - decide DRAIN_FLUSH / OVERRUN_FLUSH completion (Round 5 #1/#2)
+    s_run_rsp_pending <= (i_bus_rsp_pending or i_s_axis_tvalid)
+                         when s_phase_r = PH_RUN else '0';
     s_run_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
     s_reg_rsp_valid  <= s_bus_rsp_fire when s_phase_r = PH_REG else '0';
     s_reg_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
