@@ -608,7 +608,11 @@ begin
                     when PH_RESP_DRAIN =>
                         -- Drain stale bus responses after timeout or soft reset.
                         -- tready='1' (above), routing='0' (all discarded).
-                        s_drain_cnt_r <= s_drain_cnt_r + 1;
+                        -- Counter saturates at 15 while the bus is still active
+                        -- (quarantine — see below).
+                        if s_drain_cnt_r /= to_unsigned(15, 4) then
+                            s_drain_cnt_r <= s_drain_cnt_r + 1;
+                        end if;
                         if i_bus_busy = '0' and i_bus_rsp_pending = '0'
                            and s_drain_cnt_r >= to_unsigned(3, 4) then
                             if s_drain_to_init_r = '1' then
@@ -619,19 +623,33 @@ begin
                             end if;
                             s_drain_to_init_r <= '0';  -- always clear on drain exit
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap: bus still busy or response pending after
-                            -- 15 cycles. Forcing onward could leak stale responses
-                            -- into the next phase; flag sticky so SW can diagnose.
+                            -- Hard cap reached. Round 5 #9:
+                            --   Original design advanced the phase anyway and
+                            --   set a sticky, which could leak a lingering bus
+                            --   response into the next phase. Now: if the bus
+                            --   is still busy or a response is still pending,
+                            --   QUARANTINE — stay in PH_RESP_DRAIN with counter
+                            --   saturated at 15, keeping tready='1' and routing
+                            --   disabled so any stale response is absorbed and
+                            --   discarded. Exit happens automatically once the
+                            --   first branch above sees (busy='0' and pending=
+                            --   '0'), or when SW issues i_cmd_soft_reset (which
+                            --   re-enters PH_RESP_DRAIN with cnt=0 and flushes
+                            --   bus_phy/skid through their soft-reset path).
+                            --   s_err_drain_cap_r sticky records that quarantine
+                            --   was entered at least once so SW can diagnose.
                             if i_bus_busy = '1' or i_bus_rsp_pending = '1' then
                                 s_err_drain_cap_r <= '1';
-                            end if;
-                            if s_drain_to_init_r = '1' then
-                                s_phase_r    <= PH_INIT;
-                                s_init_start <= '1';
+                                -- No phase advance: quarantine.
                             else
-                                s_phase_r <= PH_IDLE;
+                                if s_drain_to_init_r = '1' then
+                                    s_phase_r    <= PH_INIT;
+                                    s_init_start <= '1';
+                                else
+                                    s_phase_r <= PH_IDLE;
+                                end if;
+                                s_drain_to_init_r <= '0';
                             end if;
-                            s_drain_to_init_r <= '0';  -- always clear on drain exit
                         end if;
 
                 end case;
