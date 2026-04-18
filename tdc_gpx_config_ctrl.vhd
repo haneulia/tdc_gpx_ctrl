@@ -379,7 +379,62 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_chip_shot_seq_axi_slv : t_slv16_array;  -- intermediate for xpm_cdc_gray output
     signal s_cmd_reg_rdata_axi     : t_slv28_array;
 
+    -- =========================================================================
+    -- TDC-domain reset (Round 5 #8):
+    -- AXI reset (i_axis_aresetn) is async to i_tdc_clk. Without a sync stage,
+    -- reset deassert could release TDC-domain registers metastably / non-
+    -- uniformly. xpm_cdc_async_rst provides async-assert + synchronous-deassert
+    -- in the TDC domain, which is the standard pattern for cross-domain reset.
+    -- =========================================================================
+    signal s_tdc_aresetn : std_logic;
+
+    -- =========================================================================
+    -- 2-FF synchronizer stages for quasi-static config bundles (Round 5 #7).
+    -- Each bundle gets a dedicated metastability slot before the final _tdc
+    -- register. ASYNC_REG attributes mark both stages for Vivado so the tool
+    -- does not optimize/relocate them and recognises the path as a known
+    -- CDC synchronizer. Atomicity of multi-bit payloads still relies on the
+    -- documented contract (SW holds these stable for several i_tdc_clk cycles
+    -- before issuing the related command pulse); a full xpm_cdc_handshake
+    -- refactor is tracked as a follow-up if atomicity ever fails in test.
+    -- =========================================================================
+    signal s_cfg_meta_r             : t_tdc_cfg          := c_TDC_CFG_INIT;
+    signal s_cfg_image_meta_r       : t_cfg_image        := (others => (others => '0'));
+    signal s_expected_ififo1_meta_r : t_expected_array   := (others => (others => '0'));
+    signal s_expected_ififo2_meta_r : t_expected_array   := (others => (others => '0'));
+    signal s_cmd_reg_addr_meta_r    : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_cmd_reg_wdata_meta_r   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) := (others => '0');
+
+    attribute ASYNC_REG : string;
+    attribute ASYNC_REG of s_cfg_meta_r             : signal is "TRUE";
+    attribute ASYNC_REG of s_cfg_tdc                : signal is "TRUE";
+    attribute ASYNC_REG of s_cfg_image_meta_r       : signal is "TRUE";
+    attribute ASYNC_REG of s_cfg_image_tdc          : signal is "TRUE";
+    attribute ASYNC_REG of s_expected_ififo1_meta_r : signal is "TRUE";
+    attribute ASYNC_REG of s_expected_ififo1_tdc    : signal is "TRUE";
+    attribute ASYNC_REG of s_expected_ififo2_meta_r : signal is "TRUE";
+    attribute ASYNC_REG of s_expected_ififo2_tdc    : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_reg_addr_meta_r    : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_reg_addr_tdc       : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_reg_wdata_meta_r   : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_reg_wdata_tdc      : signal is "TRUE";
+
 begin
+
+    -- =========================================================================
+    -- TDC-domain reset synchronizer (Round 5 #8)
+    -- =========================================================================
+    u_tdc_rst_sync : xpm_cdc_async_rst
+        generic map (
+            DEST_SYNC_FF    => 4,
+            INIT_SYNC_FF    => 0,
+            RST_ACTIVE_HIGH => 0
+        )
+        port map (
+            src_arst  => i_axis_aresetn,
+            dest_clk  => i_tdc_clk,
+            dest_arst => s_tdc_aresetn
+        );
 
     -- =========================================================================
     -- frame_done latch for err_handler
@@ -701,22 +756,39 @@ begin
     -- =========================================================================
     -- CDC Stage 3: Quasi-static config snapshot (AXI-Stream -> TDC)
     --
-    -- Config values are set by SW, then a command pulse is issued.
-    -- The command goes through xpm_cdc_pulse (~2-4 cycle latency).
-    -- By the time the CDC'd pulse arrives in TDC domain, config has been
-    -- stable for many cycles. Continuous register capture converges safely.
+    -- 2-FF synchronizer pipeline (Round 5 #7):
+    --   Stage 1 (_meta_r): direct capture from AXI-domain source; may go
+    --                      metastable on any bit transitioning at the edge.
+    --   Stage 2 (_tdc)   : resampled value with metastability resolved.
+    --   ASYNC_REG on both stages marks them as a known synchronizer so Vivado
+    --   does not optimize/relocate and reports CDC paths cleanly.
+    --
+    -- Atomicity contract (unchanged):
+    --   SW writes config values, then issues a command pulse. Commands cross
+    --   via xpm_cdc_pulse (~2-4 dest cycles) and the CDC'd pulse arrives in
+    --   TDC after the two sync stages have already resolved the new config.
+    --   Per-bit metastability is prevented; per-bundle atomicity still relies
+    --   on SW holding the payload stable across the handshake window.
     -- =========================================================================
-    p_tdc_cfg_snapshot : process(i_tdc_clk)
+    p_tdc_cfg_sync : process(i_tdc_clk)
     begin
         if rising_edge(i_tdc_clk) then
-            s_cfg_tdc             <= s_cfg_merged;
-            s_cfg_image_tdc       <= o_cfg_image;
-            s_expected_ififo1_tdc <= s_expected_ififo1;
-            s_expected_ififo2_tdc <= s_expected_ififo2;
-            s_cmd_reg_addr_tdc    <= s_cmd_reg_addr_mux;
-            s_cmd_reg_wdata_tdc   <= s_cmd_reg_wdata;
+            -- Stage 1: first capture (potentially metastable)
+            s_cfg_meta_r             <= s_cfg_merged;
+            s_cfg_image_meta_r       <= o_cfg_image;
+            s_expected_ififo1_meta_r <= s_expected_ififo1;
+            s_expected_ififo2_meta_r <= s_expected_ififo2;
+            s_cmd_reg_addr_meta_r    <= s_cmd_reg_addr_mux;
+            s_cmd_reg_wdata_meta_r   <= s_cmd_reg_wdata;
+            -- Stage 2: resampled (stable for TDC logic)
+            s_cfg_tdc                <= s_cfg_meta_r;
+            s_cfg_image_tdc          <= s_cfg_image_meta_r;
+            s_expected_ififo1_tdc    <= s_expected_ififo1_meta_r;
+            s_expected_ififo2_tdc    <= s_expected_ififo2_meta_r;
+            s_cmd_reg_addr_tdc       <= s_cmd_reg_addr_meta_r;
+            s_cmd_reg_wdata_tdc      <= s_cmd_reg_wdata_meta_r;
         end if;
-    end process p_tdc_cfg_snapshot;
+    end process p_tdc_cfg_sync;
 
     -- =========================================================================
     -- CDC Stage 2c: TDC -> AXI-Stream rdata snapshot
@@ -742,7 +814,7 @@ begin
         u_bus_phy : entity work.tdc_gpx_bus_phy
             port map (
                 i_clk           => i_tdc_clk,
-                i_rst_n         => i_axis_aresetn,
+                i_rst_n         => s_tdc_aresetn,
                 i_tick_en       => s_tick_en(i),
                 i_bus_ticks     => s_bus_ticks_snap(i),
                 i_req_valid     => s_bus_req_valid(i),
@@ -783,7 +855,7 @@ begin
             generic map (g_DATA_WIDTH => 40)
             port map (
                 i_clk     => i_tdc_clk,
-                i_rst_n   => i_axis_aresetn,
+                i_rst_n   => s_tdc_aresetn,
                 -- Flush on any soft reset (CDC'd to TDC domain)
                 i_flush   => s_cmd_soft_reset_tdc or s_err_cmd_soft_reset_tdc(i),
                 i_s_valid => s_brsp_axis_tvalid(i),
@@ -963,7 +1035,7 @@ begin
             )
             port map (
                 i_clk               => i_tdc_clk,
-                i_rst_n             => i_axis_aresetn,
+                i_rst_n             => s_tdc_aresetn,
                 i_cfg               => s_cfg_tdc,
                 i_cfg_image         => s_cfg_image_tdc,
                 i_cmd_start         => s_cmd_start_tdc,
