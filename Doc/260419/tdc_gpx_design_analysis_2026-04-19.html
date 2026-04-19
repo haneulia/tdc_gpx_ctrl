@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>TDC-GPX Controller — 구조 · 타이밍 · 메모리 · 데이터 흐름 분석</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f8; color: #1a1a2e; padding: 24px; line-height: 1.5; }
+  .doc { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 24px; margin-bottom: 6px; }
+  h2 { font-size: 19px; margin: 28px 0 10px; color: #16213e; border-bottom: 2px solid #0f3460; padding-bottom: 4px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: #533483; }
+  h4 { font-size: 13px; margin: 14px 0 6px; color: #222; }
+  p, li { font-size: 13px; color: #222; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0 6px 22px; }
+  .subtitle { font-size: 13px; color: #666; margin-bottom: 18px; }
+  .note { font-size: 12px; color: #666; margin: 4px 0; }
+  code { font-family: 'Consolas', monospace; background: #ececf2; padding: 1px 4px; border-radius: 2px; font-size: 12px; }
+  pre { font-family: 'Consolas', monospace; background: #1a1a2e; color: #e6e6e6; padding: 12px; border-radius: 4px; font-size: 12px; overflow-x: auto; margin: 8px 0; }
+  table { border-collapse: collapse; margin: 10px 0; font-size: 12px; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #0f3460; color: #fff; font-weight: 600; }
+  tr:nth-child(even) { background: #f0f0f5; }
+  .tight td, .tight th { padding: 4px 6px; font-size: 11px; }
+  .callout { background: #fff3cd; border-left: 3px solid #fca311; padding: 10px 12px; margin: 10px 0; font-size: 12px; }
+  .callout.info { background: #cfe2ff; border-color: #0f3460; }
+  .callout.warn { background: #f8d7da; border-color: #e94560; }
+
+  /* TOC */
+  .toc { background: #fff; border: 1px solid #ccc; padding: 12px 16px 12px 34px; margin: 12px 0 22px; border-radius: 4px; font-size: 12.5px; }
+  .toc h3 { margin: 0 0 6px -16px; color: #0f3460; }
+  .toc li { margin: 3px 0; }
+  .toc a { color: #0f3460; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Hierarchy tree */
+  .tree { font-family: 'Consolas', monospace; font-size: 12px; white-space: pre; line-height: 1.4; background: #fff; border: 1px solid #ccc; padding: 10px 14px; border-radius: 4px; overflow-x: auto; }
+
+  /* Cluster box */
+  .cluster { background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 12px 16px; margin: 12px 0; }
+  .cluster h3 { margin-top: 0; border-bottom: 1px dashed #aaa; padding-bottom: 4px; }
+  .cluster .role { font-style: italic; color: #666; font-size: 12px; margin-bottom: 8px; }
+
+  /* Flow diagram row */
+  .flow { display: flex; gap: 0; align-items: stretch; flex-wrap: wrap; margin: 12px 0; }
+  .flow-stage { flex: 0 0 auto; padding: 8px 10px; background: #fff; border: 1px solid #0f3460; border-radius: 4px; font-size: 11px; text-align: center; min-width: 88px; }
+  .flow-stage.clk-tdc { border-color: #d62828; background: #ffecec; }
+  .flow-stage.clk-axis { border-color: #0f3460; background: #e6edf5; }
+  .flow-stage.clk-axi { border-color: #2e8b57; background: #e6f4ea; }
+  .flow-arrow { display: flex; align-items: center; padding: 0 4px; color: #0f3460; font-size: 14px; }
+  .cdc-marker { background: #fca311; color: #1a1a2e; padding: 2px 5px; font-size: 9px; border-radius: 2px; align-self: center; margin: 0 2px; font-weight: 700; }
+
+  /* Color tags */
+  .tag { padding: 2px 7px; border-radius: 2px; font-size: 10px; font-weight: 700; color: #fff; }
+  .tag.tdc { background: #d62828; }
+  .tag.axis { background: #0f3460; }
+  .tag.axi { background: #2e8b57; }
+  .tag.shared { background: #533483; }
+
+  /* Timeline */
+  .timeline { font-family: 'Consolas', monospace; font-size: 11px; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px 14px; margin: 10px 0; overflow-x: auto; }
+
+  /* Bandwidth bar */
+  .bw-bar { background: linear-gradient(to right, #0f3460 0%, #e94560 100%); height: 16px; border-radius: 2px; margin: 4px 0; min-width: 40px; }
+  .bw-label { font-size: 11px; margin: 2px 0; }
+
+  /* Section anchors scroll offset */
+  h2, h3 { scroll-margin-top: 10px; }
+
+  em { color: #533483; font-style: normal; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>TDC-GPX Controller — 설계 분석</h1>
+<p class="subtitle">모듈 구조 · 타이밍 · 메모리 · 데이터 흐름 전면 분석 · 2026-04-19 · Round 13 follow-up 반영</p>
+
+<!-- ============================================================ -->
+<div class="toc">
+<h3>목차</h3>
+<ol>
+  <li><a href="#overview">개요 및 설계 목표</a></li>
+  <li><a href="#hierarchy">모듈 계층과 클러스터 구조</a></li>
+  <li><a href="#clocks">클럭 도메인과 CDC</a></li>
+  <li><a href="#cluster1">Cluster 1 — TDC 버스 제어</a></li>
+  <li><a href="#cluster2">Cluster 2 — Event 디코드</a></li>
+  <li><a href="#cluster3">Cluster 3 — Cell 조립</a></li>
+  <li><a href="#cluster4">Cluster 4 — Face/Frame 조립 + 헤더 삽입</a></li>
+  <li><a href="#sidecar">사이드카 모듈 (face_seq, err_handler, status_agg)</a></li>
+  <li><a href="#dataflow">End-to-End 데이터 흐름</a></li>
+  <li><a href="#memory">메모리 / FIFO / 저장 구조 인벤토리</a></li>
+  <li><a href="#latency">파이프라인 지연 및 쓰루풋</a></li>
+  <li><a href="#backpressure">Backpressure 와 Critical Path</a></li>
+  <li><a href="#sideband">Sideband 신호 (tuser, tdata 메타데이터)</a></li>
+  <li><a href="#refs">참조 문서</a></li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="overview">1. 개요 및 설계 목표</h2>
+
+<p>TDC-GPX Controller 는 <em>ams TDC-GPX</em> 고정밀 시간 디지털 변환기 (4 chip × 8 stop) 를 FPGA 에서 제어하면서 측정 결과를 VDMA 를 통해 DDR 로 전달하는 파이프라인이다. Laser LiDAR 용 전용 설계로, 측정 거리에 따라 쓰루풋/셀 크기를 런타임 조절하여 PRF 상한까지 활용한다.</p>
+
+<h3>핵심 설계 목표</h3>
+<ul>
+  <li><strong>TDC-GPX I-mode</strong> — 외부 stop 이벤트 → IFIFO 기반 raw word 수집</li>
+  <li><strong>4 chip 병렬 제어</strong> — 독립 bus_phy + chip_ctrl 로 chip 간 격리</li>
+  <li><strong>Rise/Fall slope 분리 파이프라인</strong> — 2× 독립 cell/face 조립 경로</li>
+  <li><strong>AXI-Stream 기반 모듈화</strong> — 모든 데이터 경로 handshake 기반, skid 버퍼/xpm_fifo_axis 로 backpressure 흡수</li>
+  <li><strong>Face-단위 VDMA 프레임 생성</strong> — 48-byte header + chip×stop×beats 순차 출력</li>
+  <li><strong>거리 기반 타이밍 규약</strong> — <code>shot_period = 1.5 × round-trip</code> (50% PRF headroom)</li>
+</ul>
+
+<div class="callout info">
+<strong>설계 스케일 (tdc_gpx_pkg.vhd)</strong>: 4 chips, 8 stops/chip, max 7 hits/stop, 17-bit hit slot, TDATA 32 또는 64-bit 선택, Rise+Fall 2 slope → 총 8 개 cell_builder, 2 face_assembler + 2 header_inserter.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="hierarchy">2. 모듈 계층과 클러스터 구조</h2>
+
+<h3>최상위 인스턴스 (tdc_gpx_top.vhd)</h3>
+<div class="tree">
+tdc_gpx_top
+├── u_csr_pipeline       : tdc_gpx_csr_pipeline       [s_axi_aclk → i_axis_aclk]
+├── u_config_ctrl        : tdc_gpx_config_ctrl        ── Cluster 1
+│   ├── u_csr_chip       : tdc_gpx_csr_chip           (per-chip AXI4-Lite CSR)
+│   ├── u_cmd_arb        : tdc_gpx_cmd_arb            (reg access arbitration)
+│   ├── u_stop_decode    : tdc_gpx_stop_cfg_decode    (stop-event decoder + window)
+│   ├── u_err_handler    : tdc_gpx_err_handler        (ErrFlag 감지 + recovery)
+│   ├── gen_chip (4×) ─ u_chip_ctrl    : tdc_gpx_chip_ctrl
+│   │                    ├── u_init    : tdc_gpx_chip_init    (powerup / cfg_write)
+│   │                    ├── u_run     : tdc_gpx_chip_run     (capture / drain / ALU)
+│   │                    └── u_reg     : tdc_gpx_chip_reg     (individual reg RW)
+│   ├── gen_chip (4×) ─ u_bus_phy      : tdc_gpx_bus_phy       [i_tdc_clk]
+│   ├── u_sk_brsp        : tdc_gpx_skid_buffer         (bus response skid)
+│   └── gen_chip (4×) ─ u_raw_cdc      : xpm_fifo_async        [i_tdc_clk → i_axis_aclk]
+│
+├── u_decode_pipe        : tdc_gpx_decode_pipe        ── Cluster 2
+│   ├── gen_chip (4×) ─ u_decoder_i_mode  : tdc_gpx_decoder_i_mode
+│   ├── gen_chip (4×) ─ u_raw_evt_builder : tdc_gpx_raw_event_builder
+│   └── u_sk_dec, u_sk_evt               : tdc_gpx_skid_buffer (timing)
+│
+├── u_cell_pipe          : tdc_gpx_cell_pipe          ── Cluster 3
+│   ├── gen_chip (4×) ─ u_cell_bld_rise   : tdc_gpx_cell_builder
+│   ├── gen_chip (4×) ─ u_cell_bld_fall   : tdc_gpx_cell_builder
+│   └── p_slope_demux    : (registered rise/fall split)
+│
+├── u_output_stage       : tdc_gpx_output_stage       ── Cluster 4
+│   ├── u_face_asm_rise  : tdc_gpx_face_assembler
+│   ├── u_face_asm_fall  : tdc_gpx_face_assembler
+│   ├── u_face_rise_fifo : xpm_fifo_axis              (post face, 16-deep)
+│   ├── u_face_fall_fifo : xpm_fifo_axis              (post face, 16-deep)
+│   ├── u_hdr_rise       : tdc_gpx_header_inserter
+│   └── u_hdr_fall       : tdc_gpx_header_inserter
+│
+├── u_face_seq           : tdc_gpx_face_seq            (face/shot 시퀀서)
+└── u_status_agg         : tdc_gpx_status_agg          (status aggregation)
+</div>
+
+<h3>클러스터 역할 요약</h3>
+<table>
+  <tr><th>Cluster</th><th>역할</th><th>주요 모듈</th><th>도메인</th><th>데이터 방향</th></tr>
+  <tr>
+    <td><strong>1</strong></td>
+    <td>TDC-GPX 칩 버스 제어 + raw word 수집 + 도메인 크로싱</td>
+    <td>chip_ctrl, chip_init/run/reg, bus_phy, cmd_arb, stop_cfg_decode, err_handler, csr_chip</td>
+    <td>TDC ↔ AXIS</td>
+    <td>TDC pin → 28-bit raw word + control beat</td>
+  </tr>
+  <tr>
+    <td><strong>2</strong></td>
+    <td>raw word → 필드 디코드 + event 메타 태깅</td>
+    <td>decoder_i_mode, raw_event_builder, skid</td>
+    <td>AXIS</td>
+    <td>28-bit raw → 17-bit hit + stop_id/chip_id</td>
+  </tr>
+  <tr>
+    <td><strong>3</strong></td>
+    <td>Rise/Fall slope 분리 + per-stop hit 누적 → cell</td>
+    <td>cell_pipe (slope demux, 8× cell_builder)</td>
+    <td>AXIS</td>
+    <td>event stream → 셀 (per-stop)</td>
+  </tr>
+  <tr>
+    <td><strong>4</strong></td>
+    <td>4 chip cell 조립 → face row + 헤더 삽입 → VDMA</td>
+    <td>output_stage (face_assembler ×2, header_inserter ×2, FIFO)</td>
+    <td>AXIS</td>
+    <td>per-chip cell → packed row → VDMA frame</td>
+  </tr>
+  <tr style="background:#fff3cd;">
+    <td><em>side</em></td>
+    <td>제어/관찰 (데이터 경로 외)</td>
+    <td>csr_pipeline, face_seq, err_handler, status_agg</td>
+    <td>cross-domain</td>
+    <td>control / status only</td>
+  </tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="clocks">3. 클럭 도메인과 CDC</h2>
+
+<h3>세 개의 클럭 도메인</h3>
+<table>
+  <tr><th>도메인</th><th>용도</th><th>대표 주파수</th><th>속하는 모듈</th></tr>
+  <tr>
+    <td><span class="tag axi">s_axi_aclk</span></td>
+    <td>PS AXI4-Lite CSR</td>
+    <td>~100 MHz (PS 종속)</td>
+    <td>csr_pipeline 의 AXI 포트, csr_chip 의 AXI 포트</td>
+  </tr>
+  <tr>
+    <td><span class="tag axis">i_axis_aclk</span></td>
+    <td>AXI-Stream 처리 (Cluster 2/3/4 + face_seq + status_agg)</td>
+    <td>200 MHz (설계 목표)</td>
+    <td>decode_pipe, cell_pipe, output_stage, face_seq, status_agg, chip_ctrl 의 일부</td>
+  </tr>
+  <tr>
+    <td><span class="tag tdc">i_tdc_clk</span></td>
+    <td>TDC-GPX 버스 프로토콜</td>
+    <td>설정 가능 (bus_clk_div)</td>
+    <td>bus_phy, chip_ctrl (bus request mux side)</td>
+  </tr>
+</table>
+
+<h3>CDC 크로싱 요약</h3>
+<table>
+  <tr><th>크로싱</th><th>프리미티브</th><th>용도</th></tr>
+  <tr><td>s_axi_aclk → i_axis_aclk</td><td>xpm_cdc_handshake (CTL0~CTL2)</td><td>CSR write 데이터 전달</td></tr>
+  <tr><td>i_axis_aclk → s_axi_aclk</td><td>xpm_cdc_handshake (STAT5~STAT7)</td><td>status 전달 (원자적 payload)</td></tr>
+  <tr><td>i_axis_aclk → i_tdc_clk</td><td>xpm_cdc_pulse (cmd_start/stop/…)</td><td>명령 펄스 전달</td></tr>
+  <tr><td>i_tdc_clk → i_axis_aclk</td><td>xpm_fifo_async (raw stream, per-chip)</td><td>raw 데이터 스트림 CDC (chip_ctrl → cluster 2 skid)</td></tr>
+  <tr><td>i_tdc_clk → i_axis_aclk</td><td>2-FF sync (EF/LF/irflag/errflag/RSP status)</td><td>비동기 status 신호</td></tr>
+  <tr><td>i_axis_aclk → i_tdc_clk</td><td>xpm_cdc_async_rst</td><td>reset CDC</td></tr>
+</table>
+
+<div class="callout warn">
+<strong>설계 상의 핵심 제약</strong>: raw 데이터 스트림의 CDC 는 <code>xpm_fifo_async</code> (per-chip) 한 번만 건너간다. 즉 <em>chip_ctrl 의 raw FIFO (depth 6)</em> → <em>CDC async FIFO</em> → <em>cluster 2 skid</em> 순으로, TDC 도메인의 모든 raw 수집이 끝난 뒤 AXIS 도메인으로 이동한다. Control beat (drain_done, ififo1_done) 도 동일 스트림으로 간다.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="cluster1">4. Cluster 1 — TDC 버스 제어</h2>
+
+<div class="cluster">
+<h3>tdc_gpx_chip_ctrl (coordinator)</h3>
+<div class="role">역할: 3 개의 서브 FSM (chip_init, chip_run, chip_reg) 를 phase 기반으로 조정하고, 버스 request mux + response routing + raw-out FIFO 를 담당.</div>
+
+<h4>Coordinator FSM (6 phase)</h4>
+<table class="tight">
+  <tr><th>Phase</th><th>역할</th><th>진입 조건</th></tr>
+  <tr><td><code>PH_INIT</code></td><td>chip_init 활성 (powerup/cfg_write)</td><td>reset 해제, soft_reset, drain_to_init</td></tr>
+  <tr><td><code>PH_IDLE</code></td><td>대기</td><td>init 완료</td></tr>
+  <tr><td><code>PH_RUN</code></td><td>chip_run 활성</td><td><code>i_cmd_start</code></td></tr>
+  <tr><td><code>PH_REG</code></td><td>chip_reg 활성</td><td><code>i_cmd_reg_read/write</code></td></tr>
+  <tr><td><code>PH_CFG_WRITE</code></td><td>chip_init 의 cfg_write 경로</td><td><code>i_cmd_cfg_write</code></td></tr>
+  <tr><td><code>PH_RESP_DRAIN</code></td><td>stale bus response 배출 (quarantine 포함)</td><td>모든 sub-FSM 완료 후 defensive 진입</td></tr>
+</table>
+
+<h4>하드 cap 및 자가 복구</h4>
+<ul>
+  <li><code>PH_RESP_DRAIN</code> 정상 종료: bus idle 3 cycle 유지</li>
+  <li>Hard cap: 15 cycle 도달 시 bus 가 여전히 busy 면 quarantine</li>
+  <li>Secondary watchdog: <code>s_drain_quarantine_cnt_r</code> (16-bit) 포화 시 <code>s_err_bus_fatal_r</code> 세움</li>
+  <li><strong>Auto-recover (Round 13 follow-up)</strong>: fatal 세팅 후 bus 가 <code>g_BUS_IDLE_STABLE_CLKS</code> (기본 4096 cy ≈ 20 µs) 연속 idle 유지 시 자동 PH_INIT 로 escape, <code>s_err_force_reinit_r</code> 스티키 세움</li>
+  <li>SW 우회: <code>i_cmd_force_reinit</code> (최우선) — 외부에서 버스 flush 했다는 전제 하에 PH_INIT 직행</li>
+</ul>
+
+<h4>Raw AXI-Stream 출력 FIFO</h4>
+<ul>
+  <li>Depth <strong>6</strong>, 타입 <code>t_raw_entry</code> {valid, tdata[31:0], tuser[7:0], drain}</li>
+  <li>Backpressure 등록 1 cycle 지연 흡수 + control beat (drain_done, ififo1_done) 예약</li>
+  <li><strong>Data-sacrifice 정책 (Round 13 follow-up P1)</strong>: control beat 가 FIFO full 일 때 가장 오래된 data beat 를 evict 하여 control 을 반드시 enqueue</li>
+  <li>TUser(5) 는 faulted 플래그 (drain_done_faulted 전파용, audit 4번)</li>
+</ul>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_chip_init / chip_run / chip_reg</h3>
+
+<table class="tight">
+  <tr><th>모듈</th><th>FSM 상태 개수</th><th>주요 기능</th><th>타임아웃</th></tr>
+  <tr>
+    <td><code>chip_init</code></td><td>10</td>
+    <td>PuResN 펄스 (~240 ns) → 레지스터 쓰기 (REG0-7) → ALU trigger → 설정 완료</td>
+    <td>bus 응답 65535 cy</td>
+  </tr>
+  <tr>
+    <td><code>chip_run</code></td><td>13</td>
+    <td>ARMED → CAPTURE → DRAIN_LATCH/EF1/EF2/BURST/FLUSH → ALU_PULSE → ALU_RECOVERY</td>
+    <td>per-state 65535 cy watchdog</td>
+  </tr>
+  <tr>
+    <td><code>chip_reg</code></td><td>2</td>
+    <td>per-register read/write dispatch; 1-depth overlap queue</td>
+    <td>bus 응답 65535 cy</td>
+  </tr>
+</table>
+
+<div class="callout">
+<strong>chip_run 의 drain 완료 의미 분리 (Round 13 axis 1a, follow-up 4번)</strong>:
+<ul>
+  <li><code>o_drain_done</code> = 정상 완료 1-clk 펄스</li>
+  <li><code>o_drain_done_faulted</code> = 동일 cycle 에 co-assert (fallback 경로에서 expected-vs-actual count 불일치 감지)</li>
+  <li>이 faulted 플래그가 raw stream 의 <code>tuser(5)</code> 에 실려 cell_builder 까지 전달되고, 최종적으로 <code>o_m_axis_tuser(0)</code> 로 face_assembler 에 도달 (P1 rework)</li>
+</ul>
+</div>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_bus_phy</h3>
+<div class="role">역할: TDC 칩 버스 프로토콜 (R/W, tick 기반) 구현 및 응답 AXI-Stream 생성.</div>
+
+<h4>FSM</h4>
+<table class="tight">
+  <tr><th>상태</th><th>역할</th></tr>
+  <tr><td><code>ST_IDLE</code></td><td>request 대기</td></tr>
+  <tr><td><code>ST_READ</code></td><td>RDN 토글 + IOB sample</td></tr>
+  <tr><td><code>ST_WRITE</code></td><td>WRN 토글</td></tr>
+  <tr><td><code>ST_TURNAROUND</code></td><td>1 tick 방향 변경 갭</td></tr>
+</table>
+
+<h4>타이밍</h4>
+<ul>
+  <li>3-bit tick counter (<code>s_tick_r</code>) 로 Phase A → L → H 분할 (1 + N-2 + 1)</li>
+  <li>최소 <code>i_bus_ticks = 4</code> → req_valid → rsp_valid 지연 = <strong>N+1 clocks</strong> (tdc 도메인)</li>
+  <li>응답은 1-stage holding register (no skid; chip_ctrl 가 next req 전에 소비)</li>
+</ul>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_stop_cfg_decode (P1 rework 후)</h3>
+<div class="role">역할: echo_receiver → expected IFIFO drain counts 디코드 + 거리 기반 orphan window.</div>
+
+<h4>거리 기반 shot window (Round 13 follow-up 5번)</h4>
+<pre>shot_start(T0) ─▶ R = max_range_clks ─▶ W = R + margin ─▶ T1 = next shot_start
+                   (물리적 round-trip 경계)  (latency 흡수)    (shot_period)
+                                             │                 │
+                                             │ orphan 감지 zone │</pre>
+<ul>
+  <li>Snapshot: <code>s_max_range_snap_r</code> (shot_start 시점 latch)</li>
+  <li>Counter: <code>s_window_cnt_r</code> (24-bit) → overflow-free</li>
+  <li>Generic: <code>g_WINDOW_MARGIN_CLKS = 32</code> (기본, 16-bit 상한)</li>
+  <li><code>max_range_clks = 0</code> → window 영원히 open (orphan 감지 실질 비활성)</li>
+</ul>
+</div>
+
+<div class="cluster">
+<h3>기타 Cluster 1 모듈</h3>
+<ul>
+  <li><code>cmd_arb</code> — 4 chip 에 걸친 reg access 중재; 1-depth overlap queue + dispatch-wait watchdog</li>
+  <li><code>csr_chip</code> — per-chip AXI4-Lite CSR (8 CTL + 8 STAT)</li>
+  <li><code>err_handler</code> — ErrFlag 디바운스 + REG12 분류 + per-chip soft_reset + error_fill gating</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="cluster2">5. Cluster 2 — Event 디코드</h2>
+
+<div class="cluster">
+<h3>tdc_gpx_decoder_i_mode</h3>
+<div class="role">28-bit TDC-GPX I-mode raw word 에서 hit/slope/channel/stop_id 추출.</div>
+
+<ul>
+  <li>입력: <code>tdata[27:0]</code>, <code>tuser[7]=drain_done</code>, <code>tuser[0]=ififo_id</code>, <code>tuser[5]=faulted</code> (control beat 에서만)</li>
+  <li>출력: <code>tdata[16:0]=raw_hit</code>, <code>tuser[5:0]</code> = slope/cha_code/stop_id_local (data beat) 혹은 faulted flag 보존 (control beat)</li>
+  <li>Pipeline: <strong>1-stage</strong> 레지스터드 (always-accept 패턴, 단일 bubble)</li>
+</ul>
+
+<h4>Field mapping (I-Mode, SINGLE_SHOT)</h4>
+<table class="tight">
+  <tr><th>Raw bit</th><th>필드</th></tr>
+  <tr><td>[27:26]</td><td>ChaCode (2-bit, IFIFO 내 channel)</td></tr>
+  <tr><td>[25:18]</td><td>StartNum (8-bit, SINGLE_SHOT 에서 항상 0)</td></tr>
+  <tr><td>[17]</td><td>Slope (rising / falling)</td></tr>
+  <tr><td>[16:0]</td><td>Hit (17-bit, BIN 단위 Stop–Start 시간)</td></tr>
+</table>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_raw_event_builder</h3>
+<div class="role">chip_id 태깅 + per-stop hit_seq 카운터 + out-of-range stop_id 검출.</div>
+
+<ul>
+  <li>입력: decoder_i_mode 출력 (8-bit tuser)</li>
+  <li>출력: <strong>16-bit tuser</strong> 확장 — slope(0), chip_id[2:1], stop_id[5:3], ififo_id[6], drain_done[7], hit_seq_local[10:8], shot_seq[4:0][15:11]</li>
+  <li>내부 상태: per-stop hit counter (8 × 3-bit), final drain_done 에 reset</li>
+  <li>Pipeline: <strong>1-stage</strong> 레지스터드</li>
+</ul>
+
+<h4>Control beat 처리</h4>
+<ul>
+  <li><code>tuser[7]=1, tuser[6]=0</code>: IFIFO1 done (중간) → 카운터 리셋 안 함</li>
+  <li><code>tuser[7]=1, tuser[6]=1</code>: Final drain_done → 모든 stop hit counter 리셋</li>
+  <li>faulted bit (<code>tuser[5]</code>) 는 control beat 에서만 의미 있고 그대로 패스스루</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="cluster3">6. Cluster 3 — Cell 조립</h2>
+
+<div class="cluster">
+<h3>tdc_gpx_cell_pipe (wrapper)</h3>
+
+<ul>
+  <li>입력: 4 chip × event stream (AXIS, 16-bit tuser)</li>
+  <li>slope_demux (registered) → rise/fall 분리</li>
+  <li>8 × <code>tdc_gpx_cell_builder</code> (4 rise + 4 fall)</li>
+  <li>출력: per-chip cell stream (rise+fall 각 4 채널), TUSER 1-bit (faulted)</li>
+</ul>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_cell_builder (핵심 메모리 집약 모듈)</h3>
+<div class="role">Event → 셀 (per-stop hit 누적, 출력 serialize). Ping-pong dual buffer 로 연속 shot overlap 흡수.</div>
+
+<h4>Dual-Buffer 구조</h4>
+<table class="tight">
+  <tr><th>항목</th><th>값</th></tr>
+  <tr><td>버퍼 개수</td><td>2 (ping-pong)</td></tr>
+  <tr><td>per-buffer 엔트리</td><td>8 stops (c_MAX_STOPS_PER_CHIP)</td></tr>
+  <tr><td>per-entry</td><td>t_cell (hit_slot×7, hit_valid×7, slope_vec×7, hit_count, hit_dropped)</td></tr>
+  <tr><td>버퍼 상태</td><td><code>BUF_FREE</code> / <code>BUF_COLLECT</code> / <code>BUF_SHARED</code></td></tr>
+  <tr><td>buffer age</td><td>8-bit monotonic 시퀀스 (age 비교 wrap-safe)</td></tr>
+</table>
+
+<h4>Collect FSM (p_collect)</h4>
+<ul>
+  <li><code>ST_C_IDLE</code> — shot_start 대기</li>
+  <li><code>ST_C_ACTIVE</code> — hit 누적; 최종 drain_done 시 BUF_FULL → 다른 버퍼로 전환 또는 DROP</li>
+  <li><code>ST_C_DROP</code> — 버퍼 부족 시 데이터 흡수 (tready='1') 하지만 버퍼에 쓰지 않음</li>
+  <li><code>ST_C_QUARANTINE</code> — 65K cy watchdog × <code>c_QUARANTINE_TICK_CAP</code> (4-bit) 반복 → 포기 후 force-escape + post-escape absorb 12-bit</li>
+</ul>
+
+<h4>Output FSM (p_output)</h4>
+<ul>
+  <li><code>ST_O_IDLE → ST_O_LOAD → ST_O_ACTIVE</code> (정상, cell 당 1-clk LOAD bubble)</li>
+  <li><code>ST_O_WAIT_IFIFO2</code> — 스톱 3→4 경계에서 IFIFO2 미준비 시 stall</li>
+  <li><code>ST_O_TIMEOUT_EOS</code> — IFIFO2 timeout (x"FFFF") 시 합성 tlast beat (faulted=1)</li>
+  <li>쓰루풋: <strong>cell 당 (beats_per_cell + 1) cycle</strong> (LOAD bubble 포함)</li>
+</ul>
+
+<h4>tuser(0) = faulted 생성 (P1 rework)</h4>
+<ul>
+  <li>Per-buffer <code>s_buf_faulted_r(0:1)</code>: final drain_done beat 에 <code>tuser(5)='1'</code> 이면 latch</li>
+  <li>p_output 이 tlast beat 에서만 <code>s_tuser_r(0) = s_buf_faulted_r(v_rd)</code> 로 set, 그 외 beat 는 0</li>
+  <li>ST_O_TIMEOUT_EOS synthetic tlast: tuser 강제 '1' (degraded output)</li>
+  <li>이로써 <em>faulted 는 data beat 와 동일한 xpm_fifo_axis 경로를 따라 이동 → cross-shot race 원천 차단</em></li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="cluster4">7. Cluster 4 — Face/Frame 조립 + 헤더 삽입</h2>
+
+<div class="cluster">
+<h3>tdc_gpx_face_assembler</h3>
+<div class="role">4 chip × cell stream → 순차 조립된 row. Strict in-order (chip0→1→2→3), inactive chip skip, timeout chip blank-fill.</div>
+
+<h4>입력 FIFO (per-chip)</h4>
+<table class="tight">
+  <tr><th>항목</th><th>값</th></tr>
+  <tr><td>개수</td><td>4 × xpm_fifo_axis</td></tr>
+  <tr><td>Depth</td><td>16 (distributed RAM)</td></tr>
+  <tr><td>TDATA</td><td>g_TDATA_WIDTH (32 또는 64)</td></tr>
+  <tr><td>TUSER</td><td>1 (faulted 플래그 전달; P1 rework 후 활용됨)</td></tr>
+</table>
+
+<h4>주요 FSM (ST_IDLE → SCAN → RESOLVE → FORWARD)</h4>
+<ul>
+  <li>ST_SCAN: 최저-index active chip 선택; timeout 시 blank-fill</li>
+  <li>ST_RESOLVE: is_last_chip 결정 (1-clk)</li>
+  <li>ST_FORWARD: cell 데이터 출력 (chip-당 1-cell = beats_per_cell × 1-clk)</li>
+  <li>blank-fill: timeout 시 metadata beat[10]=error_fill=1 로 합성</li>
+</ul>
+
+<h4>shot_start overrun (Q&A #36)</h4>
+<ul>
+  <li>row 처리 중 shot_start 도착 → 현재 row 는 blank-fill 로 완결 + 다음 shot 을 pending latch</li>
+  <li>face 는 중단하지 않고 자연스럽게 다음 shot 으로 전환 (VDMA frame size 유지)</li>
+</ul>
+
+<h4>row_done_faulted 판정 (Round 13 axis 1c + P1 rework)</h4>
+<ul>
+  <li>zero active_mask → 즉시 row_done + faulted='1' (synthetic row)</li>
+  <li>blank-fill 경로 → faulted='1'</li>
+  <li>partial/blank error mask 가 있으면 faulted='1'</li>
+  <li>chip tlast 시점에 <code>s_in_tuser(i)='1'</code> → pending[i]='1' → row 완료 시 OR-fold</li>
+</ul>
+
+<h4>출력 FIFO + header_inserter 경로</h4>
+<ul>
+  <li>face_assembler → <code>u_fifo_out</code> (16-deep xpm_fifo_axis)</li>
+  <li>output_stage 레벨 <code>u_face_rise_fifo</code> / <code>u_face_fall_fifo</code> 추가 buffering</li>
+  <li>header_inserter 가 face_start 신호로 48-byte 헤더 prepend</li>
+</ul>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_header_inserter</h3>
+
+<h4>FSM</h4>
+<table class="tight">
+  <tr><th>상태</th><th>역할</th></tr>
+  <tr><td><code>ST_IDLE</code></td><td>face_start 대기</td></tr>
+  <tr><td><code>ST_PREFIX</code></td><td>헤더 ROM 에서 prefix beat 출력</td></tr>
+  <tr><td><code>ST_DATA</code></td><td>face_assembler 출력 패스스루</td></tr>
+  <tr><td><code>ST_DRAIN_LAST</code></td><td>최종 beat 배출</td></tr>
+  <tr><td><code>ST_ABORT_DRAIN</code></td><td>abort 시 잔존 beat 배출</td></tr>
+</table>
+
+<h4>Header ROM</h4>
+<ul>
+  <li><code>s_hdr_rom_r</code>: 12 word × 32-bit = 48 byte</li>
+  <li>face_start 시점에 미리 계산 (frame_id, face_id, shot_seq, geometry, timing, timestamp, chip_error_mask 등)</li>
+  <li>32-bit TDATA → 12 prefix beats, 64-bit TDATA → 6 prefix beats</li>
+</ul>
+
+<h4>drain watchdog (Round 11 item 3)</h4>
+<ul>
+  <li>ST_DRAIN_LAST / ST_ABORT_DRAIN 에서 downstream wedge 감지 → watchdog 만료 시 tvalid='0' 강제 복귀 (last beat 유실 허용, liveness 우선)</li>
+  <li>Sticky 로 관찰 (<code>o_err_drain_timeout</code>)</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="sidecar">8. 사이드카 모듈</h2>
+
+<div class="cluster">
+<h3>tdc_gpx_face_seq</h3>
+<ul>
+  <li>FSM: <code>ST_IDLE → ST_WAIT_SHOT → ST_IN_FACE</code></li>
+  <li>카운터: <code>s_face_id_r[7:0]</code>, <code>s_global_shot_seq_r[15:0]</code>, <code>s_face_shot_cnt_r[15:0]</code>, <code>s_frame_abort_cnt_r[15:0]</code></li>
+  <li>역할: cmd_start 수락 + shot gating + face/frame boundary 관리 + rise/fall slope 동기화</li>
+</ul>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_err_handler</h3>
+<ul>
+  <li>FSM: <code>ST_IDLE → ST_READ_REG12 → ST_WAIT_READ (65K cy) → ST_RECOVERY → ST_WAIT_RECOVERY (9999 cy) → ST_WAIT_FRAME_DONE (131K cy)</code></li>
+  <li>Retry counter <code>s_retry_cnt_r</code> (g_MAX_RETRIES 기본 3) → 초과 시 <code>err_fatal</code></li>
+  <li>ErrFlag 디바운스 + REG12 분류 + per-chip soft_reset + error_fill 데이터 게이팅</li>
+</ul>
+</div>
+
+<div class="cluster">
+<h3>tdc_gpx_status_agg</h3>
+<ul>
+  <li>t_tdc_status 레코드 출력 (30+ 필드): busy, chip_error_mask, drain_timeout_mask, sequence_error_mask, shot_seq_current, vdma_frame_count, error_cycle_count, shot_drop_count, frame_abort_count, 등</li>
+  <li>Sticky: <code>s_err_drain_sticky_r</code>, <code>s_err_seq_sticky_r</code> (per-chip OR accumulator)</li>
+  <li>Clear: reset 또는 <code>i_soft_clear</code> (Round 13 follow-up 1번 — CTL2[1] edge)</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="dataflow">9. End-to-End 데이터 흐름</h2>
+
+<h3>TDC-GPX 물리 핀 → VDMA frame</h3>
+
+<div class="flow">
+<div class="flow-stage clk-tdc">TDC-GPX chip<br><span class="note">(external)</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-tdc">bus_phy<br><span class="note">tick-based<br>R/W</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-tdc">chip_ctrl<br><span class="note">phase<br>dispatch</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-tdc">raw FIFO<br><span class="note">depth=6</span></div>
+<div class="cdc-marker">CDC</div>
+<div class="flow-stage clk-axis">xpm_fifo_async<br><span class="note">per-chip</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">decoder_i_mode<br><span class="note">1-stage</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">raw_event_builder<br><span class="note">1-stage</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">slope_demux<br><span class="note">1-stage</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">cell_builder ×8<br><span class="note">dual-buf<br>+ 1-clk LOAD</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">xpm_fifo_axis ×4<br><span class="note">depth 16<br>per-chip input</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">face_assembler<br><span class="note">SCAN+RESOLVE<br>+FORWARD</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">xpm_fifo_axis<br><span class="note">post-face<br>depth 16</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">header_inserter<br><span class="note">+ 48B prefix</span></div>
+<div class="flow-arrow">→</div>
+<div class="flow-stage clk-axis">VDMA master<br><span class="note">(external)</span></div>
+</div>
+
+<p class="note"><span class="tag tdc">i_tdc_clk</span>&nbsp;&nbsp;<span class="tag axis">i_axis_aclk</span>&nbsp;&nbsp;<strong>CDC</strong>: xpm_fifo_async (raw stream) + xpm_cdc_pulse (명령) + 2-FF sync (status)</p>
+
+<h3>Control beat 경로</h3>
+<p>chip_run 의 <code>drain_done</code> / <code>ififo1_done_beat</code> 은 raw data 와 동일 경로를 따라 이동하되, <code>tuser(7)=1</code> 로 식별:</p>
+<ul>
+  <li>chip_ctrl 의 raw FIFO 에서 reserve (최소 1 slot) + data evict 정책으로 control 우선 보장</li>
+  <li>decoder_i_mode: tuser(6)=ififo_id 매핑, tuser(5) faulted 패스스루</li>
+  <li>raw_event_builder: drain_done 에 chip_id tag 추가, ifo2_done 에 hit_cnt reset</li>
+  <li>cell_builder: tuser(6)=0 (ifo1_done) 일 때 BUF_COLLECT→BUF_SHARED, tuser(6)=1 (final) 일 때 buf_full 세움; tuser(5) faulted 캡처 → s_buf_faulted_r</li>
+  <li>face_assembler 로는 control beat 가 그대로 가지 않고, cell_builder 가 cell 출력 tlast 에 faulted 태그로 요약 전달</li>
+</ul>
+
+<h3>VDMA frame 구조 (64-bit 기준, vdma_packet_structure.html 참조)</h3>
+<div class="timeline">
+1 Face = 1 Frame = cols_per_face × (HDR_PREFIX_BEATS + DATA_BEATS) × TDATA_BYTES
+
+Line 0 (SOF):  [48B header] [chip0 data] [chip1 data] [chip2 data] [chip3 data]
+Line 1:        [48B zero  ] [chip0 data] [chip1 data] [chip2 data] [chip3 data]
+...
+Line N-1:      [48B zero  ] [chip0 data] [chip1 data] [chip2 data] [chip3 data] → frame_done
+
+N = cols_per_face
+chip data = (8 stops × beats_per_cell × TDATA_BYTES)
+</div>
+
+<!-- ============================================================ -->
+<h2 id="memory">10. 메모리 / FIFO / 저장 구조 인벤토리</h2>
+
+<table>
+  <tr><th>위치</th><th>이름</th><th>종류</th><th>Depth</th><th>Width</th><th>구현</th><th>용도</th></tr>
+  <tr>
+    <td>chip_ctrl</td><td>s_raw_fifo_r</td><td>shift-reg FIFO</td><td>6</td><td>~42-bit (tdata+tuser+flags)</td><td>distributed (FF)</td><td>raw + control beat 출력 holding</td>
+  </tr>
+  <tr>
+    <td>chip_ctrl</td><td>s_drain_quarantine_cnt_r</td><td>counter</td><td>—</td><td>16-bit</td><td>FF</td><td>quarantine tick</td>
+  </tr>
+  <tr>
+    <td>chip_ctrl</td><td>s_bus_idle_stable_cnt_r</td><td>counter</td><td>—</td><td>24-bit</td><td>FF</td><td>auto-recover idle 창 (P4)</td>
+  </tr>
+  <tr>
+    <td>chip_ctrl</td><td>s_cfg_image_snap_r</td><td>reg image</td><td>16 regs</td><td>32-bit</td><td>FF</td><td>chip_init cfg_write snapshot</td>
+  </tr>
+  <tr>
+    <td>chip_run</td><td>s_expected_ififo1/2_r</td><td>per-chip reg</td><td>—</td><td>8-bit</td><td>FF</td><td>drain expected count</td>
+  </tr>
+  <tr>
+    <td>config_ctrl</td><td>u_raw_cdc (×4)</td><td>xpm_fifo_async</td><td>?</td><td>~42-bit</td><td>BRAM/distr</td><td>TDC → AXIS CDC</td>
+  </tr>
+  <tr>
+    <td>config_ctrl</td><td>u_sk_brsp</td><td>skid_buffer 2-reg</td><td>2</td><td>~42-bit</td><td>FF</td><td>bus response timing</td>
+  </tr>
+  <tr>
+    <td>raw_event_builder</td><td>s_hit_cnt_r</td><td>per-stop counter</td><td>8</td><td>3-bit</td><td>FF</td><td>hit_seq per stop</td>
+  </tr>
+  <tr>
+    <td>decode_pipe</td><td>u_sk_dec / u_sk_evt</td><td>skid_buffer 2-reg</td><td>2 each</td><td>~48-bit</td><td>FF</td><td>pipeline timing</td>
+  </tr>
+  <tr>
+    <td>cell_builder</td><td>s_cell_buf_r</td><td>ping-pong</td><td>2 × 8 stops</td><td>~144-bit/stop</td><td>FF</td><td>per-stop hit 누적 저장</td>
+  </tr>
+  <tr>
+    <td>cell_builder</td><td>s_buf_faulted_r</td><td>reg</td><td>2</td><td>1-bit</td><td>FF</td><td>per-buf faulted flag</td>
+  </tr>
+  <tr>
+    <td>face_assembler</td><td>per-chip input FIFO (×4)</td><td>xpm_fifo_axis</td><td>16</td><td>TDATA+1-bit tuser</td><td>distributed</td><td>cell stream 입력 buffering</td>
+  </tr>
+  <tr>
+    <td>face_assembler</td><td>output FIFO</td><td>xpm_fifo_axis</td><td>16</td><td>TDATA</td><td>distributed</td><td>post-face buffering</td>
+  </tr>
+  <tr>
+    <td>output_stage</td><td>u_face_rise/fall_fifo</td><td>xpm_fifo_axis</td><td>16</td><td>TDATA</td><td>distributed</td><td>slope-별 VDMA 전 buffering</td>
+  </tr>
+  <tr>
+    <td>header_inserter</td><td>s_hdr_rom_r</td><td>ROM (reg)</td><td>12</td><td>32-bit</td><td>FF</td><td>48B 헤더 prebuilt</td>
+  </tr>
+  <tr>
+    <td>stop_cfg_decode</td><td>s_prev_ififo1/2_r</td><td>per-chip reg</td><td>4</td><td>8-bit</td><td>FF</td><td>mono 위반 감지</td>
+  </tr>
+  <tr>
+    <td>stop_cfg_decode</td><td>s_window_cnt_r / cap</td><td>counter</td><td>—</td><td>24-bit</td><td>FF</td><td>거리 기반 orphan window (P3)</td>
+  </tr>
+  <tr>
+    <td>status_agg</td><td>s_err_*_sticky_r</td><td>sticky reg</td><td>—</td><td>per-chip</td><td>FF</td><td>error mask accumulation</td>
+  </tr>
+</table>
+
+<h3>총 메모리 부담 요약</h3>
+<ul>
+  <li><strong>Distributed RAM (xpm_fifo_axis)</strong>: face_asm 입력 4×16 + face_asm 출력 1×16 + output_stage 2×16 = per-slope 합 7×16 (TDATA 폭). Rise+Fall 합 ≈ 14 × 16 × TDATA bits. 64-bit 기준 ≈ 14 Kbit (distr LUTRAM).</li>
+  <li><strong>FF-based (distr)</strong>: cell_builder 의 ping-pong 버퍼가 가장 크다. per-chip ≈ 2 × 8 stops × ~144 bit ≈ 2.3 Kbit. 8 instances (4 rise + 4 fall) = ~18 Kbit FF.</li>
+  <li><strong>xpm_fifo_async (raw CDC)</strong>: 4 × depth (unclear, likely ≥16) × ~42 bit. BRAM 혹은 distributed.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="latency">11. 파이프라인 지연 및 쓰루풋</h2>
+
+<h3>End-to-End 지연 (@ i_axis_aclk = 200 MHz, 64-bit mode, max_hits=7)</h3>
+
+<table>
+  <tr><th>단계</th><th>지연 (cycle)</th><th>지연 (ns)</th><th>비고</th></tr>
+  <tr><td>chip_ctrl raw FIFO (shift)</td><td>1</td><td>5</td><td>registered output</td></tr>
+  <tr><td>TDC→AXIS CDC (xpm_fifo_async)</td><td>~6–8</td><td>~30–40</td><td>2-FF sync + read latency</td></tr>
+  <tr><td>cluster 2 skid (×2)</td><td>2</td><td>10</td><td>2-reg skid</td></tr>
+  <tr><td>decoder_i_mode</td><td>1</td><td>5</td><td>single stage</td></tr>
+  <tr><td>raw_event_builder</td><td>1</td><td>5</td><td>single stage</td></tr>
+  <tr><td>slope_demux (cell_pipe)</td><td>1</td><td>5</td><td>registered</td></tr>
+  <tr><td>cell_builder: event → buffer</td><td>1</td><td>5</td><td>직접 write</td></tr>
+  <tr><td>cell_builder: buffer → output (LOAD+ACTIVE)</td><td>2</td><td>10</td><td>LOAD bubble + ACTIVE</td></tr>
+  <tr><td>face_assembler input FIFO</td><td>~2</td><td>~10</td><td>xpm_fifo_axis 최소 latency</td></tr>
+  <tr><td>face_assembler (SCAN+RESOLVE)</td><td>2</td><td>10</td><td>ST_SCAN(1)+ST_RESOLVE(1)</td></tr>
+  <tr><td>face_assembler output FIFO</td><td>~2</td><td>~10</td><td>최소</td></tr>
+  <tr><td>output_stage face FIFO</td><td>~2</td><td>~10</td><td>최소</td></tr>
+  <tr><td>header_inserter (ST_DATA 패스스루)</td><td>1</td><td>5</td><td>registered</td></tr>
+  <tr><td><strong>End-to-end (typical)</strong></td><td><strong>~22–25</strong></td><td><strong>~110–125</strong></td><td>FIFO idle 기준. 실제는 backpressure/stall 에 따라 훨씬 길어짐.</td></tr>
+</table>
+
+<div class="callout info">
+<strong>지연은 dominant 가 아니다</strong>: TDC 의 round-trip (최대 거리에 따라 0.67–6.67 µs) 이 전체 shot cycle 을 지배한다. 파이프라인 dead-time 은 ~125 ns 수준으로 shot 간격의 1–5% 정도이므로 PRF 한계를 거의 제약하지 않는다.
+</div>
+
+<h3>쓰루풋 (stall 없음 가정)</h3>
+<table>
+  <tr><th>구간</th><th>쓰루풋</th><th>제약</th></tr>
+  <tr><td>bus_phy (TDC read)</td><td>1 read / (N+1) tdc_clk</td><td>bus_ticks ≥ 4 → 최소 5 tdc_clk / read</td></tr>
+  <tr><td>decoder_i_mode, raw_event_builder</td><td>1 beat / cycle</td><td>single-stage, always-accept</td></tr>
+  <tr><td>cell_builder 수집</td><td>1 beat / cycle</td><td>직접 버퍼 write</td></tr>
+  <tr><td>cell_builder 출력</td><td>~ 1 beat / cycle (cell 당 +1 cycle bubble)</td><td>ST_O_LOAD bubble</td></tr>
+  <tr><td>face_assembler FORWARD</td><td>1 beat / cycle</td><td>ST_FORWARD sustained</td></tr>
+  <tr><td>header_inserter prefix</td><td>1 beat / cycle</td><td>ROM read</td></tr>
+  <tr><td>VDMA output</td><td>g_OUTPUT_WIDTH-bit × f<sub>axis</sub></td><td>64-bit @ 200 MHz → 12.8 Gbit/s peak</td></tr>
+</table>
+
+<h3>거리별 shot 당 데이터 생성량 (64-bit mode)</h3>
+<table>
+  <tr><th>거리</th><th>max_hits</th><th>beats/cell</th><th>chip slice</th><th>row (4 chips)</th><th>shot 당 bytes</th></tr>
+  <tr><td>100 m</td><td>1</td><td>1</td><td>8 beats</td><td>32 beats</td><td>256 B + 48 B hdr</td></tr>
+  <tr><td>250 m</td><td>2</td><td>1</td><td>8 beats</td><td>32 beats</td><td>256 B + 48 B hdr</td></tr>
+  <tr><td>500 m</td><td>3</td><td>1</td><td>8 beats</td><td>32 beats</td><td>256 B + 48 B hdr</td></tr>
+  <tr><td>750 m</td><td>6</td><td>3</td><td>24 beats</td><td>96 beats</td><td>768 B + 48 B hdr</td></tr>
+  <tr><td>1000 m</td><td>7</td><td>4</td><td>32 beats</td><td>128 beats</td><td>1024 B + 48 B hdr</td></tr>
+</table>
+<p class="note">Header 는 line 0 만 real, line 1+ 는 zero prefix (동일 byte 수). 위 숫자는 line 단위.</p>
+
+<!-- ============================================================ -->
+<h2 id="backpressure">12. Backpressure 와 Critical Path</h2>
+
+<h3>주요 backpressure 경로</h3>
+<ol>
+  <li><strong>VDMA 가 느릴 때</strong>: output_stage 의 face_rise/fall_fifo (16-deep) 가 가득 참 → header_inserter ST_DATA 에서 stall → face_assembler 출력 FIFO 포화 → face_asm ST_FORWARD stall → 입력 FIFO 채워짐 → cell_builder 출력 stall → cell_builder 버퍼 free 안됨 → 새 shot_start 수용 못 함 → shot_dropped 발생</li>
+  <li><strong>cell_builder dual buffer 꽉 참</strong>: ping-pong 모두 BUF_SHARED 혹은 COLLECT 인 경우 새 shot_start 는 <code>ST_C_DROP</code> 경로로 — tready='1' 로 흡수하되 버퍼에는 안 씀</li>
+  <li><strong>chip_ctrl raw FIFO 꽉 참</strong>: <code>s_raw_hold_busy='1'</code> → chip_run 의 bus read 를 stall (i_raw_busy) → TDC 버스 idle → shot 누락 가능</li>
+</ol>
+
+<h3>Timing-critical 지점 (post-synth 검증 권장)</h3>
+<ul>
+  <li><strong>chip_ctrl raw FIFO shift + enqueue 로직</strong> (data-sacrifice 포함): 중첩 for-loop 로 LUT mux 체인이 길어짐. 200 MHz 에서 <code>report_timing_summary</code> 로 slack 확인 필요.</li>
+  <li><strong>cell_builder p_collect</strong>: shot_start + drain_done + hit write + quarantine 계산 모두 단일 cycle 내 → 조합 로직 깊이 주의</li>
+  <li><strong>face_assembler ST_SCAN</strong>: 4-chip priority encode + ready/timeout/overflow 판정</li>
+  <li><strong>header_inserter ROM build</strong>: face_start 1 cycle 안에 12-word ROM 계산</li>
+</ul>
+
+<h3>Deadlock 방지 장치</h3>
+<ul>
+  <li>chip_run: 7 곳의 <code>s_wait_cnt_r = x"FFFF"</code> watchdog → synthetic drain_done</li>
+  <li>chip_ctrl: PH_RESP_DRAIN hard cap + fatal → auto-recover (g_BUS_IDLE_STABLE_CLKS)</li>
+  <li>cell_builder: QUARANTINE (65K cy × 15 tick = ~4.9 ms) → force-escape + post-escape absorb</li>
+  <li>header_inserter: drain watchdog → tvalid 강제 하강 (beat 유실 허용)</li>
+  <li>face_assembler: shot_cnt hard cap (65535 cy) → blank-fill 강제</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="sideband">13. Sideband 신호 (tuser, tdata 메타데이터)</h2>
+
+<h3>Raw 경로 (chip_ctrl → decoder_i_mode) — 8-bit tuser</h3>
+<table>
+  <tr><th>Bit</th><th>Data beat</th><th>Control beat (tuser[7]=1)</th></tr>
+  <tr><td>[0]</td><td>ififo_id</td><td>ififo_id (0=ifo1_done, 1=final)</td></tr>
+  <tr><td>[4:1]</td><td>0 (reserved)</td><td>0 (reserved)</td></tr>
+  <tr><td>[5]</td><td>0</td><td><strong>faulted</strong> (final drain_done 만, Round 13)</td></tr>
+  <tr><td>[6]</td><td>0 (reserved)</td><td>0 (reserved)</td></tr>
+  <tr><td>[7]</td><td>0</td><td><strong>drain_done flag = 1</strong></td></tr>
+</table>
+
+<h3>Decoded 경로 (decoder_i_mode → raw_event_builder) — 8-bit tuser</h3>
+<table>
+  <tr><th>Bit</th><th>Data beat</th><th>Control beat</th></tr>
+  <tr><td>[0]</td><td>slope</td><td>0</td></tr>
+  <tr><td>[2:1]</td><td>cha_code_raw</td><td>0</td></tr>
+  <tr><td>[5:3]</td><td>stop_id_local</td><td>0 (bit 5 는 faulted)</td></tr>
+  <tr><td>[5]</td><td>(stop_id 의 MSB)</td><td><strong>faulted</strong> (패스스루)</td></tr>
+  <tr><td>[6]</td><td>ififo_id</td><td>ififo_id</td></tr>
+  <tr><td>[7]</td><td>0</td><td>drain_done = 1</td></tr>
+</table>
+
+<h3>Event 경로 (raw_event_builder → cell_builder) — 16-bit tuser</h3>
+<table>
+  <tr><th>Bit</th><th>Data beat</th><th>Control beat</th></tr>
+  <tr><td>[0]</td><td>slope</td><td>0</td></tr>
+  <tr><td>[2:1]</td><td>chip_id</td><td>0</td></tr>
+  <tr><td>[5:3]</td><td>stop_id_local</td><td>0 (bit 5 는 faulted)</td></tr>
+  <tr><td>[6]</td><td>ififo_id</td><td>ififo_id (0=ifo1_done, 1=final)</td></tr>
+  <tr><td>[7]</td><td>0</td><td>drain_done = 1</td></tr>
+  <tr><td>[10:8]</td><td>hit_seq_local</td><td>0</td></tr>
+  <tr><td>[15:11]</td><td>shot_seq[4:0]</td><td>shot_seq[4:0]</td></tr>
+</table>
+
+<h3>Cell 경로 (cell_builder → face_assembler) — 1-bit tuser (P1 rework)</h3>
+<table>
+  <tr><th>Bit</th><th>Semantic</th></tr>
+  <tr><td>[0]</td><td><strong>faulted</strong> — tlast beat 에만 유효 (s_buf_faulted_r 반영 또는 ST_O_TIMEOUT_EOS 에서 강제 '1'). 그 외 beat 는 0.</td></tr>
+</table>
+
+<h3>Face row 경로 (face_assembler → header_inserter → VDMA) — tdata 인코딩</h3>
+<p>Metadata 는 각 cell 의 마지막 beat (META beat) 에 embed:</p>
+<table>
+  <tr><th>Bit (TDATA)</th><th>필드</th></tr>
+  <tr><td>[9:8]</td><td>chip_id</td></tr>
+  <tr><td>[10]</td><td>error_fill (blank cell 표시)</td></tr>
+  <tr><td>[3:0] or similar</td><td>hit_count_actual</td></tr>
+  <tr><td>기타</td><td>stop_id, slope 등 (세부는 cell_builder.fn_cell_beat 참조)</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="refs">14. 참조 문서</h2>
+
+<ul>
+  <li><code>Doc/vdma_packet_structure.html</code> — VDMA frame/line/cell 레이아웃 상세</li>
+  <li><code>Doc/register_map.md</code> — AXI4-Lite CSR 레지스터 맵</li>
+  <li><code>Doc/known_issues.md</code> — 알려진 제한사항</li>
+  <li><code>Doc/260419/task_distance_bounded_windows_2026-04-19.md</code> — 거리 기반 window 규약 + 5 거리 사용 사례</li>
+  <li><code>Doc/260419/fsm_code_only_audit_2026-04-19_round2.md</code> — FSM 전수 점검 (24 항목)</li>
+  <li><code>Doc/status_observability.md</code> — status 비트 의미 및 clear 정책</li>
+  <li>메모리: <code>project_tdc_window_timing.md</code> — 거리 → cycle 환산, max_hits/beats-per-cell 32/64-bit 구분</li>
+</ul>
+
+<p style="margin-top: 30px; font-size: 11px; color: #888;">Generated from tdc_gpx_ctrl HDL source — Round 13 follow-up (P1/P3/P4/P5/P6 적용) · main 브랜치 · 2026-04-19</p>
+
+</div>
+</body>
+</html>

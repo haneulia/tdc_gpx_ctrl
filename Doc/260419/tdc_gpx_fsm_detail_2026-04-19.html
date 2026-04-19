@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>TDC-GPX — FSM / I-O / Memory 상세 분석 (시간 순)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f8; color: #1a1a2e; padding: 24px; line-height: 1.5; }
+  .doc { max-width: 1220px; margin: 0 auto; }
+  h1 { font-size: 24px; margin-bottom: 6px; }
+  h2 { font-size: 19px; margin: 30px 0 10px; color: #16213e; border-bottom: 2px solid #0f3460; padding-bottom: 4px; scroll-margin-top: 10px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: #533483; scroll-margin-top: 10px; }
+  h4 { font-size: 13px; margin: 12px 0 5px; color: #222; font-weight: 700; }
+  p, li { font-size: 13px; color: #222; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0 6px 22px; }
+  .subtitle { font-size: 13px; color: #666; margin-bottom: 18px; }
+  .note { font-size: 12px; color: #666; margin: 4px 0; }
+  code { font-family: 'Consolas', monospace; background: #ececf2; padding: 1px 4px; border-radius: 2px; font-size: 12px; }
+  pre { font-family: 'Consolas', monospace; background: #1a1a2e; color: #e6e6e6; padding: 10px 12px; border-radius: 4px; font-size: 11.5px; overflow-x: auto; margin: 8px 0; line-height: 1.45; }
+
+  table { border-collapse: collapse; margin: 10px 0; font-size: 12px; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #0f3460; color: #fff; font-weight: 600; }
+  tr:nth-child(even) { background: #f0f0f5; }
+  .tight td, .tight th { padding: 3px 6px; font-size: 11px; }
+
+  .callout { background: #fff3cd; border-left: 3px solid #fca311; padding: 9px 12px; margin: 10px 0; font-size: 12px; }
+  .callout.info { background: #cfe2ff; border-color: #0f3460; }
+  .callout.warn { background: #f8d7da; border-color: #e94560; }
+
+  /* TOC */
+  .toc { background: #fff; border: 1px solid #ccc; padding: 12px 16px 12px 34px; margin: 12px 0 22px; border-radius: 4px; font-size: 12.5px; }
+  .toc h3 { margin: 0 0 6px -16px; color: #0f3460; }
+  .toc li { margin: 3px 0; }
+  .toc a { color: #0f3460; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ol { margin-left: 18px; }
+  .toc ol ol { margin-left: 24px; margin-top: 2px; }
+
+  /* Module block */
+  .mod { background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 14px 18px; margin: 14px 0; }
+  .mod h3 { margin-top: 0; padding-bottom: 4px; border-bottom: 1px dashed #aaa; }
+  .mod .role { font-style: italic; color: #666; font-size: 12px; margin: 4px 0 8px; }
+  .mod .meta { display: flex; gap: 12px; font-size: 11px; margin: 4px 0 10px; }
+  .mod .meta span { background: #ececf2; padding: 3px 7px; border-radius: 3px; }
+  .mod.cluster { border-left: 4px solid #533483; background: #faf8ff; }
+  .mod.topmod { border-left: 4px solid #0f3460; background: #f4f8fc; }
+
+  /* FSM diagram */
+  .fsm { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 8px 0; padding: 10px 12px; background: #f9fafc; border: 1px dashed #aaa; border-radius: 4px; }
+  .st { padding: 7px 11px; border: 1.5px solid #0f3460; background: #e6edf5; border-radius: 5px; font-size: 11px; text-align: center; min-width: 70px; font-family: 'Consolas', monospace; font-weight: 600; color: #1a1a2e; white-space: nowrap; }
+  .st.init { background: #ffe9d6; border-color: #d62828; }
+  .st.idle { background: #e6f4ea; border-color: #2e8b57; }
+  .st.active { background: #fff3cd; border-color: #fca311; }
+  .st.err { background: #f8d7da; border-color: #e94560; }
+  .st.drain { background: #efe6fb; border-color: #533483; }
+  .st.done { background: #cfe2ff; border-color: #0f3460; }
+
+  .ar { font-family: 'Consolas', monospace; font-size: 10px; color: #444; padding: 0 6px; position: relative; display: inline-block; }
+  .ar::before { content: '→'; color: #0f3460; font-weight: 700; font-size: 14px; padding-right: 3px; }
+  .ar.loop::before { content: '↺'; color: #d62828; font-size: 15px; }
+  .ar.down::before { content: '↓'; color: #0f3460; font-size: 14px; }
+
+  .fsm-vert { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+  .legend { display: inline-flex; gap: 6px; font-size: 10px; margin: 4px 0 10px; flex-wrap: wrap; }
+  .legend span { padding: 2px 7px; border-radius: 3px; border: 1px solid #aaa; }
+
+  /* Timing ladder */
+  .ladder { font-family: 'Consolas', monospace; font-size: 11px; background: #1a1a2e; color: #e6e6e6; padding: 10px 12px; border-radius: 4px; overflow-x: auto; margin: 8px 0; line-height: 1.5; }
+
+  /* I/O port table */
+  .io-table th { background: #16213e; }
+  .io-table td.dir { font-family: Consolas; font-weight: 700; text-align: center; width: 30px; }
+
+  /* Flow row */
+  .flow { display: flex; flex-wrap: wrap; gap: 0; align-items: stretch; margin: 10px 0; }
+  .flow-box { padding: 8px 10px; background: #fff; border: 1.5px solid #0f3460; border-radius: 4px; font-size: 11px; text-align: center; min-width: 90px; font-family: Consolas, monospace; }
+  .flow-arrow { display: flex; align-items: center; padding: 0 3px; color: #0f3460; font-size: 14px; font-weight: 700; }
+
+  .tag { padding: 2px 7px; border-radius: 3px; font-size: 10px; font-weight: 700; color: #fff; }
+  .tag.tdc { background: #d62828; }
+  .tag.axis { background: #0f3460; }
+  .tag.axi { background: #2e8b57; }
+  .tag.leaf { background: #533483; }
+  .tag.inter { background: #fca311; color: #1a1a2e; }
+  .tag.top { background: #0f3460; }
+
+  /* Hierarchy tree */
+  .tree { font-family: 'Consolas', monospace; font-size: 12px; white-space: pre; line-height: 1.5; background: #fff; border: 1px solid #ccc; padding: 10px 14px; border-radius: 4px; overflow-x: auto; }
+
+  em { color: #533483; font-style: normal; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>TDC-GPX Controller — FSM · I/O · 메모리 상세 (시간 순 정리)</h1>
+<p class="subtitle">Leaf 모듈 · 중간 wrapper · Top 통합 · 2026-04-19 Round 13 follow-up 반영</p>
+
+<div class="legend">
+  <span style="background:#ffe9d6;border-color:#d62828;">INIT / POWERUP</span>
+  <span style="background:#e6f4ea;border-color:#2e8b57;">IDLE / OFF</span>
+  <span style="background:#fff3cd;border-color:#fca311;">ACTIVE / RUN</span>
+  <span style="background:#efe6fb;border-color:#533483;">DRAIN / QUARANTINE</span>
+  <span style="background:#f8d7da;border-color:#e94560;">ERROR / ABORT</span>
+  <span style="background:#cfe2ff;border-color:#0f3460;">DONE / COMPLETE</span>
+</div>
+
+<!-- ============================================================ -->
+<div class="toc">
+<h3>목차 (시간 순)</h3>
+<ol>
+  <li><a href="#overview">설계 개요와 시간 축</a></li>
+  <li><a href="#flow">전체 시간 순서 flow</a></li>
+  <li><a href="#leaf">Leaf 모듈 (시간 순)</a>
+    <ol>
+      <li><a href="#bus-phy">bus_phy — TDC 버스 프로토콜</a> <em>(Phase 0 — 모든 단계의 기반)</em></li>
+      <li><a href="#csr-pipeline">csr_pipeline / csr_chip — 초기 CSR</a> <em>(Phase 1 — 설정)</em></li>
+      <li><a href="#chip-init">chip_init — Powerup/Config</a> <em>(Phase 2)</em></li>
+      <li><a href="#chip-reg">chip_reg — per-register RW</a> <em>(Phase 2/선택)</em></li>
+      <li><a href="#cmd-arb">cmd_arb — 명령 중재</a></li>
+      <li><a href="#face-seq">face_seq — shot 시퀀서</a> <em>(Phase 3 — 시작 gating)</em></li>
+      <li><a href="#stop-cfg-decode">stop_cfg_decode — expected count + orphan window</a></li>
+      <li><a href="#chip-run">chip_run — Capture/Drain/ALU</a> <em>(Phase 4 — 측정)</em></li>
+      <li><a href="#chip-ctrl">chip_ctrl — Coordinator</a> <em>(Phase 2–5 통합)</em></li>
+      <li><a href="#decoder-i-mode">decoder_i_mode — raw word 디코드</a> <em>(Phase 5 — decode)</em></li>
+      <li><a href="#raw-event-builder">raw_event_builder — event 태깅</a></li>
+      <li><a href="#cell-builder">cell_builder — cell 조립</a> <em>(Phase 6)</em></li>
+      <li><a href="#face-assembler">face_assembler — row 조립</a> <em>(Phase 7)</em></li>
+      <li><a href="#header-inserter">header_inserter — 헤더 삽입</a> <em>(Phase 8)</em></li>
+      <li><a href="#err-handler">err_handler — 에러 복구</a> <em>(Phase 사이드)</em></li>
+      <li><a href="#status-agg">status_agg — status 집계</a></li>
+      <li><a href="#skid">skid_buffer — 타이밍 버퍼</a></li>
+    </ol>
+  </li>
+  <li><a href="#inter">중간 wrapper 모듈</a>
+    <ol>
+      <li><a href="#config-ctrl">tdc_gpx_config_ctrl — Cluster 1</a></li>
+      <li><a href="#decode-pipe">tdc_gpx_decode_pipe — Cluster 2</a></li>
+      <li><a href="#cell-pipe">tdc_gpx_cell_pipe — Cluster 3</a></li>
+      <li><a href="#output-stage">tdc_gpx_output_stage — Cluster 4</a></li>
+    </ol>
+  </li>
+  <li><a href="#top">통합 모듈 — tdc_gpx_top</a></li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="overview">1. 설계 개요와 시간 축</h2>
+
+<p>TDC-GPX Controller 는 ams TDC-GPX 칩을 제어하여 Laser LiDAR 측정을 수행하고, 결과를 VDMA 를 통해 DDR 프레임으로 전달한다. 동작은 다음 단계로 구분된다:</p>
+
+<table>
+  <tr><th>Phase</th><th>단계</th><th>주요 모듈 (leaf)</th><th>지속 시간 (@200MHz 기준)</th></tr>
+  <tr><td>0</td><td>HW reset → bus 프로토콜 준비</td><td>bus_phy (대기 상태)</td><td>수 µs</td></tr>
+  <tr><td>1</td><td>SW 초기 CSR 설정</td><td>csr_pipeline, csr_chip</td><td>수 µs (PS 액세스)</td></tr>
+  <tr><td>2</td><td>Chip powerup / cfg_write (per chip)</td><td>chip_init → bus_phy</td><td>~240 ns (PuResN) + config writes</td></tr>
+  <tr><td>3</td><td>cmd_start → face_seq 승인</td><td>face_seq, cmd_arb, chip_ctrl</td><td>수 cycle</td></tr>
+  <tr><td>4</td><td>Shot capture → drain → ALU</td><td>chip_run, stop_cfg_decode</td><td>round-trip + drain (~µs)</td></tr>
+  <tr><td>5</td><td>Raw → event decode</td><td>decoder_i_mode, raw_event_builder</td><td>2 cycle/beat</td></tr>
+  <tr><td>6</td><td>Cell 조립 (per chip)</td><td>cell_builder</td><td>beats/cell × 1 clk</td></tr>
+  <tr><td>7</td><td>Row 조립 (4 chip in-order)</td><td>face_assembler</td><td>row 당 1 + Σcell beats</td></tr>
+  <tr><td>8</td><td>Header prefix + VDMA 출력</td><td>header_inserter</td><td>6 또는 12 beat 헤더 + row</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="flow">2. 전체 시간 순서 flow</h2>
+
+<div class="flow">
+<div class="flow-box"><strong>HW reset</strong><br>i_rst_n</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>CSR init</strong><br>AXI4-Lite writes</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>chip_init</strong><br>PuResN + REG0-7</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>cmd_start</strong><br>face_seq 승인</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>shot_start</strong><br>laser trigger</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>chip_run</strong><br>CAPTURE → DRAIN</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>decoder</strong><br>raw → fields</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>cell_builder</strong><br>per-stop accumulate</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>face_asm</strong><br>4 chip join</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>header_ins</strong><br>48B prefix</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box"><strong>VDMA</strong><br>frame output</div>
+</div>
+
+<p class="note">병렬 경로: Rise/Fall slope 는 cell_builder 부터 분리되어 독립 face_assembler 2 개 + header_inserter 2 개로 처리됨.</p>
+
+<!-- ============================================================ -->
+<h2 id="leaf">3. Leaf 모듈 (시간 순)</h2>
+
+<!-- ============== bus_phy ============== -->
+<div class="mod" id="bus-phy">
+<h3>3.1 tdc_gpx_bus_phy <span class="tag leaf">leaf</span> <span class="tag tdc">i_tdc_clk</span></h3>
+<div class="role">TDC-GPX 버스 프로토콜 (tick 기반 R/W) 구현 및 chip_ctrl 로 AXI-Stream 응답 전달.</div>
+<div class="meta">
+  <span>FSM: 4-state</span>
+  <span>Latency: N+1 tick</span>
+  <span>Throughput: 1 R/W per (N+1) tick</span>
+</div>
+
+<h4>FSM</h4>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar">req_valid &amp; rw=0</div>
+  <div class="st active">ST_READ</div>
+  <div class="ar">turn</div>
+  <div class="st">ST_TURNAROUND</div>
+  <div class="ar">idle</div>
+  <div class="st idle">ST_IDLE</div>
+</div>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar">req_valid &amp; rw=1</div>
+  <div class="st active">ST_WRITE</div>
+  <div class="ar">turn</div>
+  <div class="st">ST_TURNAROUND</div>
+  <div class="ar">idle</div>
+  <div class="st idle">ST_IDLE</div>
+</div>
+
+<h4>I/O 요약</h4>
+<table class="io-table tight">
+<tr><th>방향</th><th>신호</th><th>폭</th><th>의미</th></tr>
+<tr><td class="dir">in</td><td>i_tick_en</td><td>1</td><td>bus_clk_div 로 분주된 enable</td></tr>
+<tr><td class="dir">in</td><td>i_bus_ticks</td><td>3</td><td>phase 분할 (≥4)</td></tr>
+<tr><td class="dir">in</td><td>i_req_{valid,rw,addr,wdata}</td><td>1/1/4/28</td><td>요청</td></tr>
+<tr><td class="dir">in</td><td>i_oen_permanent</td><td>1</td><td>burst read 중 OEN 유지</td></tr>
+<tr><td class="dir">out</td><td>o_m_axis_{tvalid,tdata,tuser}</td><td>1/32/8</td><td>응답 AXI-Stream</td></tr>
+<tr><td class="dir">out</td><td>o_busy</td><td>1</td><td>transaction 진행 중</td></tr>
+<tr><td class="dir">out</td><td>o_{ef1,ef2,lf1,lf2,irflag,errflag}_sync</td><td>1 each</td><td>2-FF sync'd 비동기 status</td></tr>
+</table>
+
+<h4>타이밍 (read, bus_ticks=4 예)</h4>
+<pre>
+tick:    0    1    2    3    4    5
+state:  IDLE READ READ READ READ TURN
+RDN:      1   ↓0   0    0    0    1
+ADR:      x  valid valid valid valid x
+DATA:     -   -    -   sample  -   -   ← IOB FF 캡처 (N-2)
+rsp_v:    0   0    0    0    0    1   ← 1 tick 후 response
+</pre>
+
+<h4>메모리 / 레지스터</h4>
+<ul>
+  <li><code>s_tick_r</code>: 3-bit tick counter</li>
+  <li><code>s_axis_{tvalid,tdata,tuser}_r</code>: 1-stage holding register (dedicated skid 없음 — chip_ctrl 가 next req 전에 소비)</li>
+</ul>
+</div>
+
+<!-- ============== csr_pipeline / csr_chip ============== -->
+<div class="mod" id="csr-pipeline">
+<h3>3.2 tdc_gpx_csr_pipeline / csr_chip <span class="tag leaf">leaf</span> <span class="tag axi">s_axi_aclk → i_axis_aclk</span></h3>
+<div class="role">AXI4-Lite 8×CTL + 8×STAT CSR, SW 명령 edge detect 및 CDC 를 통한 i_axis_aclk 도메인 전달.</div>
+
+<h4>FSM</h4>
+<p>명시적 FSM 없음 (xpm_cdc_handshake 상태 기계는 내부). Edge detect 기반:</p>
+<ul>
+  <li>CTL0[31:28] = COMMAND (start/stop/soft_reset/cfg_write) → rising edge pulse</li>
+  <li>CTL2[0] = force_reinit (edge)</li>
+  <li>CTL2[1] = err_soft_clear (edge) — <em>Round 13 follow-up 1번</em></li>
+</ul>
+
+<h4>I/O 요약</h4>
+<table class="io-table tight">
+<tr><th>방향</th><th>신호</th><th>도메인</th><th>의미</th></tr>
+<tr><td class="dir">in/out</td><td>AXI4-Lite 전체 포트</td><td>s_axi_aclk</td><td>PS 접근</td></tr>
+<tr><td class="dir">in</td><td>i_axis_aclk, i_axis_aresetn</td><td>i_axis_aclk</td><td>대상 도메인 클럭</td></tr>
+<tr><td class="dir">in</td><td>i_cmd_start_accepted</td><td>i_axis_aclk</td><td>face_seq accept 피드백</td></tr>
+<tr><td class="dir">out</td><td>o_cfg (t_tdc_cfg record)</td><td>i_axis_aclk</td><td>설정 번들</td></tr>
+<tr><td class="dir">out</td><td>o_cmd_{start,stop,soft_reset,cfg_write,force_reinit}</td><td>i_axis_aclk</td><td>1-cycle pulses</td></tr>
+<tr><td class="dir">out</td><td>o_err_soft_clear</td><td>i_axis_aclk</td><td>1-cycle pulse (신규 P1-prev)</td></tr>
+</table>
+
+<h4>메모리</h4>
+<ul>
+  <li>IP (tdc_gpx_axil_csr_pipeline): 8 CTL + 8 STAT 레지스터 (PS 도메인)</li>
+  <li>CDC: 3× xpm_cdc_handshake (CTL0/CTL1/CTL2) + 3× STAT (stat5/6/7)</li>
+  <li>Edge detect registers: <code>s_cmd_prev_r[3:0]</code>, <code>s_cmd_pulse_r[3:0]</code>, force_reinit/err_soft_clear prev+pulse</li>
+</ul>
+</div>
+
+<!-- ============== chip_init ============== -->
+<div class="mod" id="chip-init">
+<h3>3.3 tdc_gpx_chip_init <span class="tag leaf">leaf</span> <span class="tag tdc">i_tdc_clk</span></h3>
+<div class="role">per-chip 전원 인가 → PuResN 펄스 → REG0-7 쓰기 → ALU trigger → master reset. cfg_write 경로도 처리.</div>
+<div class="meta">
+  <span>FSM: 10-state</span>
+  <span>PuResN: g_POWERUP_CLKS=48 (~240 ns)</span>
+  <span>Recovery: g_RECOVERY_CLKS=8</span>
+</div>
+
+<h4>FSM (10 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_OFF</div>
+  <div class="ar">start</div>
+  <div class="st init">ST_POWERUP</div>
+  <div class="ar">48 cy</div>
+  <div class="st init">ST_PU_RELEASE</div>
+  <div class="ar">rec</div>
+  <div class="st active">ST_STOPDIS_HIGH</div>
+</div>
+<div class="fsm">
+  <div class="st active">ST_STOPDIS_HIGH</div>
+  <div class="ar">write REG(i)</div>
+  <div class="st active">ST_CFG_WRITE</div>
+  <div class="ar">await rsp</div>
+  <div class="st">ST_CFG_WR_WAIT</div>
+  <div class="ar">i &lt; 8</div>
+  <div class="st active">ST_CFG_WRITE</div>
+  <div class="ar">i=8</div>
+  <div class="st active">ST_MASTER_RESET</div>
+</div>
+<div class="fsm">
+  <div class="st active">ST_MASTER_RESET</div>
+  <div class="ar">wait</div>
+  <div class="st">ST_MR_WAIT</div>
+  <div class="ar">recovery</div>
+  <div class="st">ST_RECOVERY</div>
+  <div class="ar">drop stopdis</div>
+  <div class="st done">ST_STOPDIS_LOW</div>
+  <div class="ar">done</div>
+  <div class="st idle">ST_OFF</div>
+</div>
+
+<h4>I/O 요약</h4>
+<table class="io-table tight">
+<tr><th>방향</th><th>신호</th><th>폭</th><th>의미</th></tr>
+<tr><td class="dir">in</td><td>i_start, i_cfg_write_req</td><td>1 each</td><td>trigger (init / cfg_write)</td></tr>
+<tr><td class="dir">in</td><td>i_cfg_image</td><td>16×32</td><td>REG0-7 값 (snapshot)</td></tr>
+<tr><td class="dir">out</td><td>o_bus_req_{valid,rw,addr,wdata}</td><td>1/1/4/28</td><td>bus_phy 로 요청</td></tr>
+<tr><td class="dir">in</td><td>i_bus_rsp_valid</td><td>1</td><td>bus 응답</td></tr>
+<tr><td class="dir">out</td><td>o_{puresn,stopdis}</td><td>1 each</td><td>직접 핀 제어</td></tr>
+<tr><td class="dir">out</td><td>o_done, o_timeout, o_busy</td><td>1 each</td><td>상태 출력</td></tr>
+<tr><td class="dir">out</td><td>o_cfg_write_coalesced</td><td>1</td><td>busy 중 overlapping cfg_write sticky</td></tr>
+</table>
+
+<h4>메모리</h4>
+<ul>
+  <li><code>s_reg_idx_r</code>: 3-bit (REG0..7 순회)</li>
+  <li><code>s_powerup_cnt_r</code>: 16-bit counter</li>
+  <li><code>s_rsp_timeout_r</code>: 16-bit watchdog</li>
+  <li>1-depth cfg_write pending (busy 중 overlap 흡수)</li>
+</ul>
+</div>
+
+<!-- ============== chip_reg ============== -->
+<div class="mod" id="chip-reg">
+<h3>3.4 tdc_gpx_chip_reg <span class="tag leaf">leaf</span> <span class="tag tdc">i_tdc_clk</span></h3>
+<div class="role">individual register R/W dispatch. 1-depth overlap queue.</div>
+<div class="meta"><span>FSM: 2-state</span><span>Latency: N+1 tick (bus)</span></div>
+
+<h4>FSM (2 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_OFF</div>
+  <div class="ar">start_read/write</div>
+  <div class="st active">ST_ACTIVE</div>
+  <div class="ar">rsp_valid</div>
+  <div class="st idle">ST_OFF</div>
+</div>
+
+<h4>I/O + Memory</h4>
+<ul>
+  <li>Input: i_start_{read,write}, i_addr[3:0], i_wdata[27:0], i_soft_clear</li>
+  <li>Output: o_rdata[27:0], o_rvalid, o_done, o_timeout</li>
+  <li>Error sticky: <code>s_err_req_overflow_r</code> (2+ overlapping), <code>s_err_rw_ambiguous_r</code> (동시 R+W)</li>
+  <li>Pending queue: 1-depth (start_read/write 동시 → 다음 transaction 후 처리)</li>
+  <li>Watchdog: 16-bit (65K cy) → timeout 시 transaction drop</li>
+</ul>
+</div>
+
+<!-- ============== cmd_arb ============== -->
+<div class="mod" id="cmd-arb">
+<h3>3.5 tdc_gpx_cmd_arb <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">multi-chip register access 중재. cfg_write gating + per-chip busy 추적 + 1-depth overlap queue.</div>
+<div class="meta"><span>FSM: 명시적 없음 (combinational + pending latch)</span></div>
+
+<h4>로직</h4>
+<p>cmd_arb 는 상태 머신 대신 <strong>per-chip 병렬 dispatch</strong> 구조:</p>
+<ul>
+  <li>SW 의 reg_read/write 요청을 chip_address (2-bit) + chip_busy 조건으로 chip 0-3 중 하나에 라우팅</li>
+  <li>chip 이 busy 면 pending latch (1-depth) 에 보관</li>
+  <li>dispatch-wait watchdog (16-bit) → 타임아웃 시 reject</li>
+  <li>cfg_write gating: face_asm_idle=1 + reg_outstanding=0 일 때만 허용</li>
+  <li>per-chip reg_outstanding tracker (4-bit)</li>
+</ul>
+
+<h4>Error sticky</h4>
+<ul>
+  <li><code>o_reg_timeout</code>, <code>o_reg_rejected</code>, <code>o_reg_zero_mask</code>, <code>o_err_rw_ambiguous</code></li>
+</ul>
+</div>
+
+<!-- ============== face_seq ============== -->
+<div class="mod" id="face-seq">
+<h3>3.6 tdc_gpx_face_seq <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">cmd_start 수락 + geometry 검증 + shot_start gating + face/frame 경계 추적.</div>
+<div class="meta"><span>FSM: 3-state</span><span>Counters: 16-bit shot_seq, 8-bit face_id</span></div>
+
+<h4>FSM (3 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar">cmd_start + valid cfg + idle</div>
+  <div class="st">ST_WAIT_SHOT</div>
+  <div class="ar">shot_start_raw</div>
+  <div class="st active">ST_IN_FACE</div>
+  <div class="ar">frame_done_both</div>
+  <div class="st idle">ST_IDLE</div>
+</div>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar loop">cfg invalid → reject</div>
+  <div class="st idle">ST_IDLE</div>
+</div>
+
+<h4>Gating 로직</h4>
+<ul>
+  <li>cmd_start 수락 조건: cfg 검증 (stops_per_chip ≥ 2, cols/faces ≥ 1, active_chip_mask ≠ 0) + chip_busy=0 + face_asm_idle=1 + hdr_idle=1</li>
+  <li>ST_WAIT_SHOT 에서 첫 shot_start_raw 오면 face 시작</li>
+  <li>ST_IN_FACE 에서 face_shot_cnt_r &gt;= cols_per_face - 1 일 때 frame 완료 대기</li>
+</ul>
+
+<h4>메모리</h4>
+<ul>
+  <li><code>s_face_id_r</code>: 8-bit</li>
+  <li><code>s_global_shot_seq_r</code>: 16-bit (c_SHOT_SEQ_WIDTH)</li>
+  <li><code>s_face_shot_cnt_r</code>: 16-bit (현재 face 의 shot 수)</li>
+  <li><code>s_frame_id_r</code>: 32-bit (VDMA frame counter)</li>
+  <li><code>s_frame_abort_cnt_r</code>: 16-bit</li>
+</ul>
+</div>
+
+<!-- ============== stop_cfg_decode ============== -->
+<div class="mod" id="stop-cfg-decode">
+<h3>3.7 tdc_gpx_stop_cfg_decode <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">echo_receiver 의 stop 이벤트 stream → per-chip expected IFIFO count. 거리 기반 orphan window 감지.</div>
+<div class="meta"><span>FSM: 명시적 없음 (dataflow + window counter)</span></div>
+
+<h4>Window 기반 상태</h4>
+<div class="fsm">
+  <div class="st idle">window_active=0</div>
+  <div class="ar">shot_start_gated</div>
+  <div class="st active">window_active=1<br>cnt=0</div>
+  <div class="ar loop">cnt++, beats in</div>
+  <div class="st active">window_active=1</div>
+  <div class="ar">cnt ≥ cap</div>
+  <div class="st">window_active=0<br>(orphan zone)</div>
+  <div class="ar">shot_start_gated</div>
+  <div class="st active">window_active=1<br>cnt=0</div>
+</div>
+
+<h4>핵심 로직 (Round 13 follow-up 5번 / P3)</h4>
+<ul>
+  <li>Snapshot <code>s_max_range_snap_r</code> at shot_start</li>
+  <li><code>s_window_cap_r = snap + g_WINDOW_MARGIN_CLKS</code> (24-bit)</li>
+  <li>max_range_clks = 0 → window 영원 open</li>
+  <li>Orphan: beat 도착 시 <code>window_active=0</code> → <code>s_orphan_evt_sticky_r</code></li>
+  <li>Monotonic violation 감지: per-chip per-IFIFO 8-bit prev 비교</li>
+</ul>
+
+<h4>출력</h4>
+<ul>
+  <li><code>o_expected_ififo1/2(c_N_CHIPS)</code>: 8-bit × 4 each</li>
+  <li><code>o_monotonic_violation_mask</code>: 4-bit sticky</li>
+  <li><code>o_orphan_stop_evt_sticky</code>: 1-bit sticky</li>
+  <li><code>o_cfg_image</code>: CFG override (REG5/REG7 일부)</li>
+</ul>
+</div>
+
+<!-- ============== chip_run ============== -->
+<div class="mod" id="chip-run">
+<h3>3.8 tdc_gpx_chip_run <span class="tag leaf">leaf</span> <span class="tag tdc">i_tdc_clk</span></h3>
+<div class="role">shot-level 측정: ARMED → CAPTURE → DRAIN → ALU. 가장 복잡한 FSM (13 state).</div>
+<div class="meta"><span>FSM: 13-state</span><span>Drain modes: SourceGating / PassThrough / Purge</span></div>
+
+<h4>FSM (시간 순)</h4>
+<div class="fsm">
+  <div class="st idle">ST_OFF</div>
+  <div class="ar">i_start</div>
+  <div class="st idle">ST_ARMED</div>
+  <div class="ar">shot_start</div>
+  <div class="st active">ST_CAPTURE</div>
+  <div class="ar">irflag↑</div>
+  <div class="st drain">ST_DRAIN_LATCH</div>
+  <div class="ar">16 tdc cy</div>
+  <div class="st drain">ST_DRAIN_CHECK</div>
+</div>
+<p class="note">DRAIN_CHECK 에서 4가지 경로로 분기:</p>
+<div class="fsm">
+  <div class="st drain">ST_DRAIN_CHECK</div>
+  <div class="ar">EF1_can_read</div>
+  <div class="st drain">ST_DRAIN_EF1</div>
+  <div class="ar">rsp</div>
+  <div class="st drain">ST_DRAIN_SETTLE</div>
+  <div class="ar">→ CHECK</div>
+</div>
+<div class="fsm">
+  <div class="st drain">ST_DRAIN_CHECK</div>
+  <div class="ar">EF2_can_read</div>
+  <div class="st drain">ST_DRAIN_EF2</div>
+  <div class="ar">rsp</div>
+  <div class="st drain">ST_DRAIN_SETTLE</div>
+  <div class="ar">→ CHECK</div>
+</div>
+<div class="fsm">
+  <div class="st drain">ST_DRAIN_CHECK</div>
+  <div class="ar">can burst</div>
+  <div class="st drain">ST_DRAIN_BURST</div>
+  <div class="ar">burst rsp × N</div>
+  <div class="st drain">ST_DRAIN_SETTLE</div>
+</div>
+<div class="fsm">
+  <div class="st drain">ST_DRAIN_CHECK</div>
+  <div class="ar">fallback (done)</div>
+  <div class="st done">drain_done + maybe faulted</div>
+  <div class="ar">→</div>
+  <div class="st active">ST_ALU_PULSE</div>
+  <div class="ar">4 cy</div>
+  <div class="st">ST_ALU_RECOVERY</div>
+  <div class="ar">→</div>
+  <div class="st idle">ST_OFF</div>
+</div>
+<p class="note">특수 경로:</p>
+<div class="fsm">
+  <div class="st active">ST_CAPTURE</div>
+  <div class="ar">cmd_stop + irflag 안옴</div>
+  <div class="st drain">ST_DRAIN_FLUSH</div>
+  <div class="ar">stall detected</div>
+  <div class="st err">ST_OVERRUN_FLUSH</div>
+  <div class="ar">recovery</div>
+  <div class="st">ST_DRAIN_SETTLE</div>
+</div>
+
+<h4>주요 I/O</h4>
+<table class="io-table tight">
+<tr><th>방향</th><th>신호</th><th>폭</th><th>의미</th></tr>
+<tr><td class="dir">in</td><td>i_start, i_cmd_stop, i_shot_start</td><td>1 each</td><td>trigger</td></tr>
+<tr><td class="dir">in</td><td>i_expected_ififo1/2</td><td>8 each</td><td>drain 예상 count</td></tr>
+<tr><td class="dir">in</td><td>i_drain_mode, i_n_drain_cap</td><td>1, 4</td><td>drain 정책</td></tr>
+<tr><td class="dir">in</td><td>i_ef1/ef2/lf1/lf2/irflag_sync</td><td>1 each</td><td>비동기 status (sync'd)</td></tr>
+<tr><td class="dir">out</td><td>o_raw_word, o_raw_valid, o_ififo_id</td><td>28/1/1</td><td>raw 출력</td></tr>
+<tr><td class="dir">out</td><td>o_drain_done, o_drain_done_faulted</td><td>1/1</td><td>완료 1-clk pulse + faulted co-assert</td></tr>
+<tr><td class="dir">out</td><td>o_ififo1_done_beat</td><td>1</td><td>중간 control beat</td></tr>
+<tr><td class="dir">out</td><td>o_bus_req_{valid,rw,addr,wdata,oen_permanent,burst}</td><td>bus</td><td>drain read 요청</td></tr>
+<tr><td class="dir">out</td><td>o_timeout, o_timeout_cause</td><td>1, 3</td><td>abnormal exit</td></tr>
+<tr><td class="dir">out</td><td>o_shot_seq</td><td>16</td><td>per-shot 시퀀스</td></tr>
+<tr><td class="dir">out</td><td>o_err_drain_mismatch</td><td>1</td><td>expected 불일치 sticky (Round 12 A4)</td></tr>
+</table>
+
+<h4>메모리</h4>
+<ul>
+  <li><code>s_drain_cnt_ififo1/2_r</code>: 8-bit each (실제 drain 수)</li>
+  <li><code>s_expected_ififo1/2_r</code>: 8-bit each (latched snapshot)</li>
+  <li><code>s_burst_cnt_r / s_burst_limit_r</code>: 16-bit each</li>
+  <li><code>s_wait_cnt_r</code>: 16-bit watchdog (7 곳에서 x"FFFF" 체크)</li>
+  <li><code>s_pending_stuck_cnt_r</code>: 16-bit (pending rsp 멈춤 감지)</li>
+  <li><code>s_fill_r</code>: 9-bit (LF threshold)</li>
+  <li><code>s_shot_seq_r</code>: 16-bit</li>
+  <li>Sticky: <code>s_err_drain_mismatch_r</code>, <code>s_drain_done_faulted_r</code></li>
+</ul>
+
+<h4>Throughput</h4>
+<ul>
+  <li>EF read: (N+1) tdc_clk × drain_count (worst)</li>
+  <li>BURST: (N+1) × burst_count, oen_permanent 으로 연속 read</li>
+  <li>ALU_PULSE: g_ALU_PULSE_CLKS=4 cy</li>
+  <li>DRAIN_LATCH: 16 tdc_clk (metadata 안정)</li>
+</ul>
+</div>
+
+<!-- ============== chip_ctrl ============== -->
+<div class="mod" id="chip-ctrl">
+<h3>3.9 tdc_gpx_chip_ctrl (coordinator) <span class="tag leaf">leaf</span> <span class="tag tdc">i_tdc_clk</span></h3>
+<div class="role">chip_init / chip_run / chip_reg 를 phase 기반으로 조정, bus_phy 요청 mux, raw FIFO 관리.</div>
+<div class="meta"><span>FSM: 6 phase</span><span>Raw FIFO: 6-deep</span></div>
+
+<h4>Phase FSM</h4>
+<div class="fsm">
+  <div class="st init">PH_INIT</div>
+  <div class="ar">init_done</div>
+  <div class="st idle">PH_IDLE</div>
+  <div class="ar">cmd_start</div>
+  <div class="st active">PH_RUN</div>
+  <div class="ar">run_done</div>
+  <div class="st drain">PH_RESP_DRAIN</div>
+  <div class="ar">bus idle + 3 cy</div>
+  <div class="st idle">PH_IDLE</div>
+</div>
+<div class="fsm">
+  <div class="st idle">PH_IDLE</div>
+  <div class="ar">cmd_cfg_write</div>
+  <div class="st">PH_CFG_WRITE</div>
+  <div class="ar">done</div>
+  <div class="st drain">PH_RESP_DRAIN</div>
+</div>
+<div class="fsm">
+  <div class="st idle">PH_IDLE</div>
+  <div class="ar">cmd_reg_rw</div>
+  <div class="st">PH_REG</div>
+  <div class="ar">done</div>
+  <div class="st drain">PH_RESP_DRAIN</div>
+</div>
+<div class="fsm">
+  <div class="st drain">PH_RESP_DRAIN</div>
+  <div class="ar">cnt=15 &amp; busy</div>
+  <div class="st err">quarantine<br>(fatal)</div>
+  <div class="ar">bus idle 4096 cy</div>
+  <div class="st init">PH_INIT (auto-recover)</div>
+</div>
+<div class="fsm">
+  <div class="st idle">PH_RESP_DRAIN</div>
+  <div class="ar">force_reinit</div>
+  <div class="st init">PH_INIT</div>
+</div>
+
+<h4>Raw FIFO (Round 13 P1)</h4>
+<ul>
+  <li>Depth 6, <code>t_raw_entry</code>: {valid, tdata[31:0], tuser[7:0], drain}</li>
+  <li>Data beat: 4 slot 이상 free 일 때만 enqueue</li>
+  <li>Control beat (tuser[7]=1): 1 slot 있으면 enqueue</li>
+  <li>FIFO full + control beat → <strong>가장 오래된 data beat 를 evict</strong></li>
+  <li>tuser[5] = <em>faulted</em> bit (final drain_done only), 하위로 전달</li>
+</ul>
+
+<h4>I/O 주요</h4>
+<ul>
+  <li>i_cmd_{start, stop, soft_reset, cfg_write, reg_read, reg_write, force_reinit, soft_clear}</li>
+  <li>i_cfg (t_tdc_cfg), i_cfg_image (16×32)</li>
+  <li>o_m_raw_axis_{tvalid, tdata, tuser} (raw 스트림)</li>
+  <li>o_drain_done, o_run_drain_complete, o_drain_done_faulted</li>
+  <li>o_err_{raw_drop, drain_cap, bus_fatal, force_reinit, ...} (sticky)</li>
+</ul>
+
+<h4>메모리</h4>
+<ul>
+  <li>Raw FIFO: 6 × ~42-bit</li>
+  <li>cfg_image snapshot: 16 × 32-bit</li>
+  <li>quarantine counters: 16-bit + 24-bit (bus_idle_stable)</li>
+  <li>snapshot regs: bus_clk_div(6), bus_ticks(3), max_range(16), n_drain_cap(4), drain_mode(1)</li>
+</ul>
+</div>
+
+<!-- ============== decoder_i_mode ============== -->
+<div class="mod" id="decoder-i-mode">
+<h3>3.10 tdc_gpx_decoder_i_mode <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">28-bit raw IFIFO word → hit 필드 추출 + control beat pass-through.</div>
+<div class="meta"><span>FSM: 없음 (single-stage registered)</span><span>Latency: 1</span><span>Throughput: 1 beat/clk</span></div>
+
+<h4>처리 (combinational + 1 register stage)</h4>
+<pre>
+if tuser[7] = 1:  -- control beat
+    passthrough: drain_done flag, ififo_id → tuser[6], faulted → tuser[5]
+else:  -- data beat
+    tdata[16:0]    &lt;- raw[16:0]   (hit 17-bit)
+    tuser[0]       &lt;- raw[17]     (slope)
+    tuser[2:1]     &lt;- raw[27:26]  (cha_code)
+    tuser[5:3]     &lt;- ififo_id & raw[27:26]  (stop_id_local)
+    tuser[6]       &lt;- ififo_id
+    tuser[7]       &lt;- 0
+</pre>
+
+<h4>I/O</h4>
+<ul>
+  <li>in: i_s_axis_{tvalid, tdata[31:0], tuser[7:0]}; o_s_axis_tready</li>
+  <li>out: o_m_axis_{tvalid, tdata[31:0], tuser[7:0]}; i_m_axis_tready</li>
+  <li>storage: <code>s_tvalid_r, s_tdata_r[31:0], s_tuser_r[7:0]</code> (1-stage)</li>
+</ul>
+</div>
+
+<!-- ============== raw_event_builder ============== -->
+<div class="mod" id="raw-event-builder">
+<h3>3.11 tdc_gpx_raw_event_builder <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">chip_id 태그 + per-stop hit_seq 누적 카운터 + out-of-range stop_id 검출.</div>
+<div class="meta"><span>FSM: 없음</span><span>Latency: 1</span></div>
+
+<h4>처리</h4>
+<pre>
+if tuser[7] = 1 and tuser[6] = 1:  -- final drain_done → reset all counters
+    s_hit_cnt_r &lt;= (others =&gt; 0)
+elseif data beat and stop_id &lt; stops_per_chip:
+    increment s_hit_cnt_r(stop_id)
+    output event with hit_seq, chip_id, shot_seq tags
+
+output tuser[15:0]:
+    [0]    = slope
+    [2:1]  = chip_id
+    [5:3]  = stop_id_local
+    [5]    = faulted (control beat only)
+    [6]    = ififo_id
+    [7]    = drain_done
+    [10:8] = hit_seq_local (3-bit per stop)
+    [15:11] = shot_seq[4:0]
+</pre>
+
+<h4>메모리</h4>
+<ul>
+  <li><code>s_hit_cnt_r</code>: 8 entries × 3-bit = 24 FF per chip</li>
+  <li>1-stage output register (16-bit tuser, 32-bit tdata)</li>
+</ul>
+</div>
+
+<!-- ============== cell_builder ============== -->
+<div class="mod" id="cell-builder">
+<h3>3.12 tdc_gpx_cell_builder <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">per-chip event → per-stop hit 누적 → cell 직렬 출력. Ping-pong dual buffer 로 연속 shot overlap 흡수. (가장 메모리 큰 leaf)</div>
+<div class="meta"><span>FSM: 2개 (p_collect 4-state + p_output 5-state)</span><span>Buffers: 2 × 8 stops</span></div>
+
+<h4>Collect FSM (p_collect, 4 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_C_IDLE</div>
+  <div class="ar">shot_start</div>
+  <div class="st active">ST_C_ACTIVE</div>
+  <div class="ar">no free buf</div>
+  <div class="st err">ST_C_DROP</div>
+  <div class="ar">65K cy × 15 tick</div>
+  <div class="st drain">ST_C_QUARANTINE</div>
+  <div class="ar">final drain_done / abort / tick cap</div>
+  <div class="st idle">ST_C_IDLE</div>
+</div>
+
+<h4>Output FSM (p_output, 5 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_O_IDLE</div>
+  <div class="ar">output_req</div>
+  <div class="st">ST_O_LOAD</div>
+  <div class="ar">beat MUX</div>
+  <div class="st active">ST_O_ACTIVE</div>
+  <div class="ar loop">stop &lt; last</div>
+  <div class="st">ST_O_LOAD</div>
+</div>
+<div class="fsm">
+  <div class="st active">ST_O_ACTIVE</div>
+  <div class="ar">stop=3, ifo2 未준비</div>
+  <div class="st">ST_O_WAIT_IFIFO2</div>
+  <div class="ar">65K cy</div>
+  <div class="st err">ST_O_TIMEOUT_EOS</div>
+  <div class="ar">synthetic tlast<br>(tuser=1)</div>
+  <div class="st idle">ST_O_IDLE</div>
+</div>
+
+<h4>Dual Buffer 구조</h4>
+<pre>
+s_cell_buf_r : array(0..1) of array(0..7) of t_cell
+
+t_cell := record
+  hit_slot       : array(0..6) of unsigned(16 downto 0)  -- 7 × 17-bit
+  hit_valid      : std_logic_vector(6 downto 0)
+  slope_vec      : std_logic_vector(6 downto 0)
+  hit_count      : unsigned(2 downto 0)
+  hit_dropped    : std_logic
+end
+
+상태: BUF_FREE / BUF_COLLECT / BUF_SHARED (per buffer)
+부가:
+  s_buf_faulted_r(0..1)      : 1-bit each (final drain_done faulted 플래그)
+  s_buf_full_r(0..1)         : 1-bit each
+  s_buf_age_r(0..1)          : 8-bit each (wrap-safe age)
+</pre>
+
+<h4>tuser(0) = faulted 생성 (Round 13 P1)</h4>
+<ul>
+  <li>Final drain_done 의 tuser[5]=1 이 오면 <code>s_buf_faulted_r(wr) &lt;= '1'</code></li>
+  <li>p_output 의 tlast beat 에서만 <code>s_tuser_r(0) = s_buf_faulted_r(rd)</code></li>
+  <li>synthetic ST_O_TIMEOUT_EOS tlast: tuser 강제 '1'</li>
+</ul>
+
+<h4>Throughput</h4>
+<ul>
+  <li>Collect: 1 event/clk 직접 버퍼 write</li>
+  <li>Output: cell 당 (beats_per_cell × 1 clk) + 1 LOAD bubble</li>
+  <li>ifo1→ifo2 경계: stall (다음 버퍼 shared 상태 대기)</li>
+</ul>
+</div>
+
+<!-- ============== face_assembler ============== -->
+<div class="mod" id="face-assembler">
+<h3>3.13 tdc_gpx_face_assembler <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">4 chip cell stream → row (strict in-order chip0→3). inactive chip skip, timeout chip blank-fill.</div>
+<div class="meta"><span>FSM: 4-state</span><span>Input FIFO: 4 × 16-deep</span></div>
+
+<h4>FSM (4 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar">shot_start + mask≠0</div>
+  <div class="st active">ST_SCAN</div>
+  <div class="ar">chip ready / timeout</div>
+  <div class="st">ST_RESOLVE</div>
+  <div class="ar">compute is_last</div>
+  <div class="st active">ST_FORWARD</div>
+  <div class="ar loop">chip done → next chip</div>
+  <div class="st active">ST_SCAN</div>
+</div>
+<div class="fsm">
+  <div class="st active">ST_FORWARD</div>
+  <div class="ar">row last beat</div>
+  <div class="st done">row_done + goto IDLE</div>
+</div>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar">mask=0000 shot</div>
+  <div class="st done">row_done (synthetic, faulted=1)</div>
+</div>
+
+<h4>Blank-fill 경로 (Q&amp;A #36)</h4>
+<ul>
+  <li>Shot overrun (row 진행 중 shot_start) → 남은 chip 을 blank cell 로 생성, 현재 row 크기 유지</li>
+  <li>Timeout chip: error_fill=1 metadata 로 blank cell 생성</li>
+  <li>Zero active mask: 즉시 row_done + faulted=1</li>
+</ul>
+
+<h4>Input FIFO (Round 13 P1 rework)</h4>
+<ul>
+  <li>4 × xpm_fifo_axis, depth 16, TDATA=g_TDATA_WIDTH, TUSER=1</li>
+  <li>tuser[0] = faulted (cell_builder tlast 에서 전달)</li>
+  <li>face_assembler 가 chip tlast handshake 시점에 tuser 샘플 → row_done_faulted OR-fold</li>
+</ul>
+
+<h4>출력</h4>
+<ul>
+  <li>face_assembler → output xpm_fifo_axis (1 × 16-deep) → header_inserter</li>
+  <li>o_row_done, o_row_done_faulted, o_chip_error_{flags, partial, blank}</li>
+  <li>o_shot_overrun (pulse), o_shot_flush_drop_{sticky, mask}, o_shot_overrun_count</li>
+</ul>
+
+<h4>Throughput</h4>
+<ul>
+  <li>Sustained: 1 beat/clk in ST_FORWARD</li>
+  <li>Per-row overhead: 2 cy (SCAN + RESOLVE) × active_chip_count + blank-fill cycles</li>
+</ul>
+</div>
+
+<!-- ============== header_inserter ============== -->
+<div class="mod" id="header-inserter">
+<h3>3.14 tdc_gpx_header_inserter <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">face_start → 48B 헤더 prefix 생성 + face_assembler 출력 passthrough.</div>
+<div class="meta"><span>FSM: 5-state</span><span>Header ROM: 12 × 32-bit</span></div>
+
+<h4>FSM (5 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar">face_start</div>
+  <div class="st init">ST_PREFIX</div>
+  <div class="ar">12 or 6 beats</div>
+  <div class="st active">ST_DATA</div>
+  <div class="ar">tlast</div>
+  <div class="st drain">ST_DRAIN_LAST</div>
+  <div class="ar">accepted</div>
+  <div class="st idle">ST_IDLE</div>
+</div>
+<div class="fsm">
+  <div class="st active">ST_DATA</div>
+  <div class="ar">abort</div>
+  <div class="st err">ST_ABORT_DRAIN</div>
+  <div class="ar">drain</div>
+  <div class="st idle">ST_IDLE</div>
+</div>
+<div class="fsm">
+  <div class="st drain">ST_DRAIN_LAST / ABORT_DRAIN</div>
+  <div class="ar">watchdog (stuck sink)</div>
+  <div class="st err">tvalid=0 강제 (beat 유실 허용)</div>
+</div>
+
+<h4>Header ROM (face_start 에 1-cycle pre-build)</h4>
+<pre>
+s_hdr_rom_r(0)  = magic "TDCG" (0x47434454)
+s_hdr_rom_r(1)  = vdma_frame_id
+s_hdr_rom_r(2)  = reserved
+s_hdr_rom_r(3)  = face_config (face_id, active_mask, n_faces, stops, ndcap, ...)
+s_hdr_rom_r(4)  = geometry (rows_per_face, cols_per_face)
+s_hdr_rom_r(5)  = cell_info (max_hits, cell_size, hit_slot_w, n_chips, max_stops)
+s_hdr_rom_r(6)  = timing (shot_seq, bin_res_ps)
+s_hdr_rom_r(7)  = calibration (start_off1, cell_fmt, chip_err_mask)
+s_hdr_rom_r(8)  = k_dist_fixed
+s_hdr_rom_r(9)  = timestamp_lo
+s_hdr_rom_r(10) = timestamp_hi
+s_hdr_rom_r(11) = error_count
+</pre>
+
+<h4>TDATA 폭별 prefix beat 수</h4>
+<ul>
+  <li>32-bit TDATA: 12 prefix beats (4 B/beat × 12 = 48 B)</li>
+  <li>64-bit TDATA: 6 prefix beats (8 B/beat × 6 = 48 B)</li>
+  <li>Line 0 만 real, Line 1+ 는 zero prefix</li>
+</ul>
+
+<h4>drain watchdog (Round 11 item 3)</h4>
+<ul>
+  <li>ST_DRAIN_LAST / ST_ABORT_DRAIN 에서 downstream wedge → tvalid=0 강제 (liveness 우선)</li>
+  <li>Sticky: o_drain_timeout_sticky</li>
+</ul>
+</div>
+
+<!-- ============== err_handler ============== -->
+<div class="mod" id="err-handler">
+<h3>3.15 tdc_gpx_err_handler <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">per-chip ErrFlag 감지 + REG12 읽기로 원인 분류 + per-chip soft_reset + error_fill 게이팅.</div>
+<div class="meta"><span>FSM: 6-state</span><span>Retry: g_MAX_RETRIES=3</span></div>
+
+<h4>FSM (6 state)</h4>
+<div class="fsm">
+  <div class="st idle">ST_IDLE</div>
+  <div class="ar">errflag debounced</div>
+  <div class="st active">ST_READ_REG12</div>
+  <div class="ar">issue reg_read</div>
+  <div class="st">ST_WAIT_READ</div>
+  <div class="ar">rsp (or 65K cy)</div>
+  <div class="st err">ST_RECOVERY</div>
+</div>
+<div class="fsm">
+  <div class="st err">ST_RECOVERY</div>
+  <div class="ar">soft_reset 펄스</div>
+  <div class="st">ST_WAIT_RECOVERY</div>
+  <div class="ar">chip init + stable low</div>
+  <div class="st">ST_WAIT_FRAME_DONE</div>
+  <div class="ar">frame_done</div>
+  <div class="st idle">ST_IDLE</div>
+</div>
+<div class="fsm">
+  <div class="st">ST_WAIT_RECOVERY</div>
+  <div class="ar">timeout × retry_cnt &gt; MAX</div>
+  <div class="st err">err_fatal (sticky)</div>
+</div>
+
+<h4>I/O / 메모리</h4>
+<ul>
+  <li>Input: i_errflag_sync[3:0], i_cmd_reg_done_pulse, i_reg_outstanding, i_frame_done, i_shot_start, i_soft_clear</li>
+  <li>Output: o_cmd_soft_reset_per_chip, o_cmd_reg_read (to cmd_arb), o_err_fill, o_err_fatal</li>
+  <li>Counter: <code>s_retry_cnt_r</code>, <code>s_debounce_cnt_r</code>, <code>s_rec_wait_cnt_r</code> (9999 cy), <code>s_frame_wait_cnt_r</code> (131K cy)</li>
+</ul>
+</div>
+
+<!-- ============== status_agg ============== -->
+<div class="mod" id="status-agg">
+<h3>3.16 tdc_gpx_status_agg <span class="tag leaf">leaf</span> <span class="tag axis">i_axis_aclk</span></h3>
+<div class="role">각종 status 신호 집계 + sticky 누적 + timestamp 생성.</div>
+<div class="meta"><span>FSM: 없음 (조합 + sticky)</span></div>
+
+<h4>주요 출력</h4>
+<ul>
+  <li>o_status (t_tdc_status record): busy, err_fatal, chip_error_mask, drain_timeout_mask, sequence_error_mask, ... (30+ 필드)</li>
+  <li>o_timestamp (64-bit ns)</li>
+  <li>o_error_cycle_count (32-bit)</li>
+  <li>o_err_drain_sticky, o_err_seq_sticky (per-chip 4-bit)</li>
+</ul>
+
+<h4>Sticky clear 규약</h4>
+<ul>
+  <li>HARD-RESET only: chip_error_mask, bus_fatal_mask, force_reinit_mask, quarantine_escape_mask, mono_violation_mask, drain_faulted_mask</li>
+  <li>SOFT-CLEAR (i_soft_clear pulse): err_drain_sticky, err_seq_sticky, err_chip_mask, err_cause, reg_overflow, stop_id_error_mask</li>
+  <li>LAST-TX: reg_timeout_mask (cmd_arb 에서)</li>
+  <li>RUN-SCOPED: cmd_start_accepted 에서 clear (예: err_active)</li>
+</ul>
+</div>
+
+<!-- ============== skid_buffer ============== -->
+<div class="mod" id="skid">
+<h3>3.17 tdc_gpx_skid_buffer <span class="tag leaf">leaf</span></h3>
+<div class="role">타이밍 closure 용 2-register skid buffer (AXI-Stream).</div>
+
+<h4>구조</h4>
+<pre>
+Input  →  s_m_data_temp_r (stall 흡수)
+Output ←  s_m_data_r      (steady state)
+
+2 registers, 1-cycle latency,
+downstream stall 1 cycle 흡수 가능.
+</pre>
+
+<h4>사용</h4>
+<ul>
+  <li>config_ctrl 내 <code>u_sk_brsp</code>: bus response 경로</li>
+  <li>decode_pipe 내 <code>u_sk_dec, u_sk_evt</code>: pipeline stage 타이밍</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="inter">4. 중간 wrapper 모듈 (Cluster 수준)</h2>
+
+<!-- ============== config_ctrl ============== -->
+<div class="mod cluster" id="config-ctrl">
+<h3>4.1 tdc_gpx_config_ctrl <span class="tag inter">wrapper</span></h3>
+<div class="role">Cluster 1 — 모든 TDC 버스 경로 + per-chip CSR + 중재 + CDC 를 하나로 묶은 최대 규모 wrapper.</div>
+
+<h4>포함 인스턴스</h4>
+<div class="tree">
+tdc_gpx_config_ctrl
+├── u_csr_chip               : tdc_gpx_csr_chip
+├── u_cmd_arb                : tdc_gpx_cmd_arb
+├── u_stop_decode            : tdc_gpx_stop_cfg_decode
+├── u_err_handler            : tdc_gpx_err_handler
+├── u_sk_brsp                : tdc_gpx_skid_buffer          (bus rsp)
+├── gen_chip (i=0..3) ─
+│   ├── u_chip_ctrl          : tdc_gpx_chip_ctrl
+│   │   ├── u_init           : tdc_gpx_chip_init
+│   │   ├── u_run            : tdc_gpx_chip_run
+│   │   └── u_reg            : tdc_gpx_chip_reg
+│   ├── u_bus_phy            : tdc_gpx_bus_phy              [i_tdc_clk]
+│   └── u_raw_cdc            : xpm_fifo_async               [tdc→axis CDC]
+└── u_cdc_cmd_*              : xpm_cdc_pulse × N            [cmd 전달]
+</div>
+
+<h4>도메인 분리</h4>
+<table class="tight">
+<tr><th>신호 그룹</th><th>도메인</th></tr>
+<tr><td>AXI4-Lite CSR</td><td>s_axi_aclk</td></tr>
+<tr><td>cmd pulse / shot_start / expected_ififo</td><td>i_axis_aclk</td></tr>
+<tr><td>chip_ctrl / chip_init / chip_run / chip_reg / bus_phy</td><td>i_tdc_clk</td></tr>
+<tr><td>raw stream crossing</td><td>i_tdc_clk → i_axis_aclk (xpm_fifo_async)</td></tr>
+</table>
+
+<h4>시간 축 상 역할</h4>
+<ol>
+  <li>Phase 1: csr_chip 이 PS 에서 REG 값 받음</li>
+  <li>Phase 2: chip_init 이 bus_phy 를 통해 TDC 칩 초기화</li>
+  <li>Phase 4: chip_run 이 shot 수행, raw word → raw_cdc → cluster 2 로 전달</li>
+  <li>per-shot 사이드: err_handler 가 ErrFlag 감시 + cmd_arb 가 register access 중재</li>
+</ol>
+
+<h4>주요 입출력</h4>
+<ul>
+  <li>In: AXI4-Lite, i_axis_aclk, i_tdc_clk, laser shot_start, expected_ififo, i_frame_done</li>
+  <li>Out: per-chip raw AXI-Stream (4 × 32-bit + 8-bit tuser) to Cluster 2, status bundle</li>
+</ul>
+</div>
+
+<!-- ============== decode_pipe ============== -->
+<div class="mod cluster" id="decode-pipe">
+<h3>4.2 tdc_gpx_decode_pipe <span class="tag inter">wrapper</span></h3>
+<div class="role">Cluster 2 — raw IFIFO word → hit event stream 변환.</div>
+
+<div class="tree">
+tdc_gpx_decode_pipe
+├── gen_chip (i=0..3) ─
+│   ├── u_decoder_i_mode     : tdc_gpx_decoder_i_mode
+│   └── u_raw_evt_builder    : tdc_gpx_raw_event_builder
+└── u_sk_dec, u_sk_evt       : tdc_gpx_skid_buffer          (타이밍 stage)
+</div>
+
+<h4>Pipeline (per chip)</h4>
+<div class="flow">
+<div class="flow-box">raw_cdc<br>AXIS</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">u_sk_dec<br>2-reg skid</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">decoder_i_mode<br>1-stage</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">u_sk_evt<br>2-reg skid</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">raw_event_builder<br>1-stage</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">to Cluster 3</div>
+</div>
+
+<h4>Throughput</h4>
+<ul>
+  <li>Sustained: 1 event / clk / chip</li>
+  <li>Pipeline latency: ~6 clk (2+1+2+1)</li>
+  <li>TUSER 폭: 8 → 8 → 16 (raw_event_builder 에서 chip_id, hit_seq, shot_seq 추가)</li>
+</ul>
+</div>
+
+<!-- ============== cell_pipe ============== -->
+<div class="mod cluster" id="cell-pipe">
+<h3>4.3 tdc_gpx_cell_pipe <span class="tag inter">wrapper</span></h3>
+<div class="role">Cluster 3 — rise/fall slope 분리 + 4 chip × 2 slope = 8 개 cell_builder.</div>
+
+<div class="tree">
+tdc_gpx_cell_pipe
+├── p_slope_demux            : (registered, rise/fall 분리)
+├── gen_chip (i=0..3) ─
+│   ├── u_cell_bld_rise      : tdc_gpx_cell_builder
+│   └── u_cell_bld_fall      : tdc_gpx_cell_builder
+└── gen_tuser_map            : per-chip tuser 벡터 묶기 (Round 13 P1)
+</div>
+
+<h4>Slope demux</h4>
+<ul>
+  <li>입력 event 의 tuser[0] (slope) 로 rise/fall 경로 분기</li>
+  <li>1-register stage (p_slope_demux)</li>
+  <li>output_req 가 가능할 때만 tready=1</li>
+</ul>
+
+<h4>출력</h4>
+<ul>
+  <li>rise cell stream × 4 (per chip) + tuser(faulted) 벡터</li>
+  <li>fall cell stream × 4 (per chip) + tuser(faulted) 벡터</li>
+  <li>quarantine_escape / hit_dropped / shot_dropped / slice_timeout / stop_id_error sticky per chip per slope</li>
+</ul>
+</div>
+
+<!-- ============== output_stage ============== -->
+<div class="mod cluster" id="output-stage">
+<h3>4.4 tdc_gpx_output_stage <span class="tag inter">wrapper</span></h3>
+<div class="role">Cluster 4 — Rise/Fall 각 슬로프의 face_assembler + FIFO + header_inserter → 2 개 VDMA 채널.</div>
+
+<div class="tree">
+tdc_gpx_output_stage
+├── u_face_asm_rise          : tdc_gpx_face_assembler       (+ 4× input FIFO + 1× output FIFO)
+├── u_face_asm_fall          : tdc_gpx_face_assembler       (+ 4× input FIFO + 1× output FIFO)
+├── u_face_rise_fifo         : xpm_fifo_axis (16-deep)
+├── u_face_fall_fifo         : xpm_fifo_axis (16-deep)
+├── u_hdr_rise               : tdc_gpx_header_inserter
+└── u_hdr_fall               : tdc_gpx_header_inserter
+</div>
+
+<h4>per-slope pipeline</h4>
+<div class="flow">
+<div class="flow-box">4 input FIFO<br>16-deep each</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">face_assembler<br>FSM</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">output FIFO<br>16-deep</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">face_rise_fifo<br>16-deep</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">header_inserter<br>+48B prefix</div>
+<div class="flow-arrow">→</div>
+<div class="flow-box">VDMA output<br>o_m_axis_*</div>
+</div>
+
+<h4>메모리 총량 (per slope)</h4>
+<ul>
+  <li>4 × 16 × (TDATA + 1-bit tuser) + 1 × 16 × TDATA + 1 × 16 × TDATA + header ROM (12 × 32-bit)</li>
+  <li>64-bit 기준: 4×16×65 + 2×16×64 + 384 = 4160+2048+384 ≈ 6.6 Kbit (distr)</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="top">5. 통합 모듈 — tdc_gpx_top</h2>
+
+<div class="mod topmod">
+<h3>5.1 tdc_gpx_top <span class="tag top">integration</span></h3>
+<div class="role">최상위 모듈. 7 개 서브 인스턴스의 배선과 클럭/리셋 분배, status 조합, sticky mask 가공 담당. 자체 FSM 없음.</div>
+
+<h4>인스턴스 목록</h4>
+<table>
+<tr><th>인스턴스</th><th>엔티티</th><th>역할</th></tr>
+<tr><td>u_csr_pipeline</td><td>tdc_gpx_csr_pipeline</td><td>pipeline CSR (AXI4-Lite)</td></tr>
+<tr><td>u_config_ctrl</td><td>tdc_gpx_config_ctrl</td><td>Cluster 1 (TDC bus + chip ctrl)</td></tr>
+<tr><td>u_decode_pipe</td><td>tdc_gpx_decode_pipe</td><td>Cluster 2 (decode)</td></tr>
+<tr><td>u_cell_pipe</td><td>tdc_gpx_cell_pipe</td><td>Cluster 3 (cell)</td></tr>
+<tr><td>u_output_stage</td><td>tdc_gpx_output_stage</td><td>Cluster 4 (face+header)</td></tr>
+<tr><td>u_face_seq</td><td>tdc_gpx_face_seq</td><td>shot 시퀀서</td></tr>
+<tr><td>u_status_agg</td><td>tdc_gpx_status_agg</td><td>status 집계</td></tr>
+</table>
+
+<h4>top 자체 로직</h4>
+<ul>
+  <li>sticky mask OR 누적 (quarantine_escape, stop_id_error, frame_done_faulted, row_done_faulted)</li>
+  <li>chip_error_merged 합성</li>
+  <li>frame_id / face_id / shot_seq 배선</li>
+  <li>reset 배선 (axi_aresetn, axis_aresetn, tdc_aresetn)</li>
+  <li>AXI-Lite 2 ports (pipeline CSR + chip CSR) 분기</li>
+</ul>
+
+<h4>top-level status 조립 (요약)</h4>
+<ul>
+  <li>s_status.err_fatal = s_err_fatal (err_handler) OR (s_err_bus_fatal_mask ≠ 0)</li>
+  <li>s_status.chip_error_mask = s_chip_error_raw (unmasked)</li>
+  <li>s_status.drain_timeout_mask = s_err_drain_to_sticky_r</li>
+  <li>s_status.shot_drop_any = OR(s_shot_dropped, s_shot_fall_dropped)</li>
+  <li>기타 20+ 필드 sticky/pulse/mask 조립</li>
+</ul>
+
+<h4>CSR 우선순위 (force_reinit &gt; soft_reset &gt; auto_recover &gt; case 전이)</h4>
+<p>chip_ctrl 내부 priority 이지만 top 에서 force_reinit (CTL2[0]) 과 err_soft_clear (CTL2[1]) 를 개별 pulse 로 생성하여 하위 모듈에 배선.</p>
+
+<h4>시간 순 배선 진행</h4>
+<ol>
+  <li>HW reset → 모든 서브 reset</li>
+  <li>csr_pipeline + csr_chip 이 AXI4-Lite 로 config 수집, CDC 로 i_axis_aclk 로 전달</li>
+  <li>config_ctrl 이 chip_init 시작 (PuResN + REG writes)</li>
+  <li>face_seq 가 cmd_start 수락 → shot_start_gated pulse</li>
+  <li>config_ctrl 의 chip_run 이 shot 수행 → raw_cdc 로 Cluster 2 전달</li>
+  <li>decode_pipe → cell_pipe → output_stage 파이프라인 흐름</li>
+  <li>header_inserter 가 VDMA frame 출력</li>
+  <li>status_agg 가 end-to-end sticky/counter 를 status record 로 조립</li>
+  <li>err_handler / face_seq 가 사이드 경로로 에러 복구 / 프레임 경계 관리</li>
+</ol>
+</div>
+
+<p style="margin-top: 30px; font-size: 11px; color: #888;">Generated from tdc_gpx_ctrl HDL source, Round 13 follow-up (audit 1–5 + P1/P3/P4/P5/P6) 반영 · main 브랜치 · 2026-04-19</p>
+
+</div>
+</body>
+</html>
