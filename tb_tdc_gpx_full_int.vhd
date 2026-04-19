@@ -65,60 +65,130 @@ use work.tb_laser_ctrl_pkg.all;
 use work.tb_laser_ctrl_tests_pkg.all;
 
 entity tb_tdc_gpx_full_int is
+    generic (
+        -- =================================================================
+        -- INDEPENDENT (primary) variables -- system specification inputs.
+        -- User overrides these via xelab --generic_top or Vivado simset.
+        -- =================================================================
+        G_AXIS_CLK_MHZ    : real    := 200.0;   -- common clock freq (MHz)
+        G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (meters)
+        G_SIM_TARGET_M    : real    := 375.0;   -- TB photodiode target (m)
+        G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64)
+        G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
+        G_COLS_PER_FACE   : natural := 2;        -- shots per face
+        G_N_FACES         : natural := 1;        -- faces per frame
+        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
+        G_POWERUP_CLKS    : positive := 16;      -- chip_ctrl powerup (short sim)
+        G_RECOVERY_CLKS   : positive := 4;
+        G_ALU_PULSE_CLKS  : positive := 3;
+        G_ENC_RUN_US      : real    := 100.0     -- how long encoder spins
+    );
 end entity tb_tdc_gpx_full_int;
 
 architecture sim of tb_tdc_gpx_full_int is
 
     -- =========================================================================
-    -- Basic parameters
+    -- DEPENDENT (derived) constants -- all computed from the generics above.
     -- =========================================================================
-    constant C_CLK_PERIOD   : time    := 5 ns;    -- 200 MHz
-    constant C_RST_HOLD     : time    := 150 ns;
+    -- Physical constants
+    constant C_LIGHT_M_PER_US : real    := 299.792;   -- speed of light (m/us)
 
-    -- TDC: 500 m / 64 bit (same as tb_tdc_gpx_top_int)
-    constant C_MAX_RANGE    : natural := 667;
-    constant C_STOPS        : natural := 2;
-    constant C_COLS_FACE    : natural := 2;
-    constant C_OUTPUT_W     : natural := 64;
-    constant C_POWERUP_CLKS : natural := 16;
-    constant C_RECOVERY_CLKS: natural := 4;
-    constant C_ALU_PULSE    : natural := 3;
-    constant C_STOP_DW      : natural := c_STOP_EVT_DATA_WIDTH;  -- 32
+    -- Clock period (rounded to integer ps to keep xsim time arithmetic exact)
+    constant C_CLK_PERIOD_PS  : natural := natural(1000000.0 / G_AXIS_CLK_MHZ);
+    constant C_CLK_PERIOD     : time    := C_CLK_PERIOD_PS * 1 ps;
+    constant C_RST_HOLD       : time    := 30 * C_CLK_PERIOD;
 
-    -- Echo-receiver geometry (matches tdc_gpx_top's chip/stop count)
-    constant C_ER_N_CHIPS   : natural := 4;
-    constant C_ER_N_STOPS   : natural := 8;
-    constant C_PD_WIDTH     : natural := C_ER_N_CHIPS * C_ER_N_STOPS;  -- 32
+    -- Range-derived counters (clk units)
+    --   round-trip(D) = 2 * D / c * f_clk
+    constant C_MAX_RANGE_CLKS : natural :=
+        natural(2.0 * G_MAX_RANGE_M  / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
+    constant C_SIM_TARGET_CLKS: natural :=
+        natural(2.0 * G_SIM_TARGET_M / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
 
-    -- Chip model (reuse from tb_tdc_gpx_top_int)
-    constant C_FIFO_DEPTH   : natural := 32;
-    constant C_LF_THRESH    : natural := 4;
+    -- PRF headroom (shot_period = 1.5 x round-trip per TDC window design memo)
+    constant C_SHOT_PERIOD_CLKS : natural := (C_MAX_RANGE_CLKS * 3) / 2;
 
-    -- Photodiode echo delay (from fire_pulse to pd rising edge).
-    -- Target at 375 m (well within the 500 m max window of 667 clk) so the
-    -- echo arrives strictly before max_roundtrip timeout and is captured.
-    constant C_ECHO_DELAY   : natural := 500;  -- 2.5 us round-trip (375 m)
+    -- TB photodiode echo delay (clk units)
+    constant C_ECHO_DELAY     : natural := C_SIM_TARGET_CLKS;
 
-    -- =========================================================================
-    -- 500 m profile overrides for laser_ctrl CSR
-    --   tb_laser_ctrl_pkg assumes AXIS=150 MHz + 216 m max range, which does
-    --   not match our 200 MHz single-clock + 500 m TDC profile. Recompute
-    --   the range-dependent registers here.
-    --
-    --   @200 MHz:  1 m round-trip  = 2 m / 2.998e8 m/s * 200e6 = 1.334 clk/m
-    --              500 m           = 667 clk
-    --              shot_period(500 m) >= 1.5 * 667 = 1000 clk = 5 us
-    --
-    --   motor_decoder emits 1 AXI-S beat per encoder state. With TICKS_LO=13
-    --   clk/state (pkg derived), shot_period(80 states) ~= 1040 clk -> OK.
-    -- =========================================================================
-    constant C_LC_MAX_ROUNDTRIP_500M : natural := 667;  -- CTL2
-    constant C_LC_VIRT_OFFSET_500M   : natural := 667;  -- CTL4 (sim target = 500 m)
-    constant C_LC_STEP_INTERVAL_500M : natural := 80;   -- CTL5[15:0]
+    -- motor_decoder step rate: enc_top emits one state every TICKS_LO clk.
+    -- Use tb_laser_ctrl_pkg derivation (assumes @150 MHz) but scale if needed.
+    -- On our single 200 MHz clock the TICKS_LO stays numerically the same
+    -- (encoder + motor_decoder run on same clock so the ratio matches).
+    constant C_TICKS_LO       : natural := C_MD_TICKS_LO;   -- ~= 13
+    constant C_STEP_INTERVAL  : natural :=
+        (C_SHOT_PERIOD_CLKS + C_TICKS_LO - 1) / C_TICKS_LO;  -- ceiling
 
-    -- CTL5 packed: [20:16] face_enable=0x1F (all 5 faces), [15:0] step_interval=80
-    --   0x1F<<16 | 80 = 0x001F_0050
-    constant C_LC_CTL5_500M : std_logic_vector(31 downto 0) := x"001F0050";
+    -- max_hits table per distance memo (100m=1 / 250m=2 / 500m=3 / 750m=6 / 1000m=7)
+    function fn_max_hits(r_m : real) return natural is
+    begin
+        if r_m <=  150.0 then return 1;
+        elsif r_m <= 300.0 then return 2;
+        elsif r_m <= 600.0 then return 3;
+        elsif r_m <= 850.0 then return 6;
+        else                   return 7;
+        end if;
+    end function;
+    constant C_MAX_HITS       : natural := fn_max_hits(G_MAX_RANGE_M);
+
+    -- pulse / trigger widths (kept short but >= 1 clk, >= 4 for safety)
+    function fn_max_nat(a, b : natural) return natural is
+    begin if a > b then return a; else return b; end if; end function;
+    constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_CLKS, 4);
+    constant C_START_TDC_W    : natural := fn_max_nat(C_START_TDC_CLKS, 4);
+    constant C_STOP_TDC_W     : natural := fn_max_nat(C_STOP_TDC_CLKS, 4);
+    constant C_CTL3_VAL_LOCAL : natural := C_STOP_TDC_W * 65536 + C_START_TDC_W;
+
+    -- CTL5 packed for laser_ctrl:
+    --   [20:16] face_enable = 0x1F (all 5 mirror faces present in pkg),
+    --   [15:0]  step_interval = C_STEP_INTERVAL
+    function fn_pack_ctl5(face_en : std_logic_vector(4 downto 0);
+                          step_interval : natural) return std_logic_vector is
+    begin
+        return std_logic_vector(to_unsigned(0, 11)) & face_en
+             & std_logic_vector(to_unsigned(step_interval, 16));
+    end function;
+    constant C_LC_CTL5_DERIVED : std_logic_vector(31 downto 0) :=
+        fn_pack_ctl5("11111", C_STEP_INTERVAL);
+
+    -- tdc_gpx pipeline CSR values (packed from generics)
+    --   MAIN_CTRL  [3:0]=chip_mask, [14:12]=n_faces, [18:15]=stops
+    --   RANGE_COLS [15:0]=max_range_clks, [31:16]=cols_per_face
+    function fn_pack_main_ctrl(mask  : std_logic_vector(3 downto 0);
+                               faces : natural;
+                               stops : natural) return std_logic_vector is
+        variable v : std_logic_vector(31 downto 0) := (others => '0');
+    begin
+        v( 3 downto  0) := mask;
+        v(14 downto 12) := std_logic_vector(to_unsigned(faces, 3));
+        v(18 downto 15) := std_logic_vector(to_unsigned(stops, 4));
+        return v;
+    end function;
+    constant C_MAIN_CTRL_BASE : std_logic_vector(31 downto 0) :=
+        fn_pack_main_ctrl(G_ACTIVE_CHIP_MASK, G_N_FACES, G_STOPS_PER_CHIP);
+
+    constant C_RANGE_COLS_VAL : std_logic_vector(31 downto 0) :=
+        std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
+        std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 16));
+
+    -- Output width + stop-event width (for sub-module generic override)
+    constant C_OUTPUT_W   : natural := G_TDATA_WIDTH;
+    constant C_STOP_DW    : natural := c_STOP_EVT_DATA_WIDTH;  -- 32 (from tdc_gpx_pkg)
+
+    -- Echo-receiver geometry matches tdc_gpx_pkg (c_N_CHIPS=4, c_MAX_STOPS=8).
+    -- These are package-level locked constants -- echo_receiver MUST see them
+    -- so the PD vector length and stop_evt packing line up with tdc_gpx_top.
+    constant C_ER_N_CHIPS : natural := c_N_CHIPS;
+    constant C_ER_N_STOPS : natural := c_MAX_STOPS_PER_CHIP;
+    constant C_PD_WIDTH   : natural := C_ER_N_CHIPS * C_ER_N_STOPS;
+
+    -- Chip model fixed parameters (not distance dependent)
+    constant C_FIFO_DEPTH : natural := 32;
+    constant C_LF_THRESH  : natural := 4;
+
+    -- Encoder run wall-time (derived from generic)
+    constant C_ENC_RUN_CLKS : natural :=
+        natural(G_ENC_RUN_US * G_AXIS_CLK_MHZ);
 
     -- =========================================================================
     -- Clock / Reset
@@ -358,11 +428,10 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_td_rise_frame_end : natural := 0;
     signal mon_td_fall_frame_end : natural := 0;
 
-    -- pipeline CSR addresses
+    -- pipeline CSR addresses (C_MAIN_CTRL_BASE / C_RANGE_COLS_VAL are now
+    -- declared in the derived-constants block above from the generics).
     constant C_PIPE_MAIN_CTRL  : std_logic_vector(6 downto 0) := "0000000";  -- 0x00
     constant C_PIPE_RANGE_COLS : std_logic_vector(6 downto 0) := "0000100";  -- 0x04
-    constant C_MAIN_CTRL_BASE  : std_logic_vector(31 downto 0) := x"0001100F";
-    constant C_RANGE_COLS_VAL  : std_logic_vector(31 downto 0) := x"0002029B";
 
     -- laser_ctrl minimal config addresses (duplicate of laser_ctrl_cfg_pkg.c_ADDR_* but kept
     -- local to keep the TB self-contained)
@@ -598,9 +667,9 @@ begin
         generic map (
             g_HW_VERSION      => x"00010000",
             g_OUTPUT_WIDTH    => C_OUTPUT_W,
-            g_POWERUP_CLKS    => C_POWERUP_CLKS,
-            g_RECOVERY_CLKS   => C_RECOVERY_CLKS,
-            g_ALU_PULSE_CLKS  => C_ALU_PULSE,
+            g_POWERUP_CLKS    => G_POWERUP_CLKS,
+            g_RECOVERY_CLKS   => G_RECOVERY_CLKS,
+            g_ALU_PULSE_CLKS  => G_ALU_PULSE_CLKS,
             g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW
         )
@@ -789,8 +858,8 @@ begin
                     v_pulse_wait := true;
                     -- Preload chip FIFOs so chip_ctrl drains them after IrFlag
                     for i in 0 to c_N_CHIPS - 1 loop
-                        fifo_load_n1(i) <= C_STOPS;
-                        fifo_load_n2(i) <= C_STOPS;
+                        fifo_load_n1(i) <= G_STOPS_PER_CHIP;
+                        fifo_load_n2(i) <= G_STOPS_PER_CHIP;
                     end loop;
                     fifo_load_req <= (others => '1');
                 end if;
@@ -1073,21 +1142,21 @@ begin
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL1,
-                 std_logic_vector(to_unsigned(C_FIRE_WIDTH_CLKS, 32)));
-        -- CTL2 max_roundtrip = 500 m @200 MHz
+                 std_logic_vector(to_unsigned(C_FIRE_WIDTH, 32)));
+        -- CTL2 max_roundtrip -- derived from G_MAX_RANGE_M / G_AXIS_CLK_MHZ
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL2,
-                 std_logic_vector(to_unsigned(C_LC_MAX_ROUNDTRIP_500M, 32)));
+                 std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 32)));
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL3,
-                 std_logic_vector(to_unsigned(C_CTL3_VAL, 32)));
-        -- CTL4 sim target = 500 m
+                 std_logic_vector(to_unsigned(C_CTL3_VAL_LOCAL, 32)));
+        -- CTL4 sim target -- derived from G_SIM_TARGET_M / G_AXIS_CLK_MHZ
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL4,
-                 std_logic_vector(to_unsigned(C_LC_VIRT_OFFSET_500M, 32)));
-        -- CTL5 step_interval = 80 states (shot_period ~= 5 us @200 MHz)
+                 std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
+        -- CTL5 step_interval -- derived to guarantee shot_period >= 1.5 * round-trip
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL5, C_LC_CTL5_500M);
+                 lc_bvalid, lc_bready, C_LC_CTL5, C_LC_CTL5_DERIVED);
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL6, C_LC_CTL6_DEFAULT);
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
@@ -1139,10 +1208,10 @@ begin
         --------------------------------------------------------------
         pl("[S4] enable encoder motion");
         enc_run <= '1';
-        wait_clk(20000);   -- 20000 * 5 ns = 100 us
+        wait_clk(C_ENC_RUN_CLKS);  -- G_ENC_RUN_US worth of encoder motion
         pl("[S5] stop encoder, wait for pending frames");
         enc_run <= '0';
-        wait_clk(5000);    -- 25 us drain
+        wait_clk(C_ENC_RUN_CLKS / 4);  -- 25% drain tail
 
         --------------------------------------------------------------
         -- [S6] Summary

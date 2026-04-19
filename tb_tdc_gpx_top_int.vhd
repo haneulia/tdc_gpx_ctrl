@@ -52,33 +52,72 @@ use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
 
 entity tb_tdc_gpx_top_int is
+    generic (
+        -- =================================================================
+        -- INDEPENDENT (primary) variables. Every dependent constant below
+        -- is derived from these, so changing the distance / clock / tdata
+        -- width here propagates consistently through the whole TB (DUT
+        -- generics + CSR values + chip model preload + timing waits).
+        -- =================================================================
+        G_AXIS_CLK_MHZ    : real    := 200.0;   -- common clock freq (MHz)
+        G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (m)
+        G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64)
+        G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
+        G_COLS_PER_FACE   : natural := 2;        -- shots per face
+        G_N_FACES         : natural := 1;
+        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
+        G_POWERUP_CLKS    : positive := 16;
+        G_RECOVERY_CLKS   : positive := 4;
+        G_ALU_PULSE_CLKS  : positive := 3
+    );
 end entity tb_tdc_gpx_top_int;
 
 architecture sim of tb_tdc_gpx_top_int is
 
     -- =========================================================================
-    -- Constants
+    -- DEPENDENT (derived) constants -- all computed from the generics above.
     -- =========================================================================
-    constant C_CLK_PERIOD   : time := 5 ns;   -- 200 MHz single clock domain
-    constant C_RST_HOLD     : time := 120 ns;
+    constant C_LIGHT_M_PER_US : real    := 299.792;
+    constant C_CLK_PERIOD_PS  : natural := natural(1000000.0 / G_AXIS_CLK_MHZ);
+    constant C_CLK_PERIOD     : time    := C_CLK_PERIOD_PS * 1 ps;
+    constant C_RST_HOLD       : time    := 24 * C_CLK_PERIOD;
 
-    -- 500 m @ 200 MHz -> round-trip 667 clks (memory reference)
-    constant C_MAX_RANGE    : natural := 667;
-    constant C_COLS_FACE    : natural := 2;
-    constant C_STOPS        : natural := 2;
-    constant C_MAX_HITS     : natural := 3;    -- 500 m profile
-    constant C_SHOT_PERIOD  : natural := 1000; -- 1.5 * 667 ~= 1000 clks
+    -- Range-derived counters
+    constant C_MAX_RANGE_CLKS : natural :=
+        natural(2.0 * G_MAX_RANGE_M / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
+    constant C_SHOT_PERIOD    : natural := (C_MAX_RANGE_CLKS * 3) / 2;
 
-    -- Chip model parameters
+    -- max_hits table (see Doc/260419/task_distance_bounded_windows_2026-04-19.md)
+    function fn_max_hits(r_m : real) return natural is
+    begin
+        if r_m <=  150.0 then return 1;
+        elsif r_m <= 300.0 then return 2;
+        elsif r_m <= 600.0 then return 3;
+        elsif r_m <= 850.0 then return 6;
+        else                   return 7;
+        end if;
+    end function;
+    constant C_MAX_HITS : natural := fn_max_hits(G_MAX_RANGE_M);
+
+    -- TDC sub-module generic override values
+    constant C_OUTPUT_W     : natural := G_TDATA_WIDTH;
+    constant C_STOP_DW      : natural := c_STOP_EVT_DATA_WIDTH;  -- 32 from pkg
+
+    -- Chip model fixed
     constant C_FIFO_DEPTH   : natural := 32;
     constant C_LF_THRESH    : natural := 4;
 
-    -- DUT generics (tdc_gpx_top)
-    constant C_OUTPUT_W     : natural := 64;   -- cell / VDMA tdata width
-    constant C_POWERUP_CLKS : natural := 16;   -- shortened for TB
-    constant C_RECOVERY_CLKS: natural := 4;
-    constant C_ALU_PULSE    : natural := 3;
-    constant C_STOP_DW      : natural := c_STOP_EVT_DATA_WIDTH;  -- 32
+    -- Packed MAIN_CTRL / RANGE_COLS values for pipeline CSR
+    function fn_pack_main_ctrl(mask  : std_logic_vector(3 downto 0);
+                               faces : natural;
+                               stops : natural) return std_logic_vector is
+        variable v : std_logic_vector(31 downto 0) := (others => '0');
+    begin
+        v( 3 downto  0) := mask;
+        v(14 downto 12) := std_logic_vector(to_unsigned(faces, 3));
+        v(18 downto 15) := std_logic_vector(to_unsigned(stops, 4));
+        return v;
+    end function;
 
     -- =========================================================================
     -- Clock / Reset
@@ -226,14 +265,14 @@ architecture sim of tb_tdc_gpx_top_int is
     constant C_PIPE_MAIN_CTRL  : std_logic_vector(6 downto 0) := "0000000";  -- 0x00
     constant C_PIPE_RANGE_COLS : std_logic_vector(6 downto 0) := "0000100";  -- 0x04
 
-    -- MAIN_CTRL packed: active=F, n_faces=1, stops=2, drain_mode=0
-    --   [3:0]=F, [14:12]=001, [18:15]=0010 (stops=2)
-    --   = 0x0001_000F + 0x0000_1000 = 0x0001_100F
-    constant C_MAIN_CTRL_BASE  : std_logic_vector(31 downto 0) := x"0001100F";
-
-    -- RANGE_COLS: cols=2, max_range=667 (0x29B)
-    --   [31:16]=0x0002, [15:0]=0x029B
-    constant C_RANGE_COLS_VAL  : std_logic_vector(31 downto 0) := x"0002029B";
+    -- MAIN_CTRL + RANGE_COLS packed from the entity generics so changing
+    -- G_ACTIVE_CHIP_MASK / G_N_FACES / G_STOPS_PER_CHIP / G_COLS_PER_FACE /
+    -- G_MAX_RANGE_M at instantiation time consistently updates both CSRs.
+    constant C_MAIN_CTRL_BASE : std_logic_vector(31 downto 0) :=
+        fn_pack_main_ctrl(G_ACTIVE_CHIP_MASK, G_N_FACES, G_STOPS_PER_CHIP);
+    constant C_RANGE_COLS_VAL : std_logic_vector(31 downto 0) :=
+        std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
+        std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 16));
 
     -- Chip CSR addresses (9-bit)
     constant C_CHIP_CFG_REG0   : std_logic_vector(8 downto 0) := "0" & x"14";  -- CTL5
@@ -359,9 +398,9 @@ begin
         generic map (
             g_HW_VERSION     => x"00010000",
             g_OUTPUT_WIDTH   => C_OUTPUT_W,
-            g_POWERUP_CLKS   => C_POWERUP_CLKS,
-            g_RECOVERY_CLKS  => C_RECOVERY_CLKS,
-            g_ALU_PULSE_CLKS => C_ALU_PULSE,
+            g_POWERUP_CLKS   => G_POWERUP_CLKS,
+            g_RECOVERY_CLKS  => G_RECOVERY_CLKS,
+            g_ALU_PULSE_CLKS => G_ALU_PULSE_CLKS,
             g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW
         )
@@ -611,7 +650,7 @@ begin
 
             -- Deassert IrFlag + wait ALU recovery
             i_tdc_irflag <= (others => '0');
-            wait_clk(C_ALU_PULSE + C_RECOVERY_CLKS + 8);
+            wait_clk(G_ALU_PULSE_CLKS + G_RECOVERY_CLKS + 8);
             pl("  ---- shot [" & tag & "] drain done");
         end procedure;
 
@@ -675,7 +714,7 @@ begin
         ----------------------------------------------------------------
         -- [S6] Shot #1 - start_tdc / I-mode single measurement
         ----------------------------------------------------------------
-        do_shot(C_STOPS, "col0/shot1");   -- 2 stops -> 2 hits per IFIFO
+        do_shot(G_STOPS_PER_CHIP, "col0/shot1");
 
         ----------------------------------------------------------------
         -- [S7] shot_period wait (1.5 * round-trip = 1000 clks)
@@ -686,7 +725,7 @@ begin
         ----------------------------------------------------------------
         -- [S8] Shot #2 - face complete (cols_per_face = 2)
         ----------------------------------------------------------------
-        do_shot(C_STOPS, "col1/shot2");
+        do_shot(G_STOPS_PER_CHIP, "col1/shot2");
 
         ----------------------------------------------------------------
         -- [S9] Wait frame emit, then stop_tdc pulse
