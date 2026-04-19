@@ -87,7 +87,16 @@ entity tb_tdc_gpx_full_int is
         --   'direct' = TB drives them directly as 1-clk pulses (bypass lc), used
         --              to isolate whether the chain breaks inside TDC vs at the
         --              laser_ctrl -> TDC handshake.
-        G_TDC_STIM_MODE   : string  := "lc"
+        G_TDC_STIM_MODE   : string  := "lc";
+        -- R4 scenario knobs
+        --   G_BP_TREADY_GAP : natural := 0
+        --     0  = VDMA tready always '1' (no back-pressure)
+        --     N  = toggle m_rise_tready / m_fall_tready low for 2 clks
+        --          every N clks (emulates downstream VDMA stall)
+        G_BP_TREADY_GAP   : natural := 0;
+        -- Emit a one-line config banner at sim start (helps correlate waves
+        -- with chosen generics when runs are batched).
+        G_PRINT_BANNER    : boolean := true
     );
 end entity tb_tdc_gpx_full_int;
 
@@ -505,6 +514,37 @@ begin
     td_stop_tdc_mux   <= tb_stop_tdc   when G_TDC_STIM_MODE = "direct"
                                        else lc_stop_tdc;
 
+    -- =========================================================================
+    -- Back-pressure generator on VDMA tready lines.
+    -- G_BP_TREADY_GAP > 0 toggles both tready low for 2 clks every N clks.
+    -- =========================================================================
+    p_bp : process(clk)
+        variable v_cnt : natural := 0;
+    begin
+        if rising_edge(clk) then
+            if rst_n = '0' then
+                v_cnt := 0;
+                if G_BP_TREADY_GAP > 0 then
+                    m_rise_tready <= '1';
+                    m_fall_tready <= '1';
+                end if;
+            elsif G_BP_TREADY_GAP > 0 then
+                v_cnt := v_cnt + 1;
+                if v_cnt < G_BP_TREADY_GAP then
+                    m_rise_tready <= '1';
+                    m_fall_tready <= '1';
+                elsif v_cnt < G_BP_TREADY_GAP + 2 then
+                    m_rise_tready <= '0';
+                    m_fall_tready <= '0';
+                else
+                    v_cnt := 0;
+                    m_rise_tready <= '1';
+                    m_fall_tready <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_bp;
+
     p_reset : process
     begin
         rst_n <= '0';
@@ -904,11 +944,14 @@ begin
                 fifo_load_req <= (others => '0');
                 pd_n <= (others => '1');   -- differential complement, inactive HI
 
-                -- Rising edge detect: lc mode watches fire_pulse,
-                -- direct mode watches tb_shot_start (since fire_pulse=0 there).
-                if ((G_TDC_STIM_MODE /= "direct" and lc_fire_pulse = '1')
-                    or (G_TDC_STIM_MODE  = "direct" and tb_shot_start = '1'))
-                   and v_fire_prev = '0' then
+                -- Rising edge detect on the actual TDC input pulse
+                -- (td_shot_start_mux). Works uniformly for both modes:
+                --   "lc"     : td_shot_start_mux = lc_start_tdc
+                --   "direct" : td_shot_start_mux = tb_shot_start
+                -- Using lc_fire_pulse was incorrect for sim mode because
+                -- laser_ctrl in sim/virt-target mode still pulses start_tdc
+                -- but skips the separate fire_pulse output.
+                if td_shot_start_mux = '1' and v_fire_prev = '0' then
                     v_delay_cnt := C_ECHO_DELAY;
                     v_pulse_wait := true;
                     -- Preload chip FIFOs so chip_ctrl drains them after IrFlag
@@ -918,11 +961,7 @@ begin
                     end loop;
                     fifo_load_req <= (others => '1');
                 end if;
-                if G_TDC_STIM_MODE = "direct" then
-                    v_fire_prev := tb_shot_start;
-                else
-                    v_fire_prev := lc_fire_pulse;
-                end if;
+                v_fire_prev := td_shot_start_mux;
 
                 -- Emit pd rising pulse after delay, hold for 10 cycles
                 if v_pulse_wait then
@@ -961,11 +1000,13 @@ begin
                 v_cnt := 0;
                 v_asserting := false;
             else
-                if lc_fire_pulse = '1' and v_fire_prev = '0' then
+                -- Key off td_shot_start_mux (same as p_pd) so sim mode
+                -- (which skips lc_fire_pulse) still asserts IrFlag.
+                if td_shot_start_mux = '1' and v_fire_prev = '0' then
                     v_cnt := 50;
                     v_asserting := true;
                 end if;
-                v_fire_prev := lc_fire_pulse;
+                v_fire_prev := td_shot_start_mux;
 
                 if v_asserting then
                     if v_cnt = 0 then
@@ -1216,6 +1257,21 @@ begin
         pl(" full system integration TB start");
         pl(" (enc_top + motor_decoder + laser_ctrl + echo_receiver + tdc_gpx)");
         pl("======================================================");
+        if G_PRINT_BANNER then
+            pl("  config :  clk=" & integer'image(integer(G_AXIS_CLK_MHZ))
+               & "MHz  range=" & integer'image(integer(G_MAX_RANGE_M)) & "m"
+               & "  sim_tgt=" & integer'image(integer(G_SIM_TARGET_M)) & "m"
+               & "  tdata=" & integer'image(G_TDATA_WIDTH) & "b");
+            pl("  derived:  max_range_clks=" & integer'image(C_MAX_RANGE_CLKS)
+               & "  sim_target_clks=" & integer'image(C_SIM_TARGET_CLKS)
+               & "  shot_period=" & integer'image(C_SHOT_PERIOD_CLKS)
+               & "  step_interval=" & integer'image(C_STEP_INTERVAL)
+               & "  max_hits=" & integer'image(C_MAX_HITS));
+            pl("  stim   :  mode=" & G_TDC_STIM_MODE
+               & "  bp_gap=" & integer'image(G_BP_TREADY_GAP)
+               & "  enc_run_us=" & integer'image(integer(G_ENC_RUN_US)));
+            pl("======================================================");
+        end if;
 
         --------------------------------------------------------------
         -- [S1] CSR configuration (mirrors tb_laser_ctrl TEST 1 / TEST 2)
