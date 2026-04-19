@@ -1220,9 +1220,11 @@ begin
         --------------------------------------------------------------
         -- [S1] CSR configuration (mirrors tb_laser_ctrl TEST 1 / TEST 2)
         --------------------------------------------------------------
-        pl("[S1] motor_decoder bring-up (PHYS mode + CPR + ticks + faces + APPLY)");
+        pl("[S1] motor_decoder bring-up (SIM mode + CPR + ticks + faces + APPLY)");
+        -- SIM mode: motor_decoder uses its internal virtual encoder; the
+        -- enc_top A/B/Z pins are then ignored. enc_run toggles are no-ops.
         axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_PHYS);
+                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_SIM);
         axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
                  md_bvalid, md_bready, C_MD_CTL1,
                  std_logic_vector(to_unsigned(C_MD_CPR, 32)));
@@ -1235,10 +1237,10 @@ begin
         wait_clk(100);
         -- sw reset pulse (CTL0 SWRST_PHYS then clear)
         axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_SWRST_PHYS);
+                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_SWRST_SIM);
         wait_clk(5);
         axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_PHYS);
+                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_SIM);
         wait_clk(30);
         -- per-face centers (CTL5/CTL6/CTL7 loop)
         for f in 0 to C_N_FACES - 1 loop
@@ -1276,10 +1278,15 @@ begin
                  md_bvalid, md_bready, C_MD_CTL7, C_MD_CTL7_APPLY);
         wait_clk(200);
 
-        pl("[S1] echo_receiver CSR: physical mode (SIM_EN=0) + multi_hit_limit=7");
-        -- CTL0: SIM_EN=0 (physical pd_lvds path), multi_hit_limit=7 ([12:8])
+        pl("[S1] echo_receiver CSR: SIM mode + ch_delay(0) = C_SIM_TARGET_CLKS");
+        -- CTL0: SIM_EN=1, multi_hit_limit=7 [12:8] -> 0x701
         axilw_9b(er_awaddr, er_awvalid, er_awready, er_wdata, er_wvalid, er_wready,
-                 er_bvalid, er_bready, C_ER_CTL0, x"00000700");
+                 er_bvalid, er_bready, C_ER_CTL0, x"00000701");
+        -- CTL1 = ch_delay(0): SIM mode auto-fires channel 0 this many clks
+        -- after start_tdc rising edge (no pd_lvds required).
+        axilw_9b(er_awaddr, er_awvalid, er_awready, er_wdata, er_wvalid, er_wready,
+                 er_bvalid, er_bready, "0" & x"04",
+                 std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
         wait_clk(10);
 
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
