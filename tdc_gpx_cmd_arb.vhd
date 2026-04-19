@@ -238,6 +238,14 @@ begin
                 s_loop_resume_r    <= '0';
 
                 -- Detect new request (read or write; write wins if both)
+                -- Round 9 #24: write-wins is deliberate but ambiguous — flag
+                -- the concurrent R+W case to the TB so a contract violation
+                -- is visible instead of silently turning a read into a write.
+                -- synthesis translate_off
+                assert not (i_cmd_reg_read = '1' and i_cmd_reg_write = '1')
+                    report "cmd_arb: simultaneous cmd_reg_read+cmd_reg_write; write wins, read intent dropped"
+                    severity warning;
+                -- synthesis translate_on
                 v_new_request := i_cmd_reg_read or i_cmd_reg_write;
                 if i_cmd_reg_write = '1' then
                     v_rw := '1';
