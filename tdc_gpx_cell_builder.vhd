@@ -249,6 +249,12 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_shot_dropped_r  : std_logic := '0';  -- shot-level drop (no free buffer)
     signal s_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');  -- watchdog
 
+    -- Round 9 #8: effective max_hits_cfg. i_max_hits_cfg="000" is an invalid
+    -- SW setting; canonical spec is 1..7. To keep the collect path (hit
+    -- storage limit) and the output path (beat count formatting, fn_
+    -- cell_beat) consistent, both use this effective value. 000→7.
+    signal s_max_hits_eff_u  : unsigned(3 downto 0);
+
     -- =========================================================================
     -- Cell-to-beat mux (combinational, used inside p_output)
     -- Auto-calculated from c_MAX_HITS_PER_STOP / g_TDATA_WIDTH.
@@ -307,6 +313,11 @@ architecture rtl of tdc_gpx_cell_builder is
     end function;
 
 begin
+
+    -- Round 9 #8: effective max_hits_cfg (000 aliased to 7 so collect and
+    -- output paths agree on the slot count).
+    s_max_hits_eff_u <= "0111" when i_max_hits_cfg = "000"
+                        else ('0' & i_max_hits_cfg);
 
     -- AXI-Stream slave: accept during collect, drop, or quarantine.
     -- QUARANTINE continues to absorb late stale beats after a DROP timeout
@@ -442,7 +453,11 @@ begin
                                         severity warning;
                                     -- synthesis translate_on
                                     s_hit_dropped_r <= '1';  -- TODO: separate o_stop_id_invalid when port available
-                                elsif s_cell_buf_r(v_wr)(v_stop).hit_count_actual < ('0' & i_max_hits_cfg) then
+                                -- Round 9 #8: treat i_max_hits_cfg=000 as 7 in
+                                -- the store path, matching the output-format
+                                -- convention at line 673 (`others => 7`).
+                                elsif s_cell_buf_r(v_wr)(v_stop).hit_count_actual <
+                                      s_max_hits_eff_u then
                                     v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
                                     s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
                                     s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq) <= '1';
@@ -552,14 +567,19 @@ begin
                         when ST_C_QUARANTINE =>
                             -- Absorb stale beats after a DROP timeout. Exit on:
                             --   a) drain_done marker (ifo2 final control beat),
-                            --   b) i_abort (handled above), or
-                            --   c) Round 6 A2 escape watchdog — another 65K
-                            --      cycles without a marker forces IDLE so a
-                            --      permanently-lost drain_done cannot hang the
-                            --      pipeline forever. s_shot_dropped_r re-pulses
-                            --      to flag the unrecovered exit.
-                            -- shot_start arriving here latches as pending so
-                            -- ST_C_IDLE consumes it on return.
+                            --   b) i_abort (handled above).
+                            -- Round 9 #9: the Round 6 A2 escape-to-IDLE watchdog
+                            -- was REMOVED. Exiting QUARANTINE early created a
+                            -- late-stale-beat stall: a beat arriving after the
+                            -- watchdog timeout would hit ST_C_IDLE (tready='0')
+                            -- and backpressure upstream again. Policy now:
+                            -- stay in QUARANTINE forever until the drain_done
+                            -- marker arrives or SW issues i_abort. The 65K
+                            -- counter still ticks and pulses s_shot_dropped_r
+                            -- once as a "recovery incomplete" notification, but
+                            -- we do NOT leave the state. s_shot_pending_r
+                            -- captures any incoming shot_start so the eventual
+                            -- ST_C_IDLE entry consumes it.
                             if i_shot_start = '1' then
                                 s_shot_pending_r <= '1';
                             end if;
@@ -568,7 +588,7 @@ begin
                                 s_cstate_r     <= ST_C_IDLE;
                                 s_timeout_cnt_r <= (others => '0');
                             elsif s_timeout_cnt_r = x"FFFF" then
-                                s_cstate_r      <= ST_C_IDLE;
+                                -- Round 9 #9: flag but remain in QUARANTINE.
                                 s_shot_dropped_r <= '1';
                                 s_timeout_cnt_r  <= (others => '0');
                             else

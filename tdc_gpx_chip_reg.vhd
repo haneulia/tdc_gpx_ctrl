@@ -188,6 +188,16 @@ begin
                         -- Queue incoming pulse while busy instead of dropping it.
                         -- If the queue is already occupied, raise sticky error
                         -- so SW can see that a request was lost.
+                        -- Round 9 #16: simultaneous read+write is ambiguous —
+                        -- current policy is "write wins, read intent silently
+                        -- lost" via the s_pend_rw_r assignment below. Simulation
+                        -- assert flags the case so a TB can detect when the
+                        -- caller violates the single-request-at-a-time contract.
+                        -- synthesis translate_off
+                        assert not (i_start_read = '1' and i_start_write = '1')
+                            report "chip_reg: simultaneous start_read+start_write in ST_ACTIVE; write wins, read intent dropped"
+                            severity warning;
+                        -- synthesis translate_on
                         if i_start_read = '1' or i_start_write = '1' then
                             if s_pend_valid_r = '0' then
                                 s_pend_valid_r <= '1';

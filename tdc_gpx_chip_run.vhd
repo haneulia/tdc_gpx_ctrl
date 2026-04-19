@@ -199,6 +199,16 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_timeout_r         : std_logic := '0';
     signal s_timeout_cause_r   : std_logic_vector(2 downto 0) := (others => '0');
 
+    -- Round 9 #1: Secondary watchdog for "pending stuck" deadlock.
+    -- Round 5 #1 made EF1/EF2/BURST freeze s_wait_cnt_r while i_bus_rsp_pending
+    -- is '1' (protects against false bus-hang timeout when downstream
+    -- backpressure is merely briefly holding tready low). But if pending
+    -- stays '1' forever — e.g. raw FIFO permanently full with no consumer —
+    -- chip_run would hang indefinitely. This counter increments while the
+    -- FSM is in a wait-for-response drain state AND pending='1' AND no fire;
+    -- it fires a timeout if downstream never drains.
+    signal s_pending_stuck_cnt_r : unsigned(15 downto 0) := (others => '0');
+
     signal s_raw_word_r        : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_raw_valid_r       : std_logic := '0';
     signal s_ififo_id_r        : std_logic := '0';
@@ -271,6 +281,7 @@ begin
                 s_overrun_deferred_r <= '0';
                 s_timeout_r          <= '0';
                 s_timeout_cause_r    <= (others => '0');
+                s_pending_stuck_cnt_r <= (others => '0');
             else
                 s_raw_valid_r        <= '0';
                 s_drain_done_r       <= '0';
@@ -525,13 +536,31 @@ begin
                             end if;
                             s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                             s_wait_cnt_r         <= (others => '0');
+                            s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
                         elsif i_bus_rsp_pending = '1' then
                             -- Response already at bus_phy/skid but tready held
-                            -- low by raw hold backpressure. Hold watchdog to
-                            -- avoid a false bus-hang timeout.
-                            null;
+                            -- low by raw hold backpressure. Hold bus-hang
+                            -- watchdog (s_wait_cnt_r) but advance pending-stuck
+                            -- watchdog (Round 9 #1). If pending persists to the
+                            -- full 16-bit count, downstream has deadlocked —
+                            -- force a safe drain exit so the coordinator can
+                            -- recover the chip via soft_reset.
+                            if s_pending_stuck_cnt_r = x"FFFF" then
+                                s_req_valid_r     <= '0';
+                                s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
+                                s_drain_done_r    <= '1';
+                                s_ififo_id_r      <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "001";  -- raw_busy (downstream deadlock)
+                                s_pending_stuck_cnt_r <= (others => '0');
+                                s_state_r         <= ST_ALU_PULSE;
+                            else
+                                s_pending_stuck_cnt_r <= s_pending_stuck_cnt_r + 1;
+                            end if;
                         else
+                            s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
                                 s_req_valid_r     <= '0';
@@ -554,10 +583,25 @@ begin
                             end if;
                             s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                             s_wait_cnt_r         <= (others => '0');
+                            s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
                         elsif i_bus_rsp_pending = '1' then
-                            null;  -- downstream backpressure; hold watchdog
+                            -- Round 9 #1 secondary watchdog (see ST_DRAIN_EF1)
+                            if s_pending_stuck_cnt_r = x"FFFF" then
+                                s_req_valid_r     <= '0';
+                                s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
+                                s_drain_done_r    <= '1';
+                                s_ififo_id_r      <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "001";  -- raw_busy
+                                s_pending_stuck_cnt_r <= (others => '0');
+                                s_state_r         <= ST_ALU_PULSE;
+                            else
+                                s_pending_stuck_cnt_r <= s_pending_stuck_cnt_r + 1;
+                            end if;
                         else
+                            s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
                                 s_req_valid_r     <= '0';
@@ -577,6 +621,7 @@ begin
                             s_raw_valid_r <= '1';
                             s_burst_cnt_r <= s_burst_cnt_r + 1;
                             s_wait_cnt_r  <= (others => '0');
+                            s_pending_stuck_cnt_r <= (others => '0');
                             if s_ififo_id_r = '0' then
                                 s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                             else
@@ -588,8 +633,23 @@ begin
                                 s_state_r     <= ST_DRAIN_FLUSH;
                             end if;
                         elsif i_bus_rsp_pending = '1' then
-                            null;  -- downstream backpressure; hold watchdog
+                            -- Round 9 #1 secondary watchdog
+                            if s_pending_stuck_cnt_r = x"FFFF" then
+                                s_req_burst_r     <= '0';
+                                s_req_valid_r     <= '0';
+                                s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
+                                s_drain_done_r    <= '1';
+                                s_ififo_id_r      <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "001";  -- raw_busy
+                                s_pending_stuck_cnt_r <= (others => '0');
+                                s_state_r         <= ST_ALU_PULSE;
+                            else
+                                s_pending_stuck_cnt_r <= s_pending_stuck_cnt_r + 1;
+                            end if;
                         else
+                            s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                             if s_wait_cnt_r = x"FFFF" then
                                 s_req_burst_r     <= '0';

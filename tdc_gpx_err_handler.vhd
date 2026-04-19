@@ -340,24 +340,33 @@ begin
                     -- ST_WAIT_FRAME_DONE: re-sync at frame/shot boundary
                     -- ---------------------------------------------------------
                     when ST_WAIT_FRAME_DONE =>
-                        if s_frame_done_seen_r = '0' then
-                            if i_frame_done = '1' then
-                                s_frame_done_seen_r <= '1';
-                            end if;
-                        else
-                            if i_shot_start = '1' then
-                                -- Clear error-fill and all internal state
-                                s_err_fill_r        <= (others => '0');
-                                s_err_chip_mask_r   <= (others => '0');
-                                s_err_cause_r       <= (others => '0');
-                                s_debounce_cnt_r    <= (others => (others => '0'));
-                                s_retry_cnt_r       <= (others => '0');
-                                s_frame_done_seen_r <= '0';
-                                s_state_r           <= ST_IDLE;
-                            end if;
+                        -- Round 9 #19: s_frame_done_seen_r is now latched
+                        -- unconditionally outside the case (below) so a
+                        -- frame_done arriving just before this state entry
+                        -- is still honored. Here we only wait for shot_start
+                        -- once the latch has caught a frame_done.
+                        if s_frame_done_seen_r = '1' and i_shot_start = '1' then
+                            -- Clear error-fill and all internal state
+                            s_err_fill_r        <= (others => '0');
+                            s_err_chip_mask_r   <= (others => '0');
+                            s_err_cause_r       <= (others => '0');
+                            s_debounce_cnt_r    <= (others => (others => '0'));
+                            s_retry_cnt_r       <= (others => '0');
+                            s_frame_done_seen_r <= '0';
+                            s_state_r           <= ST_IDLE;
                         end if;
 
                 end case;
+
+                -- Round 9 #19: edge-capture frame_done latch runs in parallel
+                -- with the FSM. Once the recovery path starts (any state
+                -- other than ST_IDLE), any frame_done pulse is remembered so
+                -- ST_WAIT_FRAME_DONE sees a pulse that happened the cycle
+                -- before it was entered. Cleared explicitly by the state's
+                -- shot_start handshake above and by reset.
+                if s_state_r /= ST_IDLE and i_frame_done = '1' then
+                    s_frame_done_seen_r <= '1';
+                end if;
             end if;
         end if;
     end process p_fsm;

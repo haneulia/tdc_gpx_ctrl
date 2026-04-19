@@ -452,18 +452,27 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     signal s_cfg_meta_r             : t_tdc_cfg          := c_TDC_CFG_INIT;
     signal s_cfg_image_meta_r       : t_cfg_image        := (others => (others => '0'));
-    signal s_cmd_reg_addr_meta_r    : std_logic_vector(3 downto 0) := (others => '0');
-    signal s_cmd_reg_wdata_meta_r   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) := (others => '0');
 
     attribute ASYNC_REG : string;
     attribute ASYNC_REG of s_cfg_meta_r             : signal is "TRUE";
     attribute ASYNC_REG of s_cfg_tdc                : signal is "TRUE";
     attribute ASYNC_REG of s_cfg_image_meta_r       : signal is "TRUE";
     attribute ASYNC_REG of s_cfg_image_tdc          : signal is "TRUE";
-    attribute ASYNC_REG of s_cmd_reg_addr_meta_r    : signal is "TRUE";
-    attribute ASYNC_REG of s_cmd_reg_addr_tdc       : signal is "TRUE";
-    attribute ASYNC_REG of s_cmd_reg_wdata_meta_r   : signal is "TRUE";
-    attribute ASYNC_REG of s_cmd_reg_wdata_tdc      : signal is "TRUE";
+
+    -- Round 9 #5: cmd_reg bundle moved from 2-FF sync to xpm_cdc_handshake.
+    -- Per-reg-op the bundle changes every time SW issues a read/write, so
+    -- bit-skew risk is much higher than for quasi-static cfg/cfg_image.
+    -- 32-bit handshake packs addr[3:0] + wdata[27:0].
+    -- (cfg / cfg_image remain on 2-FF + ASYNC_REG — atomicity there is
+    --  guaranteed by SW holding the payload stable for several cycles
+    --  before the cfg_write / cmd_start pulse; the race window closed by
+    --  the command pulse's own ~4-cycle CDC latency.)
+    signal s_cmd_reg_src_packed : std_logic_vector(31 downto 0);
+    signal s_cmd_reg_dst_packed : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_cmd_reg_src_send_r : std_logic := '0';
+    signal s_cmd_reg_src_rcv    : std_logic;
+    signal s_cmd_reg_dst_req    : std_logic;
+    signal s_cmd_reg_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
 
     -- Round 6 A3: expected_ififo1/2 now transfer via xpm_cdc_handshake.
     -- Unlike cfg/cfg_image (quasi-static) these are running totals updated
@@ -860,15 +869,55 @@ begin
             -- Stage 1: first capture (potentially metastable)
             s_cfg_meta_r             <= s_cfg_merged;
             s_cfg_image_meta_r       <= o_cfg_image;
-            s_cmd_reg_addr_meta_r    <= s_cmd_reg_addr_mux;
-            s_cmd_reg_wdata_meta_r   <= s_cmd_reg_wdata;
             -- Stage 2: resampled (stable for TDC logic)
             s_cfg_tdc                <= s_cfg_meta_r;
             s_cfg_image_tdc          <= s_cfg_image_meta_r;
-            s_cmd_reg_addr_tdc       <= s_cmd_reg_addr_meta_r;
-            s_cmd_reg_wdata_tdc      <= s_cmd_reg_wdata_meta_r;
         end if;
     end process p_tdc_cfg_sync;
+
+    -- =========================================================================
+    -- Round 9 #5: cmd_reg bundle atomic transfer via xpm_cdc_handshake.
+    -- cmd_reg_addr + cmd_reg_wdata change per reg-op (unlike quasi-static
+    -- cfg / cfg_image), so a torn sample would dispatch the wrong register
+    -- or wrong data. Single 32-bit handshake packs both.
+    -- =========================================================================
+    s_cmd_reg_src_packed(3 downto 0)  <= s_cmd_reg_addr_mux;
+    s_cmd_reg_src_packed(31 downto 4) <= s_cmd_reg_wdata;
+    s_cmd_reg_addr_tdc  <= s_cmd_reg_dst_packed(3 downto 0);
+    s_cmd_reg_wdata_tdc <= s_cmd_reg_dst_packed(31 downto 4);
+
+    u_cdc_cmd_reg : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
+            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 32
+        )
+        port map (
+            src_clk  => i_axis_aclk,
+            src_in   => s_cmd_reg_src_packed,
+            src_send => s_cmd_reg_src_send_r,
+            src_rcv  => s_cmd_reg_src_rcv,
+            dest_clk => i_tdc_clk,
+            dest_req => s_cmd_reg_dst_req,
+            dest_ack => s_cmd_reg_dst_req,
+            dest_out => s_cmd_reg_dst_packed
+        );
+
+    p_cmd_reg_send : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_cmd_reg_src_send_r <= '0';
+                s_cmd_reg_d1_r       <= (others => '1');
+            else
+                if s_cmd_reg_src_send_r = '0' and s_cmd_reg_src_packed /= s_cmd_reg_d1_r then
+                    s_cmd_reg_src_send_r <= '1';
+                    s_cmd_reg_d1_r       <= s_cmd_reg_src_packed;
+                elsif s_cmd_reg_src_rcv = '1' then
+                    s_cmd_reg_src_send_r <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_cmd_reg_send;
 
     -- =========================================================================
     -- Round 6 A3: expected_ififo1/2 atomic transfer via xpm_cdc_handshake

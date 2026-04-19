@@ -277,7 +277,12 @@ begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or s_cmd_start_accepted_r = '1' then
                 s_frame_abort_cnt_r <= (others => '0');
-            elsif s_pipeline_abort = '1' and s_face_state_r = ST_IN_FACE then
+            elsif (s_pipeline_abort_rise = '1' or s_pipeline_abort_fall = '1')
+                  and s_face_state_r = ST_IN_FACE then
+                -- Round 9 #14: count either slope's abort. The previous
+                -- s_pipeline_abort alias only reflected rise-side abort, so
+                -- fall-only aborts were invisible to the frame_abort_count
+                -- statistic even though they do kill fall's VDMA stream.
                 s_frame_abort_cnt_r <= s_frame_abort_cnt_r + 1;
             end if;
         end if;
@@ -551,12 +556,18 @@ begin
         end if;
     end process;
 
-    -- Shot gated with closing/abort kill
+    -- Shot gated with closing/abort kill.
+    -- Round 9 #15: intentional rise-primary gating. s_pipeline_abort is the
+    -- rise-only alias; fall-only abort does NOT gate shot_start. This matches
+    -- the #22 Sprint 3 design (rise is the primary slope; fall can abort
+    -- independently without killing the rise VDMA stream). frame_done_both
+    -- still waits on fall completion, but that is downstream completion
+    -- accounting — separate from start gating.
     s_shot_start_gated <= s_shot_pending_r
                           when s_face_closing = '0'
                                and i_cmd_stop = '0'
                                and i_cmd_soft_reset = '0'
-                               and s_pipeline_abort = '0'
+                               and s_pipeline_abort_rise = '0'
                                and s_abort_quiesce_r = '0'
                           else '0';
 
@@ -567,8 +578,9 @@ begin
 
     -- Output assignments
     o_face_start       <= s_face_start_r;
+    -- Round 9 #15: rise-only gating (same rationale as s_shot_start_gated).
     o_face_start_gated <= s_face_start_r when i_cmd_stop = '0' and i_cmd_soft_reset = '0'
-                                            and s_pipeline_abort = '0' and s_abort_quiesce_r = '0'
+                                            and s_pipeline_abort_rise = '0' and s_abort_quiesce_r = '0'
                           else '0';
     o_shot_start_gated <= s_shot_start_gated;
     o_pipeline_abort      <= s_pipeline_abort;

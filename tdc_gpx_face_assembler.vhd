@@ -186,6 +186,15 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     signal s_shot_cnt_r      : unsigned(15 downto 0) := (others => '0');
     signal s_timeout_limit_r : unsigned(15 downto 0) := (others => '0');
+    -- Round 9 #2: intra-forward stall watchdog. ST_SCAN has a timeout for
+    -- "first beat never arrives", but ST_FORWARD real-chip path has no
+    -- watchdog for "first beat arrived, then the stream stalls mid-chip".
+    -- This counter increments when we're in ST_FORWARD, the current chip is
+    -- real (not blank), and i_s_axis_tvalid is low. On overflow we flip the
+    -- current chip to blank mode from the currently-tracked (fwd_stop,
+    -- fwd_beat) position and flag chip_error — the remainder is generated
+    -- as blank beats so the row still completes.
+    signal s_fwd_stall_cnt_r : unsigned(15 downto 0) := (others => '0');
 
     -- Combinational timeout limit (latched into s_timeout_limit_r on shot_start)
     signal s_timeout_limit   : unsigned(15 downto 0);
@@ -435,6 +444,7 @@ begin
                 s_shot_pending_r <= '0';
                 s_shot_flush_drop_r  <= '0';
                 s_shot_overrun_cnt_r <= (others => '0');
+                s_fwd_stall_cnt_r    <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_row_done_r     <= '0';
@@ -651,6 +661,7 @@ begin
                             if s_in_tvalid(v_chip_idx) = '1' then
                                 s_pipe_tdata_r  <= s_in_tdata(v_chip_idx);
                                 s_pipe_tvalid_r <= '1';
+                                s_fwd_stall_cnt_r <= (others => '0');  -- Round 9 #2: reset stall counter on progress
                                 -- Track (stop_idx, beat_idx) position for Q&A #36
                                 -- overrun hand-off to blank mode.
                                 if s_fwd_beat_r = s_rt_last_beat_r then
@@ -684,6 +695,22 @@ begin
                                     end if;
                                 else
                                     s_pipe_tlast_r <= '0';
+                                end if;
+                            else
+                                -- Round 9 #2: intra-forward stall watchdog.
+                                -- Chip data started but now tvalid is low. On
+                                -- watchdog expiry, hand off to blank mode from
+                                -- the current (fwd_stop, fwd_beat) position
+                                -- and flag chip_error. Blank path then finishes
+                                -- the chip and normal transition proceeds.
+                                if s_fwd_stall_cnt_r = x"FFFF" then
+                                    s_fwd_stall_cnt_r    <= (others => '0');
+                                    s_is_blank_r         <= '1';
+                                    s_blank_stop_r       <= s_fwd_stop_r;
+                                    s_blank_beat_r       <= s_fwd_beat_r;
+                                    s_chip_error_r(v_chip_idx) <= '1';
+                                else
+                                    s_fwd_stall_cnt_r <= s_fwd_stall_cnt_r + 1;
                                 end if;
                             end if;
 

@@ -157,6 +157,11 @@ architecture rtl of tdc_gpx_header_inserter is
     -- when upstream issues face_start before hdr_idle reports.
     -- Dropped on face_abort (abort cancels any queued restart).
     signal s_face_start_pending_r : std_logic := '0';
+    -- Round 9 #10: face_start pending is 1-depth (intentional — multiple
+    -- pulses during a busy window collapse to the same latent restart). To
+    -- preserve observability, count each additional non-IDLE face_start that
+    -- arrives while a pending was already latched. 8-bit wrap.
+    signal s_face_start_collapsed_cnt_r : unsigned(7 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Latched header fields (captured at face_start)
@@ -486,6 +491,13 @@ begin
                 --   this pending-latch behavior in Round 5 #21.
                 -- =============================================================
                 if i_face_start = '1' and s_state_r /= ST_IDLE then
+                    -- Round 9 #10: count collapsed pulses. If a pending was
+                    -- already latched, the new pulse is coalesced — increment
+                    -- the wrap-counter for SW visibility.
+                    if s_face_start_pending_r = '1' then
+                        s_face_start_collapsed_cnt_r <=
+                            s_face_start_collapsed_cnt_r + 1;
+                    end if;
                     s_face_start_pending_r <= '1';
                     -- synthesis translate_off
                     assert false
