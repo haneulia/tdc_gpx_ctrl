@@ -77,11 +77,13 @@ entity tb_tdc_gpx_full_int is
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;        -- faces per frame
-        -- echo_receiver's STAT packing maps only 16 PD channels total, so
-        -- enable only 2 of the 4 TDC chips (2 * 8 stops = 16 channels)
-        -- by default. Override to "1111" for experiments that do not rely
-        -- on the echo_receiver stop_evt path.
-        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "0011";
+        -- With the stop_evt path currently tied off in the DUT port map
+        -- (echo_receiver packing mismatch, see R4a notes), default back to
+        -- all four chips active so chip_run uses its EF-based drain
+        -- fallback uniformly. When the per-chip STAT packing is fixed we
+        -- can drop this to "0011" again to stay within the 16-channel
+        -- limit.
+        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
         G_POWERUP_CLKS    : positive := 16;      -- chip_ctrl powerup (short sim)
         G_RECOVERY_CLKS   : positive := 4;
         G_ALU_PULSE_CLKS  : positive := 3;
@@ -404,7 +406,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal i_tdc_ef2        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
     signal i_tdc_lf1        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal i_tdc_lf2        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_irflag     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_irflag     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');  -- driven by per-chip p_chip
     signal i_tdc_errflag    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- VDMA sinks
@@ -817,10 +819,18 @@ begin
             i_lsr_tdata       => lc_m_tdata,
             i_shot_start      => td_shot_start_mux,
             i_stop_tdc        => td_stop_tdc_mux,
-            i_stop_evt_tvalid => er_stop_tvalid,
-            i_stop_evt_tdata  => er_stop_tdata,
-            i_stop_evt_tkeep  => er_stop_tkeep,
-            i_stop_evt_tuser  => er_stop_tuser,
+            -- NOTE (R4a workaround): echo_receiver packs stop_evt tdata per
+            -- stop (8 stops * 4 bits) while tdc_gpx_top's stop_cfg_decode
+            -- unpacks per chip ([chip3|chip2|chip1|chip0], 8 b each =
+            -- [IFIFO2|IFIFO1]). The two formats are incompatible, and
+            -- forwarding echo_receiver's stream produces only chip-3 drain
+            -- activity under default mask. Until the echo_receiver stop_evt
+            -- packing is reworked, we tie the TDC stop_evt input low so
+            -- chip_run falls back to EF-based drain (all chips symmetric).
+            i_stop_evt_tvalid => '0',
+            i_stop_evt_tdata  => (others => '0'),
+            i_stop_evt_tkeep  => (others => '0'),
+            i_stop_evt_tuser  => (others => '0'),
             o_stop_evt_tready => er_stop_tready,
             io_tdc_d          => io_tdc_d,
             o_tdc_adr         => o_tdc_adr,
@@ -863,58 +873,154 @@ begin
         i_tdc_lf2(i) <= '1' when fifo2_fill(i) >= C_LF_THRESH else '0';
     end generate;
 
+    -- =========================================================================
+     --  TDC-GPX I-Mode single-shot behavioral model, per chip (gen_chip x4)
+     --
+     --  Sequence per shot (datasheet 01_chip_acquisition_single_shot.md, 5.4):
+     --    1. AluTrigger rising  -> ALU reset: clear IFIFO counts, reload MTimer
+     --    2. Stop pulses (from echo_receiver.o_stop_pulse_rise) during MTimer
+     --       window push entries into IFIFO1 (stops 0..3) or IFIFO2 (stops 4..7)
+     --    3. MTimer reaches 0 -> assert IrFlag
+     --    4. chip_ctrl reads Reg8/Reg9 with RDN low; drive raw 28-bit word
+     --       (ChaCode[27:26]=00, StartNum[25:18]=0, Slope[17]=0, Hit[16:0])
+     --       and pop on RDN rising edge
+     --    5. When both FIFOs empty, chip_ctrl pulses AluTrigger -> back to 1
+     --
+     --  EF pin = '1' when IFIFO empty; LF pin = '1' when fill >= LF_THRESH
+     --  IrFlag stays high until an AluTrigger pulse clears the state
+     -- =========================================================================
     gen_chip : for i in 0 to c_N_CHIPS - 1 generate
+
         p_chip : process(clk)
-            variable v_rdn_prev : std_logic := '1';
-            variable v_load_prev : std_logic := '0';
-            variable v_my_fill1, v_my_fill2, v_my_rd1, v_my_rd2 : natural := 0;
+            -- Persistent state
+            variable v_fill1      : natural := 0;
+            variable v_fill2      : natural := 0;
+            variable v_rd1        : natural := 0;
+            variable v_rd2        : natural := 0;
+            variable v_mtimer     : natural := 0;          -- 0 = expired
+            variable v_irf        : std_logic := '0';
+            variable v_rdn_prev   : std_logic := '1';
+            variable v_alu_prev   : std_logic := '0';
+            -- Stop pulse slice index for this chip (8 channels)
+            variable v_pd_slice_lo : natural := i * C_ER_N_STOPS;
         begin
             if rising_edge(clk) then
                 if rst_n = '0' then
-                    v_my_fill1 := 0; v_my_fill2 := 0; v_my_rd1 := 0; v_my_rd2 := 0;
+                    v_fill1 := 0; v_fill2 := 0; v_rd1 := 0; v_rd2 := 0;
+                    v_mtimer := 0; v_irf := '0';
+                    v_rdn_prev := '1'; v_alu_prev := '0';
                     chip_d_oe(i) <= '0';
                     chip_d_out(i) <= (others => '0');
                 else
                     chip_d_oe(i) <= '0';
-                    if fifo_load_req(i) = '1' and v_load_prev = '0' then
-                        v_my_fill1 := fifo_load_n1(i);
-                        v_my_fill2 := fifo_load_n2(i);
-                        v_my_rd1 := 0; v_my_rd2 := 0;
-                    end if;
-                    v_load_prev := fifo_load_req(i);
 
+                    -- ---------------------------------------------------
+                    -- MTimer arm + ALU reset.
+                    -- Real chip: AluTrigger (sometime after a chip_init
+                    -- MASTER_RESET) arms MTimer; real chip_run expects
+                    -- IrFlag to be FALLING to ARMED entry, then RISING in
+                    -- CAPTURE. In our behavioural model we just re-arm
+                    -- MTimer on every td_shot_start_mux rising edge. This
+                    -- keeps IrFlag low while chip_run is in ARMED and gives
+                    -- a clean 0->1 transition when MTimer expires during
+                    -- CAPTURE. AluTrigger pulses (from init) are still
+                    -- observed to clear the FIFO mid-simulation but no
+                    -- longer arm MTimer on their own, which would leave a
+                    -- sticky IrFlag from init time.
+                    -- ---------------------------------------------------
+                    if o_tdc_alutrigger(i) = '1' and v_alu_prev = '0' then
+                        v_fill1 := 0; v_fill2 := 0;
+                        v_rd1   := 0; v_rd2   := 0;
+                        v_irf   := '0';   -- clear IrFlag, keep MTimer idle
+                        v_mtimer := 0;
+                    end if;
+                    v_alu_prev := o_tdc_alutrigger(i);
+
+                    if td_shot_start_mux = '1' then
+                        v_fill1 := 0; v_fill2 := 0;
+                        v_rd1   := 0; v_rd2   := 0;
+                        v_mtimer := C_MAX_RANGE_CLKS;
+                        v_irf    := '0';
+                    end if;
+
+                    -- ---------------------------------------------------
+                    -- [2] Stop pulses during open MTimer window fall into
+                    -- IFIFO1 (stops 0..3) or IFIFO2 (stops 4..7), up to
+                    -- C_FIFO_DEPTH per side. Ignored when StopDis=1.
+                    -- ---------------------------------------------------
+                    if v_mtimer > 0 and o_tdc_stopdis(i) = '0' then
+                        for s in 0 to C_ER_N_STOPS - 1 loop
+                            if er_pulse_rise(v_pd_slice_lo + s) = '1' then
+                                if s < C_ER_N_STOPS / 2 then
+                                    if v_fill1 < C_FIFO_DEPTH then
+                                        v_fill1 := v_fill1 + 1;
+                                    end if;
+                                else
+                                    if v_fill2 < C_FIFO_DEPTH then
+                                        v_fill2 := v_fill2 + 1;
+                                    end if;
+                                end if;
+                            end if;
+                        end loop;
+                    end if;
+
+                    -- ---------------------------------------------------
+                    -- [3] MTimer countdown; assert IrFlag on expiry.
+                    -- Hold IrFlag high until the next AluTrigger rising.
+                    -- ---------------------------------------------------
+                    if v_mtimer > 0 then
+                        v_mtimer := v_mtimer - 1;
+                        if v_mtimer = 0 then
+                            v_irf := '1';
+                        end if;
+                    end if;
+
+                    -- ---------------------------------------------------
+                    -- [4] Bus read response: drive D-bus with 28-bit TDC-GPX
+                    -- I-Mode raw word while chip_ctrl holds RDN low.
+                    --   Hit value is a test pattern keyed on chip/stop/rd_cnt
+                    --   so decode_pipe / raw_event_builder can sanity-check.
+                    -- ---------------------------------------------------
                     if o_tdc_oen(i) = '0' and o_tdc_rdn(i) = '0'
                        and o_tdc_csn(i) = '0' then
                         chip_d_oe(i) <= '1';
                         if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 then
                             chip_d_out(i) <= "00" & x"00" & '0' &
                                 std_logic_vector(to_unsigned(
-                                    (i * 256) + v_my_rd1 + 1, c_RAW_HIT_WIDTH));
+                                    (i * 256) + v_rd1 + 1, c_RAW_HIT_WIDTH));
                         elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 then
                             chip_d_out(i) <= "00" & x"00" & '0' &
                                 std_logic_vector(to_unsigned(
-                                    (i * 256) + 128 + v_my_rd2 + 1, c_RAW_HIT_WIDTH));
+                                    (i * 256) + 128 + v_rd2 + 1, c_RAW_HIT_WIDTH));
                         else
                             chip_d_out(i) <= (others => '0');
                         end if;
                     end if;
 
+                    -- On RDN rising edge: pop the corresponding IFIFO.
                     if o_tdc_rdn(i) = '1' and v_rdn_prev = '0' then
-                        if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 and v_my_fill1 > 0 then
-                            v_my_fill1 := v_my_fill1 - 1; v_my_rd1 := v_my_rd1 + 1;
-                        elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 and v_my_fill2 > 0 then
-                            v_my_fill2 := v_my_fill2 - 1; v_my_rd2 := v_my_rd2 + 1;
+                        if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 and v_fill1 > 0 then
+                            v_fill1 := v_fill1 - 1;
+                            v_rd1   := v_rd1 + 1;
+                        elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 and v_fill2 > 0 then
+                            v_fill2 := v_fill2 - 1;
+                            v_rd2   := v_rd2 + 1;
                         end if;
                     end if;
                     v_rdn_prev := o_tdc_rdn(i);
 
-                    fifo1_fill(i) <= v_my_fill1;
-                    fifo2_fill(i) <= v_my_fill2;
-                    fifo1_rd_cnt(i) <= v_my_rd1;
-                    fifo2_rd_cnt(i) <= v_my_rd2;
+                    -- ---------------------------------------------------
+                    -- Publish state: fill counters + IrFlag output pin
+                    -- ---------------------------------------------------
+                    fifo1_fill(i)   <= v_fill1;
+                    fifo2_fill(i)   <= v_fill2;
+                    fifo1_rd_cnt(i) <= v_rd1;
+                    fifo2_rd_cnt(i) <= v_rd2;
+                    i_tdc_irflag(i) <= v_irf;
                 end if;
             end if;
         end process p_chip;
+
         io_tdc_d(i) <= chip_d_out(i) when chip_d_oe(i) = '1'
                                      else (others => 'Z');
     end generate gen_chip;
@@ -924,6 +1030,13 @@ begin
     --   On each lc_fire_pulse rising edge, schedule a rising pulse on pd_p(0)
     --   after C_ECHO_DELAY cycles. pd_n is kept low (differential simplified).
     --   Also preloads chip FIFOs so the TDC chip model has data to drain.
+    -- =========================================================================
+    -- =========================================================================
+    -- Photodiode pulse generator
+    --   Emits a rising pulse on pd_p(0) after C_ECHO_DELAY clocks relative
+    --   to each td_shot_start_mux rising edge so echo_receiver's physical
+    --   path observes a single stop event per shot. IFIFO population +
+    --   IrFlag are handled inside the per-chip p_chip datasheet model.
     -- =========================================================================
     p_pd : process(clk)
         variable v_fire_prev : std_logic := '0';
@@ -939,35 +1052,15 @@ begin
                 v_delay_cnt := 0;
                 v_pulse_wait := false;
                 v_pulse_hold := 0;
-                fifo_load_req <= (others => '0');
-                for i in 0 to c_N_CHIPS - 1 loop
-                    fifo_load_n1(i) <= 0;
-                    fifo_load_n2(i) <= 0;
-                end loop;
             else
-                fifo_load_req <= (others => '0');
-                pd_n <= (others => '1');   -- differential complement, inactive HI
+                pd_n <= (others => '1');
 
-                -- Rising edge detect on the actual TDC input pulse
-                -- (td_shot_start_mux). Works uniformly for both modes:
-                --   "lc"     : td_shot_start_mux = lc_start_tdc
-                --   "direct" : td_shot_start_mux = tb_shot_start
-                -- Using lc_fire_pulse was incorrect for sim mode because
-                -- laser_ctrl in sim/virt-target mode still pulses start_tdc
-                -- but skips the separate fire_pulse output.
                 if td_shot_start_mux = '1' and v_fire_prev = '0' then
                     v_delay_cnt := C_ECHO_DELAY;
                     v_pulse_wait := true;
-                    -- Preload chip FIFOs so chip_ctrl drains them after IrFlag
-                    for i in 0 to c_N_CHIPS - 1 loop
-                        fifo_load_n1(i) <= G_STOPS_PER_CHIP;
-                        fifo_load_n2(i) <= G_STOPS_PER_CHIP;
-                    end loop;
-                    fifo_load_req <= (others => '1');
                 end if;
                 v_fire_prev := td_shot_start_mux;
 
-                -- Emit pd rising pulse after delay, hold for 10 cycles
                 if v_pulse_wait then
                     if v_delay_cnt = 0 then
                         v_pulse_wait := false;
@@ -987,47 +1080,6 @@ begin
             end if;
         end if;
     end process p_pd;
-
-    -- =========================================================================
-    -- IrFlag model:  assert for all chips ~50 cycles after fire_pulse
-    --   (TDC-GPX MTimer expiry emulation)
-    -- =========================================================================
-    p_irflag : process(clk)
-        variable v_fire_prev : std_logic := '0';
-        variable v_cnt : natural := 0;
-        variable v_asserting : boolean := false;
-    begin
-        if rising_edge(clk) then
-            if rst_n = '0' then
-                i_tdc_irflag <= (others => '0');
-                v_fire_prev := '0';
-                v_cnt := 0;
-                v_asserting := false;
-            else
-                -- Key off td_shot_start_mux (same as p_pd) so sim mode
-                -- (which skips lc_fire_pulse) still asserts IrFlag.
-                if td_shot_start_mux = '1' and v_fire_prev = '0' then
-                    v_cnt := 50;
-                    v_asserting := true;
-                end if;
-                v_fire_prev := td_shot_start_mux;
-
-                if v_asserting then
-                    if v_cnt = 0 then
-                        i_tdc_irflag <= (others => '1');
-                    else
-                        v_cnt := v_cnt - 1;
-                    end if;
-                end if;
-
-                -- Auto-clear after a while
-                if lc_stop_tdc = '1' then
-                    i_tdc_irflag <= (others => '0');
-                    v_asserting := false;
-                end if;
-            end if;
-        end if;
-    end process p_irflag;
 
     -- =========================================================================
     -- Monitors

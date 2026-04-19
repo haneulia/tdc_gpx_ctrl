@@ -65,9 +65,9 @@ entity tb_tdc_gpx_top_int is
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;
-        -- Match full_int default (2 chips active = 16 channels, fits
-        -- echo_receiver's 16-channel STAT packing). Override as needed.
-        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "0011";
+        -- All 4 chips active by default (top_int has no echo_receiver, so
+        -- the 16-channel STAT packing limit does not apply).
+        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
         G_POWERUP_CLKS    : positive := 16;
         G_RECOVERY_CLKS   : positive := 4;
         G_ALU_PULSE_CLKS  : positive := 3
