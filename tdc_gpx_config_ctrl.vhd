@@ -340,6 +340,18 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_raw_cdc_full  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_raw_cdc_empty : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+    -- Round 6 A1: per-chip reset stretcher for u_raw_cdc flush.
+    -- xpm_fifo_async.rst requires a multi-cycle hold; soft_reset pulses are
+    -- 1-clk so they must be extended. Counter stretches the pulse to
+    -- c_RAW_FIFO_RST_CLKS cycles before deassert. Covers both the global
+    -- soft_reset (s_cmd_soft_reset_tdc) and per-chip err recovery
+    -- (s_err_cmd_soft_reset_tdc(i)).
+    constant c_RAW_FIFO_RST_CLKS : natural := 8;  -- > XPM async rst minimum
+    type t_raw_fifo_rst_cnt_arr is array (0 to c_N_CHIPS - 1)
+        of unsigned(3 downto 0);
+    signal s_raw_fifo_rst_cnt_r : t_raw_fifo_rst_cnt_arr := (others => (others => '0'));
+    signal s_raw_fifo_rst       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
     -- =========================================================================
     -- CDC signals: AXI-Stream -> TDC domain (command pulses)
     -- =========================================================================
@@ -405,8 +417,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     signal s_cfg_meta_r             : t_tdc_cfg          := c_TDC_CFG_INIT;
     signal s_cfg_image_meta_r       : t_cfg_image        := (others => (others => '0'));
-    signal s_expected_ififo1_meta_r : t_expected_array   := (others => (others => '0'));
-    signal s_expected_ififo2_meta_r : t_expected_array   := (others => (others => '0'));
     signal s_cmd_reg_addr_meta_r    : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_reg_wdata_meta_r   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) := (others => '0');
 
@@ -415,14 +425,28 @@ architecture rtl of tdc_gpx_config_ctrl is
     attribute ASYNC_REG of s_cfg_tdc                : signal is "TRUE";
     attribute ASYNC_REG of s_cfg_image_meta_r       : signal is "TRUE";
     attribute ASYNC_REG of s_cfg_image_tdc          : signal is "TRUE";
-    attribute ASYNC_REG of s_expected_ififo1_meta_r : signal is "TRUE";
-    attribute ASYNC_REG of s_expected_ififo1_tdc    : signal is "TRUE";
-    attribute ASYNC_REG of s_expected_ififo2_meta_r : signal is "TRUE";
-    attribute ASYNC_REG of s_expected_ififo2_tdc    : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_reg_addr_meta_r    : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_reg_addr_tdc       : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_reg_wdata_meta_r   : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_reg_wdata_tdc      : signal is "TRUE";
+
+    -- Round 6 A3: expected_ififo1/2 now transfer via xpm_cdc_handshake.
+    -- Unlike cfg/cfg_image (quasi-static) these are running totals updated
+    -- per stop event in AXI domain, so 2-FF sync would expose torn samples
+    -- to chip_run's ST_DRAIN_LATCH. Handshake provides atomic 32-bit
+    -- delivery per bundle; any change in the source retriggers a transfer.
+    signal s_expected_ififo1_src_packed : std_logic_vector(31 downto 0);
+    signal s_expected_ififo2_src_packed : std_logic_vector(31 downto 0);
+    signal s_expected_ififo1_dst_packed : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_expected_ififo2_dst_packed : std_logic_vector(31 downto 0) := (others => '0');
+    signal s_exp1_src_send_r : std_logic := '0';
+    signal s_exp1_src_rcv    : std_logic;
+    signal s_exp1_dst_req    : std_logic;
+    signal s_exp1_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
+    signal s_exp2_src_send_r : std_logic := '0';
+    signal s_exp2_src_rcv    : std_logic;
+    signal s_exp2_dst_req    : std_logic;
+    signal s_exp2_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
 
 begin
 
@@ -784,19 +808,87 @@ begin
             -- Stage 1: first capture (potentially metastable)
             s_cfg_meta_r             <= s_cfg_merged;
             s_cfg_image_meta_r       <= o_cfg_image;
-            s_expected_ififo1_meta_r <= s_expected_ififo1;
-            s_expected_ififo2_meta_r <= s_expected_ififo2;
             s_cmd_reg_addr_meta_r    <= s_cmd_reg_addr_mux;
             s_cmd_reg_wdata_meta_r   <= s_cmd_reg_wdata;
             -- Stage 2: resampled (stable for TDC logic)
             s_cfg_tdc                <= s_cfg_meta_r;
             s_cfg_image_tdc          <= s_cfg_image_meta_r;
-            s_expected_ififo1_tdc    <= s_expected_ififo1_meta_r;
-            s_expected_ififo2_tdc    <= s_expected_ififo2_meta_r;
             s_cmd_reg_addr_tdc       <= s_cmd_reg_addr_meta_r;
             s_cmd_reg_wdata_tdc      <= s_cmd_reg_wdata_meta_r;
         end if;
     end process p_tdc_cfg_sync;
+
+    -- =========================================================================
+    -- Round 6 A3: expected_ififo1/2 atomic transfer via xpm_cdc_handshake
+    -- =========================================================================
+    -- Pack 4 per-chip 8-bit counts into 32 bits for the handshake.
+    gen_exp_pack : for i in 0 to c_N_CHIPS - 1 generate
+        s_expected_ififo1_src_packed(8 * (i + 1) - 1 downto 8 * i)
+            <= std_logic_vector(s_expected_ififo1(i));
+        s_expected_ififo2_src_packed(8 * (i + 1) - 1 downto 8 * i)
+            <= std_logic_vector(s_expected_ififo2(i));
+        s_expected_ififo1_tdc(i)
+            <= unsigned(s_expected_ififo1_dst_packed(8 * (i + 1) - 1 downto 8 * i));
+        s_expected_ififo2_tdc(i)
+            <= unsigned(s_expected_ififo2_dst_packed(8 * (i + 1) - 1 downto 8 * i));
+    end generate gen_exp_pack;
+
+    u_cdc_exp1 : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
+            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 32
+        )
+        port map (
+            src_clk  => i_axis_aclk,
+            src_in   => s_expected_ififo1_src_packed,
+            src_send => s_exp1_src_send_r,
+            src_rcv  => s_exp1_src_rcv,
+            dest_clk => i_tdc_clk,
+            dest_req => s_exp1_dst_req,
+            dest_ack => s_exp1_dst_req,
+            dest_out => s_expected_ififo1_dst_packed
+        );
+
+    u_cdc_exp2 : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
+            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 32
+        )
+        port map (
+            src_clk  => i_axis_aclk,
+            src_in   => s_expected_ififo2_src_packed,
+            src_send => s_exp2_src_send_r,
+            src_rcv  => s_exp2_src_rcv,
+            dest_clk => i_tdc_clk,
+            dest_req => s_exp2_dst_req,
+            dest_ack => s_exp2_dst_req,
+            dest_out => s_expected_ififo2_dst_packed
+        );
+
+    p_exp_send : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_exp1_src_send_r <= '0';
+                s_exp1_d1_r       <= (others => '1');
+                s_exp2_src_send_r <= '0';
+                s_exp2_d1_r       <= (others => '1');
+            else
+                if s_exp1_src_send_r = '0' and s_expected_ififo1_src_packed /= s_exp1_d1_r then
+                    s_exp1_src_send_r <= '1';
+                    s_exp1_d1_r       <= s_expected_ififo1_src_packed;
+                elsif s_exp1_src_rcv = '1' then
+                    s_exp1_src_send_r <= '0';
+                end if;
+                if s_exp2_src_send_r = '0' and s_expected_ififo2_src_packed /= s_exp2_d1_r then
+                    s_exp2_src_send_r <= '1';
+                    s_exp2_d1_r       <= s_expected_ififo2_src_packed;
+                elsif s_exp2_src_rcv = '1' then
+                    s_exp2_src_send_r <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_exp_send;
 
     -- =========================================================================
     -- CDC Stage 2c: TDC -> AXI-Stream rdata snapshot
@@ -1107,6 +1199,30 @@ begin
         s_raw_axis_tready(i) <= not s_raw_cdc_full(i);
         s_sk_raw_tvalid(i)   <= not s_raw_cdc_empty(i);
 
+        -- Round 6 A1: stretch 1-clk soft_reset pulses into a multi-cycle
+        -- reset so xpm_fifo_async can drop any stale beats left from the
+        -- previous shot. Without this, post-soft_reset traffic into cell_pipe
+        -- could start with previous-shot residue (the consumer FSMs cannot
+        -- distinguish a stale drain_done from a fresh one).
+        p_raw_fifo_rst : process(i_tdc_clk)
+        begin
+            if rising_edge(i_tdc_clk) then
+                if s_tdc_aresetn = '0' then
+                    s_raw_fifo_rst_cnt_r(i) <= (others => '0');
+                elsif s_cmd_soft_reset_tdc = '1'
+                   or s_err_cmd_soft_reset_tdc(i) = '1' then
+                    s_raw_fifo_rst_cnt_r(i) <=
+                        to_unsigned(c_RAW_FIFO_RST_CLKS, s_raw_fifo_rst_cnt_r(i)'length);
+                elsif s_raw_fifo_rst_cnt_r(i) /= 0 then
+                    s_raw_fifo_rst_cnt_r(i) <= s_raw_fifo_rst_cnt_r(i) - 1;
+                end if;
+            end if;
+        end process p_raw_fifo_rst;
+
+        s_raw_fifo_rst(i) <= '1' when s_raw_fifo_rst_cnt_r(i) /= 0
+                                   or i_axis_aresetn = '0'
+                             else '0';
+
         u_raw_cdc : xpm_fifo_async
             generic map (
                 CDC_SYNC_STAGES  => 2,
@@ -1130,7 +1246,9 @@ begin
                 dout(7 downto 0)  => s_sk_raw_tuser(i),
                 empty         => s_raw_cdc_empty(i),
                 -- Reset (active-high, synchronized internally by XPM)
-                rst           => not i_axis_aresetn,
+                -- Round 6 A1: stretched to include soft_reset pulses so
+                -- stale beats from the previous shot don't survive a reset.
+                rst           => s_raw_fifo_rst(i),
                 wr_rst_busy   => open,
                 rd_rst_busy   => open,
                 -- Unused status / ECC ports

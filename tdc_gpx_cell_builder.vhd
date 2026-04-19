@@ -547,16 +547,29 @@ begin
                             end if;
 
                         when ST_C_QUARANTINE =>
-                            -- Absorb stale beats after a DROP timeout. Exit on
-                            -- the drain_done marker (ifo2 final control beat)
-                            -- or on i_abort (handled above). shot_start arriving
-                            -- here latches as pending — ST_C_IDLE consumes it.
+                            -- Absorb stale beats after a DROP timeout. Exit on:
+                            --   a) drain_done marker (ifo2 final control beat),
+                            --   b) i_abort (handled above), or
+                            --   c) Round 6 A2 escape watchdog — another 65K
+                            --      cycles without a marker forces IDLE so a
+                            --      permanently-lost drain_done cannot hang the
+                            --      pipeline forever. s_shot_dropped_r re-pulses
+                            --      to flag the unrecovered exit.
+                            -- shot_start arriving here latches as pending so
+                            -- ST_C_IDLE consumes it on return.
                             if i_shot_start = '1' then
                                 s_shot_pending_r <= '1';
                             end if;
                             if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1'
                                and i_s_axis_tuser(6) = '1' then
-                                s_cstate_r <= ST_C_IDLE;
+                                s_cstate_r     <= ST_C_IDLE;
+                                s_timeout_cnt_r <= (others => '0');
+                            elsif s_timeout_cnt_r = x"FFFF" then
+                                s_cstate_r      <= ST_C_IDLE;
+                                s_shot_dropped_r <= '1';
+                                s_timeout_cnt_r  <= (others => '0');
+                            else
+                                s_timeout_cnt_r <= s_timeout_cnt_r + 1;
                             end if;
 
                     end case;

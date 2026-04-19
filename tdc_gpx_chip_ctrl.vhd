@@ -588,25 +588,23 @@ begin
                         end if;
 
                     when PH_CFG_WRITE =>
+                        -- Round 6 A4: always enter PH_RESP_DRAIN on completion
+                        -- (matches PH_RUN's defensive policy). A late bus
+                        -- response that fires after s_init_done could otherwise
+                        -- land in the skid and be consumed as a bogus response
+                        -- by the next PH_REG / PH_CFG_WRITE transaction.
                         if s_init_done = '1' then
-                            if s_init_timeout = '1' then
-                                s_phase_r         <= PH_RESP_DRAIN;
-                                s_drain_cnt_r     <= (others => '0');
-                                s_drain_to_init_r <= '0';
-                            else
-                                s_phase_r <= PH_IDLE;
-                            end if;
+                            s_phase_r         <= PH_RESP_DRAIN;
+                            s_drain_cnt_r     <= (others => '0');
+                            s_drain_to_init_r <= '0';
                         end if;
 
                     when PH_REG =>
+                        -- Round 6 A4: same policy as PH_CFG_WRITE.
                         if s_reg_done = '1' then
-                            if s_reg_timeout = '1' then
-                                s_phase_r         <= PH_RESP_DRAIN;
-                                s_drain_cnt_r     <= (others => '0');
-                                s_drain_to_init_r <= '0';
-                            else
-                                s_phase_r <= PH_IDLE;
-                            end if;
+                            s_phase_r         <= PH_RESP_DRAIN;
+                            s_drain_cnt_r     <= (others => '0');
+                            s_drain_to_init_r <= '0';
                         end if;
 
                     when PH_RESP_DRAIN =>
