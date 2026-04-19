@@ -97,9 +97,16 @@ architecture rtl of tdc_gpx_chip_init is
     signal s_cfg_image_snap_r : t_cfg_image := (others => (others => '0'));
     signal s_init_mode_r     : std_logic := '1';  -- '1' = powerup (full), '0' = runtime cfg_write
     -- Pending cfg_write: set when i_cfg_write_req arrives same cycle as i_start
-    -- (start wins). Processed automatically after the init sequence returns to
-    -- ST_OFF, preventing silent loss of SW cfg_write commands.
+    -- (start wins) or during busy. Processed automatically after the init
+    -- sequence returns to ST_OFF, preventing silent loss of SW cfg_write.
     signal s_cfg_write_pending_r : std_logic := '0';
+    -- Round 9 #4: cfg_image snapshot at pending-latch time. Previously ST_OFF
+    -- re-sampled the live i_cfg_image when the deferred cfg_write finally ran,
+    -- so a cfg value updated between request time and deferred-run time would
+    -- be applied instead of the one SW requested. Now we capture the image
+    -- alongside the pending pulse so the deferred run uses the same snapshot
+    -- SW intended.
+    signal s_cfg_pending_image_r : t_cfg_image := (others => (others => '0'));
 
     signal s_req_valid_r     : std_logic := '0';
     signal s_req_rw_r        : std_logic := '0';
@@ -140,6 +147,7 @@ begin
                 s_init_mode_r    <= '1';
                 s_cfg_image_snap_r <= (others => (others => '0'));
                 s_cfg_write_pending_r <= '0';
+                s_cfg_pending_image_r <= (others => (others => '0'));
             else
                 s_done_r        <= '0';
                 s_timeout_out_r <= '0';
@@ -155,16 +163,32 @@ begin
                             s_busy_r           <= '1';
                             -- If a cfg_write was requested the same cycle, queue
                             -- it so the SW pulse is not lost when init wins.
+                            -- Round 9 #4: also snapshot the cfg_image at
+                            -- pending-latch time so the deferred run uses the
+                            -- SW-intended image rather than whatever i_cfg_image
+                            -- happens to be when ST_OFF re-runs.
                             if i_cfg_write_req = '1' then
                                 s_cfg_write_pending_r <= '1';
+                                s_cfg_pending_image_r <= i_cfg_image;
                             end if;
                             s_state_r          <= ST_POWERUP;
-                        elsif i_cfg_write_req = '1' or s_cfg_write_pending_r = '1' then
-                            s_cfg_write_pending_r <= '0';  -- consume
+                        elsif i_cfg_write_req = '1' then
+                            -- Live cfg_write: use the live i_cfg_image
+                            s_cfg_write_pending_r <= '0';
                             s_init_mode_r      <= '0';
                             s_cfg_image_snap_r <= i_cfg_image;
                             s_cfg_idx_r        <= (others => '0');
-                            s_rsp_timeout_r    <= (others => '0');  -- rearm watchdog
+                            s_rsp_timeout_r    <= (others => '0');
+                            s_busy_r           <= '1';
+                            s_state_r          <= ST_STOPDIS_HIGH;
+                        elsif s_cfg_write_pending_r = '1' then
+                            -- Round 9 #4: deferred cfg_write — use the snapshot
+                            -- captured at request time, not the current live image.
+                            s_cfg_write_pending_r <= '0';
+                            s_init_mode_r      <= '0';
+                            s_cfg_image_snap_r <= s_cfg_pending_image_r;
+                            s_cfg_idx_r        <= (others => '0');
+                            s_rsp_timeout_r    <= (others => '0');
                             s_busy_r           <= '1';
                             s_state_r          <= ST_STOPDIS_HIGH;
                         end if;
@@ -284,15 +308,21 @@ begin
 
                 end case;
 
-                -- Busy-state cfg_write_req absorb (Round 5 #14):
+                -- Busy-state cfg_write_req absorb (Round 5 #14 + Round 9 #4):
                 -- The ST_OFF branch handles the start+cfg_write_req coincidence
                 -- above. Any cfg_write_req arriving while we are NOT in ST_OFF
                 -- would otherwise be silently lost; latch it so the SW pulse
-                -- is consumed when the FSM next returns to ST_OFF. 1-depth
-                -- (collapsing) — multiple pulses during one busy window are
-                -- coalesced into a single post-init cfg_write, which matches
-                -- SW expectations since all pulses target the same snapshot.
+                -- is consumed when the FSM next returns to ST_OFF.
+                -- Round 9 #4: snapshot the cfg_image together with the pending
+                -- pulse so the deferred run uses the SW-intended image (the
+                -- first pulse in a busy-window burst captures; later pulses
+                -- in the same window are coalesced into the same snapshot,
+                -- matching the pre-R9 collapsing behavior).
                 if s_state_r /= ST_OFF and i_cfg_write_req = '1' then
+                    if s_cfg_write_pending_r = '0' then
+                        -- First pending in this busy window → capture snapshot.
+                        s_cfg_pending_image_r <= i_cfg_image;
+                    end if;
                     s_cfg_write_pending_r <= '1';
                 end if;
             end if;

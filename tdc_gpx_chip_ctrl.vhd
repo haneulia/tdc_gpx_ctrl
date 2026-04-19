@@ -251,7 +251,12 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     --   creating a worst-case 3-beat burst. Depth=3 absorbs this cleanly so
     --   no control beat is ever dropped by the raw-path buffer.
     -- =========================================================================
-    constant c_RAW_FIFO_DEPTH : natural := 3;
+    -- Round 9 #7: bumped 3 → 6 so a worst-case control + burst beat cluster
+    -- (raw + raw + control + raw + raw + control) never drops a beat even
+    -- when downstream backpressure holds tready low across the full cluster.
+    -- The 3-slot version (Round 5 #3) covered the normal case but the
+    -- control/data-sharing concern remained when the raw burst is long.
+    constant c_RAW_FIFO_DEPTH : natural := 6;
 
     type t_raw_entry is record
         valid : std_logic;
