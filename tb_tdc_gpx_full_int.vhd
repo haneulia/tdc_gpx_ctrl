@@ -77,7 +77,11 @@ entity tb_tdc_gpx_full_int is
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;        -- faces per frame
-        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
+        -- echo_receiver's STAT packing maps only 16 PD channels total, so
+        -- enable only 2 of the 4 TDC chips (2 * 8 stops = 16 channels)
+        -- by default. Override to "1111" for experiments that do not rely
+        -- on the echo_receiver stop_evt path.
+        G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "0011";
         G_POWERUP_CLKS    : positive := 16;      -- chip_ctrl powerup (short sim)
         G_RECOVERY_CLKS   : positive := 4;
         G_ALU_PULSE_CLKS  : positive := 3;
@@ -1422,14 +1426,11 @@ begin
                 tb_shot_start <= '1';
                 wait_clk(1);
                 tb_shot_start <= '0';
-                -- Inline chip FIFO preload (bypassing p_pd since no fire_pulse)
-                wait_clk(4);
-                i_tdc_irflag <= (others => '0');
-                wait_clk(20);
-                i_tdc_irflag <= (others => '1');
-                wait_clk(1000);
-                i_tdc_irflag <= (others => '0');
-                wait_clk(G_ALU_PULSE_CLKS + G_RECOVERY_CLKS + 8);
+                -- FIFO preload + IrFlag generation are handled by p_pd and
+                -- p_irflag (both keyed on td_shot_start_mux). Leaving those
+                -- as the sole drivers of i_tdc_irflag avoids a multi-driver
+                -- 'U' resolution bug that blocked IrFlag in lc mode.
+                wait_clk(1200);  -- cover capture + IrFlag + drain + ALU tail
                 if shot = 0 then wait_clk(C_SHOT_PERIOD_CLKS); end if;
             end loop;
             wait_clk(2000);
