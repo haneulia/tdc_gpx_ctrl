@@ -447,11 +447,23 @@ begin
                         end if;
                     end loop;
 
-                    -- Queue absorb (Round 5 #10): a new reg request arriving
-                    -- while a transaction is in flight used to be silently
-                    -- dropped. Latch into a 1-depth queue; raise the reject
-                    -- sticky if the queue is already occupied (2+ overlaps).
+                    -- Queue absorb (Round 5 #10 + Round 11 item 17): a new
+                    -- reg request arriving while a transaction is in flight
+                    -- used to be silently dropped. Latch into a 1-depth
+                    -- queue; raise the reject sticky (s_reg_rejected_r) if
+                    -- the queue is already occupied (2+ overlaps).
                     -- Ignore zero-mask requests (matches the accept path).
+                    --
+                    -- Round 11 item 17: queue depth rationale.
+                    --   SW's typical reg-access pattern is single-shot read
+                    --   or write per command, with the caller waiting for
+                    --   o_cmd_reg_done before issuing the next. Burst reg
+                    --   access is not a supported workload. The 1-depth
+                    --   queue covers the common race where a second pulse
+                    --   arrives during the current op's bus round-trip.
+                    --   Deeper queuing (FIFO) would add area for a use case
+                    --   SW doesn't actually exercise; the reject sticky is
+                    --   the agreed signal that SW's pattern has deviated.
                     if v_new_request = '1'
                        and i_cmd_reg_chip_address /= C_ZEROS then
                         if s_reg_queue_valid_r = '0' then

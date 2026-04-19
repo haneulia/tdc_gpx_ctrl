@@ -141,6 +141,9 @@ package tdc_gpx_pkg is
         tkeep_width : natural
     ) return std_logic_vector;
 
+    -- (Round 11 item 9 pack/unpack helpers are declared below, after
+    -- t_tdc_cfg is defined.)
+
     -- Cell size and derived constants: auto-calculated from MAX_HITS
     -- (deferred constants — full definitions in package body using fn_cell_size_bytes)
     constant c_CELL_SIZE_BYTES      : natural;
@@ -258,6 +261,36 @@ package tdc_gpx_pkg is
     );
 
     -- =========================================================================
+    -- Round 11 item 9: atomic CDC pack/unpack helpers for t_tdc_cfg.
+    -- xpm_cdc_handshake carries a std_logic_vector; these helpers flatten
+    -- the record into a fixed-width vector and restore it on the far side.
+    -- Field order MUST match between pack/unpack — any divergence silently
+    -- corrupts the destination bundle.
+    -- =========================================================================
+    constant c_TDC_CFG_BITS : natural :=
+          c_N_CHIPS    -- active_chip_mask
+        + 1            -- packet_scope
+        + 2            -- hit_store_mode
+        + 3            -- dist_scale
+        + 1            -- drain_mode
+        + 1            -- pipeline_en
+        + 3            -- n_faces
+        + 4            -- stops_per_chip
+        + 4            -- n_drain_cap
+        + 5            -- stopdis_override
+        + 6            -- bus_clk_div
+        + 3            -- bus_ticks
+        + 16           -- max_range_clks
+        + 16           -- cols_per_face
+        + 18           -- start_off1
+        + 32           -- cfg_reg7
+        + 16           -- max_scan_clks
+        + 3;           -- max_hits_cfg
+
+    function fn_pack_tdc_cfg(cfg : t_tdc_cfg) return std_logic_vector;
+    function fn_unpack_tdc_cfg(v  : std_logic_vector) return t_tdc_cfg;
+
+    -- =========================================================================
     -- t_tdc_status : Status feedback (submodules -> CSR)
     -- =========================================================================
     type t_tdc_status is record
@@ -303,6 +336,31 @@ package tdc_gpx_pkg is
         run_timeout_cause_last : std_logic_vector(2 downto 0);  -- chip_run last timeout cause (any chip, most recent)
         rise_face_start_collapsed_count : unsigned(7 downto 0);
         fall_face_start_collapsed_count : unsigned(7 downto 0);
+        -- Round 11 item 3: header_inserter drain-watchdog sticky per slope.
+        -- Asserts when ST_DRAIN_LAST or ST_ABORT_DRAIN force-escapes to IDLE
+        -- due to downstream AXI sink stall. Indicates the corresponding VDMA
+        -- frame is truncated; SW should issue cmd_soft_reset before the next
+        -- run. Wiring into CSR (STAT register packing) is a follow-up.
+        rise_hdr_drain_timeout : std_logic;
+        fall_hdr_drain_timeout : std_logic;
+        -- Round 11 item 4: cell_builder ST_C_QUARANTINE escalation sticky
+        -- mask (per chip, OR of rise/fall slopes). Bit i = '1' means chip i's
+        -- QUARANTINE force-escaped because neither drain_done nor i_abort
+        -- arrived within ~4.9ms — the chip's slice stream is out of sync.
+        -- Cleared only by full i_rst_n (cell_builder has no soft-reset).
+        quarantine_escape_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 11 item 10: stop_cfg_decode monotonic violation sticky mask.
+        mono_violation_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 11 item 11: err_handler ST_WAIT_FRAME_DONE escape sticky
+        -- (distinct from err_read_timeout so SW can tell the two failure
+        -- modes apart).
+        err_frame_wait_escape  : std_logic;
+        -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky mask.
+        init_cfg_coalesced_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 11 item 15: per-chip shot_flush_drop mask (OR of rise+fall).
+        -- Bit i = '1' (latched) if chip i's face_assembler input FIFO held
+        -- old-shot tail data at a shot_start boundary on either slope.
+        shot_flush_drop_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -342,7 +400,14 @@ package tdc_gpx_pkg is
         stop_id_error_mask      => (others => '0'),
         run_timeout_cause_last  => (others => '0'),
         rise_face_start_collapsed_count => (others => '0'),
-        fall_face_start_collapsed_count => (others => '0')
+        fall_face_start_collapsed_count => (others => '0'),
+        rise_hdr_drain_timeout  => '0',
+        fall_hdr_drain_timeout  => '0',
+        quarantine_escape_mask  => (others => '0'),
+        mono_violation_mask     => (others => '0'),
+        err_frame_wait_escape   => '0',
+        init_cfg_coalesced_mask => (others => '0'),
+        shot_flush_drop_mask    => (others => '0')
     );
 
     -- =========================================================================
@@ -550,6 +615,63 @@ package body tdc_gpx_pkg is
         v_hit_beats := fn_ceil_div(max_hits, tdata_width / c_HIT_SLOT_DATA_WIDTH);
         -- total = hit beats + 1 metadata beat (always present)
         return v_hit_beats + 1;
+    end function;
+
+    -- =========================================================================
+    -- Round 11 item 9: t_tdc_cfg ↔ std_logic_vector pack/unpack.
+    -- Layout is contiguous concatenation in declaration order. The
+    -- symmetric unpack reverses the same slicing, so any re-order of the
+    -- record fields MUST update both functions in lock-step.
+    -- =========================================================================
+    function fn_pack_tdc_cfg(cfg : t_tdc_cfg) return std_logic_vector is
+        variable v : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0);
+        variable i : natural := 0;
+    begin
+        v(i + c_N_CHIPS - 1 downto i) := cfg.active_chip_mask;    i := i + c_N_CHIPS;
+        v(i)                          := cfg.packet_scope;        i := i + 1;
+        v(i + 1 downto i)             := std_logic_vector(cfg.hit_store_mode);    i := i + 2;
+        v(i + 2 downto i)             := std_logic_vector(cfg.dist_scale);        i := i + 3;
+        v(i)                          := cfg.drain_mode;          i := i + 1;
+        v(i)                          := cfg.pipeline_en;         i := i + 1;
+        v(i + 2 downto i)             := std_logic_vector(cfg.n_faces);           i := i + 3;
+        v(i + 3 downto i)             := std_logic_vector(cfg.stops_per_chip);    i := i + 4;
+        v(i + 3 downto i)             := std_logic_vector(cfg.n_drain_cap);       i := i + 4;
+        v(i + 4 downto i)             := cfg.stopdis_override;    i := i + 5;
+        v(i + 5 downto i)             := std_logic_vector(cfg.bus_clk_div);       i := i + 6;
+        v(i + 2 downto i)             := std_logic_vector(cfg.bus_ticks);         i := i + 3;
+        v(i + 15 downto i)            := std_logic_vector(cfg.max_range_clks);    i := i + 16;
+        v(i + 15 downto i)            := std_logic_vector(cfg.cols_per_face);     i := i + 16;
+        v(i + 17 downto i)            := std_logic_vector(cfg.start_off1);        i := i + 18;
+        v(i + 31 downto i)            := cfg.cfg_reg7;            i := i + 32;
+        v(i + 15 downto i)            := std_logic_vector(cfg.max_scan_clks);     i := i + 16;
+        v(i + 2 downto i)             := std_logic_vector(cfg.max_hits_cfg);      i := i + 3;
+        -- assert i = c_TDC_CFG_BITS;
+        return v;
+    end function;
+
+    function fn_unpack_tdc_cfg(v : std_logic_vector) return t_tdc_cfg is
+        variable cfg : t_tdc_cfg := c_TDC_CFG_INIT;
+        variable i   : natural := 0;
+    begin
+        cfg.active_chip_mask := v(i + c_N_CHIPS - 1 downto i);    i := i + c_N_CHIPS;
+        cfg.packet_scope     := v(i);                             i := i + 1;
+        cfg.hit_store_mode   := unsigned(v(i + 1 downto i));      i := i + 2;
+        cfg.dist_scale       := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.drain_mode       := v(i);                             i := i + 1;
+        cfg.pipeline_en      := v(i);                             i := i + 1;
+        cfg.n_faces          := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.stops_per_chip   := unsigned(v(i + 3 downto i));      i := i + 4;
+        cfg.n_drain_cap      := unsigned(v(i + 3 downto i));      i := i + 4;
+        cfg.stopdis_override := v(i + 4 downto i);                i := i + 5;
+        cfg.bus_clk_div      := unsigned(v(i + 5 downto i));      i := i + 6;
+        cfg.bus_ticks        := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.max_range_clks   := unsigned(v(i + 15 downto i));     i := i + 16;
+        cfg.cols_per_face    := unsigned(v(i + 15 downto i));     i := i + 16;
+        cfg.start_off1       := unsigned(v(i + 17 downto i));     i := i + 18;
+        cfg.cfg_reg7         := v(i + 31 downto i);               i := i + 32;
+        cfg.max_scan_clks    := unsigned(v(i + 15 downto i));     i := i + 16;
+        cfg.max_hits_cfg     := unsigned(v(i + 2 downto i));      i := i + 3;
+        return cfg;
     end function;
 
 end package body tdc_gpx_pkg;

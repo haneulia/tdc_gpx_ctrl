@@ -188,11 +188,23 @@ begin
                         -- Queue incoming pulse while busy instead of dropping it.
                         -- If the queue is already occupied, raise sticky error
                         -- so SW can see that a request was lost.
-                        -- Round 9 #16: simultaneous read+write is ambiguous —
-                        -- current policy is "write wins, read intent silently
-                        -- lost" via the s_pend_rw_r assignment below. Simulation
-                        -- assert flags the case so a TB can detect when the
-                        -- caller violates the single-request-at-a-time contract.
+                        --
+                        -- Round 9 #16 + Round 11 item 16: simultaneous
+                        -- read+write policy.
+                        --   Synthesized behavior: WRITE wins.
+                        --     `s_pend_rw_r <= i_start_write` assigns 1 when
+                        --     write is asserted; if both are high, write wins
+                        --     and read intent is dropped.
+                        --   Sim assertion: WARNING fires below.
+                        --   Overflow sticky (s_err_req_overflow_r): does NOT
+                        --     fire for this case (the pending slot IS being
+                        --     filled, just with the wrong request). A
+                        --     dedicated "ambiguous overlap" sticky would be
+                        --     needed to catch this in silicon.
+                        --   Caller contract: the cmd_arb layer upstream is
+                        --     expected to serialize read/write into non-
+                        --     overlapping pulses. This assertion catches
+                        --     contract violations during regression.
                         -- synthesis translate_off
                         assert not (i_start_read = '1' and i_start_write = '1')
                             report "chip_reg: simultaneous start_read+start_write in ST_ACTIVE; write wins, read intent dropped"

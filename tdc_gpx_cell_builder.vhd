@@ -161,7 +161,15 @@ entity tdc_gpx_cell_builder is
         -- can distinguish routing/config bugs from genuine hit overflow.
         o_stop_id_error     : out std_logic;    -- 1-clk pulse: stop_id >= stops_per_chip
         o_shot_dropped      : out std_logic;    -- 1-clk pulse: entire shot dropped (no free buffer)
-        o_slice_timeout     : out std_logic     -- 1-clk pulse: slice truncated by IFIFO2 timeout
+        o_slice_timeout     : out std_logic;    -- 1-clk pulse: slice truncated by IFIFO2 timeout
+        -- Round 11 item 4: QUARANTINE bounded-escape sticky.
+        -- '1' (latched) when ST_C_QUARANTINE failed to see a drain_done
+        -- marker (nor i_abort) within c_QUARANTINE_TICK_CAP 65K-cycle ticks
+        -- and the FSM force-escaped to ST_C_IDLE. Indicates this chip's
+        -- slice stream has lost sync with upstream; SW/supervisor should
+        -- treat subsequent data from this chip as suspect until a full
+        -- re-init (cmd_soft_reset) clears it.
+        o_quarantine_escape_sticky : out std_logic
     );
 end entity tdc_gpx_cell_builder;
 
@@ -252,6 +260,17 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_stop_id_error_r : std_logic := '0';  -- Round 11 C: distinct from hit overflow
     signal s_shot_dropped_r  : std_logic := '0';  -- shot-level drop (no free buffer)
     signal s_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');  -- watchdog
+
+    -- Round 11 item 4: QUARANTINE escalation tick counter.
+    -- Counts completed 65K-cycle watchdog cycles while still in QUARANTINE.
+    -- Reset on QUARANTINE entry, incremented whenever s_timeout_cnt_r wraps,
+    -- cleared again on clean exit (drain_done marker) or on abort. When it
+    -- reaches c_QUARANTINE_TICK_CAP we force-escape to ST_C_IDLE and latch
+    -- s_quarantine_escape_sticky_r so SW knows the exit was synthetic.
+    -- 4-bit width → 15 * 65535 ≈ 4.9ms @ 200MHz upper bound.
+    constant c_QUARANTINE_TICK_CAP : unsigned(3 downto 0) := (others => '1');
+    signal s_quarantine_tick_r          : unsigned(3 downto 0) := (others => '0');
+    signal s_quarantine_escape_sticky_r : std_logic := '0';
 
     -- Round 9 #8: effective max_hits_cfg. i_max_hits_cfg="000" is an invalid
     -- SW setting; canonical spec is 1..7. To keep the collect path (hit
@@ -360,6 +379,9 @@ begin
                 s_shot_pending_r <= '0';
                 s_buf_seq_r      <= (others => '0');
                 s_buf_age_r      <= (others => (others => '0'));
+                -- Round 11 item 4: QUARANTINE escalation reset
+                s_quarantine_tick_r          <= (others => '0');
+                s_quarantine_escape_sticky_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r   <= '0';
@@ -375,6 +397,12 @@ begin
                     s_buf_full_r  <= "00";
                     s_cstate_r    <= ST_C_IDLE;
                     s_shot_pending_r <= '0';  -- drop any pending shot on abort
+                    -- Round 11 item 4: abort is the clean-exit path; reset
+                    -- escalation tick so a future QUARANTINE starts fresh.
+                    -- Sticky is INTENTIONALLY not cleared by abort — it
+                    -- survives until full i_rst_n / cmd_soft_reset so the
+                    -- supervisor that issued abort can still see the cause.
+                    s_quarantine_tick_r <= (others => '0');
                     -- Do NOT clear cell_buf (unnecessary, will be cleared on next shot_start)
                 else
                     -- ---------------------------------------------------------
@@ -581,30 +609,48 @@ begin
                         when ST_C_QUARANTINE =>
                             -- Absorb stale beats after a DROP timeout. Exit on:
                             --   a) drain_done marker (ifo2 final control beat),
-                            --   b) i_abort (handled above).
+                            --   b) i_abort (handled above),
+                            --   c) Round 11 item 4 escalation: if neither (a)
+                            --      nor (b) arrives within c_QUARANTINE_TICK_CAP
+                            --      65K-cycle ticks (~4.9ms @ 200MHz), force-
+                            --      escape to ST_C_IDLE and latch
+                            --      s_quarantine_escape_sticky_r so SW knows
+                            --      this chip's stream is out of sync.
+                            --
                             -- Round 9 #9: the Round 6 A2 escape-to-IDLE watchdog
                             -- was REMOVED. Exiting QUARANTINE early created a
                             -- late-stale-beat stall: a beat arriving after the
                             -- watchdog timeout would hit ST_C_IDLE (tready='0')
-                            -- and backpressure upstream again. Policy now:
-                            -- stay in QUARANTINE forever until the drain_done
-                            -- marker arrives or SW issues i_abort. The 65K
-                            -- counter still ticks and pulses s_shot_dropped_r
-                            -- once as a "recovery incomplete" notification, but
-                            -- we do NOT leave the state. s_shot_pending_r
-                            -- captures any incoming shot_start so the eventual
-                            -- ST_C_IDLE entry consumes it.
+                            -- and backpressure upstream again. Round 11 item 4
+                            -- re-adds a MUCH LATER escape (15 ticks vs. 1 tick)
+                            -- with an explicit sticky — the failure mode is
+                            -- "upstream never recovered, SW must intervene",
+                            -- which is safer than silently sinking data forever.
                             if i_shot_start = '1' then
                                 s_shot_pending_r <= '1';
                             end if;
                             if i_s_axis_tvalid = '1' and i_s_axis_tuser(7) = '1'
                                and i_s_axis_tuser(6) = '1' then
-                                s_cstate_r     <= ST_C_IDLE;
-                                s_timeout_cnt_r <= (others => '0');
+                                -- Clean exit: drain_done marker consumed.
+                                s_cstate_r          <= ST_C_IDLE;
+                                s_timeout_cnt_r     <= (others => '0');
+                                s_quarantine_tick_r <= (others => '0');
                             elsif s_timeout_cnt_r = x"FFFF" then
-                                -- Round 9 #9: flag but remain in QUARANTINE.
                                 s_shot_dropped_r <= '1';
                                 s_timeout_cnt_r  <= (others => '0');
+                                if s_quarantine_tick_r = c_QUARANTINE_TICK_CAP then
+                                    -- Escalation: force-escape to IDLE. Mirror
+                                    -- what i_abort does to buffer state so the
+                                    -- next shot_start starts from a clean slate.
+                                    s_buf_state_r                <= (others => BUF_FREE);
+                                    s_buf_full_r                 <= "00";
+                                    s_cstate_r                   <= ST_C_IDLE;
+                                    s_shot_pending_r             <= '0';
+                                    s_quarantine_tick_r          <= (others => '0');
+                                    s_quarantine_escape_sticky_r <= '1';
+                                else
+                                    s_quarantine_tick_r <= s_quarantine_tick_r + 1;
+                                end if;
                             else
                                 s_timeout_cnt_r <= s_timeout_cnt_r + 1;
                             end if;
@@ -828,5 +874,6 @@ begin
     o_stop_id_error   <= s_stop_id_error_r;
     o_shot_dropped    <= s_shot_dropped_r;
     o_slice_timeout   <= s_slice_timeout_r;
+    o_quarantine_escape_sticky <= s_quarantine_escape_sticky_r;
 
 end architecture rtl;

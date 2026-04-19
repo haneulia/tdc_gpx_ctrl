@@ -52,14 +52,73 @@ entity tdc_gpx_stop_cfg_decode is
         -- Config image override
         i_cfg             : in  t_tdc_cfg;
         i_cfg_image_raw   : in  t_cfg_image;
-        o_cfg_image       : out t_cfg_image
+        o_cfg_image       : out t_cfg_image;
+
+        -- Round 11 item 10: runtime monotonicity sticky (per-chip).
+        -- Bit i = '1' (latched) if chip i's IFIFO1 or IFIFO2 running total
+        -- decreased within a shot window — a contract violation from
+        -- echo_receiver. Sim-only assert still fires too for regression.
+        -- Cleared only by i_rst_n; SW reads it to detect silent upstream
+        -- format drift that would otherwise corrupt chip_run's drain
+        -- policy via a bogus expected_ififo count.
+        o_monotonic_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0)
     );
 end entity tdc_gpx_stop_cfg_decode;
 
 architecture rtl of tdc_gpx_stop_cfg_decode is
+
+    -- Round 11 item 10: synth-side monotonic tracker.
+    -- Remembers the previous running total per chip/IFIFO within a shot so
+    -- a decrease latches s_mono_viol_r. Reset on shot boundary + global rst.
+    type t_prev_arr is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
+    signal s_prev_ififo1_r : t_prev_arr := (others => (others => '0'));
+    signal s_prev_ififo2_r : t_prev_arr := (others => (others => '0'));
+    signal s_track_r       : std_logic  := '0';   -- has at least one beat been seen this shot?
+    signal s_mono_viol_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+
 begin
 
     o_stop_evt_tready <= '1';
+    o_monotonic_violation_mask <= s_mono_viol_r;
+
+    -- Round 11 item 10: runtime violation detector (synth-live).
+    p_mono_live : process(i_clk)
+        variable v_new1 : unsigned(7 downto 0);
+        variable v_new2 : unsigned(7 downto 0);
+        variable v_lo   : natural;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_prev_ififo1_r <= (others => (others => '0'));
+                s_prev_ififo2_r <= (others => (others => '0'));
+                s_track_r       <= '0';
+                s_mono_viol_r   <= (others => '0');
+            elsif i_shot_start_gated = '1' then
+                s_prev_ififo1_r <= (others => (others => '0'));
+                s_prev_ififo2_r <= (others => (others => '0'));
+                s_track_r       <= '0';
+                -- NOTE: sticky s_mono_viol_r is NOT cleared on shot boundary.
+                -- A violation in shot N should remain visible to SW across
+                -- subsequent shots; only full reset clears it.
+            elsif i_stop_evt_tvalid = '1' then
+                for i in 0 to c_N_CHIPS - 1 loop
+                    v_lo   := i * 8;
+                    v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
+                            + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);
+                    v_new2 := resize(unsigned(i_stop_evt_tdata(v_lo + 7 downto v_lo + 4)), 8)
+                            + resize(unsigned(i_stop_evt_tuser(v_lo + 7 downto v_lo + 4)), 8);
+                    if s_track_r = '1' then
+                        if v_new1 < s_prev_ififo1_r(i) or v_new2 < s_prev_ififo2_r(i) then
+                            s_mono_viol_r(i) <= '1';
+                        end if;
+                    end if;
+                    s_prev_ififo1_r(i) <= v_new1;
+                    s_prev_ififo2_r(i) <= v_new2;
+                end loop;
+                s_track_r <= '1';
+            end if;
+        end if;
+    end process;
 
     p_stop_decode : process(i_clk)
         variable v_lo : natural;

@@ -88,7 +88,11 @@ entity tdc_gpx_err_handler is
         --   forcing the recovery FSM to classify the error without the read
         --   result. Indicates the reg-access subsystem failed to respond;
         --   cleared only by reset.
-        o_err_read_timeout  : out std_logic
+        o_err_read_timeout  : out std_logic;
+        -- Round 11 item 11: separate sticky for ST_WAIT_FRAME_DONE long-wait
+        -- escape. Previously conflated with o_err_read_timeout; SW could not
+        -- tell a reg-read failure from a frame-boundary resync timeout.
+        o_err_frame_wait_escape : out std_logic
     );
 end entity tdc_gpx_err_handler;
 
@@ -167,6 +171,7 @@ architecture rtl of tdc_gpx_err_handler is
     -- = 6.5ms) gives long grace before a soft-escape back to IDLE.
     signal s_frame_wait_cnt_r : unsigned(16 downto 0) := (others => '0');
     signal s_err_read_timeout_r : std_logic := '0';  -- sticky: reg read timed out
+    signal s_err_frame_wait_escape_r : std_logic := '0';  -- Round 11 item 11: sticky for ST_WAIT_FRAME_DONE escape
 
     -- =========================================================================
     -- Reg11 data selection helper
@@ -207,6 +212,7 @@ begin
                 s_frame_done_seen_r  <= '0';
                 s_wait_read_cnt_r    <= (others => '0');
                 s_err_read_timeout_r <= '0';
+                s_err_frame_wait_escape_r <= '0';
                 s_read_issue_cnt_r   <= (others => '0');
                 s_frame_wait_cnt_r   <= (others => '0');
             else
@@ -402,7 +408,11 @@ begin
                             s_retry_cnt_r       <= (others => '0');
                             s_frame_done_seen_r <= '0';
                             s_frame_wait_cnt_r  <= (others => '0');
-                            s_err_read_timeout_r <= '1';  -- reuse sticky to flag the escape
+                            -- Round 11 item 11: distinct sticky — previously
+                            -- reused s_err_read_timeout_r which made SW unable
+                            -- to distinguish a reg-read failure from a frame-
+                            -- boundary resync escape.
+                            s_err_frame_wait_escape_r <= '1';
                             s_state_r           <= ST_IDLE;
                         else
                             s_frame_wait_cnt_r <= s_frame_wait_cnt_r + 1;
@@ -439,5 +449,6 @@ begin
     o_err_cause         <= s_err_cause_r;
     o_err_fatal         <= s_err_fatal_r;
     o_err_read_timeout  <= s_err_read_timeout_r;
+    o_err_frame_wait_escape <= s_err_frame_wait_escape_r;
 
 end architecture rtl;

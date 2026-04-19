@@ -126,11 +126,17 @@ entity tdc_gpx_output_stage is
         -- Round 5/6 per-slope face_assembler observability (both AXI-Stream domain)
         o_shot_flush_drop_rise : out std_logic;                       -- rise shot_start drop sticky
         o_shot_flush_drop_fall : out std_logic;                       -- fall shot_start drop sticky
+        -- Round 11 item 15: per-chip breakdown of shot_flush_drop stickies.
+        o_shot_flush_drop_mask_rise : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_shot_flush_drop_mask_fall : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_shot_overrun_count_rise : out unsigned(7 downto 0);        -- rise blank-fill wrap count
         o_shot_overrun_count_fall : out unsigned(7 downto 0);        -- fall blank-fill wrap count
         -- Round 11 C: header_inserter per-slope face_start pulse-collapse count
         o_hdr_face_start_collapsed_rise : out unsigned(7 downto 0);
-        o_hdr_face_start_collapsed_fall : out unsigned(7 downto 0)
+        o_hdr_face_start_collapsed_fall : out unsigned(7 downto 0);
+        -- Round 11 item 3: header_inserter drain-watchdog sticky per slope.
+        o_hdr_drain_timeout_rise        : out std_logic;
+        o_hdr_drain_timeout_fall        : out std_logic
     );
 end entity tdc_gpx_output_stage;
 
@@ -224,6 +230,7 @@ begin
             o_face_abort       => o_face_abort,
             o_idle             => o_face_asm_idle,
             o_shot_flush_drop    => o_shot_flush_drop_rise,
+            o_shot_flush_drop_mask => o_shot_flush_drop_mask_rise,
             o_shot_overrun_count => o_shot_overrun_count_rise
         );
 
@@ -261,6 +268,7 @@ begin
             o_face_abort       => o_face_fall_abort,
             o_idle             => o_face_asm_fall_idle,
             o_shot_flush_drop    => o_shot_flush_drop_fall,
+            o_shot_flush_drop_mask => o_shot_flush_drop_mask_fall,
             o_shot_overrun_count => o_shot_overrun_count_fall
         );
 
@@ -387,7 +395,8 @@ begin
             o_draining          => o_hdr_draining,
             o_last_line         => open,
             o_idle              => o_hdr_idle,
-            o_face_start_collapsed_count => o_hdr_face_start_collapsed_rise
+            o_face_start_collapsed_count => o_hdr_face_start_collapsed_rise,
+            o_drain_timeout_sticky       => o_hdr_drain_timeout_rise
         );
 
     -- =========================================================================
@@ -425,7 +434,8 @@ begin
             o_draining          => o_hdr_fall_draining,
             o_last_line         => open,
             o_idle              => o_hdr_fall_idle,
-            o_face_start_collapsed_count => o_hdr_face_start_collapsed_fall
+            o_face_start_collapsed_count => o_hdr_face_start_collapsed_fall,
+            o_drain_timeout_sticky       => o_hdr_drain_timeout_fall
         );
 
     -- =========================================================================

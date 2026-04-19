@@ -68,7 +68,14 @@ entity tdc_gpx_chip_init is
         -- Physical pin outputs
         o_puresn         : out std_logic;
         o_stopdis        : out std_logic;
-        o_busy           : out std_logic
+        o_busy           : out std_logic;
+        -- Round 11 item 14: sticky for busy-window cfg_write coalescing.
+        -- Asserts when a cfg_write_req arrives while already pending (1-depth
+        -- queue already occupied). The 2nd+ request is absorbed into the
+        -- existing snapshot — SW's later writes in the same busy window are
+        -- effectively ignored. SW reads this sticky to detect when its intent
+        -- did not propagate and may need to re-issue cfg_write after done.
+        o_cfg_write_coalesced : out std_logic
     );
 end entity tdc_gpx_chip_init;
 
@@ -100,6 +107,8 @@ architecture rtl of tdc_gpx_chip_init is
     -- (start wins) or during busy. Processed automatically after the init
     -- sequence returns to ST_OFF, preventing silent loss of SW cfg_write.
     signal s_cfg_write_pending_r : std_logic := '0';
+    -- Round 11 item 14: sticky for busy-window cfg_write coalesce events
+    signal s_cfg_write_coalesced_r : std_logic := '0';
     -- Round 9 #4: cfg_image snapshot at pending-latch time. Previously ST_OFF
     -- re-sampled the live i_cfg_image when the deferred cfg_write finally ran,
     -- so a cfg value updated between request time and deferred-run time would
@@ -148,6 +157,7 @@ begin
                 s_cfg_image_snap_r <= (others => (others => '0'));
                 s_cfg_write_pending_r <= '0';
                 s_cfg_pending_image_r <= (others => (others => '0'));
+                s_cfg_write_coalesced_r <= '0';
             else
                 s_done_r        <= '0';
                 s_timeout_out_r <= '0';
@@ -322,6 +332,10 @@ begin
                     if s_cfg_write_pending_r = '0' then
                         -- First pending in this busy window → capture snapshot.
                         s_cfg_pending_image_r <= i_cfg_image;
+                    else
+                        -- Round 11 item 14: 2nd+ request while pending already
+                        -- latched → coalesce. Flag sticky for SW visibility.
+                        s_cfg_write_coalesced_r <= '1';
                     end if;
                     s_cfg_write_pending_r <= '1';
                 end if;
@@ -337,6 +351,7 @@ begin
     o_stopdis       <= s_stopdis_r;
     o_busy          <= s_busy_r;
     o_done          <= s_done_r;
+    o_cfg_write_coalesced <= s_cfg_write_coalesced_r;
     o_timeout       <= s_timeout_out_r;
 
 end architecture rtl;

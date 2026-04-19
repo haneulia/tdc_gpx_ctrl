@@ -340,43 +340,72 @@ begin
     s_stat_src(31 downto c_STAT_SEQ_ERR_HI + 1) <= (others => '0');
 
     -- =========================================================================
-    -- [3b] STAT6 source packing (Round 5 follow-up, i_axis_aclk domain)
-    --   bit  0    err_read_timeout (pipeline)
-    --   bit  1    reg_rejected (pipeline)
-    --   bit  2    reg_zero_mask (pipeline)
-    --   bit  3    rise_shot_flush_drop
-    --   bit  4    fall_shot_flush_drop
-    --   bits[15:8]  rise_shot_overrun_count
-    --   bits[23:16] fall_shot_overrun_count
+    -- [3b] STAT6 source packing (Round 5 follow-up + Round 11 items 3/11/15)
+    --   bit  0      err_read_timeout (pipeline)
+    --   bit  1      reg_rejected (pipeline)
+    --   bit  2      reg_zero_mask (pipeline)
+    --   bit  3      rise_shot_flush_drop (OR-reduction, any chip)
+    --   bit  4      fall_shot_flush_drop (OR-reduction, any chip)
+    --   bit  5      rise_hdr_drain_timeout        (Round 11 item 3)
+    --   bit  6      fall_hdr_drain_timeout        (Round 11 item 3)
+    --   bit  7      err_frame_wait_escape         (Round 11 item 11)
+    --   bits[11:8]  rise_shot_overrun_count[3:0]  (reduced 8→4; wrap)
+    --   bits[15:12] shot_flush_drop_mask          (Round 11 item 15, per-chip)
+    --   bits[19:16] fall_shot_overrun_count[3:0]  (reduced 8→4; wrap)
+    --   bits[23:20] reserved
     --   bits[27:24] err_reg_overflow_mask (per-chip)
-    --   bits[31:28] run_drain_complete_mask (per-chip, sticky from pulses)
+    --   bits[31:28] run_drain_complete_mask (per-chip)
+    --
+    -- shot_overrun_count reduced 8→4 bits to free space for
+    -- shot_flush_drop_mask. Rationale matches face_start_collapsed_count
+    -- reduction: under correct operation these counters stay zero, so a
+    -- 4-bit wrap suffices as a "nonzero = bug" indicator. Full 8-bit
+    -- magnitude was never functionally required by SW.
     -- =========================================================================
     s_stat6_src(0)            <= i_status.err_read_timeout;
     s_stat6_src(1)            <= i_status.reg_rejected;
     s_stat6_src(2)            <= i_status.reg_zero_mask;
     s_stat6_src(3)            <= i_status.rise_shot_flush_drop;
     s_stat6_src(4)            <= i_status.fall_shot_flush_drop;
-    s_stat6_src(7 downto 5)   <= (others => '0');
-    s_stat6_src(15 downto 8)  <= std_logic_vector(i_status.rise_shot_overrun_count);
-    s_stat6_src(23 downto 16) <= std_logic_vector(i_status.fall_shot_overrun_count);
+    s_stat6_src(5)            <= i_status.rise_hdr_drain_timeout;
+    s_stat6_src(6)            <= i_status.fall_hdr_drain_timeout;
+    s_stat6_src(7)            <= i_status.err_frame_wait_escape;
+    s_stat6_src(11 downto 8)  <= std_logic_vector(i_status.rise_shot_overrun_count(3 downto 0));
+    s_stat6_src(15 downto 12) <= i_status.shot_flush_drop_mask;
+    s_stat6_src(19 downto 16) <= std_logic_vector(i_status.fall_shot_overrun_count(3 downto 0));
+    s_stat6_src(23 downto 20) <= (others => '0');
     s_stat6_src(27 downto 24) <= i_status.err_reg_overflow_mask;
     s_stat6_src(31 downto 28) <= i_status.run_drain_complete_mask;
 
     -- =========================================================================
-    -- [3c] STAT7 source packing (Round 11 Category C)
+    -- [3c] STAT7 source packing (Round 11 Category C + Round 11 items 4/10/14)
     --   [3:0]   reg_timeout_mask
     --   [7:4]   stop_id_error_mask
     --   [10:8]  run_timeout_cause_last
-    --   [15:11] reserved
-    --   [23:16] rise_face_start_collapsed_count
-    --   [31:24] fall_face_start_collapsed_count
+    --   [14:11] quarantine_escape_mask       (Round 11 item 4)
+    --   [15]    reserved
+    --   [19:16] rise_face_start_collapsed_count (reduced from 8-bit; wrap-4)
+    --   [23:20] mono_violation_mask          (Round 11 item 10)
+    --   [27:24] fall_face_start_collapsed_count (reduced from 8-bit; wrap-4)
+    --   [31:28] init_cfg_coalesced_mask      (Round 11 item 14)
+    --
+    -- face_start_collapsed_count fields reduced from 8 to 4 bits.
+    -- Rationale: with Round 11 item 1 (1-cycle pulse guarantee), these
+    -- counters should stay at 0 under correct behavior; a 4-bit wrap is
+    -- sufficient to flag "nonzero = bug" without consuming 16 bits that
+    -- the new Round 11 masks need. The low nibble of the source counter
+    -- is surfaced (so a wrap at 16 is still observable as the bits
+    -- changing; full saturation would appear as stuck zeros).
     -- =========================================================================
     s_stat7_src(3 downto 0)   <= i_status.reg_timeout_mask;
     s_stat7_src(7 downto 4)   <= i_status.stop_id_error_mask;
     s_stat7_src(10 downto 8)  <= i_status.run_timeout_cause_last;
-    s_stat7_src(15 downto 11) <= (others => '0');
-    s_stat7_src(23 downto 16) <= std_logic_vector(i_status.rise_face_start_collapsed_count);
-    s_stat7_src(31 downto 24) <= std_logic_vector(i_status.fall_face_start_collapsed_count);
+    s_stat7_src(14 downto 11) <= i_status.quarantine_escape_mask;
+    s_stat7_src(15)           <= '0';
+    s_stat7_src(19 downto 16) <= std_logic_vector(i_status.rise_face_start_collapsed_count(3 downto 0));
+    s_stat7_src(23 downto 20) <= i_status.mono_violation_mask;
+    s_stat7_src(27 downto 24) <= std_logic_vector(i_status.fall_face_start_collapsed_count(3 downto 0));
+    s_stat7_src(31 downto 28) <= i_status.init_cfg_coalesced_mask;
 
     -- =========================================================================
     -- [4] STAT CDC: i_axis_aclk → s_axi_aclk (1 live register)

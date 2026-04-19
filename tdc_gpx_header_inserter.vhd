@@ -135,7 +135,15 @@ entity tdc_gpx_header_inserter is
         o_idle              : out std_logic;    -- '1' when FSM is in ST_IDLE
         -- Round 11 C: face_start pulse-collapse counter surface (Round 9 #10
         -- added the sticky, this port exposes it). Wrap-counter 8-bit.
-        o_face_start_collapsed_count : out unsigned(7 downto 0)
+        o_face_start_collapsed_count : out unsigned(7 downto 0);
+        -- Round 11 item 3: drain-watchdog sticky.
+        -- Asserts ('1') and latches when ST_DRAIN_LAST or ST_ABORT_DRAIN
+        -- cannot make forward progress within c_DRAIN_WDT_CAP cycles
+        -- (downstream AXI sink indefinitely deasserts tready). On timeout,
+        -- the FSM force-escapes to ST_IDLE so the rest of the pipeline
+        -- (face_seq, SW) does not wedge. SW should treat the corresponding
+        -- frame as truncated and clear by asserting cmd_soft_reset.
+        o_drain_timeout_sticky       : out std_logic
     );
 end entity tdc_gpx_header_inserter;
 
@@ -165,6 +173,15 @@ architecture rtl of tdc_gpx_header_inserter is
     -- preserve observability, count each additional non-IDLE face_start that
     -- arrives while a pending was already latched. 8-bit wrap.
     signal s_face_start_collapsed_cnt_r : unsigned(7 downto 0) := (others => '0');
+
+    -- Round 11 item 3: drain-state watchdog.
+    -- c_DRAIN_WDT_CAP = 16-bit all-ones (65535 cycles ≈ 327us @ 200MHz).
+    -- Scope: normal VDMA backpressure rarely exceeds tens of cycles; a
+    -- multi-hundred-microsecond stall means the AXI sink is wedged, not
+    -- busy. The cap is comfortably above normal, below SW-visible stall.
+    constant c_DRAIN_WDT_CAP : unsigned(15 downto 0) := (others => '1');
+    signal s_drain_wdt_r              : unsigned(15 downto 0) := (others => '0');
+    signal s_drain_timeout_sticky_r   : std_logic := '0';
 
     -- =========================================================================
     -- Latched header fields (captured at face_start)
@@ -253,6 +270,7 @@ begin
     o_draining        <= '1' when s_state_r = ST_DRAIN_LAST else '0';
     o_idle            <= '1' when s_state_r = ST_IDLE else '0';
     o_face_start_collapsed_count <= s_face_start_collapsed_cnt_r;
+    o_drain_timeout_sticky       <= s_drain_timeout_sticky_r;
     -- '1' during the entire last line: from ST_PREFIX/ST_DATA on the last col
     -- through ST_DRAIN_LAST.  Closes the window where assembler output skid
     -- holds the final beat but header hasn't consumed it yet.
@@ -368,6 +386,9 @@ begin
                 s_hdr_rom_pending_r <= '0';
                 s_hdr_rom_r         <= (others => (others => '0'));
                 s_face_start_pending_r <= '0';
+                -- Round 11 item 3: watchdog reset
+                s_drain_wdt_r            <= (others => '0');
+                s_drain_timeout_sticky_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_frame_done_r <= '0';
@@ -472,25 +493,59 @@ begin
                 --   downstream to consume it before reporting frame_done.
                 --   This prevents a race where face_start arrives before the
                 --   last beat is handed off and clears the output register.
+                --
+                -- Round 11 item 3: bounded escape on downstream stall.
+                -- Without a cap, a wedged AXI sink holds this state forever
+                -- and frame_done never fires — face_seq's frame_done_both
+                -- never aligns and the whole pipeline wedges. On timeout we
+                -- forcibly emit frame_done, clear tvalid, and return to
+                -- IDLE. The pending beat is dropped (protocol violation is
+                -- accepted because the sink is already non-functional); SW
+                -- learns this via o_drain_timeout_sticky.
                 -- ==============================================================
                 when ST_DRAIN_LAST =>
                     if s_out_tvalid_r = '0' or i_m_axis_tready = '1' then
                         -- Last beat consumed (or was already consumed)
                         s_frame_done_r <= '1';
                         s_state_r      <= ST_IDLE;
+                    elsif s_drain_wdt_r = c_DRAIN_WDT_CAP then
+                        s_frame_done_r           <= '1';
+                        s_out_tvalid_r           <= '0';
+                        s_state_r                <= ST_IDLE;
+                        s_drain_timeout_sticky_r <= '1';
+                    else
+                        s_drain_wdt_r <= s_drain_wdt_r + 1;
                     end if;
 
                 -- ==============================================================
                 -- ST_ABORT_DRAIN: wait for pending output beat to handshake,
                 --   then go to IDLE.  Prevents AXI-Stream tvalid withdrawal.
+                --
+                -- Round 11 item 3: same bounded-escape rationale as
+                -- ST_DRAIN_LAST — a stuck tready must not wedge the FSM.
                 -- ==============================================================
                 when ST_ABORT_DRAIN =>
                     if i_m_axis_tready = '1' then
                         s_out_tvalid_r <= '0';
                         s_state_r      <= ST_IDLE;
+                    elsif s_drain_wdt_r = c_DRAIN_WDT_CAP then
+                        s_out_tvalid_r           <= '0';
+                        s_state_r                <= ST_IDLE;
+                        s_drain_timeout_sticky_r <= '1';
+                    else
+                        s_drain_wdt_r <= s_drain_wdt_r + 1;
                     end if;
 
                 end case;
+
+                -- Round 11 item 3: watchdog counter reset whenever the FSM
+                -- is outside drain states. Placed AFTER the case so a state
+                -- transition this cycle (e.g. ST_DATA -> ST_DRAIN_LAST) is
+                -- observed on the NEXT cycle; the counter starts at 0 on
+                -- entry to the drain state.
+                if s_state_r /= ST_DRAIN_LAST and s_state_r /= ST_ABORT_DRAIN then
+                    s_drain_wdt_r <= (others => '0');
+                end if;
 
                 -- =============================================================
                 -- face_start: latch fields and start first line prefix.
@@ -501,6 +556,20 @@ begin
                 --   ST_IDLE entry consumes it. No silent drop — the stale
                 --   "non-IDLE face_start ignored" contract was replaced by
                 --   this pending-latch behavior in Round 5 #21.
+                --
+                -- Round 11 item 13: coalescing risk reduced by item 1.
+                --   The 1-cycle pulse guarantee on s_packet_start_r /
+                --   s_face_start_r (Round 11 item 1) means face_seq cannot
+                --   emit multi-cycle face_start pulses anymore. The FSM
+                --   logic in face_seq also serializes face_start pulses
+                --   through ST_WAIT_SHOT → ST_IN_FACE transitions, so a
+                --   second face_start can only arrive after the current
+                --   face completes frame_done_both. In that window,
+                --   header_inserter is already in ST_DRAIN_LAST → ST_IDLE,
+                --   so the pending latch's 1-depth is sufficient for all
+                --   legal upstream behaviors. s_face_start_collapsed_cnt_r
+                --   remains as an observability backstop for the event
+                --   "item 1 guarantee somehow failed" — nonzero is a bug.
                 -- =============================================================
                 if i_face_start = '1' and s_state_r /= ST_IDLE then
                     -- Round 9 #10: count collapsed pulses. If a pending was

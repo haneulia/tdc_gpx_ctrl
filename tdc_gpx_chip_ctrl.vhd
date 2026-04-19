@@ -175,7 +175,9 @@ entity tdc_gpx_chip_ctrl is
         o_err_reg_overflow  : out std_logic;    -- sticky: chip_reg 3rd-pulse queue overflow (Round 5 #12)
         o_run_timeout       : out std_logic;    -- 1-clk pulse: chip_run abnormal drain exit
         -- Round 11 C: surface chip_run's timeout cause code for SW diagnosis.
-        o_run_timeout_cause : out std_logic_vector(2 downto 0)
+        o_run_timeout_cause : out std_logic_vector(2 downto 0);
+        -- Round 11 item 14: chip_init cfg_write coalesce sticky (per-chip).
+        o_init_cfg_coalesced : out std_logic
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -188,12 +190,16 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_phase_r      : t_phase := PH_INIT;
     signal s_drain_cnt_r    : unsigned(3 downto 0) := (others => '0');  -- stale response drain counter
     signal s_drain_to_init_r : std_logic := '0';  -- '1' = drain→PH_INIT (soft reset), '0' = drain→PH_IDLE (timeout)
-    -- Round 9 #6: secondary quarantine watchdog. Round 5 #9 made PH_RESP_DRAIN
-    -- stay forever when the bus is stuck, which avoided stale-response leaks
-    -- at the cost of a potential permanent hang. This counter runs while the
-    -- phase is stuck in quarantine (cnt saturated at 15 AND bus still active).
-    -- On overflow we force-exit to PH_INIT — same path as a soft_reset — so
-    -- the chip has a chance to recover via its own init sequence.
+    -- Round 9 #6 + Round 11 item 5: secondary quarantine counter.
+    -- Runs while the phase is stuck in quarantine (cnt saturated at 15 AND
+    -- bus still active). Round 9 #6 used its overflow (65K cycles) to
+    -- force-exit to PH_INIT. Round 11 item 5 reverts that escalation: the
+    -- forced PH_INIT transition risked routing stale responses into the
+    -- init sub-FSM, so the counter now just saturates in place while the
+    -- bus remains stuck. Recovery requires SW/supervisor action via full
+    -- i_rst_n (soft_reset alone re-enters PH_RESP_DRAIN and stalls again).
+    -- The counter is retained for potential future observability (time
+    -- spent in quarantine) rather than functional escalation.
     signal s_drain_quarantine_cnt_r : unsigned(15 downto 0) := (others => '0');
 
     -- =========================================================================
@@ -210,6 +216,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_init_puresn     : std_logic;
     signal s_init_stopdis    : std_logic;
     signal s_init_busy       : std_logic;
+    signal s_init_cfg_coalesced : std_logic;  -- Round 11 item 14: chip_init cfg_write coalesce sticky
 
     -- =========================================================================
     -- Sub-FSM signals: chip_run
@@ -368,7 +375,8 @@ begin
             i_bus_rsp_valid => s_init_rsp_valid,
             o_puresn        => s_init_puresn,
             o_stopdis       => s_init_stopdis,
-            o_busy          => s_init_busy
+            o_busy          => s_init_busy,
+            o_cfg_write_coalesced => s_init_cfg_coalesced
         );
 
     u_run : entity work.tdc_gpx_chip_run
@@ -558,6 +566,21 @@ begin
 
                     when PH_IDLE =>
                         -- Priority: start > cfg_write > reg_read > reg_write
+                        --
+                        -- Round 11 item 18: policy statement.
+                        --   When multiple commands arrive in the SAME cycle,
+                        --   priority is fixed (above). Lower-priority
+                        --   commands are DROPPED with no runtime sticky —
+                        --   only a sim-time WARNING fires.
+                        --   Rationale: cmd_arb and higher-level command
+                        --   dispatch at config_ctrl serialize these pulses;
+                        --   simultaneous arrival here would indicate a bug
+                        --   in that layer rather than a workload to
+                        --   accommodate. Adding a runtime sticky is a
+                        --   reasonable follow-up if silicon shows the
+                        --   contract being violated (e.g. CDC skew between
+                        --   pulses). For now the sim assert is the only
+                        --   detection.
                         -- synthesis translate_off
                         -- Warn if multiple commands arrive simultaneously
                         if (i_cmd_start and i_cmd_cfg_write) = '1'
@@ -645,28 +668,28 @@ begin
                             end if;
                             s_drain_to_init_r <= '0';  -- always clear on drain exit
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap reached. Round 5 #9 + Round 9 #6:
+                            -- Hard cap reached. Round 5 #9 + Round 9 #6 + Round 11 item 5:
                             --   Round 5 #9 made this a QUARANTINE — stay in
                             --   PH_RESP_DRAIN with cnt saturated at 15 and
                             --   routing disabled so any stale response is
-                            --   absorbed. Round 9 #6 adds a secondary
-                            --   watchdog (s_drain_quarantine_cnt_r) so a
-                            --   permanently-stuck bus eventually triggers a
-                            --   forced re-init instead of hanging the FSM.
+                            --   absorbed. Round 9 #6 added a secondary
+                            --   watchdog (s_drain_quarantine_cnt_r) that
+                            --   forcibly re-entered PH_INIT at 65K cycles.
+                            --   Round 11 item 5 REMOVES that forced re-init:
+                            --   transitioning to PH_INIT while the bus is
+                            --   still active risks stale responses arriving
+                            --   into the init sub-FSM's routing window
+                            --   ("phase pollution"). The safer policy is to
+                            --   quarantine permanently and let SW notice via
+                            --   s_err_drain_cap_r — recovery is a full
+                            --   i_rst_n / power cycle, not an in-band re-init.
                             if i_bus_busy = '1' or i_bus_rsp_pending = '1' then
                                 s_err_drain_cap_r <= '1';
-                                if s_drain_quarantine_cnt_r = x"FFFF" then
-                                    -- 65K cycles quarantined: bus likely broken.
-                                    -- Escalate to full re-init so the chip's
-                                    -- own powerup sequence can recover the bus.
-                                    s_phase_r             <= PH_INIT;
-                                    s_init_start          <= '1';
-                                    s_drain_to_init_r     <= '0';
-                                    s_drain_quarantine_cnt_r <= (others => '0');
-                                else
+                                if s_drain_quarantine_cnt_r /= x"FFFF" then
                                     s_drain_quarantine_cnt_r <=
                                         s_drain_quarantine_cnt_r + 1;
                                 end if;
+                                -- At x"FFFF": saturate in place. No escalation.
                             else
                                 if s_drain_to_init_r = '1' then
                                     s_phase_r    <= PH_INIT;
@@ -785,6 +808,7 @@ begin
         variable v_new  : t_raw_entry;
         variable v_fifo : t_raw_fifo;
         variable v_placed : boolean;
+        variable v_free : natural range 0 to c_RAW_FIFO_DEPTH;
     begin
         if rising_edge(i_clk) then
             if s_sub_rst_n = '0' then
@@ -819,24 +843,70 @@ begin
                 end if;
 
                 -- Step 2: enqueue new beat at the first empty slot (from head).
+                -- Round 11 item 6: reserve one slot for control beats.
+                -- tuser(7)='1' marks a control beat (drain_done / ififo1_beat);
+                -- tuser(7)='0' is a data beat (raw hit word).
+                --
+                -- Old policy (pre-item-6): any beat (data OR control) could use
+                -- any free slot, and the LAST free slot could be consumed by
+                -- data. A control beat arriving right after could then find
+                -- the FIFO full and get dropped — losing a completion /
+                -- drain boundary marker, which is far more damaging than a
+                -- single data beat loss.
+                --
+                -- New policy: data beats only enqueue if 2+ slots are free,
+                -- so one slot always remains reservable for a control beat.
+                -- Control beats enqueue into any free slot. The overflow
+                -- sticky now fires for data beats at a lower threshold, but
+                -- control beats are preserved as long as the FIFO is not
+                -- completely saturated with earlier control beats.
                 if v_new.valid = '1' then
                     v_placed := false;
+
+                    v_free := 0;
                     for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
-                        if not v_placed and v_fifo(i).valid = '0' then
-                            v_fifo(i) := v_new;
-                            v_placed := true;
+                        if v_fifo(i).valid = '0' then
+                            v_free := v_free + 1;
                         end if;
                     end loop;
+
+                    if v_new.tuser(7) = '1' then
+                        -- Control beat: enqueue if any slot is free.
+                        if v_free >= 1 then
+                            for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
+                                if not v_placed and v_fifo(i).valid = '0' then
+                                    v_fifo(i) := v_new;
+                                    v_placed := true;
+                                end if;
+                            end loop;
+                        end if;
+                    else
+                        -- Data beat: enqueue only if 2+ slots are free, so
+                        -- one remains for a future control beat.
+                        if v_free >= 2 then
+                            for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
+                                if not v_placed and v_fifo(i).valid = '0' then
+                                    v_fifo(i) := v_new;
+                                    v_placed := true;
+                                end if;
+                            end loop;
+                        end if;
+                    end if;
+
                     if not v_placed then
-                        -- All slots full: beat dropped. With depth=3 and
-                        -- 1-cycle-late busy backpressure, this should not
-                        -- occur in practice; flag it so SW can see the loss
-                        -- instead of corrupting silently.
+                        -- Drop. For data beats this is the new reserve
+                        -- threshold (free=1 slot left); for control beats
+                        -- it means the FIFO is genuinely saturated (should
+                        -- not happen with proper backpressure).
                         s_err_raw_overflow_r <= '1';
                         -- synthesis translate_off
                         assert false
-                            report "chip_ctrl: raw beat DROPPED (all slots full, drain=" &
-                                   std_logic'image(v_new.drain) & ")"
+                            report "chip_ctrl: raw beat DROPPED (kind=" &
+                                   std_logic'image(v_new.tuser(7)) &
+                                   ", drain=" &
+                                   std_logic'image(v_new.drain) &
+                                   ", free=" &
+                                   integer'image(v_free) & ")"
                             severity error;
                         -- synthesis translate_on
                     end if;
@@ -911,6 +981,7 @@ begin
     o_err_drain_timeout <= s_err_drain_timeout_r;
     o_err_sequence      <= s_err_sequence_r;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
+    o_init_cfg_coalesced <= s_init_cfg_coalesced;
     -- raw_overflow aggregates multiple "integrity compromised" events so SW
     -- only needs to observe one flag per chip. Individual cause codes can be
     -- split into dedicated ports later if needed:

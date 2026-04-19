@@ -170,6 +170,13 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_packet_start_comb : std_logic := '0';
     signal s_packet_start_r    : std_logic := '0';
 
+    -- Round 11 item 1: rising-edge pulse of i_shot_start_raw.
+    -- Internal logic must use this pulse, NOT the raw level, to prevent
+    -- multi-cycle raw assertions from generating multiple internal start
+    -- events (packet_start_r, shot_pending_r, drop_cnt increments).
+    signal s_shot_raw_d_r   : std_logic := '0';
+    signal s_shot_raw_pulse : std_logic;
+
 begin
 
     -- =========================================================================
@@ -195,9 +202,28 @@ begin
                     when ST_IDLE =>
                         if i_cmd_start = '1' or s_cmd_start_pending_r = '1' then
                             -- Config validation: reject if geometry is degenerate
+                            -- Round 11 item 7: upper bound check on stops_per_chip.
+                            -- The codebase assumes c_MAX_STOPS_PER_CHIP = 8:
+                            --   - face_seq p_geometry: v_rows is bounded by
+                            --     c_MAX_ROWS_PER_FACE (derived from 8)
+                            --   - cell_builder / face_assembler use
+                            --     i_stops_per_chip(2 downto 0) — i.e. 3-bit
+                            --     truncation — so values 9..15 wrap to 1..7
+                            --     silently, producing an entirely different
+                            --     row geometry from what SW configured.
+                            -- Reject (don't clamp) keeps the failure loud:
+                            -- SW gets a cfg_rejected pulse instead of silently
+                            -- running with wrong geometry.
+                            -- Round 11 item 12: reject n_faces=0 explicitly.
+                            -- The state machine previously treated n_faces=0
+                            -- as an ambiguous special case (face_id reset
+                            -- logic at line 256). Policy is now: n_faces
+                            -- must be in [1..7]; anything else is rejected.
                             if i_cfg.active_chip_mask = "0000"
                                or i_cfg.stops_per_chip < 2
-                               or i_cfg.cols_per_face < 1 then
+                               or i_cfg.stops_per_chip > c_MAX_STOPS_PER_CHIP
+                               or i_cfg.cols_per_face < 1
+                               or i_cfg.n_faces = 0 then
                                 -- Invalid config: reject start, pulse cfg_rejected
                                 s_cfg_rejected_r      <= '1';
                                 s_cmd_start_pending_r <= '0';  -- drop pending on config error
@@ -435,8 +461,14 @@ begin
     -- s_packet_start_r itself (which hasn't fired yet when _comb first
     -- rises).
     -- =========================================================================
+    -- Round 11 item 1: self-mask guard (s_packet_start_r = '0') ensures
+    -- comb drops to 0 the cycle after it first rises, so the registered
+    -- s_packet_start_r is exactly 1 cycle wide per accepted shot.
+    -- Also use s_shot_raw_pulse (edge) instead of i_shot_start_raw (level)
+    -- so a sticky raw level cannot retrigger comb after deferred clears.
     s_packet_start_comb <= '1' when s_face_state_r = ST_WAIT_SHOT
-                                    and (i_shot_start_raw = '1' or s_shot_deferred_r = '1')
+                                    and s_packet_start_r = '0'
+                                    and (s_shot_raw_pulse = '1' or s_shot_deferred_r = '1')
                                     and i_cmd_stop = '0'
                                     and i_cmd_soft_reset = '0'
                                     and s_pipeline_abort = '0'
@@ -455,6 +487,23 @@ begin
             end if;
         end if;
     end process;
+
+    -- Round 11 item 1: edge-detect i_shot_start_raw. Replaces level-sensitive
+    -- use of the raw input in every internal decision (packet_start, shot
+    -- deferral, shot pending, drop count). Guarantees 1-cycle internal
+    -- semantics regardless of upstream pulse width.
+    p_shot_raw_edge : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_cmd_soft_reset = '1' then
+                s_shot_raw_d_r <= '0';
+            else
+                s_shot_raw_d_r <= i_shot_start_raw;
+            end if;
+        end if;
+    end process;
+
+    s_shot_raw_pulse <= i_shot_start_raw and not s_shot_raw_d_r;
 
     -- Pipeline abort (#22 Sprint 3: slope-independent)
     --
@@ -512,19 +561,26 @@ begin
                     s_face_active_r <= '0';
                 end if;
 
-                -- Shot deferral
+                -- Shot deferral (Round 11 item 1: use edge pulse, not level).
+                -- The s_packet_start_comb = '0' guard below is critical: without
+                -- it, the same raw edge that makes comb = '1' (accepting the
+                -- shot) also arms s_shot_deferred_r. The accept consumes the
+                -- shot and the deferred latch queues a phantom second start
+                -- that fires as soon as WAIT_SHOT is re-entered.
                 if s_packet_start_r = '1' then
-                    if s_shot_deferred_r = '1' and i_shot_start_raw = '1' then
+                    if s_shot_deferred_r = '1' and s_shot_raw_pulse = '1' then
                         s_shot_deferred_r <= '1';
                     else
                         s_shot_deferred_r <= '0';
                     end if;
-                elsif i_shot_start_raw = '1' and s_shot_deferred_r = '0' then
+                elsif s_shot_raw_pulse = '1' and s_shot_deferred_r = '0' then
                     if (s_face_state_r = ST_IN_FACE and s_face_closing = '1')
-                       or (s_face_state_r = ST_WAIT_SHOT and s_packet_start_r = '0') then
+                       or (s_face_state_r = ST_WAIT_SHOT
+                           and s_packet_start_r = '0'
+                           and s_packet_start_comb = '0') then
                         s_shot_deferred_r <= '1';
                     end if;
-                elsif i_shot_start_raw = '1' and s_shot_deferred_r = '1' then
+                elsif s_shot_raw_pulse = '1' and s_shot_deferred_r = '1' then
                     s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
                 end if;
 
@@ -539,15 +595,21 @@ begin
                     end if;
                 end if;
 
-                -- Registered shot acceptance
-                if (s_face_state_r = ST_WAIT_SHOT
-                        and (i_shot_start_raw = '1' or s_shot_deferred_r = '1')
-                        and i_cmd_stop = '0')
-                   or (s_face_active_r = '1'
-                        and s_frame_done_both = '0'
-                        and s_face_closing = '0'
-                        and i_cmd_stop = '0'
-                        and i_shot_start_raw = '1') then
+                -- Registered shot acceptance (Round 11 item 1: 1-cycle pulse).
+                -- WAIT_SHOT accept -> pending fires concurrent with the 1-cycle
+                --   s_packet_start_r. Downstream gated pulse appears one cycle
+                --   later (aligned with IN_FACE / face_active = '1').
+                -- IN_FACE accept -> pending fires on the rising edge of raw.
+                -- Both paths produce exactly one pending='1' cycle per shot,
+                -- so p_global_shot_seq / p_face_shot_cnt cannot double-increment
+                -- regardless of raw pulse width.
+                if s_packet_start_r = '1' then
+                    s_shot_pending_r <= '1';
+                elsif s_face_active_r = '1'
+                      and s_frame_done_both = '0'
+                      and s_face_closing = '0'
+                      and i_cmd_stop = '0'
+                      and s_shot_raw_pulse = '1' then
                     s_shot_pending_r <= '1';
                 else
                     s_shot_pending_r <= '0';

@@ -70,7 +70,10 @@ entity tdc_gpx_cell_pipe is
         o_slice_fall_timeout    : out std_logic_vector(c_N_CHIPS-1 downto 0);
         -- Round 11 C: distinct stop_id error cause (separate from hit overflow)
         o_stop_id_error         : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_stop_id_fall_error    : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        o_stop_id_fall_error    : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        -- Round 11 item 4: per-chip cell_builder QUARANTINE escalation sticky.
+        o_quarantine_escape_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_quarantine_escape_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
 end entity tdc_gpx_cell_pipe;
 
@@ -212,28 +215,47 @@ begin
     ---------------------------------------------------------------------------
     -- Cell builders (rising + falling) -- one generate for all 4 chips
     ---------------------------------------------------------------------------
-    -- NOTE: cell_builder o_s_axis_tready is monitored but NOT used for
-    -- upstream backpressure. The system guarantees shot_start arrives before
-    -- data, so cell_builder is always in ST_C_ACTIVE when data arrives.
-    -- If this assumption breaks, the assertion below will fire in simulation.
+    -- Round 11 item 8: the pre-Round-11 comment claimed cell_builder's
+    -- o_s_axis_tready was monitored but NOT used for upstream backpressure.
+    -- That was incorrect — the backpressure chain IS wired through:
+    --
+    --   cell_builder.o_s_axis_tready → s_rise_tready / s_fall_tready
+    --     → s_rise_free / s_fall_free (= slot-empty OR downstream-ready)
+    --     → s_can_accept_comb (gated by incoming-valid + beat-type)
+    --     → s_can_accept_r  (1-cycle registered for timing closure)
+    --     → o_evt_sk_tready (actual upstream backpressure)
+    --
+    -- The 1-cycle register is tolerated by the 1-slot holding register
+    -- (s_rise_valid_r / s_fall_valid_r) inside p_slope_demux, which acts
+    -- as the first-beat absorb skid recommended by the review:
+    --   - If cell_builder is in ST_C_IDLE and a beat arrives before
+    --     shot_start, it is latched here and held until cell_builder
+    --     enters ST_C_ACTIVE. No data loss.
+    --   - Upstream is throttled via o_evt_sk_tready while the slot is
+    --     full, so subsequent beats cannot overwrite the held one.
+    --
+    -- The warning assert below is retained as a DIAGNOSTIC: it fires
+    -- whenever a beat waits for cell_builder (e.g. arrived before
+    -- shot_start, or during a DROP→QUARANTINE transition). Not an error.
     ---------------------------------------------------------------------------
     gen_chip : for i in 0 to c_N_CHIPS-1 generate
     begin
 
-        -- Simulation-only drop detection (Round 5 #22):
-        -- Moved from concurrent-region assertions that used rising_edge()
-        -- (tool-fragile / lint-unfriendly) to a proper clocked process so
-        -- the same edge-triggered check uses the standard synchronous form.
+        -- Simulation-only timing observability. Fires when a beat is held
+        -- in the cell_pipe skid waiting for cell_builder readiness. This
+        -- is the intended behavior of the first-beat absorb register and
+        -- not a data-loss condition (upstream backpressure kicks in via
+        -- s_can_accept_r, so the slot cannot be overrun).
         -- synthesis translate_off
         p_drop_assert : process(i_clk)
         begin
             if rising_edge(i_clk) then
                 assert not (s_rise_valid_r(i) = '1' and s_rise_tready(i) = '0')
-                    report "WARN: cell_builder rise(" & integer'image(i) & ") not ready when data valid"
-                    severity warning;
+                    report "INFO: cell_pipe rise(" & integer'image(i) & ") skid holding beat for cell_builder"
+                    severity note;
                 assert not (s_fall_valid_r(i) = '1' and s_fall_tready(i) = '0')
-                    report "WARN: cell_builder fall(" & integer'image(i) & ") not ready when data valid"
-                    severity warning;
+                    report "INFO: cell_pipe fall(" & integer'image(i) & ") skid holding beat for cell_builder"
+                    severity note;
             end if;
         end process p_drop_assert;
         -- synthesis translate_on
@@ -263,7 +285,8 @@ begin
                 o_hit_dropped_any   => o_hit_dropped(i),
                 o_shot_dropped      => o_shot_dropped(i),
                 o_slice_timeout     => o_slice_timeout(i),
-                o_stop_id_error     => o_stop_id_error(i)
+                o_stop_id_error     => o_stop_id_error(i),
+                o_quarantine_escape_sticky => o_quarantine_escape_rise(i)
             );
 
         -- Falling-slope cell builder
@@ -291,7 +314,8 @@ begin
                 o_hit_dropped_any   => o_hit_fall_dropped(i),
                 o_shot_dropped      => o_shot_fall_dropped(i),
                 o_slice_timeout     => o_slice_fall_timeout(i),
-                o_stop_id_error     => o_stop_id_fall_error(i)
+                o_stop_id_error     => o_stop_id_fall_error(i),
+                o_quarantine_escape_sticky => o_quarantine_escape_fall(i)
             );
 
     end generate gen_chip;

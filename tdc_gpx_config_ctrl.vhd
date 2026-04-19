@@ -211,6 +211,8 @@ entity tdc_gpx_config_ctrl is
 
         -- Round 5 follow-up: pipeline-wide sticky observability (from sub-blocks)
         o_err_read_timeout   : out std_logic;  -- err_handler ST_WAIT_READ watchdog fired
+        -- Round 11 item 11: separate sticky for ST_WAIT_FRAME_DONE escape
+        o_err_frame_wait_escape : out std_logic;
         o_reg_rejected       : out std_logic;  -- cmd_arb overlap queue full (request lost)
         o_reg_zero_mask      : out std_logic;  -- cmd_arb got zero chip_mask request
 
@@ -221,6 +223,12 @@ entity tdc_gpx_config_ctrl is
         -- Round 11 C: Category C observability surface
         o_reg_timeout_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
         o_run_timeout_cause  : out std_logic_vector(2 downto 0);              -- chip_run last timeout cause (OR-aggregated)
+
+        -- Round 11 item 10: stop_cfg_decode monotonic violation sticky.
+        o_mono_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+        -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky.
+        o_init_cfg_coalesced_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
         -- =====================================================================
         -- Interrupt
@@ -334,6 +342,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- Round 11 C: per-chip timeout_cause + aggregated "last cause" signal
     type t_timeout_cause_arr is array (0 to c_N_CHIPS - 1) of std_logic_vector(2 downto 0);
     signal s_run_timeout_cause     : t_timeout_cause_arr;
+    -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
+    signal s_init_cfg_coalesced    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_last_r : std_logic_vector(2 downto 0) := (others => '0');
     signal s_reg_arb_timeout   : std_logic;
 
@@ -457,15 +467,51 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- documented contract (SW holds these stable for several i_tdc_clk cycles
     -- before issuing the related command pulse); a full xpm_cdc_handshake
     -- refactor is tracked as a follow-up if atomicity ever fails in test.
+    --
+    -- Round 11 item 9: explicit atomicity contract.
+    --   The per-bit metastability guarantee is bounded by the ASYNC_REG
+    --   attribute + 2 register stages. Per-bundle atomicity however is a
+    --   SOFTWARE RESPONSIBILITY:
+    --     1. SW writes CFG register fields in the AXI-Lite domain.
+    --     2. SW MUST wait long enough for the new values to propagate
+    --        through the 2-FF sync (> 3 i_tdc_clk periods) before issuing
+    --        any command pulse (cmd_start, cmd_cfg_write, cmd_reg_rw, ...).
+    --     3. Commands cross via xpm_cdc_pulse (~4 dest cycles on top of the
+    --        sync); by then the bundle has already settled.
+    --   If SW violates this contract (writes CFG + pulses command in the
+    --   same AXI-Lite transaction), some fields may be sampled old and
+    --   others new on the TDC side. Run-critical fields that tolerate
+    --   this skew poorly (geometry: stops_per_chip, cols_per_face,
+    --   n_faces, active_chip_mask, max_hits_cfg) are additionally latched
+    --   at packet_start inside face_seq (see s_cfg_face_r), giving a
+    --   second settle window before they are consumed.
     -- =========================================================================
-    signal s_cfg_meta_r             : t_tdc_cfg          := c_TDC_CFG_INIT;
-    signal s_cfg_image_meta_r       : t_cfg_image        := (others => (others => '0'));
+    -- Round 11 item 9: atomic CDC handshake for cfg + cfg_image. 2-FF
+    -- sync signals are removed — the handshake flattens the bundle into
+    -- a fixed-width vector and guarantees atomic delivery on the dest
+    -- clock (matches the existing Round 9 #5 cmd_reg handshake pattern).
+    --
+    -- Two independent handshakes (one per bundle) because the two change
+    -- rates differ: cfg is AXI-Lite register writes; cfg_image is raw
+    -- register overrides. Combining them would couple unrelated SW
+    -- updates into a single transfer slot.
+    signal s_cfg_src_packed   : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0);
+    signal s_cfg_dst_packed   : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0) := (others => '0');
+    signal s_cfg_src_send_r   : std_logic := '0';
+    signal s_cfg_src_rcv      : std_logic;
+    signal s_cfg_dst_req      : std_logic;
+    signal s_cfg_d1_r         : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0) := (others => '1');
+
+    -- cfg_image is an array of 8 × 32-bit words = 256 bits.
+    constant c_CFG_IMAGE_BITS : natural := 8 * 32;
+    signal s_cfg_image_src_packed : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0);
+    signal s_cfg_image_dst_packed : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0) := (others => '0');
+    signal s_cfg_image_src_send_r : std_logic := '0';
+    signal s_cfg_image_src_rcv    : std_logic;
+    signal s_cfg_image_dst_req    : std_logic;
+    signal s_cfg_image_d1_r       : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0) := (others => '1');
 
     attribute ASYNC_REG : string;
-    attribute ASYNC_REG of s_cfg_meta_r             : signal is "TRUE";
-    attribute ASYNC_REG of s_cfg_tdc                : signal is "TRUE";
-    attribute ASYNC_REG of s_cfg_image_meta_r       : signal is "TRUE";
-    attribute ASYNC_REG of s_cfg_image_tdc          : signal is "TRUE";
 
     -- Round 9 #5: cmd_reg bundle moved from 2-FF sync to xpm_cdc_handshake.
     -- Per-reg-op the bundle changes every time SW issues a read/write, so
@@ -609,6 +655,12 @@ begin
     -- Round 6 B1: surface per-chip stickies to top
     o_err_reg_overflow    <= s_err_reg_overflow_axi;
     o_run_drain_complete  <= s_run_drain_complete_axi;
+    -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky.
+    -- NOTE: this is in TDC clock domain (chip_ctrl output). No CDC for now
+    -- because observability is not latency-critical; SW polls occasionally.
+    -- If cross-domain sampling causes metastability concerns, wrap in a
+    -- 2-FF sync later.
+    o_init_cfg_coalesced_mask <= s_init_cfg_coalesced;
 
     -- =========================================================================
     -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
@@ -774,7 +826,8 @@ begin
             o_err_chip_mask      => o_err_chip_mask,
             o_err_cause          => o_err_cause,
             o_err_fatal          => o_err_fatal,
-            o_err_read_timeout   => o_err_read_timeout  -- surfaced to top via config_ctrl port
+            o_err_read_timeout   => o_err_read_timeout,  -- surfaced to top via config_ctrl port
+            o_err_frame_wait_escape => o_err_frame_wait_escape  -- Round 11 item 11
         );
 
     -- =========================================================================
@@ -794,7 +847,8 @@ begin
             o_expected_ififo2  => s_expected_ififo2,
             i_cfg              => s_cfg_merged,
             i_cfg_image_raw    => s_cfg_image_raw,
-            o_cfg_image        => o_cfg_image
+            o_cfg_image        => o_cfg_image,
+            o_monotonic_violation_mask => o_mono_violation_mask
         );
 
     -- =========================================================================
@@ -874,33 +928,112 @@ begin
         );
 
     -- =========================================================================
-    -- CDC Stage 3: Quasi-static config snapshot (AXI-Stream -> TDC)
+    -- CDC Stage 3: Atomic config snapshot (AXI-Stream -> TDC) — Round 11 item 9
     --
-    -- 2-FF synchronizer pipeline (Round 5 #7):
-    --   Stage 1 (_meta_r): direct capture from AXI-domain source; may go
-    --                      metastable on any bit transitioning at the edge.
-    --   Stage 2 (_tdc)   : resampled value with metastability resolved.
-    --   ASYNC_REG on both stages marks them as a known synchronizer so Vivado
-    --   does not optimize/relocate and reports CDC paths cleanly.
+    -- Replaces the Round 5 #7 2-FF bundle sync. Each bundle crosses via its
+    -- own xpm_cdc_handshake (same pattern as Round 9 #5 cmd_reg). Change
+    -- detection on the source side triggers src_send; the handshake
+    -- guarantees the destination sees a coherent snapshot with no torn
+    -- fields — per-bit metastability AND per-bundle atomicity are now
+    -- structurally protected.
     --
-    -- Atomicity contract (unchanged):
-    --   SW writes config values, then issues a command pulse. Commands cross
-    --   via xpm_cdc_pulse (~2-4 dest cycles) and the CDC'd pulse arrives in
-    --   TDC after the two sync stages have already resolved the new config.
-    --   Per-bit metastability is prevented; per-bundle atomicity still relies
-    --   on SW holding the payload stable across the handshake window.
+    -- SW timing contract is relaxed: writing CFG + pulsing a command in
+    -- the same AXI-Lite transaction is now safe (previously the 2-FF sync
+    -- could torn-sample a mid-update bundle).
     -- =========================================================================
-    p_tdc_cfg_sync : process(i_tdc_clk)
+
+    -- Pack t_tdc_cfg into the handshake payload.
+    s_cfg_src_packed <= fn_pack_tdc_cfg(s_cfg_merged);
+
+    -- Pack cfg_image (8 × 32-bit) into the handshake payload.
+    gen_cfg_image_pack : for i in 0 to 7 generate
+        s_cfg_image_src_packed(32 * (i + 1) - 1 downto 32 * i) <= o_cfg_image(i);
+    end generate;
+
+    u_cdc_cfg : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK   => 1,
+            DEST_SYNC_FF   => 4,
+            INIT_SYNC_FF   => 0,
+            SIM_ASSERT_CHK => 0,
+            SRC_SYNC_FF    => 4,
+            WIDTH          => c_TDC_CFG_BITS
+        )
+        port map (
+            src_clk  => i_axis_aclk,
+            src_in   => s_cfg_src_packed,
+            src_send => s_cfg_src_send_r,
+            src_rcv  => s_cfg_src_rcv,
+            dest_clk => i_tdc_clk,
+            dest_req => s_cfg_dst_req,
+            dest_ack => s_cfg_dst_req,
+            dest_out => s_cfg_dst_packed
+        );
+
+    u_cdc_cfg_image : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK   => 1,
+            DEST_SYNC_FF   => 4,
+            INIT_SYNC_FF   => 0,
+            SIM_ASSERT_CHK => 0,
+            SRC_SYNC_FF    => 4,
+            WIDTH          => c_CFG_IMAGE_BITS
+        )
+        port map (
+            src_clk  => i_axis_aclk,
+            src_in   => s_cfg_image_src_packed,
+            src_send => s_cfg_image_src_send_r,
+            src_rcv  => s_cfg_image_src_rcv,
+            dest_clk => i_tdc_clk,
+            dest_req => s_cfg_image_dst_req,
+            dest_ack => s_cfg_image_dst_req,
+            dest_out => s_cfg_image_dst_packed
+        );
+
+    -- Source-side send control: trigger new handshake on payload change.
+    p_cfg_send : process(i_axis_aclk)
     begin
-        if rising_edge(i_tdc_clk) then
-            -- Stage 1: first capture (potentially metastable)
-            s_cfg_meta_r             <= s_cfg_merged;
-            s_cfg_image_meta_r       <= o_cfg_image;
-            -- Stage 2: resampled (stable for TDC logic)
-            s_cfg_tdc                <= s_cfg_meta_r;
-            s_cfg_image_tdc          <= s_cfg_image_meta_r;
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_cfg_src_send_r <= '0';
+                s_cfg_d1_r       <= (others => '1');
+            else
+                if s_cfg_src_send_r = '0' and s_cfg_src_packed /= s_cfg_d1_r then
+                    s_cfg_src_send_r <= '1';
+                    s_cfg_d1_r       <= s_cfg_src_packed;
+                elsif s_cfg_src_rcv = '1' then
+                    s_cfg_src_send_r <= '0';
+                end if;
+            end if;
         end if;
-    end process p_tdc_cfg_sync;
+    end process p_cfg_send;
+
+    p_cfg_image_send : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_cfg_image_src_send_r <= '0';
+                s_cfg_image_d1_r       <= (others => '1');
+            else
+                if s_cfg_image_src_send_r = '0'
+                    and s_cfg_image_src_packed /= s_cfg_image_d1_r then
+                    s_cfg_image_src_send_r <= '1';
+                    s_cfg_image_d1_r       <= s_cfg_image_src_packed;
+                elsif s_cfg_image_src_rcv = '1' then
+                    s_cfg_image_src_send_r <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_cfg_image_send;
+
+    -- Unpack destination-side handshake output into the TDC-domain
+    -- record and array. These are combinational (the handshake already
+    -- presents a registered, stable output on dest_out).
+    s_cfg_tdc <= fn_unpack_tdc_cfg(s_cfg_dst_packed);
+
+    gen_cfg_image_unpack : for i in 0 to 7 generate
+        s_cfg_image_tdc(i) <= s_cfg_image_dst_packed(32 * (i + 1) - 1 downto 32 * i);
+    end generate;
 
     -- =========================================================================
     -- Round 9 #5: cmd_reg bundle atomic transfer via xpm_cdc_handshake.
@@ -1360,7 +1493,8 @@ begin
                 o_err_raw_overflow  => s_err_raw_overflow(i),
                 o_err_reg_overflow  => s_err_reg_overflow(i),  -- Round 6 B1: CDC'd below
                 o_run_timeout       => s_run_timeout(i),
-                o_run_timeout_cause => s_run_timeout_cause(i)
+                o_run_timeout_cause => s_run_timeout_cause(i),
+                o_init_cfg_coalesced => s_init_cfg_coalesced(i)
             );
 
         -- ----- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk) -----

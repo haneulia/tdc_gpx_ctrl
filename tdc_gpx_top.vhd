@@ -312,6 +312,7 @@ architecture rtl of tdc_gpx_top is
     signal s_reg_arb_timeout      : std_logic;
     -- Round 5 follow-up: pipeline-wide sticky observability
     signal s_err_read_timeout     : std_logic;
+    signal s_err_frame_wait_escape : std_logic;  -- Round 11 item 11
     signal s_reg_rejected         : std_logic;
     signal s_reg_zero_mask        : std_logic;
     -- Round 6 B1: per-chip observability (CDC'd to AXI-S by config_ctrl)
@@ -319,17 +320,29 @@ architecture rtl of tdc_gpx_top is
     signal s_run_drain_complete   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Round 6 follow-up: per-slope face_assembler stickies (AXI-Stream domain)
     signal s_shot_flush_drop_rise    : std_logic;
+    signal s_shot_flush_drop_mask_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_flush_drop_mask_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_shot_flush_drop_fall    : std_logic;
     signal s_shot_overrun_count_rise : unsigned(7 downto 0);
     signal s_shot_overrun_count_fall : unsigned(7 downto 0);
     -- Round 11 C: Category C observability surface
     signal s_reg_timeout_mask        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 11 item 10: per-chip stop_cfg_decode monotonic violation sticky
+    signal s_mono_violation_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
+    signal s_init_cfg_coalesced_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_last  : std_logic_vector(2 downto 0);
     signal s_hdr_face_start_collapsed_rise : unsigned(7 downto 0);
+    signal s_hdr_drain_timeout_rise : std_logic;
+    signal s_hdr_drain_timeout_fall : std_logic;
     signal s_hdr_face_start_collapsed_fall : unsigned(7 downto 0);
     -- cell_pipe stop_id_error per-chip (rise and fall); sticky aggregation below
     signal s_stop_id_error_rise   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_stop_id_error_fall   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 11 item 4: cell_builder QUARANTINE escalation sticky, per chip / slope
+    signal s_quarantine_escape_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_quarantine_escape_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_quarantine_escape_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_stop_id_error_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
@@ -504,6 +517,7 @@ begin
             o_reg_arb_timeout    => s_reg_arb_timeout,
             -- Round 5 follow-up: pipeline-wide observability stickies
             o_err_read_timeout   => s_err_read_timeout,
+            o_err_frame_wait_escape => s_err_frame_wait_escape,
             o_reg_rejected       => s_reg_rejected,
             o_reg_zero_mask      => s_reg_zero_mask,
             -- Round 6 B1: per-chip observability (CDC'd inside config_ctrl)
@@ -512,6 +526,10 @@ begin
             -- Round 11 C: Category C observability surface
             o_reg_timeout_mask   => s_reg_timeout_mask,
             o_run_timeout_cause  => s_run_timeout_cause_last,
+            -- Round 11 item 10: stop_cfg_decode monotonic violation sticky
+            o_mono_violation_mask => s_mono_violation_mask,
+            -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
+            o_init_cfg_coalesced_mask => s_init_cfg_coalesced_mask,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -564,7 +582,10 @@ begin
             i_abort_rise            => s_pipeline_abort_rise,  -- #22 Sprint 2
             i_abort_fall            => s_pipeline_abort_fall,  -- #22 Sprint 2
             i_face_stops_per_chip   => s_face_stops_per_chip_r,
-            i_max_hits_cfg          => s_cfg.max_hits_cfg,
+            -- Round 11 item 2: use face snapshot (latched at packet_start)
+            -- instead of live s_cfg, so cell_builder's beat-per-cell lookup
+            -- stays aligned with the header metadata for the same face.
+            i_max_hits_cfg          => s_cfg_face_r.max_hits_cfg,
             -- Rising cell output
             o_cell_rise_tdata_0     => s_cell_rise_tdata_0,
             o_cell_rise_tdata_1     => s_cell_rise_tdata_1,
@@ -590,7 +611,10 @@ begin
             o_slice_fall_timeout    => s_slice_fall_timeout,
             -- Round 11 C: distinct stop_id_error per-chip (separate from hit overflow)
             o_stop_id_error         => s_stop_id_error_rise,
-            o_stop_id_fall_error    => s_stop_id_error_fall
+            o_stop_id_fall_error    => s_stop_id_error_fall,
+            -- Round 11 item 4: per-chip cell_builder QUARANTINE escalation sticky
+            o_quarantine_escape_rise => s_quarantine_escape_rise,
+            o_quarantine_escape_fall => s_quarantine_escape_fall
         );
 
     -- =========================================================================
@@ -629,8 +653,11 @@ begin
             -- Configuration (latched at face_start)
             i_face_active_mask   => s_face_active_mask_r,
             i_face_stops_per_chip => s_face_stops_per_chip_r,
-            i_max_hits_cfg       => s_cfg.max_hits_cfg,
-            i_max_scan_clks      => s_cfg.max_scan_clks,
+            -- Round 11 item 2: use face snapshot so output_stage's beat count
+            -- and scan-timeout match header metadata and cell_builder within
+            -- the same face (both driven by s_cfg_face_r).
+            i_max_hits_cfg       => s_cfg_face_r.max_hits_cfg,
+            i_max_scan_clks      => s_cfg_face_r.max_scan_clks,
             i_rows_per_face      => s_rows_per_face_r,
             -- Header metadata
             i_cfg_face           => s_cfg_face_r,
@@ -685,11 +712,17 @@ begin
             -- Round 6 follow-up: per-slope face_assembler observability
             o_shot_flush_drop_rise    => s_shot_flush_drop_rise,
             o_shot_flush_drop_fall    => s_shot_flush_drop_fall,
+            -- Round 11 item 15: per-chip breakdown of shot_flush_drop stickies
+            o_shot_flush_drop_mask_rise => s_shot_flush_drop_mask_rise,
+            o_shot_flush_drop_mask_fall => s_shot_flush_drop_mask_fall,
             o_shot_overrun_count_rise => s_shot_overrun_count_rise,
             o_shot_overrun_count_fall => s_shot_overrun_count_fall,
             -- Round 11 C: per-slope header_inserter face_start collapse count
             o_hdr_face_start_collapsed_rise => s_hdr_face_start_collapsed_rise,
-            o_hdr_face_start_collapsed_fall => s_hdr_face_start_collapsed_fall
+            o_hdr_face_start_collapsed_fall => s_hdr_face_start_collapsed_fall,
+            -- Round 11 item 3: header_inserter drain-watchdog sticky per slope
+            o_hdr_drain_timeout_rise => s_hdr_drain_timeout_rise,
+            o_hdr_drain_timeout_fall => s_hdr_drain_timeout_fall
         );
 
     -- =========================================================================
@@ -816,6 +849,7 @@ begin
     s_status.reg_arb_timeout     <= s_reg_arb_timeout;
     -- Round 5 follow-up: newly exposed stickies
     s_status.err_read_timeout    <= s_err_read_timeout;
+    s_status.err_frame_wait_escape <= s_err_frame_wait_escape;
     s_status.reg_rejected        <= s_reg_rejected;
     s_status.reg_zero_mask       <= s_reg_zero_mask;
     -- Round 6 B1: per-chip stickies now CDC'd through config_ctrl
@@ -833,6 +867,36 @@ begin
     s_status.run_timeout_cause_last  <= s_run_timeout_cause_last;
     s_status.rise_face_start_collapsed_count <= s_hdr_face_start_collapsed_rise;
     s_status.fall_face_start_collapsed_count <= s_hdr_face_start_collapsed_fall;
+    -- Round 11 item 3: header_inserter drain-watchdog sticky.
+    s_status.rise_hdr_drain_timeout <= s_hdr_drain_timeout_rise;
+    s_status.fall_hdr_drain_timeout <= s_hdr_drain_timeout_fall;
+
+    -- Round 11 item 4: aggregate cell_builder QUARANTINE escalation stickies.
+    -- cell_builder's internal sticky is only cleared by its own i_rst_n so
+    -- s_err_soft_clear cannot reset this mask — SW must re-issue pipeline
+    -- reset to clear. The OR-into-latch is still useful: it lets STAT read
+    -- either slope's event on a single per-chip bit.
+    p_quarantine_escape_mask : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_quarantine_escape_mask_r <= (others => '0');
+            else
+                s_quarantine_escape_mask_r <= s_quarantine_escape_mask_r
+                                              or s_quarantine_escape_rise
+                                              or s_quarantine_escape_fall;
+            end if;
+        end if;
+    end process p_quarantine_escape_mask;
+    s_status.quarantine_escape_mask <= s_quarantine_escape_mask_r;
+
+    -- Round 11 item 10: stop_cfg_decode monotonic violation sticky
+    s_status.mono_violation_mask <= s_mono_violation_mask;
+    -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
+    s_status.init_cfg_coalesced_mask <= s_init_cfg_coalesced_mask;
+    -- Round 11 item 15: per-chip shot_flush_drop mask (OR of rise+fall slopes)
+    s_status.shot_flush_drop_mask <=
+        s_shot_flush_drop_mask_rise or s_shot_flush_drop_mask_fall;
 
     -- stop_id_error_mask: per-chip sticky aggregating rise + fall pulses.
     p_stop_id_error_sticky : process(i_axis_aclk)

@@ -126,7 +126,12 @@ entity tdc_gpx_face_assembler is
         o_face_abort         : out std_logic;    -- stub '0' (see DEPRECATED note above)
         o_idle               : out std_logic;    -- '1' when FSM is in ST_IDLE
         -- Trace / status (Round 5 #15 #16)
-        o_shot_flush_drop    : out std_logic;    -- sticky: shot_start flush dropped old-shot input FIFO data
+        o_shot_flush_drop    : out std_logic;    -- sticky: any chip had old-shot tail dropped
+        -- Round 11 item 15: per-chip breakdown of the above sticky.
+        -- Bit i = '1' (latched) if chip i's input FIFO still held data at
+        -- the moment shot_start flushed. The OR-reduction of this mask is
+        -- what o_shot_flush_drop exposes.
+        o_shot_flush_drop_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_shot_overrun_count : out unsigned(7 downto 0)  -- wrapping count of mid-shot overruns (blank-fill invocations)
     );
 end entity tdc_gpx_face_assembler;
@@ -240,7 +245,8 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_face_abort_r    : std_logic := '0';
     signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
     -- Round 5 #15/#16 trace counters / stickies
-    signal s_shot_flush_drop_r  : std_logic := '0';  -- sticky: shot_start flushed non-empty FIFO
+    signal s_shot_flush_drop_r      : std_logic := '0';  -- sticky: shot_start flushed non-empty FIFO
+    signal s_shot_flush_drop_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');  -- Round 11 item 15: per-chip
     signal s_shot_overrun_cnt_r : unsigned(7 downto 0) := (others => '0');  -- wrapping mid-shot overrun count
 
     -- =========================================================================
@@ -373,6 +379,21 @@ begin
     -- Late-arriving beats from previous shot are intentionally dropped.
     -- This policy prioritizes shot boundary integrity over data completeness.
     -- Drops are reflected in top-level frame_abort_count / shot_drop_count.
+    --
+    -- Round 11 item 15: observability cause distinction.
+    --   s_shot_flush_drop_r (per-slope) fires when shot_start flushes
+    --   while any input FIFO held data (i.e. old-shot tail present).
+    --   The abort path does NOT set this sticky — abort is explicit SW
+    --   intent, not boundary drift. That separation is already present
+    --   (see the guard `i_shot_start='1' and s_in_tvalid /= "0000"`
+    --   below which excludes the abort-only flush case).
+    --
+    --   Per-chip breakdown of WHICH input FIFO still had data would
+    --   require s_shot_flush_drop_mask_r[c_N_CHIPS]; it is not added
+    --   here because SW typically only needs the binary indication
+    --   "is the pipeline losing shot-boundary alignment?" to trigger a
+    --   full re-init. Per-chip resolution can be added later if a
+    --   specific chip's stream needs fault isolation.
     s_flush          <= i_shot_start or i_abort;
     s_fifo_rst_n     <= i_rst_n and (not s_flush);         -- input FIFOs: flush on shot_start + abort
     s_out_fifo_rst_n <= i_rst_n and (not i_abort);         -- output FIFO: flush on abort ONLY
@@ -443,6 +464,7 @@ begin
                 s_face_abort_r   <= '0';
                 s_shot_pending_r <= '0';
                 s_shot_flush_drop_r  <= '0';
+                s_shot_flush_drop_mask_r <= (others => '0');
                 s_shot_overrun_cnt_r <= (others => '0');
                 s_fwd_stall_cnt_r    <= (others => '0');
             else
@@ -458,6 +480,10 @@ begin
                 -- they are explicit SW intent, not boundary drift.)
                 if i_shot_start = '1' and s_in_tvalid /= "0000" then
                     s_shot_flush_drop_r <= '1';
+                    -- Round 11 item 15: record WHICH chips had data pending
+                    -- so SW can isolate a faulty chip stream.
+                    s_shot_flush_drop_mask_r <=
+                        s_shot_flush_drop_mask_r or s_in_tvalid;
                 end if;
 
                 -- Default: deassert pipe valid after handshake
@@ -807,7 +833,8 @@ begin
     -- 1-cycle feedback path concern from #18 is therefore moot.
     o_face_abort       <= s_face_abort_r;
     o_idle             <= '1' when s_state_r = ST_IDLE else '0';
-    o_shot_flush_drop    <= s_shot_flush_drop_r;
+    o_shot_flush_drop      <= s_shot_flush_drop_r;
+    o_shot_flush_drop_mask <= s_shot_flush_drop_mask_r;
     o_shot_overrun_count <= s_shot_overrun_cnt_r;
 
 end architecture rtl;
