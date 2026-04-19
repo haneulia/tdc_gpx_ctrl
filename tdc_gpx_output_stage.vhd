@@ -121,7 +121,13 @@ entity tdc_gpx_output_stage is
         o_face_tvalid          : out std_logic;   -- face_asm output valid (pre-FIFO)
         o_face_fall_tvalid     : out std_logic;   -- face_asm_fall output valid (pre-FIFO)
         o_face_buf_tvalid      : out std_logic;   -- post-FIFO valid (rising)
-        o_face_fall_buf_tvalid : out std_logic    -- post-FIFO valid (falling)
+        o_face_fall_buf_tvalid : out std_logic;   -- post-FIFO valid (falling)
+
+        -- Round 5/6 per-slope face_assembler observability (both AXI-Stream domain)
+        o_shot_flush_drop_rise : out std_logic;                       -- rise shot_start drop sticky
+        o_shot_flush_drop_fall : out std_logic;                       -- fall shot_start drop sticky
+        o_shot_overrun_count_rise : out unsigned(7 downto 0);        -- rise blank-fill wrap count
+        o_shot_overrun_count_fall : out unsigned(7 downto 0)         -- fall blank-fill wrap count
     );
 end entity tdc_gpx_output_stage;
 
@@ -214,8 +220,8 @@ begin
             o_shot_overrun     => o_shot_overrun,
             o_face_abort       => o_face_abort,
             o_idle             => o_face_asm_idle,
-            o_shot_flush_drop    => open,  -- Round 5 #15 sticky; not yet surfaced
-            o_shot_overrun_count => open   -- Round 5 #16 wrap-count; not yet surfaced
+            o_shot_flush_drop    => o_shot_flush_drop_rise,
+            o_shot_overrun_count => o_shot_overrun_count_rise
         );
 
     -- =========================================================================
@@ -251,8 +257,8 @@ begin
             o_shot_overrun     => o_shot_fall_overrun,
             o_face_abort       => o_face_fall_abort,
             o_idle             => o_face_asm_fall_idle,
-            o_shot_flush_drop    => open,  -- Round 5 #15 sticky; not yet surfaced
-            o_shot_overrun_count => open   -- Round 5 #16 wrap-count; not yet surfaced
+            o_shot_flush_drop    => o_shot_flush_drop_fall,
+            o_shot_overrun_count => o_shot_overrun_count_fall
         );
 
     -- =========================================================================

@@ -219,6 +219,28 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT_SEQ_ERR_LO       : natural := 12;
 
     -- =========================================================================
+    -- STAT6 (Round 5 / Round 6 observability)
+    -- csr_pipeline register at 0x58 (7-bit addr space).
+    -- Pipeline-wide stickies + per-chip/per-slope stickies + wrap counters.
+    -- =========================================================================
+    constant c_ADDR_STATUS_EXT       : natural := 16#58#;  -- STAT6 (pipeline CSR)
+
+    constant c_STAT6_ERR_READ_TIMEOUT  : natural := 0;   -- err_handler watchdog
+    constant c_STAT6_REG_REJECTED      : natural := 1;   -- cmd_arb queue overflow
+    constant c_STAT6_REG_ZERO_MASK     : natural := 2;   -- cmd_arb zero-mask req
+    constant c_STAT6_SHOT_FLUSH_DROP_RISE : natural := 3;
+    constant c_STAT6_SHOT_FLUSH_DROP_FALL : natural := 4;
+    -- bits [7:5] reserved
+    constant c_STAT6_OVRUN_CNT_RISE_HI : natural := 15;  -- rise shot_overrun count [7:0]
+    constant c_STAT6_OVRUN_CNT_RISE_LO : natural := 8;
+    constant c_STAT6_OVRUN_CNT_FALL_HI : natural := 23;  -- fall shot_overrun count [7:0]
+    constant c_STAT6_OVRUN_CNT_FALL_LO : natural := 16;
+    constant c_STAT6_ERR_REG_OVR_HI    : natural := 27;  -- err_reg_overflow_mask[3:0]
+    constant c_STAT6_ERR_REG_OVR_LO    : natural := 24;
+    constant c_STAT6_RUN_DRAIN_COMP_HI : natural := 31;  -- run_drain_complete_mask[3:0]
+    constant c_STAT6_RUN_DRAIN_COMP_LO : natural := 28;
+
+    -- =========================================================================
     -- Bus timing constraints (TDC-GPX datasheet @ 200 MHz, T_clk = 5 ns)
     --
     -- Datasheet parameters:

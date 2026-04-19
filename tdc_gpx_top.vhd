@@ -317,6 +317,11 @@ architecture rtl of tdc_gpx_top is
     -- Round 6 B1: per-chip observability (CDC'd to AXI-S by config_ctrl)
     signal s_err_reg_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_drain_complete   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 6 follow-up: per-slope face_assembler stickies (AXI-Stream domain)
+    signal s_shot_flush_drop_rise    : std_logic;
+    signal s_shot_flush_drop_fall    : std_logic;
+    signal s_shot_overrun_count_rise : unsigned(7 downto 0);
+    signal s_shot_overrun_count_fall : unsigned(7 downto 0);
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- Error handler status (from config_ctrl)
@@ -661,7 +666,12 @@ begin
             o_face_tvalid          => s_face_tvalid,
             o_face_fall_tvalid     => s_face_fall_tvalid,
             o_face_buf_tvalid      => s_face_buf_tvalid,
-            o_face_fall_buf_tvalid => s_face_fall_buf_tvalid
+            o_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
+            -- Round 6 follow-up: per-slope face_assembler observability
+            o_shot_flush_drop_rise    => s_shot_flush_drop_rise,
+            o_shot_flush_drop_fall    => s_shot_flush_drop_fall,
+            o_shot_overrun_count_rise => s_shot_overrun_count_rise,
+            o_shot_overrun_count_fall => s_shot_overrun_count_fall
         );
 
     -- =========================================================================
@@ -792,12 +802,12 @@ begin
     -- Round 6 B1: per-chip stickies now CDC'd through config_ctrl
     s_status.err_reg_overflow_mask   <= s_err_reg_overflow;
     s_status.run_drain_complete_mask <= s_run_drain_complete;
-    -- Per-slope face_assembler stickies remain as follow-up (need CDC from
-    -- output_stage instance through top). Wire as '0' until that path lands.
-    s_status.rise_shot_flush_drop    <= '0';
-    s_status.fall_shot_flush_drop    <= '0';
-    s_status.rise_shot_overrun_count <= (others => '0');
-    s_status.fall_shot_overrun_count <= (others => '0');
+    -- Round 6 follow-up: per-slope face_assembler stickies (AXI-Stream domain;
+    -- no CDC needed because csr_pipeline packs STAT6 in the same domain).
+    s_status.rise_shot_flush_drop    <= s_shot_flush_drop_rise;
+    s_status.fall_shot_flush_drop    <= s_shot_flush_drop_fall;
+    s_status.rise_shot_overrun_count <= s_shot_overrun_count_rise;
+    s_status.fall_shot_overrun_count <= s_shot_overrun_count_fall;
     s_status.shot_drop_any       <= '1' when (s_shot_dropped or s_shot_fall_dropped)
                                               /= (s_shot_dropped'range => '0') else '0';
     s_status.slice_timeout_any   <= '1' when (s_slice_timeout or s_slice_fall_timeout)
