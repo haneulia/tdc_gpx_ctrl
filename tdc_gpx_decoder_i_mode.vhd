@@ -11,6 +11,7 @@
 --     tdata[27:0]  = 28-bit raw IFIFO word (0 for drain_done beat)
 --     tdata[31:28] = 0 (reserved)
 --     tuser[0]     = ififo_id ('0'=IFIFO1, '1'=IFIFO2)
+--     tuser[5]     = faulted (drain_done beat only; '0' on data beats)
 --     tuser[7]     = drain_done flag ('1' = control beat, no data)
 --
 --   Output AXI-Stream (to raw_event_builder):
@@ -18,7 +19,9 @@
 --     tdata[31:17] = 0 (reserved)
 --     tuser[0]     = slope (edge direction)
 --     tuser[2:1]   = cha_code_raw (2-bit channel within IFIFO)
---     tuser[5:3]   = stop_id_local (0..7, reconstructed from ififo_id + cha_code)
+--     tuser[5:3]   = stop_id_local (0..7, reconstructed from ififo_id + cha_code)  [data beats]
+--     tuser[5]     = faulted (drain_done beat only; overlaps with stop_id_local,
+--                   but the drain_done flag in tuser[7] disambiguates)
 --     tuser[6]     = ififo_id (pass-through)
 --     tuser[7]     = drain_done (pass-through from input)
 --
@@ -89,6 +92,11 @@ begin
                             s_tuser_r    <= (others => '0');
                             s_tuser_r(7) <= '1';                  -- drain_done flag
                             s_tuser_r(6) <= i_s_axis_tuser(0);    -- ififo_id passthrough
+                            -- Round 13 follow-up (audit 4번): carry the
+                            -- faulted flag from chip_ctrl's tuser(5) through
+                            -- unchanged. Overlaps with stop_id_local on data
+                            -- beats, but drain_done (tuser[7]) disambiguates.
+                            s_tuser_r(5) <= i_s_axis_tuser(5);
                         else
                             -- Normal data beat: decode raw word
                             v_raw      := i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);

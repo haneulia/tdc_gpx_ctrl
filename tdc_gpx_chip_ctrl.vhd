@@ -37,6 +37,14 @@
 --   forces onward to PH_IDLE/PH_INIT but sets s_err_drain_cap_r if bus
 --   was still active — SW can diagnose the forced drain.
 --
+-- PH_RESP_DRAIN auto-recover (Round 13 follow-up, audit 3번):
+--   After s_err_bus_fatal_r is latched (quarantine counter reached 65K
+--   with bus still active), a secondary observer tracks how long the bus
+--   has been stably idle. If it stays idle for c_BUS_IDLE_STABLE cycles,
+--   the phase auto-transitions to PH_INIT. This reclaims liveness when
+--   the bus recovers on its own, without relying on SW force_reinit. The
+--   event is logged in s_err_force_reinit_r (shared observability path).
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 
@@ -163,7 +171,13 @@ entity tdc_gpx_chip_ctrl is
         --   tdata[27:0]  = 28-bit raw IFIFO word (0 for drain_done beat)
         --   tdata[31:28] = 0 (zero-padded to 32-bit)
         --   tuser[0]     = ififo_id ('0'=IFIFO1, '1'=IFIFO2)
-        --   tuser[6:1]   = 0 (reserved)
+        --   tuser[4:1]   = 0 (reserved)
+        --   tuser[5]     = faulted flag — only meaningful on drain_done beat
+        --                  ('1' = chip_run's final drain fallback detected a
+        --                   drain-count mismatch; downstream should treat the
+        --                   associated shot as degraded). Always '0' on data
+        --                   beats and on the intermediate IFIFO1-done beat.
+        --   tuser[6]     = 0 (reserved)
         --   tuser[7]     = drain_done flag ('1' = control-only beat, no data)
         o_m_raw_axis_tvalid : out std_logic;
         o_m_raw_axis_tdata  : out std_logic_vector(31 downto 0);
@@ -400,6 +414,17 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- OR-folded into top-level status.err_fatal so it joins the
     -- err_handler fatal path that SW already watches.
     signal s_err_bus_fatal_r        : std_logic := '0';
+    -- Round 13 follow-up (audit 3번): bounded auto-recover from quarantine.
+    -- After s_err_bus_fatal_r is set, if the bus later stabilises at idle
+    -- (busy='0' AND rsp_pending='0') for c_BUS_IDLE_STABLE consecutive
+    -- cycles, auto-transition to PH_INIT. This reclaims liveness when the
+    -- bus recovers on its own without requiring SW force_reinit, while
+    -- still guarding against phase pollution via the idle-stable window.
+    -- The existing s_err_force_reinit_r sticky is set to surface the event
+    -- (SW cannot distinguish auto vs SW-initiated; both imply "bus was
+    -- flushed without full hard reset").
+    constant c_BUS_IDLE_STABLE      : natural := 4096;  -- ~20us @200MHz
+    signal   s_bus_idle_stable_cnt_r : unsigned(12 downto 0) := (others => '0');
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
     signal s_err_cmd_collision_r  : std_logic := '0';  -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision sticky (cmd_arb contract violation)
     -- Round 12 #20: collision vector — records WHICH commands collided.
@@ -619,6 +644,7 @@ begin
                 s_err_stopdis_mid_shot_r <= '0';
                 s_err_bus_fatal_r        <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
+                s_bus_idle_stable_cnt_r  <= (others => '0');
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
             else
@@ -810,6 +836,36 @@ begin
 
                 end case;
 
+                -- Round 13 follow-up (audit 3번): bounded auto-recover after
+                -- s_err_bus_fatal_r is latched. Counter increments only while
+                -- in PH_RESP_DRAIN AND the bus has stabilised at idle. Any
+                -- activity (busy or rsp_pending) resets the counter. When
+                -- the window is reached, transition to PH_INIT and log the
+                -- event in the force_reinit sticky (reusing the existing SW
+                -- observability path). This is strictly additive: if the bus
+                -- never clears, s_bus_idle_stable_cnt_r never reaches the
+                -- threshold and the module stays in quarantine as before.
+                if s_phase_r = PH_RESP_DRAIN and s_err_bus_fatal_r = '1' then
+                    if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
+                        if s_bus_idle_stable_cnt_r <
+                           to_unsigned(c_BUS_IDLE_STABLE, s_bus_idle_stable_cnt_r'length) then
+                            s_bus_idle_stable_cnt_r <= s_bus_idle_stable_cnt_r + 1;
+                        else
+                            s_phase_r                <= PH_INIT;
+                            s_init_start             <= '1';
+                            s_drain_cnt_r            <= (others => '0');
+                            s_drain_to_init_r        <= '0';
+                            s_drain_quarantine_cnt_r <= (others => '0');
+                            s_bus_idle_stable_cnt_r  <= (others => '0');
+                            s_err_force_reinit_r     <= '1';
+                        end if;
+                    else
+                        s_bus_idle_stable_cnt_r <= (others => '0');
+                    end if;
+                else
+                    s_bus_idle_stable_cnt_r <= (others => '0');
+                end if;
+
                 -- Soft reset: global OR per-chip error recovery
                 -- Drain stale responses first, then restart init
                 -- (s_soft_reset_d1_r removed)
@@ -947,7 +1003,15 @@ begin
                     v_new.tuser := "0000000" & s_run_ififo_id;
                 elsif s_run_drain_done = '1' or s_run_ififo1_beat = '1' then
                     v_new.valid := '1';
-                    v_new.tuser := '1' & "000000" & s_run_ififo_id;
+                    -- Round 13 follow-up (audit 4번): tuser(5) carries the
+                    -- drain_done_faulted flag forward so downstream cell_
+                    -- builder / face_assembler can mark the shot as degraded
+                    -- rather than treating it as a clean completion.
+                    -- Only the FINAL drain_done beat carries the flag; the
+                    -- intermediate IFIFO1-done beat always reports '0'.
+                    v_new.tuser := '1' & '0' &
+                                   (s_drain_done_faulted and s_run_drain_done) &
+                                   "0000" & s_run_ififo_id;
                     v_new.drain := s_run_drain_done;
                 end if;
 
@@ -993,15 +1057,12 @@ begin
                     -- Round 13 axis 4: reserve strengthened further.
                     -- History: Round 11 item 6 reserve=1; Round 12 A2 reserve=2;
                     -- Round 13 reserve=3 (data capacity 6−3 = 3).
-                    -- Control beats now need 4+ consecutive pulses to fill
-                    -- their reserve, which does not occur in the chip_run
-                    -- workload (drain_done + ififo1_done = 2 per phase max).
-                    -- A TRUE separate control FIFO with order-preservation
-                    -- (submission-timestamp tagging) was considered but
-                    -- deferred: the LUT cost + re-ordering logic outweighs
-                    -- the marginal benefit given the reserve=3 margin.
-                    -- The s_err_raw_ctrl_drop_r sticky still surfaces any
-                    -- control-beat drop that somehow gets through.
+                    -- Round 13 follow-up (audit 2번): added a DATA-SACRIFICE
+                    -- fallback so control beats NEVER drop while any data
+                    -- beat exists in the FIFO. If the FIFO has filled with
+                    -- earlier control beats only (workload-impossible but
+                    -- structurally possible), the ctrl_drop sticky still
+                    -- fires as a last-resort observability path.
                     if v_new.tuser(7) = '1' then
                         -- Control beat: enqueue if any slot is free.
                         if v_free >= 1 then
@@ -1009,6 +1070,30 @@ begin
                                 if not v_placed and v_fifo(i).valid = '0' then
                                     v_fifo(i) := v_new;
                                     v_placed := true;
+                                end if;
+                            end loop;
+                        else
+                            -- FIFO full: evict the OLDEST data beat (lowest
+                            -- index with tuser(7)='0') and shift the tail
+                            -- down so the control beat lands at the tail.
+                            -- This preserves the relative order of all
+                            -- remaining beats (both data and control). The
+                            -- sacrificed data beat is counted via the
+                            -- raw_overflow sticky (data-drop cause).
+                            for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
+                                if not v_placed and v_fifo(i).valid = '1'
+                                   and v_fifo(i).tuser(7) = '0' then
+                                    for j in i to c_RAW_FIFO_DEPTH - 2 loop
+                                        v_fifo(j) := v_fifo(j + 1);
+                                    end loop;
+                                    v_fifo(c_RAW_FIFO_DEPTH - 1) := v_new;
+                                    v_placed := true;
+                                    s_err_raw_overflow_r <= '1';
+                                    -- synthesis translate_off
+                                    assert false
+                                        report "chip_ctrl: data beat EVICTED to preserve control beat"
+                                        severity warning;
+                                    -- synthesis translate_on
                                 end if;
                             end loop;
                         end if;
@@ -1028,6 +1113,10 @@ begin
                     if not v_placed then
                         s_err_raw_overflow_r <= '1';
                         -- Round 12 A2: control vs data drop distinction.
+                        -- With the data-sacrifice fallback above, a
+                        -- control-beat drop here means the FIFO is 100%
+                        -- control beats — workload-impossible but still
+                        -- surfaced for structural observability.
                         if v_new.tuser(7) = '1' then
                             s_err_raw_ctrl_drop_r <= '1';
                         end if;

@@ -73,7 +73,13 @@ entity tdc_gpx_cell_pipe is
         o_stop_id_fall_error    : out std_logic_vector(c_N_CHIPS-1 downto 0);
         -- Round 11 item 4: per-chip cell_builder QUARANTINE escalation sticky.
         o_quarantine_escape_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_quarantine_escape_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        o_quarantine_escape_fall : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted pulses
+        -- (1-clk, co-assert with cell_builder's slice_done). Consumed by
+        -- face_assembler to tag rows as degraded when the drain completion
+        -- for any chip's shot was a faulted fallback.
+        o_slice_done_faulted_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_slice_done_faulted_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
 end entity tdc_gpx_cell_pipe;
 
@@ -282,6 +288,7 @@ begin
                 o_m_axis_tlast      => o_cell_rise_tlast(i),
                 i_m_axis_tready     => i_cell_rise_tready(i),
                 o_slice_done        => open,
+                o_slice_done_faulted => o_slice_done_faulted_rise(i),  -- Round 13 follow-up (audit 4번)
                 o_hit_dropped_any   => o_hit_dropped(i),
                 o_shot_dropped      => o_shot_dropped(i),
                 o_slice_timeout     => o_slice_timeout(i),
@@ -311,6 +318,7 @@ begin
                 o_m_axis_tlast      => o_cell_fall_tlast(i),
                 i_m_axis_tready     => i_cell_fall_tready(i),
                 o_slice_done        => open,
+                o_slice_done_faulted => o_slice_done_faulted_fall(i),  -- Round 13 follow-up (audit 4번)
                 o_hit_dropped_any   => o_hit_fall_dropped(i),
                 o_shot_dropped      => o_shot_fall_dropped(i),
                 o_slice_timeout     => o_slice_fall_timeout(i),

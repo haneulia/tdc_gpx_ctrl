@@ -19,6 +19,7 @@
 -- AXI-Stream slave (from decoder_i_mode):
 --   tdata[16:0] = raw_hit,  tuser[7] = drain_done
 --   tuser[0] = slope, [2:1] = cha_code, [5:3] = stop_id, [6] = ififo_id
+--   tuser[5] = faulted (drain_done control beat only; overlaps stop_id on data)
 --
 -- AXI-Stream master (to cell_builder via skid buffer):
 --   tdata[16:0] = raw_hit
@@ -44,7 +45,7 @@ entity tdc_gpx_raw_event_builder is
         --   tdata[16:0]  = raw_hit (17-bit, 0 for drain_done beat)
         --   tuser[0]     = slope
         --   tuser[2:1]   = cha_code_raw
-        --   tuser[5:3]   = stop_id_local
+        --   tuser[5:3]   = stop_id_local (data beat) / faulted flag on tuser[5] (drain_done beat)
         --   tuser[6]     = ififo_id
         --   tuser[7]     = drain_done ('1' = control beat: reset hit counters)
         i_s_axis_tvalid   : in  std_logic;
@@ -64,7 +65,8 @@ entity tdc_gpx_raw_event_builder is
         --   tdata[31:17] = 0 (reserved)
         --   tuser[0]     = slope
         --   tuser[2:1]   = chip_id
-        --   tuser[5:3]   = stop_id_local (0..7)
+        --   tuser[5:3]   = stop_id_local (0..7)  [data beat only]
+        --   tuser[5]     = faulted flag [drain_done control beat only; '0' on data]
         --   tuser[6]     = ififo_id
         --   tuser[7]    = drain_done (control beat: no data, triggers output phase)
         --   tuser[10:8]   = hit_seq_local (0..7 per stop, shared across slopes)
@@ -135,6 +137,8 @@ begin
                     s_tuser_r     <= (others => '0');
                     s_tuser_r(7)  <= '1';   -- drain_done flag
                     s_tuser_r(6)  <= i_s_axis_tuser(6);  -- preserve ififo_id
+                    -- Round 13 follow-up (audit 4번): pass through faulted flag.
+                    s_tuser_r(5)  <= i_s_axis_tuser(5);
                     s_tuser_r(15 downto 11) <= std_logic_vector(i_shot_seq(4 downto 0));
                     s_tvalid_r    <= '1';
                 elsif i_s_axis_tvalid = '1' and s_can_accept = '1' then

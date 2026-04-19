@@ -185,12 +185,16 @@ architecture rtl of tdc_gpx_top is
     signal s_run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);  -- Round 12 #17
     signal s_err_bus_fatal_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 2
     signal s_drain_faulted_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 1a
+    -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted from
+    -- cell_pipe → output_stage (which feeds face_assembler).
+    signal s_slice_done_faulted_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_slice_done_faulted_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_cfg_write    : std_logic;
     -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
     -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
-    -- Currently tied to '0' — future CSR bit will pulse this to clear error
-    -- history without a hard reset.
-    signal s_err_soft_clear   : std_logic := '0';
+    -- Round 13 follow-up: now driven by csr_pipeline o_err_soft_clear
+    -- (CTL2[1] rising-edge pulse, i_axis_aclk domain).
+    signal s_err_soft_clear   : std_logic;
     signal s_cmd_cfg_write_g  : std_logic;
     signal s_cmd_start_accepted : std_logic;
 
@@ -433,6 +437,7 @@ begin
             o_cmd_stop          => s_cmd_stop,
             o_cmd_soft_reset    => s_cmd_soft_reset,
             o_cmd_force_reinit  => s_cmd_force_reinit,   -- Round 12 A1
+            o_err_soft_clear    => s_err_soft_clear,     -- Round 13 follow-up
             o_cmd_cfg_write     => s_cmd_cfg_write,
             i_status            => s_status,
             o_irq               => o_irq_pipe
@@ -672,7 +677,10 @@ begin
             o_stop_id_fall_error    => s_stop_id_error_fall,
             -- Round 11 item 4: per-chip cell_builder QUARANTINE escalation sticky
             o_quarantine_escape_rise => s_quarantine_escape_rise,
-            o_quarantine_escape_fall => s_quarantine_escape_fall
+            o_quarantine_escape_fall => s_quarantine_escape_fall,
+            -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted
+            o_slice_done_faulted_rise => s_slice_done_faulted_rise,
+            o_slice_done_faulted_fall => s_slice_done_faulted_fall
         );
 
     -- =========================================================================
@@ -702,6 +710,9 @@ begin
             i_cell_fall_tvalid   => s_cell_fall_tvalid,
             i_cell_fall_tlast    => s_cell_fall_tlast,
             o_cell_fall_tready   => s_cell_fall_tready,
+            -- Round 13 follow-up (audit 4번): per-chip faulted pulses
+            i_slice_done_faulted_rise => s_slice_done_faulted_rise,
+            i_slice_done_faulted_fall => s_slice_done_faulted_fall,
             -- Control from face_seq
             i_shot_start_gated   => s_shot_start_gated,
             i_pipeline_abort     => s_pipeline_abort,       -- legacy global

@@ -30,7 +30,24 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_stop_cfg_decode is
     generic (
-        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH
+        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
+        -- Round 13 follow-up (audit 5번): stop-event window margin.
+        -- The effective window close = snapshot(i_cfg.max_range_clks) + this
+        -- margin. max_range_clks is the physical distance-of-flight bound
+        -- for this shot (all valid beats must arrive within it); the margin
+        -- absorbs echo_receiver internal latency + pipeline stage delay on
+        -- the stop_evt path. Default 32 cycles (~160ns @200MHz).
+        --
+        -- Sizing guidance (see Doc/vdma_packet_structure.html §5 for the
+        -- distance / max_hits / shot-period table):
+        --   - Must be > typical echo_receiver emission delay (few cycles).
+        --   - Must be < (shot_period - max_range_clks) for orphan detection
+        --     to have a non-empty zone; at the near-max-PRF configurations
+        --     (500m+ rows in the doc) this is already near zero, so the
+        --     orphan detection degrades naturally into "pre-first-shot
+        --     only" for tight PRF workloads. That is intentional: trying
+        --     to push margin smaller only buys false positives.
+        g_WINDOW_MARGIN_CLKS : natural := 32
     );
     port (
         i_clk             : in  std_logic;
@@ -63,12 +80,12 @@ entity tdc_gpx_stop_cfg_decode is
         -- policy via a bogus expected_ififo count.
         o_monotonic_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-        -- Round 12 #16: "orphan stop event" sticky. Fires when a
-        -- stop_evt_tvalid pulse arrives before ANY shot_start_gated has
-        -- been seen since reset — i.e. echo_receiver emitted a running
-        -- total outside of a shot window. Indicates upstream format drift
-        -- (missing shot_start signaling or earliest-beat generation) that
-        -- the monotonic check alone cannot catch.
+        -- Round 12 #16 + Round 13 follow-up (audit 5번): "orphan stop event"
+        -- sticky. Fires when i_stop_evt_tvalid pulses while NO shot window
+        -- is active — i.e. either before the first shot_start_gated since
+        -- reset (pre-first-shot case) OR after the current shot's window
+        -- has timed out (inter-shot gap case). Indicates upstream format
+        -- drift that the monotonic check alone cannot catch.
         o_orphan_stop_evt_sticky   : out std_logic
     );
 end entity tdc_gpx_stop_cfg_decode;
@@ -83,8 +100,32 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
     signal s_prev_ififo2_r : t_prev_arr := (others => (others => '0'));
     signal s_track_r       : std_logic  := '0';   -- has at least one beat been seen this shot?
     signal s_mono_viol_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    -- Round 12 #16: "have we ever seen a shot_start?" flag + orphan sticky
-    signal s_shot_ever_seen_r    : std_logic := '0';
+    -- Round 13 follow-up (audit 5번): distance-bounded shot window.
+    --
+    -- Timing contract:
+    --   shot_start < max_range_clks (R) < window_close (W) < next_shot_start
+    --   where W = snapshot(max_range_clks) + g_WINDOW_MARGIN_CLKS.
+    --
+    -- R is the physical time-of-flight bound — all VALID stop events arrive
+    -- within it. The margin between R and W absorbs echo_receiver internal
+    -- latency so legitimate late beats are not misclassified. Beats arriving
+    -- between W and the next shot_start are in the inter-shot gap and flagged
+    -- as orphan. Snapshot semantics at shot_start prevent mid-shot SW config
+    -- writes from shifting the active window.
+    --
+    -- max_range_clks = 0 is treated as "distance check disabled" (matches
+    -- chip_run's range-counter convention) — window stays open until the
+    -- next shot_start, i.e. orphan only fires pre-first-shot.
+    --
+    -- Counter width = 17 bits: max_range_clks (16 bit) + margin (up to ~256)
+    -- fits comfortably with headroom.
+    constant c_WINDOW_CNT_WIDTH : natural := 17;
+    signal s_window_active_r    : std_logic := '0';
+    signal s_window_cnt_r       : unsigned(c_WINDOW_CNT_WIDTH - 1 downto 0)
+                                  := (others => '0');
+    signal s_max_range_snap_r   : unsigned(15 downto 0) := (others => '0');
+    signal s_window_cap_r       : unsigned(c_WINDOW_CNT_WIDTH - 1 downto 0)
+                                  := (others => '0');
     signal s_orphan_evt_sticky_r : std_logic := '0';
 
 begin
@@ -105,37 +146,65 @@ begin
                 s_prev_ififo2_r <= (others => (others => '0'));
                 s_track_r       <= '0';
                 s_mono_viol_r   <= (others => '0');
-                s_shot_ever_seen_r    <= '0';
+                s_window_active_r     <= '0';
+                s_window_cnt_r        <= (others => '0');
+                s_max_range_snap_r    <= (others => '0');
+                s_window_cap_r        <= (others => '0');
                 s_orphan_evt_sticky_r <= '0';
-            elsif i_shot_start_gated = '1' then
-                s_prev_ififo1_r <= (others => (others => '0'));
-                s_prev_ififo2_r <= (others => (others => '0'));
-                s_track_r       <= '0';
-                s_shot_ever_seen_r <= '1';  -- Round 12 #16
-                -- NOTE: sticky s_mono_viol_r is NOT cleared on shot boundary.
-                -- A violation in shot N should remain visible to SW across
-                -- subsequent shots; only full reset clears it.
-            elsif i_stop_evt_tvalid = '1' then
-                -- Round 12 #16: if stop_evt arrives with no shot_start ever
-                -- seen, flag as orphan (upstream format drift).
-                if s_shot_ever_seen_r = '0' then
-                    s_orphan_evt_sticky_r <= '1';
-                end if;
-                for i in 0 to c_N_CHIPS - 1 loop
-                    v_lo   := i * 8;
-                    v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
-                            + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);
-                    v_new2 := resize(unsigned(i_stop_evt_tdata(v_lo + 7 downto v_lo + 4)), 8)
-                            + resize(unsigned(i_stop_evt_tuser(v_lo + 7 downto v_lo + 4)), 8);
-                    if s_track_r = '1' then
-                        if v_new1 < s_prev_ififo1_r(i) or v_new2 < s_prev_ififo2_r(i) then
-                            s_mono_viol_r(i) <= '1';
-                        end if;
+            else
+                -- Round 13 follow-up (audit 5번): distance-bounded window.
+                -- Snapshot max_range_clks at shot_start so a mid-shot config
+                -- change cannot retroactively shift the window. Effective
+                -- cap = snapshot + margin. If the snapshot is zero (distance
+                -- check disabled), keep the window open — no timer-based
+                -- close, only the next shot_start re-opens.
+                if i_shot_start_gated = '1' then
+                    s_max_range_snap_r <= i_cfg.max_range_clks;
+                    s_window_cap_r     <= resize(i_cfg.max_range_clks,
+                                                  c_WINDOW_CNT_WIDTH)
+                                          + to_unsigned(g_WINDOW_MARGIN_CLKS,
+                                                         c_WINDOW_CNT_WIDTH);
+                    s_window_active_r  <= '1';
+                    s_window_cnt_r     <= (others => '0');
+                elsif s_window_active_r = '1' and s_max_range_snap_r /= 0 then
+                    if s_window_cnt_r < s_window_cap_r then
+                        s_window_cnt_r <= s_window_cnt_r + 1;
+                    else
+                        s_window_active_r <= '0';
                     end if;
-                    s_prev_ififo1_r(i) <= v_new1;
-                    s_prev_ififo2_r(i) <= v_new2;
-                end loop;
-                s_track_r <= '1';
+                end if;
+
+                if i_shot_start_gated = '1' then
+                    s_prev_ififo1_r <= (others => (others => '0'));
+                    s_prev_ififo2_r <= (others => (others => '0'));
+                    s_track_r       <= '0';
+                    -- NOTE: sticky s_mono_viol_r is NOT cleared on shot boundary.
+                    -- A violation in shot N should remain visible to SW across
+                    -- subsequent shots; only full reset clears it.
+                elsif i_stop_evt_tvalid = '1' then
+                    -- Round 13 follow-up (audit 5번): fire orphan sticky if
+                    -- the beat arrived with no active shot window. Covers
+                    -- the pre-first-shot case (window never opened) AND the
+                    -- inter-shot gap case (distance window closed).
+                    if s_window_active_r = '0' then
+                        s_orphan_evt_sticky_r <= '1';
+                    end if;
+                    for i in 0 to c_N_CHIPS - 1 loop
+                        v_lo   := i * 8;
+                        v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
+                                + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);
+                        v_new2 := resize(unsigned(i_stop_evt_tdata(v_lo + 7 downto v_lo + 4)), 8)
+                                + resize(unsigned(i_stop_evt_tuser(v_lo + 7 downto v_lo + 4)), 8);
+                        if s_track_r = '1' then
+                            if v_new1 < s_prev_ififo1_r(i) or v_new2 < s_prev_ififo2_r(i) then
+                                s_mono_viol_r(i) <= '1';
+                            end if;
+                        end if;
+                        s_prev_ififo1_r(i) <= v_new1;
+                        s_prev_ififo2_r(i) <= v_new2;
+                    end loop;
+                    s_track_r <= '1';
+                end if;
             end if;
         end if;
     end process;

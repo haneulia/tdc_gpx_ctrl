@@ -57,6 +57,12 @@ entity tdc_gpx_output_stage is
         i_cell_fall_tlast    : in  std_logic_vector(3 downto 0);
         o_cell_fall_tready   : out std_logic_vector(3 downto 0);
 
+        -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted pulses
+        -- routed from cell_pipe into face_assembler. Default '0'000 keeps
+        -- legacy instantiations passing cleanly.
+        i_slice_done_faulted_rise : in  std_logic_vector(3 downto 0) := (others => '0');
+        i_slice_done_faulted_fall : in  std_logic_vector(3 downto 0) := (others => '0');
+
         -- Control from face_seq
         i_shot_start_gated   : in  std_logic;
         i_pipeline_abort     : in  std_logic;  -- legacy global abort
@@ -228,6 +234,7 @@ begin
             i_s_axis_tvalid    => i_cell_rise_tvalid,
             i_s_axis_tlast     => i_cell_rise_tlast,
             o_s_axis_tready    => o_cell_rise_tready,
+            i_slice_done_faulted => i_slice_done_faulted_rise,
             i_shot_start       => i_shot_start_gated,
             i_abort            => s_abort_rise,
             i_active_chip_mask => i_face_active_mask,
@@ -269,6 +276,7 @@ begin
             i_s_axis_tvalid    => i_cell_fall_tvalid,
             i_s_axis_tlast     => i_cell_fall_tlast,
             o_s_axis_tready    => o_cell_fall_tready,
+            i_slice_done_faulted => i_slice_done_faulted_fall,
             i_shot_start       => i_shot_start_gated,
             i_abort            => s_abort_fall,
             i_active_chip_mask => i_face_active_mask,

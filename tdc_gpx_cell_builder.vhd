@@ -156,6 +156,11 @@ entity tdc_gpx_cell_builder is
 
         -- Status
         o_slice_done        : out std_logic;    -- 1-clk pulse: chip slice complete
+        -- Round 13 follow-up (audit 4번): 1-clk pulse co-asserts with o_slice_done
+        -- when the shot's final drain_done beat carried the faulted flag
+        -- (chip_run drain-count mismatch). Lets face_assembler tag the row
+        -- as degraded instead of seeing a clean completion.
+        o_slice_done_faulted : out std_logic;
         o_hit_dropped_any   : out std_logic;    -- 1-clk pulse: cell hit overflow
         -- Round 11 C: separate cause for stop_id out-of-range drops so SW
         -- can distinguish routing/config bugs from genuine hit overflow.
@@ -223,6 +228,14 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_output_done_r    : std_logic := '0';
     signal s_out_timeout_r    : unsigned(15 downto 0) := (others => '0');  -- output watchdog
     signal s_slice_timeout_r  : std_logic := '0';  -- 1-clk pulse: IFIFO2 timeout truncation
+
+    -- Round 13 follow-up (audit 4번): per-buffer faulted tag + output pulse.
+    -- Set when final drain_done beat (tuser(7)=1 AND tuser(6)=1) arrives with
+    -- the faulted bit (tuser(5)=1) for that buffer's shot. Co-asserts with
+    -- s_output_done_r via s_output_done_faulted_r pulse so face_assembler can
+    -- mark the row as degraded at the same granularity as slice_done itself.
+    signal s_buf_faulted_r         : std_logic_vector(0 to 1) := (others => '0');
+    signal s_output_done_faulted_r : std_logic := '0';
 
     -- =========================================================================
     -- Output FSM (p_output)
@@ -401,12 +414,17 @@ begin
                 s_quarantine_escape_sticky_r <= '0';
                 -- Round 12 B6: post-escape absorb window counter
                 s_post_escape_cnt_r          <= (others => '0');
+                -- Round 13 follow-up (audit 4번): faulted tag + pulse reset
+                s_buf_faulted_r              <= (others => '0');
+                s_output_done_faulted_r      <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r   <= '0';
                 s_hit_dropped_r  <= '0';
                 s_stop_id_error_r <= '0';
                 s_shot_dropped_r <= '0';
+                -- Round 13 follow-up (audit 4번): default clear 1-clk pulse.
+                s_output_done_faulted_r <= '0';
 
                 -- ---------------------------------------------------------
                 -- Abort: free all buffers, return to idle
@@ -422,6 +440,9 @@ begin
                     -- survives until full i_rst_n / cmd_soft_reset so the
                     -- supervisor that issued abort can still see the cause.
                     s_quarantine_tick_r <= (others => '0');
+                    -- Round 13 follow-up (audit 4번): abort drops any pending
+                    -- faulted tags — the shots they pointed to are gone.
+                    s_buf_faulted_r <= (others => '0');
                     -- Do NOT clear cell_buf (unnecessary, will be cleared on next shot_start)
                 else
                     -- ---------------------------------------------------------
@@ -434,6 +455,11 @@ begin
                         v_done_buf := fn_buf_idx(s_rd_buf_r);
                         s_buf_state_r(v_done_buf) <= BUF_FREE;
                         s_buf_full_r(v_done_buf)  <= '0';
+                        -- Round 13 follow-up (audit 4번): emit faulted pulse
+                        -- co-asserting with slice_done, then clear the tag
+                        -- so the buffer returns to a clean state.
+                        s_output_done_faulted_r <= s_buf_faulted_r(v_done_buf);
+                        s_buf_faulted_r(v_done_buf) <= '0';
                         -- Auto-start: if the OTHER buffer is SHARED, start output
                         v_other := 1 - v_done_buf;
                         if s_buf_state_r(v_other) = BUF_SHARED then
@@ -555,6 +581,13 @@ begin
                                 else
                                     -- Final drain_done: mark stops 4~7 ready
                                     s_buf_full_r(v_wr) <= '1';
+                                    -- Round 13 follow-up (audit 4번): capture
+                                    -- the faulted flag carried on tuser(5) of
+                                    -- the final drain_done beat so the shot
+                                    -- can be tagged downstream.
+                                    if i_s_axis_tuser(5) = '1' then
+                                        s_buf_faulted_r(v_wr) <= '1';
+                                    end if;
                                     if s_buf_state_r(v_wr) = BUF_COLLECT then
                                         -- Both IFIFOs done simultaneously (no prior ififo1_done)
                                         s_buf_state_r(v_wr) <= BUF_SHARED;
@@ -667,6 +700,10 @@ begin
                                     s_shot_pending_r             <= '0';
                                     s_quarantine_tick_r          <= (others => '0');
                                     s_quarantine_escape_sticky_r <= '1';
+                                    -- Round 13 follow-up (audit 4번): escape
+                                    -- also clears per-buffer faulted tags so
+                                    -- stale bits don't leak into the next shot.
+                                    s_buf_faulted_r              <= (others => '0');
                                     -- Round 12 B6: arm post-escape absorb window
                                     s_post_escape_cnt_r          <= c_POST_ESCAPE_ABSORB_CYCLES;
                                 else
@@ -898,6 +935,7 @@ begin
     o_m_axis_tvalid   <= s_tvalid_r;
     o_m_axis_tlast    <= s_tlast_r;
     o_slice_done      <= s_output_done_r;
+    o_slice_done_faulted <= s_output_done_faulted_r;  -- Round 13 follow-up (audit 4번)
     o_hit_dropped_any <= s_hit_dropped_r;
     o_stop_id_error   <= s_stop_id_error_r;
     o_shot_dropped    <= s_shot_dropped_r;

@@ -16,7 +16,10 @@
 --                               [22:19] n_drain_cap, [27:23] stopdis_override,
 --                               [31:28] COMMAND
 --   CTL1  (0x04) RANGE_COLS    [15:0] max_range_clks, [31:16] cols_per_face
---   CTL2..7 reserved
+--   CTL2  (0x08) AUX_CMD       [0] force_reinit (rising edge),
+--                               [1] err_soft_clear (rising edge),
+--                               [31:2] reserved
+--   CTL3..7 reserved
 --
 --   STAT0  (0x40) HW_VERSION   [31:0] (constant)
 --   STAT1  (0x44) HW_CONFIG    packed generics (constant)
@@ -108,6 +111,11 @@ entity tdc_gpx_csr_pipeline is
         o_cmd_soft_reset    : out std_logic;
         -- Round 12 A1: force-reinit escape command (SW pulse).
         o_cmd_force_reinit  : out std_logic;
+        -- Round 13 follow-up: SW-initiated error-history soft clear pulse.
+        -- CTL2[1] rising edge emits a single-cycle pulse in i_axis_aclk domain.
+        -- Consumed by err_handler, status_agg, chip_reg, config_ctrl sticky
+        -- clear logic (SOFT-CLEAR category).
+        o_err_soft_clear    : out std_logic;
         o_cmd_cfg_write     : out std_logic;
 
         -- Status input (i_axis_aclk domain)
@@ -243,6 +251,9 @@ architecture rtl of tdc_gpx_csr_pipeline is
     -- Round 12 A1: force-reinit command via CTL2[0] edge detect
     signal s_force_reinit_prev_r  : std_logic := '0';
     signal s_force_reinit_pulse_r : std_logic := '0';
+    -- Round 13 follow-up: err soft-clear command via CTL2[1] edge detect
+    signal s_err_soft_clear_prev_r  : std_logic := '0';
+    signal s_err_soft_clear_pulse_r : std_logic := '0';
 
     -- Pending latches (i_axis_aclk domain)
     signal s_cfg_write_pending_r : std_logic := '0';
@@ -610,14 +621,22 @@ begin
                 -- Round 12 A1: force-reinit edge detect
                 s_force_reinit_prev_r  <= '0';
                 s_force_reinit_pulse_r <= '0';
+                -- Round 13 follow-up: err soft-clear edge detect
+                s_err_soft_clear_prev_r  <= '0';
+                s_err_soft_clear_pulse_r <= '0';
             else
                 s_cmd_prev_r  <= s_ctl_out(0)(31 downto 28);
                 s_cmd_pulse_r <= s_ctl_out(0)(31 downto 28) and (not s_cmd_prev_r);
                 -- Round 12 A1: CTL2[0] rising edge → force_reinit pulse.
                 -- SW writes CTL2[0]=1 then CTL2[0]=0 to issue a single
-                -- recovery attempt. Higher bits of CTL2 are reserved.
+                -- recovery attempt.
                 s_force_reinit_prev_r  <= s_ctl_out(2)(0);
                 s_force_reinit_pulse_r <= s_ctl_out(2)(0) and (not s_force_reinit_prev_r);
+                -- Round 13 follow-up: CTL2[1] rising edge → err_soft_clear pulse.
+                -- SW writes CTL2[1]=1 then CTL2[1]=0 to ack per-run error
+                -- history (SOFT-CLEAR category). Higher bits of CTL2 reserved.
+                s_err_soft_clear_prev_r  <= s_ctl_out(2)(1);
+                s_err_soft_clear_pulse_r <= s_ctl_out(2)(1) and (not s_err_soft_clear_prev_r);
             end if;
         end if;
     end process p_cmd_edge;
@@ -648,6 +667,7 @@ begin
     o_cmd_stop       <= s_cmd_pulse_r(1);
     o_cmd_soft_reset <= s_cmd_pulse_r(2);
     o_cmd_force_reinit <= s_force_reinit_pulse_r;  -- Round 12 A1
+    o_err_soft_clear   <= s_err_soft_clear_pulse_r;  -- Round 13 follow-up
 
     -- cfg_write pending latch
     p_cfg_write_pending : process(i_axis_aclk)

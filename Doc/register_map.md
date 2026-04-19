@@ -15,7 +15,8 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
 |:------:|------------|-------------------------------------------------------|
 | 0x00   | MAIN_CTRL  | `[3:0] active_chip_mask`, `[4] packet_scope`, `[6:5] hit_store_mode`, `[9:7] dist_scale`, `[10] drain_mode`, `[11] pipeline_en`, `[14:12] n_faces`, `[18:15] stops_per_chip`, `[22:19] n_drain_cap`, `[27:23] stopdis_override`, `[31:28] COMMAND` |
 | 0x04   | RANGE_COLS | `[15:0] max_range_clks`, `[31:16] cols_per_face`      |
-| 0x08–0x1C | reserved  | —                                                  |
+| 0x08   | AUX_CMD    | `[0] force_reinit` (rising edge), `[1] err_soft_clear` (rising edge), `[31:2] reserved` |
+| 0x0C–0x1C | reserved  | —                                                  |
 
 `COMMAND` (CTL0[31:28]) bit assignments:
 - `[28] cmd_start`
@@ -23,6 +24,15 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
 - `[30] cmd_soft_reset`
 - `[31] cmd_cfg_write`
 - Pulse-only; hardware edge-detects and clears.
+
+`AUX_CMD` (CTL2) bit assignments:
+- `[0] force_reinit` — SW writes 1→0 to escape `PH_RESP_DRAIN` quarantine
+  after externally flushing the bus. Single-shot recovery attempt.
+- `[1] err_soft_clear` — SW writes 1→0 to acknowledge per-run error
+  history (SOFT-CLEAR category stickies: `err_chip_mask`, `err_cause`,
+  `err_reg_overflow`, `chip_reg req_overflow`, `stop_id_error_mask`,
+  etc.). Does NOT clear HISTORICAL-category stickies.
+- Both are rising-edge detected in the i_axis_aclk domain.
 
 ### Status registers (R/O)
 

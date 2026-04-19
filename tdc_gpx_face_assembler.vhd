@@ -93,6 +93,13 @@ entity tdc_gpx_face_assembler is
         i_s_axis_tlast       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_s_axis_tready      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+        -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted pulses
+        -- from cell_builder. A '1' on bit i asserts for 1 clock co-incident
+        -- with cell_builder[i]'s slice_done; face_assembler latches it per
+        -- chip and ORs the pending mask into s_row_done_faulted_r when the
+        -- row completes. Fed zero by legacy instantiations remains safe.
+        i_slice_done_faulted : in  std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+
         -- Shot control
         i_shot_start         : in  std_logic;
         i_abort              : in  std_logic;    -- cmd_stop/soft_reset: flush + ST_IDLE
@@ -271,6 +278,11 @@ architecture rtl of tdc_gpx_face_assembler is
     -- persistent chip_error masks so "this frame's rows were faulted"
     -- can be tracked without polling.
     signal s_row_done_faulted_r   : std_logic := '0';
+    -- Round 13 follow-up (audit 4번): per-chip faulted pending mask. Each bit
+    -- latches on the cell_builder[i] slice_done_faulted pulse and clears on
+    -- row completion (so the next row starts clean). OR-reduction is folded
+    -- into s_row_done_faulted_r when the row's tlast fires.
+    signal s_chip_faulted_pending_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_shot_overrun_r  : std_logic := '0';
     signal s_face_abort_r    : std_logic := '0';
     signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
@@ -490,6 +502,7 @@ begin
                 s_pipe_tlast_r    <= '0';
                 s_row_done_r      <= '0';
                 s_row_done_faulted_r <= '0';
+                s_chip_faulted_pending_r <= (others => '0');
                 s_chip_error_r    <= (others => '0');
                 s_chip_error_partial_r <= (others => '0');
                 s_chip_error_blank_r   <= (others => '0');
@@ -505,6 +518,16 @@ begin
                 s_row_done_r     <= '0';
                 s_shot_overrun_r <= '0';
                 s_face_abort_r   <= '0';
+
+                -- Round 13 follow-up (audit 4번): latch per-chip slice-done
+                -- faulted pulses. The pending mask accumulates while the row
+                -- is being scheduled / forwarded, then is folded into
+                -- s_row_done_faulted_r at row completion below and cleared.
+                for i in 0 to c_N_CHIPS - 1 loop
+                    if i_slice_done_faulted(i) = '1' then
+                        s_chip_faulted_pending_r(i) <= '1';
+                    end if;
+                end loop;
 
                 -- Round 5 #15 trace: if shot_start flushes input FIFOs while
                 -- any of them still holds data, the old-shot tail is being
@@ -794,6 +817,20 @@ begin
 
                 end case;
 
+                -- Round 13 follow-up (audit 4번): on row completion, OR the
+                -- per-chip slice-done-faulted pending mask into the row
+                -- faulted flag, then clear the mask for the next row. Any
+                -- chip whose slice_done carried faulted during scheduling
+                -- makes the whole row degraded — a safer downstream default
+                -- than the pre-existing "row looks clean" behaviour.
+                if v_row_completing
+                   and s_chip_faulted_pending_r /= (c_N_CHIPS - 1 downto 0 => '0') then
+                    s_row_done_faulted_r <= '1';
+                end if;
+                if v_row_completing then
+                    s_chip_faulted_pending_r <= (others => '0');
+                end if;
+
                 -- =============================================================
                 -- shot_start override: BLANK-FILL current line (Q&A #36, c-simplified)
                 --
@@ -884,6 +921,7 @@ begin
                     s_chip_error_r    <= (others => '0');
                 s_chip_error_partial_r <= (others => '0');
                 s_chip_error_blank_r   <= (others => '0');
+                s_chip_faulted_pending_r <= (others => '0');  -- Round 13 follow-up (audit 4번)
                     s_pipe_tvalid_r   <= '0';
                     s_pipe_tlast_r    <= '0';
                     s_shot_pending_r  <= '0';
