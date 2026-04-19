@@ -9,3 +9,14 @@ xsim.dir/
 .Xil/
 dfx_runtime.txt
 hs_err_*.dmp
+
+# Adhoc xsim work directories created outside the xpr sim_1
+/sim_face_seq_work/
+/sim_mask_sweep/
+
+# Claude Code local / machine state
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock
+
+# Ad-hoc synthesis diagnostic script (per-session, not shared)
+/scripts/run_synth_cs_opt.tcl
