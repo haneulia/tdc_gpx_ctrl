@@ -12,7 +12,7 @@
 - `round-trip(D) = 2 × D / c`, @200MHz: `1 m ≈ 1.335 cycles`
 - `shot_period` 동안 빛의 왕복 가능 거리 = 측정거리 × 1.5
 
-### 5 거리 사용 사례
+### 5 거리 사용 사례 — 타이밍 기본
 
 | 거리 | R (cycles) | shot_period (cycles) | PRF | orphan zone @ margin=32 | shot_period 빛 왕복 |
 |-----:|-----------:|---------------------:|----:|-----------------------:|---------------------:|
@@ -21,6 +21,25 @@
 | 500 m  | 667  | 1000 | 200 kHz  | 301 cycles  | 750 m  |
 | 750 m  | 1000 | 1500 | 133 kHz  | 468 cycles  | 1125 m |
 | 1000 m | 1334 | 2000 | 100 kHz  | 634 cycles  | 1500 m |
+
+### 5 거리 사용 사례 — max_hits / beats per cell
+
+100 m / 500 m / 1000 m 의 max_hits 와 beats/cell 은 HTML §5 값. 250 m / 750 m 은 interpolated.
+
+공식 (`fn_beats_per_cell_rt`):
+- 32-bit: `beats = max_hits + 1` (1 슬롯/beat)
+- 64-bit: `beats = ceil(max_hits / 3) + 1` (3 슬롯/beat)
+- HTML §4/§5 의 "runtime truncated" 최적화: 64-bit + max_hits ≤ 5 는 hit 을 META beat 에 패킹 → 공식값보다 작음
+
+| 거리 | max_hits | 32-bit beats/cell | 64-bit beats/cell |
+|-----:|:--------:|:-----------------:|:-----------------:|
+| 100 m  | 1          | **2** (공식)        | **1** (HTML packed) |
+| 250 m  | 2 (interp) | **3** (interp)     | **1** (interp, packed) |
+| 500 m  | 3          | **4** (공식)        | **1** (HTML packed) |
+| 750 m  | 6 (interp) | **7** (interp)     | **3** (interp) |
+| 1000 m | 7          | **8** (HTML §4)    | **4** (HTML §4) |
+
+**Consumer 모듈**: `cell_builder` · `header_inserter` · `face_assembler` · `output_stage` 가 `max_hits_cfg` (CTL21[18:16]) 기반으로 같은 beats/cell 값을 산정해야 한다 (face-level consistency).
 
 ### 타이밍 관계 (shot 내부)
 ```

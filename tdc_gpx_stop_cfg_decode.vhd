@@ -18,6 +18,37 @@
 --   - The last beat before irflag carries the FINAL expected count for this
 --     shot; o_expected_ififo1/2 retain that value (overwrite semantics).
 --
+-- Distance-based shot window (Round 13 follow-up, audit 5번):
+--   Orphan detection timing is derived from i_cfg.max_range_clks (physical
+--   time-of-flight bound) rather than an arbitrary generic. Design contract:
+--
+--     shot_start < R = max_range_clks < W = R + margin < T1 = next shot_start
+--                   │                     │                 │
+--                   │ (valid beats done)  │ (orphan zone)   │ (window reopens)
+--
+--   Operating rule: SW sets shot_period = 1.5 × round-trip(max_distance)
+--   i.e. 50% PRF headroom. Under this rule, gap (T1 − R) = 0.5 × R, which
+--   comfortably accommodates the margin (echo_receiver emission latency +
+--   pipeline stages) and still leaves an orphan-detection zone.
+--
+--   Reference use cases @ 200 MHz (see Doc/vdma_packet_structure.html §5,
+--   Doc/260419/task_distance_bounded_windows_2026-04-19.md, and the project
+--   memory project_tdc_window_timing.md for rationale):
+--
+--     | distance | R (cy) | shot_period (cy) | PRF     | orphan zone @ margin=32 |
+--     |---------:|-------:|-----------------:|--------:|------------------------:|
+--     | 100  m   |  134   |  200  (1.0 µs)   | 1.0 MHz |  34 cy (170 ns)         |
+--     | 250  m   |  334   |  500  (2.5 µs)   | 400 kHz | 134 cy (670 ns)         |
+--     | 500  m   |  667   | 1000  (5.0 µs)   | 200 kHz | 301 cy (1.51 µs)        |
+--     | 750  m   | 1000   | 1500  (7.5 µs)   | 133 kHz | 468 cy (2.34 µs)        |
+--     | 1000 m   | 1334   | 2000 (10.0 µs)   | 100 kHz | 634 cy (3.17 µs)        |
+--
+--   If SW runs tighter PRF (no headroom): window close timer never beats the
+--   next shot_start → orphan detection degrades to "pre-first-shot only".
+--   That is intentional; tightening margin further would only create false
+--   positives. max_range_clks = 0 disables distance-based close entirely
+--   (chip_run convention).
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 

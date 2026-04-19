@@ -228,6 +228,13 @@ package tdc_gpx_pkg is
         bus_clk_div         : unsigned(5 downto 0);                         -- CTL1[5:0]
         bus_ticks           : unsigned(2 downto 0);                         -- CTL1[8:6]
         -- CTL2: RANGE_COLS
+        -- max_range_clks: physical round-trip bound (= 2 × max_distance / c,
+        -- ~1.335 cy per meter @200MHz). Drives chip_run drain range check AND
+        -- stop_cfg_decode orphan window (Round 13 follow-up). SW operating
+        -- contract: shot_period = 1.5 × round-trip (50% PRF headroom) — see
+        -- Doc/vdma_packet_structure.html §5 and Doc/260419/task_distance_
+        -- bounded_windows_2026-04-19.md for the 5-distance reference table.
+        -- Value 0 disables the range/window check entirely.
         max_range_clks      : unsigned(15 downto 0);                        -- CTL2[15:0]
         cols_per_face       : unsigned(15 downto 0);                        -- CTL2[31:16]
         -- CTL3: START_OFF1
@@ -726,6 +733,15 @@ package body tdc_gpx_pkg is
         variable v_hit_beats : natural;
     begin
         -- hit data beats = ceil(max_hits / slots_per_beat)
+        --   32-bit TDATA: 32/17 = 1 slot/beat  → beats = max_hits + 1
+        --   64-bit TDATA: 64/17 = 3 slots/beat → beats = ceil(max_hits/3) + 1
+        -- The 5-distance reference (Doc/260419/task_distance_bounded_windows_
+        -- 2026-04-19.md §1) uses max_hits = {1,2,3,6,7} for 100/250/500/750/
+        -- 1000 m respectively, yielding the beats/cell values wired into the
+        -- VDMA frame layout (see Doc/vdma_packet_structure.html §4/§5).
+        -- Note: HTML shows "runtime truncated" 64-bit cells for max_hits ≤ 5
+        -- as a packing optimization; this formula returns the conservative
+        -- upper bound used by cell_builder's buffer sizing.
         v_hit_beats := fn_ceil_div(max_hits, tdata_width / c_HIT_SLOT_DATA_WIDTH);
         -- total = hit beats + 1 metadata beat (always present)
         return v_hit_beats + 1;
