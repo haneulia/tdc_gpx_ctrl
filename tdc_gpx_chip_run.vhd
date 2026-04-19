@@ -38,10 +38,13 @@
 --   cause "111" (capture_stop_fallback).
 --
 -- Shot overrun policy (i_shot_start during non-idle, non-completion):
---   Post-case override forces ST_OVERRUN_FLUSH. If a bus response arrives
---   in the same cycle, the response beat is dropped; s_err_overrun_drop_r
---   sticky records the event. chip_ctrl OR-folds it into the unified
---   o_err_raw_overflow status output.
+--   Post-case override forces ST_OVERRUN_FLUSH. Round 5 #5 changed the
+--   DRAIN-state branches to PRESERVE any bus response fired in the same
+--   cycle (s_raw_valid_r stays '1'), so drain accounting remains
+--   consistent and no beat is dropped. The ST_CAPTURE/LATCH/CHECK/SETTLE
+--   branch still defensively clears s_raw_valid_r — there is no request
+--   outstanding in those states, so any fire would be stale data.
+--   Round 6 B2 removed the now-dead s_err_overrun_drop_r sticky / port.
 --
 -- Timeout cause codes (o_timeout_cause):
 --   001 = raw_busy, 010 = ef1_rsp, 011 = ef2_rsp, 100 = burst_rsp,
@@ -137,7 +140,8 @@ entity tdc_gpx_chip_run is
         -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
         --              "100"=burst_rsp, "101"=flush_rsp, "110"=overrun_flush,
         --              "111"=capture_stop_fallback (irflag missing after cmd_stop)
-        o_err_overrun_drop  : out std_logic;  -- sticky: overrun override dropped bus response beat
+        -- (Round 5 #5 removed the overrun-drop path; Round 6 B2 deleted the
+        --  matching o_err_overrun_drop port — never asserted after Round 5.)
 
         -- Pin outputs
         o_stopdis           : out std_logic;
@@ -211,12 +215,6 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_purge_mode_r      : std_logic := '0';
     signal s_stop_pending_r    : std_logic := '0';
     signal s_overrun_deferred_r : std_logic := '0';
-    -- Sticky: overrun override dropped a same-cycle bus response beat.
-    -- Set whenever the overrun post-case override clears s_raw_valid_r
-    -- while i_bus_rsp_valid was high in the same cycle. Visible to SW
-    -- for diagnosing drain accounting anomalies caused by aggressive
-    -- overrun recovery policy.
-    signal s_err_overrun_drop_r : std_logic := '0';
 
 begin
 
@@ -264,7 +262,6 @@ begin
                 s_purge_mode_r      <= '0';
                 s_stop_pending_r    <= '0';
                 s_overrun_deferred_r <= '0';
-                s_err_overrun_drop_r <= '0';
                 s_timeout_r          <= '0';
                 s_timeout_cause_r    <= (others => '0');
             else
@@ -723,8 +720,9 @@ begin
                 --   * ST_CAPTURE/LATCH/CHECK/SETTLE: no request is outstanding
                 --     in these states, so any fire here would be stale. Keep
                 --     the defensive clear of s_raw_valid_r.
-                -- s_err_overrun_drop_r kept in the declaration for backward
-                -- compatibility but is no longer set (drop is eliminated).
+                -- Round 6 B2: the s_err_overrun_drop_r sticky + o_err_overrun
+                -- _drop port were deleted. With the preservation policy above
+                -- there are no drops to report, so the signal was dead code.
                 if i_shot_start = '1' and s_state_r /= ST_OFF
                    and s_state_r /= ST_ARMED then
                     case s_state_r is
@@ -779,7 +777,6 @@ begin
     o_range_active      <= s_range_active_r;
     o_timeout           <= s_timeout_r;
     o_timeout_cause     <= s_timeout_cause_r;
-    o_err_overrun_drop  <= s_err_overrun_drop_r;
     o_armed             <= '1' when s_state_r = ST_ARMED else '0';
 
 end architecture rtl;

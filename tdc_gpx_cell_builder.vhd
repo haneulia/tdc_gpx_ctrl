@@ -537,8 +537,11 @@ begin
                                 -- Transition to ST_C_QUARANTINE so late stale
                                 -- beats keep being absorbed (tready='1') while
                                 -- we wait for an explicit drain marker or
-                                -- i_abort. s_shot_dropped_r sticky records
-                                -- that recovery was incomplete (#25).
+                                -- i_abort. s_shot_dropped_r pulses (1-clk) to
+                                -- flag the incomplete recovery (#25). Round 6
+                                -- B3: the pulse semantic matches the port
+                                -- declaration; status_agg's shot_drop_any OR
+                                -- of rise+fall captures it.
                                 s_cstate_r      <= ST_C_QUARANTINE;
                                 s_shot_dropped_r <= '1';
                                 s_timeout_cnt_r  <= (others => '0');

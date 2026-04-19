@@ -240,8 +240,11 @@ architecture rtl of tdc_gpx_top is
     signal s_chip_fall_error      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_shot_overrun         : std_logic;
     signal s_shot_fall_overrun    : std_logic;
-    signal s_face_abort           : std_logic;
-    signal s_face_fall_abort      : std_logic;
+    -- Round 6 B5: kept as constants '0' (see output_stage instantiation note).
+    -- Driving them through face_seq OR with a runtime-zero source is harmless
+    -- but fragile; grounding at top is the opt-in guard.
+    signal s_face_abort           : std_logic := '0';
+    signal s_face_fall_abort      : std_logic := '0';
     signal s_frame_done           : std_logic;
     signal s_frame_fall_done      : std_logic;
 
@@ -638,8 +641,14 @@ begin
             o_chip_fall_error    => s_chip_fall_error,
             o_shot_overrun       => s_shot_overrun,
             o_shot_fall_overrun  => s_shot_fall_overrun,
-            o_face_abort         => s_face_abort,
-            o_face_fall_abort    => s_face_fall_abort,
+            -- Round 6 B5: o_face_abort has been a permanent '0' since Round 4
+            -- (face self-completes via blank-fill instead of aborting). The
+            -- port is retained for backward compatibility but we intentionally
+            -- ground the downstream signal so a future re-enable in
+            -- face_assembler cannot silently reactivate s_pipeline_abort
+            -- through face_seq's OR logic without an explicit opt-in here.
+            o_face_abort         => open,
+            o_face_fall_abort    => open,
             o_face_asm_idle      => s_face_asm_idle,
             o_face_asm_fall_idle => s_face_asm_fall_idle,
             o_frame_done         => s_frame_done,

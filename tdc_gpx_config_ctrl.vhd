@@ -25,6 +25,24 @@
 --                  raw_cdc (xpm_fifo_async) crosses TDC -> AXI-Stream.
 --   s_axi_aclk   : AXI4-Lite PS domain
 --
+-- Reset-domain map (Round 6 C1):
+--   AXI-Stream clock (i_axis_aclk) uses i_axis_aresetn directly:
+--     - u_cmd_arb         (cmd_arb)
+--     - u_err_handler     (err_handler)
+--     - u_stop_decode     (stop_cfg_decode)
+--     - p_frame_done_latch, MUXes, per-chip CDC instances source sides
+--   TDC clock (i_tdc_clk) uses s_tdc_aresetn (xpm_cdc_async_rst of
+--   i_axis_aresetn, Round 5 #8):
+--     - u_bus_phy         (bus_phy)
+--     - u_sk_brsp         (skid buffer)
+--     - u_chip_ctrl       (chip_ctrl sub-FSM coordinator)
+--     - p_raw_fifo_rst / s_run_drain_complete_sticky_r (TDC stickies)
+--   Async, no dedicated reset sync:
+--     - u_raw_cdc         (xpm_fifo_async — rst combines i_axis_aresetn
+--                          with the stretched soft_reset pulse, Round 6 A1)
+--   When adding new modules, drive i_rst_n from the reset that matches
+--   the module's clock domain. Do not cross-wire.
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 
