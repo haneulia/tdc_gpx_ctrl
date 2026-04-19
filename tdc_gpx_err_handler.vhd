@@ -176,16 +176,16 @@ architecture rtl of tdc_gpx_err_handler is
     -- =========================================================================
     -- Reg11 data selection helper
     -- =========================================================================
-    type t_reg11_arr is array (0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
-    signal s_reg11_data : t_reg11_arr;
+    type t_reg12_arr is array (0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
+    signal s_reg12_data : t_reg12_arr;
 
 begin
 
     -- Map individual Reg11 inputs into an array for indexed access
-    s_reg11_data(0) <= i_reg11_data_0;
-    s_reg11_data(1) <= i_reg11_data_1;
-    s_reg11_data(2) <= i_reg11_data_2;
-    s_reg11_data(3) <= i_reg11_data_3;
+    s_reg12_data(0) <= i_reg11_data_0;
+    s_reg12_data(1) <= i_reg11_data_1;
+    s_reg12_data(2) <= i_reg11_data_2;
+    s_reg12_data(3) <= i_reg11_data_3;
 
     -- =========================================================================
     -- Main FSM process
@@ -297,7 +297,7 @@ begin
                                     -- Only classify if read data is actually valid.
                                     -- If reg timeout occurred, rvalid stays '0' and
                                     -- stale data is not used for cause classification.
-                                    v_reg12 := s_reg11_data(i);  -- data from Reg12 read
+                                    v_reg12 := s_reg12_data(i);  -- data from Reg12 read
                                     -- Reg12 datasheet bit map:
                                     --   [7:0]  = HFifoFull per stop (8 flags)
                                     --   [9:8]  = IFifoFull (2 flags: IFIFO1, IFIFO2)

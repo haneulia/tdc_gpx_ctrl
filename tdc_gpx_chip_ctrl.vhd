@@ -180,7 +180,13 @@ entity tdc_gpx_chip_ctrl is
         o_err_drain_timeout : out std_logic;    -- max_range_clks expired before drain_done
         o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
         o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
-        o_err_raw_overflow  : out std_logic;    -- sticky: raw hold+skid both full (beat dropped)
+        o_err_raw_overflow  : out std_logic;    -- sticky: OR of raw-drop + drain-cap (legacy, retained)
+        -- Round 12 #15: distinct cause bits so SW can differentiate
+        -- "data/control beat dropped by raw FIFO" from "PH_RESP_DRAIN
+        -- hard-cap hit while bus still active". Previously both OR-folded
+        -- into o_err_raw_overflow which hid the actual root cause.
+        o_err_raw_drop      : out std_logic;    -- sticky: raw FIFO beat dropped (see also o_err_raw_ctrl_drop)
+        o_err_drain_cap     : out std_logic;    -- sticky: PH_RESP_DRAIN hit 15-cycle hard cap while bus busy
         o_err_reg_overflow  : out std_logic;    -- sticky: chip_reg 3rd-pulse queue overflow (Round 5 #12)
         o_run_timeout       : out std_logic;    -- 1-clk pulse: chip_run abnormal drain exit
         -- Round 11 C: surface chip_run's timeout cause code for SW diagnosis.
@@ -203,7 +209,10 @@ entity tdc_gpx_chip_ctrl is
         -- Round 12 A5: chip_reg concurrent R+W ambiguity sticky (per-chip).
         o_err_reg_rw_ambiguous : out std_logic;
         -- Round 12 B8: sticky for stopdis_override asserted during PH_RUN.
-        o_err_stopdis_mid_shot : out std_logic
+        o_err_stopdis_mid_shot : out std_logic;
+        -- Round 12 #20: PH_IDLE collision vector (OR-accumulated).
+        --   [0] start, [1] cfg_write, [2] reg_read, [3] reg_write
+        o_err_cmd_collision_vec : out std_logic_vector(3 downto 0)
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -380,6 +389,12 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_stopdis_mid_shot_r : std_logic := '0';
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
     signal s_err_cmd_collision_r  : std_logic := '0';  -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision sticky (cmd_arb contract violation)
+    -- Round 12 #20: collision vector — records WHICH commands collided.
+    -- [0] start, [1] cfg_write, [2] reg_read, [3] reg_write
+    -- OR-accumulated across all collision events. SW can decode to see
+    -- if, e.g., start+cfg_write always collide together (upstream bug
+    -- pattern) vs. sporadic all-four collisions.
+    signal s_err_cmd_collision_vec_r : std_logic_vector(3 downto 0) := (others => '0');
     signal s_err_force_reinit_r   : std_logic := '0';  -- Round 12 A1: sticky — force-reinit was used (stale pollution risk acknowledged)
     -- #13: i_stop_tdc CDC moved to config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse);
     -- arrives here as a clean 1-cycle pulse in the TDC clock domain, so no
@@ -585,6 +600,7 @@ begin
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_err_drain_cap_r    <= '0';
                 s_err_cmd_collision_r <= '0';
+                s_err_cmd_collision_vec_r <= (others => '0');
                 s_err_force_reinit_r  <= '0';
                 s_err_stopdis_mid_shot_r <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
@@ -633,6 +649,12 @@ begin
                            or (i_cmd_start and (i_cmd_reg_read or i_cmd_reg_write)) = '1'
                            or (i_cmd_cfg_write and (i_cmd_reg_read or i_cmd_reg_write)) = '1' then
                             s_err_cmd_collision_r <= '1';
+                            -- Round 12 #20: record which commands were
+                            -- active at collision (OR-accumulates).
+                            s_err_cmd_collision_vec_r(0) <= s_err_cmd_collision_vec_r(0) or i_cmd_start;
+                            s_err_cmd_collision_vec_r(1) <= s_err_cmd_collision_vec_r(1) or i_cmd_cfg_write;
+                            s_err_cmd_collision_vec_r(2) <= s_err_cmd_collision_vec_r(2) or i_cmd_reg_read;
+                            s_err_cmd_collision_vec_r(3) <= s_err_cmd_collision_vec_r(3) or i_cmd_reg_write;
                             -- synthesis translate_off
                             assert false
                                 report "chip_ctrl: multiple commands in PH_IDLE (lower priority dropped)"
@@ -1069,6 +1091,7 @@ begin
     o_err_drain_mismatch <= s_err_drain_mismatch;
     o_err_reg_rw_ambiguous <= s_err_reg_rw_ambiguous;
     o_err_stopdis_mid_shot <= s_err_stopdis_mid_shot_r;
+    o_err_cmd_collision_vec <= s_err_cmd_collision_vec_r;
     -- raw_overflow aggregates multiple "integrity compromised" events so SW
     -- only needs to observe one flag per chip. Individual cause codes can be
     -- split into dedicated ports later if needed:
@@ -1076,6 +1099,9 @@ begin
     --                         OR chip_run overrun override dropped response
     --   s_err_drain_cap_r    -> PH_RESP_DRAIN hard cap hit while bus busy
     o_err_raw_overflow  <= s_err_raw_overflow_r or s_err_drain_cap_r;
+    -- Round 12 #15: distinct cause outputs.
+    o_err_raw_drop      <= s_err_raw_overflow_r;
+    o_err_drain_cap     <= s_err_drain_cap_r;
     o_run_timeout       <= s_run_timeout;
 
     -- =========================================================================

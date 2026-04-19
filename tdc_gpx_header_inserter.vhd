@@ -143,7 +143,9 @@ entity tdc_gpx_header_inserter is
         -- the FSM force-escapes to ST_IDLE so the rest of the pipeline
         -- (face_seq, SW) does not wedge. SW should treat the corresponding
         -- frame as truncated and clear by asserting cmd_soft_reset.
-        o_drain_timeout_sticky       : out std_logic
+        o_drain_timeout_sticky       : out std_logic;
+        -- Round 12 #19: abort truncation sticky (frame ended with no EOL).
+        o_abort_truncated_sticky     : out std_logic
     );
 end entity tdc_gpx_header_inserter;
 
@@ -187,6 +189,12 @@ architecture rtl of tdc_gpx_header_inserter is
     constant c_DRAIN_WDT_CAP : unsigned(15 downto 0) := (others => '1');
     signal s_drain_wdt_r              : unsigned(15 downto 0) := (others => '0');
     signal s_drain_timeout_sticky_r   : std_logic := '0';
+
+    -- Round 12 #19: abort-truncation sticky. abort produces a truncated
+    -- AXIS line with NO synthetic tlast; downstream parsers see an
+    -- incomplete frame. This sticky lets SW correlate "discarded frame"
+    -- with an actual hdr-side abort instead of inferring from drain state.
+    signal s_abort_truncated_sticky_r : std_logic := '0';
 
     -- =========================================================================
     -- Latched header fields (captured at face_start)
@@ -276,6 +284,7 @@ begin
     o_idle            <= '1' when s_state_r = ST_IDLE else '0';
     o_face_start_collapsed_count <= s_face_start_collapsed_cnt_r;
     o_drain_timeout_sticky       <= s_drain_timeout_sticky_r;
+    o_abort_truncated_sticky     <= s_abort_truncated_sticky_r;
     -- '1' during the entire last line: from ST_PREFIX/ST_DATA on the last col
     -- through ST_DRAIN_LAST.  Closes the window where assembler output skid
     -- holds the final beat but header hasn't consumed it yet.
@@ -394,6 +403,7 @@ begin
                 -- Round 11 item 3: watchdog reset
                 s_drain_wdt_r            <= (others => '0');
                 s_drain_timeout_sticky_r <= '0';
+                s_abort_truncated_sticky_r <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_frame_done_r <= '0';
@@ -678,6 +688,9 @@ begin
                 if i_face_abort = '1' then
                     -- Abort cancels any queued face_start (SW must re-arm).
                     s_face_start_pending_cnt_r <= (others => '0');
+                    -- Round 12 #19: mark that a truncated (no-EOL) line
+                    -- may have been emitted on this event.
+                    s_abort_truncated_sticky_r <= '1';
                     -- #34: if face_start was accepted SAME cycle, the face_start
                     -- block above already set s_hdr_rom_pending_r <= '1' and
                     -- s_state_r <= ST_PREFIX. Abort runs after face_start in

@@ -61,7 +61,15 @@ entity tdc_gpx_stop_cfg_decode is
         -- Cleared only by i_rst_n; SW reads it to detect silent upstream
         -- format drift that would otherwise corrupt chip_run's drain
         -- policy via a bogus expected_ififo count.
-        o_monotonic_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0)
+        o_monotonic_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+        -- Round 12 #16: "orphan stop event" sticky. Fires when a
+        -- stop_evt_tvalid pulse arrives before ANY shot_start_gated has
+        -- been seen since reset — i.e. echo_receiver emitted a running
+        -- total outside of a shot window. Indicates upstream format drift
+        -- (missing shot_start signaling or earliest-beat generation) that
+        -- the monotonic check alone cannot catch.
+        o_orphan_stop_evt_sticky   : out std_logic
     );
 end entity tdc_gpx_stop_cfg_decode;
 
@@ -75,11 +83,15 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
     signal s_prev_ififo2_r : t_prev_arr := (others => (others => '0'));
     signal s_track_r       : std_logic  := '0';   -- has at least one beat been seen this shot?
     signal s_mono_viol_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    -- Round 12 #16: "have we ever seen a shot_start?" flag + orphan sticky
+    signal s_shot_ever_seen_r    : std_logic := '0';
+    signal s_orphan_evt_sticky_r : std_logic := '0';
 
 begin
 
     o_stop_evt_tready <= '1';
     o_monotonic_violation_mask <= s_mono_viol_r;
+    o_orphan_stop_evt_sticky <= s_orphan_evt_sticky_r;
 
     -- Round 11 item 10: runtime violation detector (synth-live).
     p_mono_live : process(i_clk)
@@ -93,14 +105,22 @@ begin
                 s_prev_ififo2_r <= (others => (others => '0'));
                 s_track_r       <= '0';
                 s_mono_viol_r   <= (others => '0');
+                s_shot_ever_seen_r    <= '0';
+                s_orphan_evt_sticky_r <= '0';
             elsif i_shot_start_gated = '1' then
                 s_prev_ififo1_r <= (others => (others => '0'));
                 s_prev_ififo2_r <= (others => (others => '0'));
                 s_track_r       <= '0';
+                s_shot_ever_seen_r <= '1';  -- Round 12 #16
                 -- NOTE: sticky s_mono_viol_r is NOT cleared on shot boundary.
                 -- A violation in shot N should remain visible to SW across
                 -- subsequent shots; only full reset clears it.
             elsif i_stop_evt_tvalid = '1' then
+                -- Round 12 #16: if stop_evt arrives with no shot_start ever
+                -- seen, flag as orphan (upstream format drift).
+                if s_shot_ever_seen_r = '0' then
+                    s_orphan_evt_sticky_r <= '1';
+                end if;
                 for i in 0 to c_N_CHIPS - 1 loop
                     v_lo   := i * 8;
                     v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)

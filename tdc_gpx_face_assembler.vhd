@@ -115,14 +115,27 @@ entity tdc_gpx_face_assembler is
         -- Status
         o_row_done           : out std_logic;    -- 1-clk pulse: packed row complete
         o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 #18: split chip error into partial/blank causes.
+        o_chip_error_partial : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_error_blank   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_shot_overrun       : out std_logic;    -- 1-clk pulse: shot truncated (was not idle)
-        -- DEPRECATED (Round 5 #19): o_face_abort is retained for backward
-        -- compatibility with existing instantiations but is never asserted
-        -- in this architecture. After Round 4's c-simplified overrun policy
-        -- the face self-completes in place (blank-fill) instead of issuing
-        -- a face-level abort, so the port permanently reads '0'. Do not
-        -- add new consumers — treat this as a stub and wire to 'open'.
-        -- Planned removal once every instantiation migrates to 'open'.
+        -- DEPRECATED (Round 5 #19 + Round 12 #14): o_face_abort is a stub.
+        -- Permanent '0' since Round 4 — face_assembler self-completes via
+        -- blank-fill and never asserts this port. Top wires it to 'open'
+        -- (tdc_gpx_top.vhd:721) and output_stage merely propagates it.
+        --
+        -- REMOVAL CHECKLIST for a future Round:
+        --   1. Delete this port from face_assembler entity + architecture.
+        --   2. Delete the forwarding in tdc_gpx_output_stage.vhd:109,
+        --      :230, :268 (port itself, plus both gen instances).
+        --   3. Delete the `o_face_abort => open` line in tdc_gpx_top.vhd.
+        --   4. Update the 3 testbenches that still reference the port:
+        --        tb_tdc_gpx_mask_sweep.vhd, tb_tdc_gpx_downstream.vhd,
+        --        tb_tdc_gpx_output_stage.vhd.
+        -- Round 12 chose NOT to remove the port to avoid a breaking
+        -- interface churn alongside the many observability additions
+        -- landing in the same release — migration is deferred until a
+        -- future interface-cleanup round.
         o_face_abort         : out std_logic;    -- stub '0' (see DEPRECATED note above)
         o_idle               : out std_logic;    -- '1' when FSM is in ST_IDLE
         -- Trace / status (Round 5 #15 #16)
@@ -241,6 +254,12 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     signal s_row_done_r      : std_logic := '0';
     signal s_chip_error_r    : std_logic_vector(3 downto 0) := (others => '0');
+    -- Round 12 #18: split chip_error into "partial (mid-forward at overrun)"
+    -- vs "blank (not-yet-started)" so SW can distinguish a chip whose data
+    -- was truncated mid-cell from one that was never reached before the
+    -- overrun boundary. Previously both folded into s_chip_error_r.
+    signal s_chip_error_partial_r : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_chip_error_blank_r   : std_logic_vector(3 downto 0) := (others => '0');
     signal s_shot_overrun_r  : std_logic := '0';
     signal s_face_abort_r    : std_logic := '0';
     signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
@@ -460,6 +479,8 @@ begin
                 s_pipe_tlast_r    <= '0';
                 s_row_done_r      <= '0';
                 s_chip_error_r    <= (others => '0');
+                s_chip_error_partial_r <= (others => '0');
+                s_chip_error_blank_r   <= (others => '0');
                 s_shot_overrun_r  <= '0';
                 s_face_abort_r   <= '0';
                 s_shot_pending_r <= '0';
@@ -531,6 +552,8 @@ begin
                         s_chip_done_r     <= (others => '0');
                         s_shot_cnt_r      <= (others => '0');
                         s_chip_error_r    <= (others => '0');
+                s_chip_error_partial_r <= (others => '0');
+                s_chip_error_blank_r   <= (others => '0');
                         s_active_mask_r   <= i_active_chip_mask;    -- latch config
                         if i_stops_per_chip >= 2 then
                             s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
@@ -784,6 +807,33 @@ begin
                     s_chip_error_r <= s_chip_error_r or
                                       (s_active_mask_r and (not s_chip_done_r));
 
+                    -- Round 12 #18: partial vs blank classification.
+                    -- "partial" = the chip that was mid-ST_FORWARD when the
+                    --             new shot hit (at most 1 bit set per event).
+                    -- "blank"   = active chips not-yet-done other than partial
+                    --             (i.e. chips that would have been reached
+                    --             next but are now force-blanked).
+                    if s_state_r = ST_FORWARD and s_is_blank_r = '0' then
+                        -- mark current chip as partial
+                        for k in 0 to c_N_CHIPS - 1 loop
+                            if k = to_integer(s_cur_chip_r) then
+                                s_chip_error_partial_r(k) <= '1';
+                            end if;
+                        end loop;
+                        -- blank mask = active AND not done AND NOT current chip
+                        for k in 0 to c_N_CHIPS - 1 loop
+                            if s_active_mask_r(k) = '1'
+                               and s_chip_done_r(k) = '0'
+                               and k /= to_integer(s_cur_chip_r) then
+                                s_chip_error_blank_r(k) <= '1';
+                            end if;
+                        end loop;
+                    else
+                        -- Not mid-forward: all not-done active chips are blank
+                        s_chip_error_blank_r <= s_chip_error_blank_r or
+                                                (s_active_mask_r and (not s_chip_done_r));
+                    end if;
+
                     -- Force upcoming chips (after current) into blank mode via
                     -- ST_SCAN's hard safety cap.
                     s_shot_cnt_r <= x"FFFF";
@@ -806,6 +856,8 @@ begin
                     s_chip_ready_r    <= (others => '0');
                     s_chip_done_r     <= (others => '0');
                     s_chip_error_r    <= (others => '0');
+                s_chip_error_partial_r <= (others => '0');
+                s_chip_error_blank_r   <= (others => '0');
                     s_pipe_tvalid_r   <= '0';
                     s_pipe_tlast_r    <= '0';
                     s_shot_pending_r  <= '0';
@@ -826,6 +878,8 @@ begin
     -- =========================================================================
     o_row_done         <= s_row_done_r;
     o_chip_error_flags <= s_chip_error_r;
+    o_chip_error_partial <= s_chip_error_partial_r;
+    o_chip_error_blank   <= s_chip_error_blank_r;
     o_shot_overrun     <= s_shot_overrun_r;
     -- #18: o_face_abort is retained as a port for backward compatibility but
     -- s_face_abort_r is never asserted after Round 4 (c-simplified overrun).

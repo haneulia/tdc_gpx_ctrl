@@ -388,6 +388,24 @@ package tdc_gpx_pkg is
         -- Non-zero means debug override was used mid-shot — the affected
         -- frame should be treated as suspect.
         stopdis_mid_shot_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 #19: per-slope header_inserter abort-truncation sticky.
+        rise_hdr_abort_truncated : std_logic;
+        fall_hdr_abort_truncated : std_logic;
+        -- Round 12 #20: PH_IDLE command collision vector (OR across chips).
+        -- Bit layout: [0]=start, [1]=cfg_write, [2]=reg_read, [3]=reg_write.
+        cmd_collision_vec        : std_logic_vector(3 downto 0);
+        -- Round 12 #18: partial/blank chip error split per slope.
+        rise_chip_error_partial  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        rise_chip_error_blank    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        fall_chip_error_partial  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        fall_chip_error_blank    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 #16: stop_cfg_decode orphan-event sticky.
+        orphan_stop_evt_sticky   : std_logic;
+        -- Round 12 #15: distinct per-chip raw-overflow cause masks.
+        raw_drop_mask            : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        drain_cap_mask           : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 #17: per-chip last run_timeout_cause (3-bit × N_CHIPS packed).
+        run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -441,7 +459,18 @@ package tdc_gpx_pkg is
         drain_mismatch_mask     => (others => '0'),
         rw_ambiguous_arb        => '0',
         rw_ambiguous_reg_mask   => (others => '0'),
-        stopdis_mid_shot_mask   => (others => '0')
+        stopdis_mid_shot_mask   => (others => '0'),
+        rise_hdr_abort_truncated => '0',
+        fall_hdr_abort_truncated => '0',
+        cmd_collision_vec        => (others => '0'),
+        raw_drop_mask            => (others => '0'),
+        drain_cap_mask           => (others => '0'),
+        run_timeout_cause_per_chip => (others => '0'),
+        rise_chip_error_partial  => (others => '0'),
+        rise_chip_error_blank    => (others => '0'),
+        fall_chip_error_partial  => (others => '0'),
+        fall_chip_error_blank    => (others => '0'),
+        orphan_stop_evt_sticky   => '0'
     );
 
     -- =========================================================================

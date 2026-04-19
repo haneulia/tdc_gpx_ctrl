@@ -231,6 +231,9 @@ entity tdc_gpx_config_ctrl is
         -- Round 11 item 10: stop_cfg_decode monotonic violation sticky.
         o_mono_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+        -- Round 12 #16: stop_cfg_decode orphan-event sticky.
+        o_orphan_stop_evt_sticky : out std_logic;
+
         -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky.
         o_init_cfg_coalesced_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
@@ -252,6 +255,18 @@ entity tdc_gpx_config_ctrl is
 
         -- Round 12 B8: per-chip stopdis_override mid-shot sticky.
         o_err_stopdis_mid_shot_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+        -- Round 12 #20: PH_IDLE command collision vector (OR across chips).
+        o_err_cmd_collision_vec  : out std_logic_vector(3 downto 0);
+
+        -- Round 12 #15: distinct raw-overflow cause masks (per-chip).
+        o_err_raw_drop_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_drain_cap_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+        -- Round 12 #17: per-chip run_timeout_cause (packed 3-bit × N_CHIPS).
+        --   chip i → [3*i + 2 : 3*i]
+        -- Replaces the "last cause only" behavior of o_run_timeout_cause.
+        o_run_timeout_cause_per_chip : out std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
 
         -- =====================================================================
         -- Interrupt
@@ -357,6 +372,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_sequence      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_raw_overflow  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 12 #15: per-chip distinct cause stickies
+    signal s_err_raw_drop      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_drain_cap     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Round 6 B1: additional per-chip observability from chip_ctrl (TDC domain)
     signal s_err_reg_overflow  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_drain_complete : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- pulse
@@ -370,6 +388,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask
     signal s_cmd_collision_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_last_r : std_logic_vector(2 downto 0) := (others => '0');
+    -- Round 12 #17: per-chip cause latch (each chip keeps its last cause)
+    signal s_run_timeout_cause_per_chip_r : t_timeout_cause_arr := (others => (others => '0'));
     signal s_reg_arb_timeout   : std_logic;
 
     -- =========================================================================
@@ -451,6 +471,15 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_stopdis_mid_shot_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_err_stopdis_mid_shot_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
+    -- Round 12 #20: per-chip collision vector (4 bits each)
+    type t_collision_vec_arr is array(0 to c_N_CHIPS - 1) of std_logic_vector(3 downto 0);
+    signal s_cmd_collision_vec_per : t_collision_vec_arr;
+    -- Aggregated across chips: [0]=any-chip-start-collision, [1]=cfg_write,
+    -- [2]=reg_read, [3]=reg_write. OR-across-chip combinational reduction.
+    signal s_cmd_collision_vec_comb   : std_logic_vector(3 downto 0);
+    signal s_cmd_collision_vec_meta_r : std_logic_vector(3 downto 0) := (others => '0');
+    signal s_cmd_collision_vec_axi_r  : std_logic_vector(3 downto 0) := (others => '0');
+
     -- Round 12 A3: 2-FF sync for TDC-domain status signals before crossing
     -- to AXI-Stream domain. These are OR-accumulated stickies / latched
     -- cause fields — per-bit metastability is the only concern (no
@@ -459,6 +488,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- marks both stages as a known synchronizer.
     signal s_run_timeout_cause_meta_r  : std_logic_vector(2 downto 0) := (others => '0');
     signal s_run_timeout_cause_axi_r   : std_logic_vector(2 downto 0) := (others => '0');
+    -- Round 12 #17: packed 12-bit per-chip cause (chip i at [3*i+2:3*i])
+    signal s_run_timeout_cause_packed   : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
+    signal s_run_timeout_cause_arr_meta_r : std_logic_vector(3 * c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_run_timeout_cause_arr_axi_r  : std_logic_vector(3 * c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_init_cfg_coalesced_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_init_cfg_coalesced_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_cmd_collision_meta_r      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
@@ -487,6 +520,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     attribute ASYNC_REG of s_err_rw_ambiguous_reg_axi_r  : signal is "TRUE";
     attribute ASYNC_REG of s_err_stopdis_mid_shot_meta_r : signal is "TRUE";
     attribute ASYNC_REG of s_err_stopdis_mid_shot_axi_r  : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_collision_vec_meta_r    : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_collision_vec_axi_r     : signal is "TRUE";
+    attribute ASYNC_REG of s_run_timeout_cause_arr_meta_r : signal is "TRUE";
+    attribute ASYNC_REG of s_run_timeout_cause_arr_axi_r  : signal is "TRUE";
     signal s_cmd_cfg_write_g_tdc : std_logic;
     signal s_stop_tdc_tdc        : std_logic;  -- stop_tdc after xpm_cdc_pulse (#13)
     -- Round 7 B-5: i_err_soft_clear CDC'd to TDC domain so chip_reg can
@@ -517,6 +554,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_sequence_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_raw_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 12 #15: distinct cause stickies (CDC'd)
+    signal s_err_raw_drop_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_drain_cap_axi     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Round 6 B1: additional per-chip observability in AXI-Stream domain
     signal s_err_reg_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_drain_complete_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -716,6 +756,26 @@ begin
     -- run_timeout pulse so SW always sees the latest non-stale value. TDC
     -- domain; consumers are quasi-static so a 2-FF sync at consumer side is
     -- sufficient (handled by the status CDC that carries STAT7).
+    -- Round 12 #17: per-chip cause latch (keeps the last cause that fired
+    -- on each chip, instead of the previous behavior that overwrote a
+    -- single register with whichever chip iterated last).
+    p_run_timeout_cause_per_chip : process(i_tdc_clk)
+    begin
+        if rising_edge(i_tdc_clk) then
+            if s_tdc_aresetn = '0' then
+                for i in 0 to c_N_CHIPS - 1 loop
+                    s_run_timeout_cause_per_chip_r(i) <= (others => '0');
+                end loop;
+            else
+                for i in 0 to c_N_CHIPS - 1 loop
+                    if s_run_timeout(i) = '1' then
+                        s_run_timeout_cause_per_chip_r(i) <= s_run_timeout_cause(i);
+                    end if;
+                end loop;
+            end if;
+        end if;
+    end process p_run_timeout_cause_per_chip;
+
     p_run_timeout_cause_latch : process(i_tdc_clk)
     begin
         if rising_edge(i_tdc_clk) then
@@ -751,6 +811,10 @@ begin
                 s_err_rw_ambiguous_reg_axi_r  <= (others => '0');
                 s_err_stopdis_mid_shot_meta_r <= (others => '0');
                 s_err_stopdis_mid_shot_axi_r  <= (others => '0');
+                s_cmd_collision_vec_meta_r    <= (others => '0');
+                s_cmd_collision_vec_axi_r     <= (others => '0');
+                s_run_timeout_cause_arr_meta_r <= (others => '0');
+                s_run_timeout_cause_arr_axi_r  <= (others => '0');
             else
                 s_run_timeout_cause_meta_r  <= s_run_timeout_cause_last_r;
                 s_run_timeout_cause_axi_r   <= s_run_timeout_cause_meta_r;
@@ -768,6 +832,10 @@ begin
                 s_err_rw_ambiguous_reg_axi_r  <= s_err_rw_ambiguous_reg_meta_r;
                 s_err_stopdis_mid_shot_meta_r <= s_err_stopdis_mid_shot;
                 s_err_stopdis_mid_shot_axi_r  <= s_err_stopdis_mid_shot_meta_r;
+                s_cmd_collision_vec_meta_r    <= s_cmd_collision_vec_comb;
+                s_cmd_collision_vec_axi_r     <= s_cmd_collision_vec_meta_r;
+                s_run_timeout_cause_arr_meta_r <= s_run_timeout_cause_packed;
+                s_run_timeout_cause_arr_axi_r  <= s_run_timeout_cause_arr_meta_r;
             end if;
         end if;
     end process p_tdc_to_axi_status_sync;
@@ -790,6 +858,20 @@ begin
     o_err_rw_ambiguous_arb    <= s_err_rw_ambiguous_arb;  -- AXI-Stream domain, no CDC needed
     o_err_rw_ambiguous_reg    <= s_err_rw_ambiguous_reg_axi_r;
     o_err_stopdis_mid_shot_mask <= s_err_stopdis_mid_shot_axi_r;
+    -- Round 12 #20: aggregate collision vec across chips (OR-reduction)
+    -- then feed through CDC.
+    s_cmd_collision_vec_comb <=
+        s_cmd_collision_vec_per(0) or s_cmd_collision_vec_per(1) or
+        s_cmd_collision_vec_per(2) or s_cmd_collision_vec_per(3);
+    o_err_cmd_collision_vec <= s_cmd_collision_vec_axi_r;
+    -- Round 12 #15: distinct cause masks.
+    o_err_raw_drop_mask     <= s_err_raw_drop_axi;
+    o_err_drain_cap_mask    <= s_err_drain_cap_axi;
+    -- Round 12 #17: pack per-chip cause into one vector then feed CDC output.
+    gen_cause_pack : for i in 0 to c_N_CHIPS - 1 generate
+        s_run_timeout_cause_packed(3*i + 2 downto 3*i) <= s_run_timeout_cause_per_chip_r(i);
+    end generate;
+    o_run_timeout_cause_per_chip <= s_run_timeout_cause_arr_axi_r;
 
     -- =========================================================================
     -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
@@ -978,7 +1060,8 @@ begin
             i_cfg              => s_cfg_merged,
             i_cfg_image_raw    => s_cfg_image_raw,
             o_cfg_image        => o_cfg_image,
-            o_monotonic_violation_mask => o_mono_violation_mask
+            o_monotonic_violation_mask => o_mono_violation_mask,
+            o_orphan_stop_evt_sticky   => o_orphan_stop_evt_sticky
         );
 
     -- =========================================================================
@@ -1471,6 +1554,25 @@ begin
                 dest_out => s_err_raw_overflow_axi(i)
             );
 
+        -- Round 12 #15: distinct cause CDCs so SW can read them separately.
+        u_cdc_raw_drop : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_err_raw_drop(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_err_raw_drop_axi(i)
+            );
+
+        u_cdc_drain_cap : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_err_drain_cap(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_err_drain_cap_axi(i)
+            );
+
         -- Round 6 B1: per-chip chip_reg 3rd-pulse overflow (level sticky)
         u_cdc_err_reg_overflow : xpm_cdc_single
             generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
@@ -1634,6 +1736,9 @@ begin
                 o_err_sequence      => s_err_sequence(i),
                 o_err_rsp_mismatch  => s_err_rsp_mismatch(i),
                 o_err_raw_overflow  => s_err_raw_overflow(i),
+                -- Round 12 #15: distinct cause outputs.
+                o_err_raw_drop      => s_err_raw_drop(i),
+                o_err_drain_cap     => s_err_drain_cap(i),
                 o_err_reg_overflow  => s_err_reg_overflow(i),  -- Round 6 B1: CDC'd below
                 o_run_timeout       => s_run_timeout(i),
                 o_run_timeout_cause => s_run_timeout_cause(i),
@@ -1643,7 +1748,8 @@ begin
                 o_err_raw_ctrl_drop  => s_err_raw_ctrl_drop(i),
                 o_err_drain_mismatch => s_err_drain_mismatch(i),
                 o_err_reg_rw_ambiguous => s_err_rw_ambiguous_reg(i),
-                o_err_stopdis_mid_shot => s_err_stopdis_mid_shot(i)
+                o_err_stopdis_mid_shot => s_err_stopdis_mid_shot(i),
+                o_err_cmd_collision_vec => s_cmd_collision_vec_per(i)
             );
 
         -- ----- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk) -----

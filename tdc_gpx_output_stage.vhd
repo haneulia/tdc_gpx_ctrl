@@ -104,6 +104,11 @@ entity tdc_gpx_output_stage is
         o_row_fall_done      : out std_logic;
         o_chip_error_flags   : out std_logic_vector(3 downto 0);
         o_chip_fall_error    : out std_logic_vector(3 downto 0);
+        -- Round 12 #18: partial/blank chip_error split per slope
+        o_chip_error_partial_rise : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_error_blank_rise   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_error_partial_fall : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_error_blank_fall   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_shot_overrun       : out std_logic;
         o_shot_fall_overrun  : out std_logic;
         o_face_abort         : out std_logic;
@@ -136,7 +141,10 @@ entity tdc_gpx_output_stage is
         o_hdr_face_start_collapsed_fall : out unsigned(7 downto 0);
         -- Round 11 item 3: header_inserter drain-watchdog sticky per slope.
         o_hdr_drain_timeout_rise        : out std_logic;
-        o_hdr_drain_timeout_fall        : out std_logic
+        o_hdr_drain_timeout_fall        : out std_logic;
+        -- Round 12 #19: per-slope abort-truncation sticky.
+        o_hdr_abort_truncated_rise      : out std_logic;
+        o_hdr_abort_truncated_fall      : out std_logic
     );
 end entity tdc_gpx_output_stage;
 
@@ -226,6 +234,8 @@ begin
             i_m_axis_tready    => s_face_tready,
             o_row_done         => o_row_done,
             o_chip_error_flags => o_chip_error_flags,
+            o_chip_error_partial => o_chip_error_partial_rise,
+            o_chip_error_blank   => o_chip_error_blank_rise,
             o_shot_overrun     => o_shot_overrun,
             o_face_abort       => o_face_abort,
             o_idle             => o_face_asm_idle,
@@ -264,6 +274,8 @@ begin
             i_m_axis_tready    => s_face_fall_tready,
             o_row_done         => o_row_fall_done,
             o_chip_error_flags => o_chip_fall_error,
+            o_chip_error_partial => o_chip_error_partial_fall,
+            o_chip_error_blank   => o_chip_error_blank_fall,
             o_shot_overrun     => o_shot_fall_overrun,
             o_face_abort       => o_face_fall_abort,
             o_idle             => o_face_asm_fall_idle,
@@ -396,7 +408,8 @@ begin
             o_last_line         => open,
             o_idle              => o_hdr_idle,
             o_face_start_collapsed_count => o_hdr_face_start_collapsed_rise,
-            o_drain_timeout_sticky       => o_hdr_drain_timeout_rise
+            o_drain_timeout_sticky       => o_hdr_drain_timeout_rise,
+            o_abort_truncated_sticky     => o_hdr_abort_truncated_rise
         );
 
     -- =========================================================================
@@ -435,7 +448,8 @@ begin
             o_last_line         => open,
             o_idle              => o_hdr_fall_idle,
             o_face_start_collapsed_count => o_hdr_face_start_collapsed_fall,
-            o_drain_timeout_sticky       => o_hdr_drain_timeout_fall
+            o_drain_timeout_sticky       => o_hdr_drain_timeout_fall,
+            o_abort_truncated_sticky     => o_hdr_abort_truncated_fall
         );
 
     -- =========================================================================

@@ -179,6 +179,10 @@ architecture rtl of tdc_gpx_top is
     signal s_err_rw_ambiguous_arb    : std_logic;  -- Round 12 A5
     signal s_err_rw_ambiguous_reg_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A5
     signal s_err_stopdis_mid_shot_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 B8
+    signal s_err_cmd_collision_vec : std_logic_vector(3 downto 0);  -- Round 12 #20
+    signal s_err_raw_drop_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
+    signal s_err_drain_cap_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
+    signal s_run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);  -- Round 12 #17
     signal s_cmd_cfg_write    : std_logic;
     -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
     -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
@@ -336,6 +340,7 @@ architecture rtl of tdc_gpx_top is
     signal s_reg_timeout_mask        : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Round 11 item 10: per-chip stop_cfg_decode monotonic violation sticky
     signal s_mono_violation_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_orphan_stop_evt_sticky  : std_logic;  -- Round 12 #16
     -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
     signal s_init_cfg_coalesced_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
@@ -344,6 +349,13 @@ architecture rtl of tdc_gpx_top is
     signal s_hdr_face_start_collapsed_rise : unsigned(7 downto 0);
     signal s_hdr_drain_timeout_rise : std_logic;
     signal s_hdr_drain_timeout_fall : std_logic;
+    signal s_hdr_abort_truncated_rise : std_logic;  -- Round 12 #19
+    signal s_hdr_abort_truncated_fall : std_logic;  -- Round 12 #19
+    -- Round 12 #18: partial/blank chip_error split per slope
+    signal s_chip_error_partial_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_blank_rise   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_partial_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_blank_fall   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_hdr_face_start_collapsed_fall : unsigned(7 downto 0);
     -- cell_pipe stop_id_error per-chip (rise and fall); sticky aggregation below
     signal s_stop_id_error_rise   : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -539,6 +551,8 @@ begin
             o_run_timeout_cause  => s_run_timeout_cause_last,
             -- Round 11 item 10: stop_cfg_decode monotonic violation sticky
             o_mono_violation_mask => s_mono_violation_mask,
+            -- Round 12 #16: stop_cfg_decode orphan-event sticky
+            o_orphan_stop_evt_sticky => s_orphan_stop_evt_sticky,
             -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
             o_init_cfg_coalesced_mask => s_init_cfg_coalesced_mask,
             -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
@@ -554,6 +568,13 @@ begin
             o_err_rw_ambiguous_reg    => s_err_rw_ambiguous_reg_mask,
             -- Round 12 B8: per-chip stopdis_override mid-shot sticky
             o_err_stopdis_mid_shot_mask => s_err_stopdis_mid_shot_mask,
+            -- Round 12 #20: PH_IDLE command collision vector
+            o_err_cmd_collision_vec    => s_err_cmd_collision_vec,
+            -- Round 12 #15: distinct raw-overflow cause masks
+            o_err_raw_drop_mask        => s_err_raw_drop_mask,
+            o_err_drain_cap_mask       => s_err_drain_cap_mask,
+            -- Round 12 #17: per-chip run_timeout_cause packed vector
+            o_run_timeout_cause_per_chip => s_run_timeout_cause_per_chip,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -746,7 +767,15 @@ begin
             o_hdr_face_start_collapsed_fall => s_hdr_face_start_collapsed_fall,
             -- Round 11 item 3: header_inserter drain-watchdog sticky per slope
             o_hdr_drain_timeout_rise => s_hdr_drain_timeout_rise,
-            o_hdr_drain_timeout_fall => s_hdr_drain_timeout_fall
+            o_hdr_drain_timeout_fall => s_hdr_drain_timeout_fall,
+            -- Round 12 #19: per-slope abort-truncation sticky
+            o_hdr_abort_truncated_rise => s_hdr_abort_truncated_rise,
+            o_hdr_abort_truncated_fall => s_hdr_abort_truncated_fall,
+            -- Round 12 #18: partial/blank chip_error split per slope
+            o_chip_error_partial_rise => s_chip_error_partial_rise,
+            o_chip_error_blank_rise   => s_chip_error_blank_rise,
+            o_chip_error_partial_fall => s_chip_error_partial_fall,
+            o_chip_error_blank_fall   => s_chip_error_blank_fall
         );
 
     -- =========================================================================
@@ -934,6 +963,23 @@ begin
     s_status.rw_ambiguous_reg_mask <= s_err_rw_ambiguous_reg_mask;
     -- Round 12 B8: stopdis_override mid-shot sticky
     s_status.stopdis_mid_shot_mask <= s_err_stopdis_mid_shot_mask;
+    -- Round 12 #19: per-slope abort-truncation sticky
+    s_status.rise_hdr_abort_truncated <= s_hdr_abort_truncated_rise;
+    s_status.fall_hdr_abort_truncated <= s_hdr_abort_truncated_fall;
+    -- Round 12 #20: PH_IDLE collision vector
+    s_status.cmd_collision_vec  <= s_err_cmd_collision_vec;
+    -- Round 12 #15: distinct raw-overflow cause masks
+    s_status.raw_drop_mask     <= s_err_raw_drop_mask;
+    s_status.drain_cap_mask    <= s_err_drain_cap_mask;
+    -- Round 12 #17: per-chip run_timeout_cause
+    s_status.run_timeout_cause_per_chip <= s_run_timeout_cause_per_chip;
+    -- Round 12 #18: partial/blank chip_error split per slope
+    s_status.rise_chip_error_partial <= s_chip_error_partial_rise;
+    s_status.rise_chip_error_blank   <= s_chip_error_blank_rise;
+    s_status.fall_chip_error_partial <= s_chip_error_partial_fall;
+    s_status.fall_chip_error_blank   <= s_chip_error_blank_fall;
+    -- Round 12 #16: stop_cfg_decode orphan-event sticky
+    s_status.orphan_stop_evt_sticky <= s_orphan_stop_evt_sticky;
 
     -- stop_id_error_mask: per-chip sticky aggregating rise + fall pulses.
     p_stop_id_error_sticky : process(i_axis_aclk)

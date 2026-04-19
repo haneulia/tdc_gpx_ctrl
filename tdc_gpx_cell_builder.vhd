@@ -250,7 +250,9 @@ architecture rtl of tdc_gpx_cell_builder is
     -- fn_cell_beat still uses compile-time constants for slot packing;
     -- the runtime limit only controls HOW MANY beats are emitted.
     signal s_rt_last_beat_r : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
-    signal s_rt_max_hits_r  : unsigned(2 downto 0) := to_unsigned(c_MAX_HITS_PER_STOP, 3);
+    -- Round 12 #21: s_rt_max_hits_r removed — was latched at ST_O_LOAD
+    -- entry but never consumed. s_rt_last_beat_r is the actual beat-
+    -- count signal used by the output serializer.
 
     -- Registered outputs
     signal s_tdata_r     : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
@@ -745,7 +747,6 @@ begin
                 s_slice_timeout_r <= '0';
                 s_out_timeout_r   <= (others => '0');
                 s_rt_last_beat_r  <= to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
-                s_rt_max_hits_r   <= to_unsigned(c_MAX_HITS_PER_STOP, 3);
             else
                 s_output_done_r  <= '0';
                 s_slice_timeout_r <= '0';
@@ -787,7 +788,6 @@ begin
                                     when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
                                     when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
                                 end case;
-                                s_rt_max_hits_r  <= i_max_hits_cfg;
                                 s_ostate_r       <= ST_O_LOAD;
                             end if;
 
