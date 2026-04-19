@@ -157,6 +157,9 @@ entity tdc_gpx_cell_builder is
         -- Status
         o_slice_done        : out std_logic;    -- 1-clk pulse: chip slice complete
         o_hit_dropped_any   : out std_logic;    -- 1-clk pulse: cell hit overflow
+        -- Round 11 C: separate cause for stop_id out-of-range drops so SW
+        -- can distinguish routing/config bugs from genuine hit overflow.
+        o_stop_id_error     : out std_logic;    -- 1-clk pulse: stop_id >= stops_per_chip
         o_shot_dropped      : out std_logic;    -- 1-clk pulse: entire shot dropped (no free buffer)
         o_slice_timeout     : out std_logic     -- 1-clk pulse: slice truncated by IFIFO2 timeout
     );
@@ -246,6 +249,7 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_tvalid_r    : std_logic := '0';
     signal s_tlast_r     : std_logic := '0';
     signal s_hit_dropped_r   : std_logic := '0';
+    signal s_stop_id_error_r : std_logic := '0';  -- Round 11 C: distinct from hit overflow
     signal s_shot_dropped_r  : std_logic := '0';  -- shot-level drop (no free buffer)
     signal s_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');  -- watchdog
 
@@ -350,6 +354,7 @@ begin
                 s_output_req_r  <= '0';
                 s_rd_buf_idx_r  <= '0';
                 s_hit_dropped_r  <= '0';
+                s_stop_id_error_r <= '0';
                 s_shot_dropped_r <= '0';
                 s_timeout_cnt_r  <= (others => '0');
                 s_shot_pending_r <= '0';
@@ -359,6 +364,7 @@ begin
                 -- Default: clear single-cycle pulses
                 s_output_req_r   <= '0';
                 s_hit_dropped_r  <= '0';
+                s_stop_id_error_r <= '0';
                 s_shot_dropped_r <= '0';
 
                 -- ---------------------------------------------------------
@@ -457,7 +463,10 @@ begin
                                                integer'image(to_integer(i_stops_per_chip))
                                         severity warning;
                                     -- synthesis translate_on
-                                    s_hit_dropped_r <= '1';  -- TODO: separate o_stop_id_invalid when port available
+                                    -- Round 11 C: distinct cause — stop_id out-of-range.
+                                    -- hit_dropped is reserved for hit-count overflow; this
+                                    -- path is a routing / config error.
+                                    s_stop_id_error_r <= '1';
                                 -- Round 9 #8: treat i_max_hits_cfg=000 as 7 in
                                 -- the store path, matching the output-format
                                 -- convention at line 673 (`others => 7`).
@@ -816,6 +825,7 @@ begin
     o_m_axis_tlast    <= s_tlast_r;
     o_slice_done      <= s_output_done_r;
     o_hit_dropped_any <= s_hit_dropped_r;
+    o_stop_id_error   <= s_stop_id_error_r;
     o_shot_dropped    <= s_shot_dropped_r;
     o_slice_timeout   <= s_slice_timeout_r;
 

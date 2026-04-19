@@ -221,6 +221,15 @@ architecture rtl of tdc_gpx_csr_pipeline is
     signal s_dest_req_stat6 : std_logic;
     signal s_stat6_d1      : std_logic_vector(31 downto 0) := (others => '1');
 
+    -- STAT7 (Round 11 Category C): reg timeout mask + stop_id error mask +
+    -- run timeout cause + per-slope face_start collapsed count.
+    signal s_stat7_src     : std_logic_vector(31 downto 0);
+    signal s_stat7_out     : std_logic_vector(31 downto 0) := C_ZERO32;
+    signal s_src_send_stat7 : std_logic := '0';
+    signal s_src_rcv_stat7  : std_logic;
+    signal s_dest_req_stat7 : std_logic;
+    signal s_stat7_d1      : std_logic_vector(31 downto 0) := (others => '1');
+
     -- HW_CONFIG constant (compile-time)
     signal s_hw_config : std_logic_vector(31 downto 0);
 
@@ -310,7 +319,7 @@ begin
                  + fn_hdr_prefix_beats(g_OUTPUT_WIDTH)) * (g_OUTPUT_WIDTH / 8), 32)),
             stat5_in => s_stat_out,     -- STATUS (CDC'd from i_axis_aclk)
             stat6_in => s_stat6_out,    -- STATUS_EXT (Round 5 follow-up, CDC'd)
-            stat7_in => C_ZERO32,       -- reserved
+            stat7_in => s_stat7_out,    -- STATUS_EXT2 (Round 11 Category C, CDC'd)
             intrpt_src_in => "0",
             irq           => o_irq
         );
@@ -352,6 +361,22 @@ begin
     s_stat6_src(23 downto 16) <= std_logic_vector(i_status.fall_shot_overrun_count);
     s_stat6_src(27 downto 24) <= i_status.err_reg_overflow_mask;
     s_stat6_src(31 downto 28) <= i_status.run_drain_complete_mask;
+
+    -- =========================================================================
+    -- [3c] STAT7 source packing (Round 11 Category C)
+    --   [3:0]   reg_timeout_mask
+    --   [7:4]   stop_id_error_mask
+    --   [10:8]  run_timeout_cause_last
+    --   [15:11] reserved
+    --   [23:16] rise_face_start_collapsed_count
+    --   [31:24] fall_face_start_collapsed_count
+    -- =========================================================================
+    s_stat7_src(3 downto 0)   <= i_status.reg_timeout_mask;
+    s_stat7_src(7 downto 4)   <= i_status.stop_id_error_mask;
+    s_stat7_src(10 downto 8)  <= i_status.run_timeout_cause_last;
+    s_stat7_src(15 downto 11) <= (others => '0');
+    s_stat7_src(23 downto 16) <= std_logic_vector(i_status.rise_face_start_collapsed_count);
+    s_stat7_src(31 downto 24) <= std_logic_vector(i_status.fall_face_start_collapsed_count);
 
     -- =========================================================================
     -- [4] STAT CDC: i_axis_aclk → s_axi_aclk (1 live register)
@@ -430,6 +455,40 @@ begin
             end if;
         end if;
     end process p_send_stat6;
+
+    -- STAT7 CDC (Round 11 Category C): i_axis_aclk -> s_axi_aclk
+    u_cdc_stat7 : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
+            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 32
+        )
+        port map (
+            src_clk  => i_axis_aclk,
+            src_in   => s_stat7_src,
+            src_send => s_src_send_stat7,
+            src_rcv  => s_src_rcv_stat7,
+            dest_clk => s_axi_aclk,
+            dest_req => s_dest_req_stat7,
+            dest_ack => s_dest_req_stat7,
+            dest_out => s_stat7_out
+        );
+
+    p_send_stat7 : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_src_send_stat7 <= '0';
+                s_stat7_d1       <= (others => '1');
+            else
+                if s_src_send_stat7 = '0' and s_stat7_src /= s_stat7_d1 then
+                    s_src_send_stat7 <= '1';
+                    s_stat7_d1       <= s_stat7_src;
+                elsif s_src_rcv_stat7 = '1' then
+                    s_src_send_stat7 <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_send_stat7;
 
     -- =========================================================================
     -- [5] CTL CDC: s_axi_aclk → i_axis_aclk (CTL0, CTL1)

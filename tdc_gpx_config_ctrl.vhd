@@ -218,6 +218,10 @@ entity tdc_gpx_config_ctrl is
         o_err_reg_overflow   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg 3rd-pulse sticky
         o_run_drain_complete : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_run internal drain-complete sticky
 
+        -- Round 11 C: Category C observability surface
+        o_reg_timeout_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
+        o_run_timeout_cause  : out std_logic_vector(2 downto 0);              -- chip_run last timeout cause (OR-aggregated)
+
         -- =====================================================================
         -- Interrupt
         -- =====================================================================
@@ -327,6 +331,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_run_drain_complete : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- pulse
     signal s_run_drain_complete_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_run_timeout       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 11 C: per-chip timeout_cause + aggregated "last cause" signal
+    type t_timeout_cause_arr is array (0 to c_N_CHIPS - 1) of std_logic_vector(2 downto 0);
+    signal s_run_timeout_cause     : t_timeout_cause_arr;
+    signal s_run_timeout_cause_last_r : std_logic_vector(2 downto 0) := (others => '0');
     signal s_reg_arb_timeout   : std_logic;
 
     -- =========================================================================
@@ -577,6 +585,25 @@ begin
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_axi;
     o_err_raw_overflow  <= s_err_raw_overflow_axi;
     o_run_timeout       <= s_run_timeout_axi;
+    -- Round 11 C: most-recent timeout cause across all chips. Latched on any
+    -- run_timeout pulse so SW always sees the latest non-stale value. TDC
+    -- domain; consumers are quasi-static so a 2-FF sync at consumer side is
+    -- sufficient (handled by the status CDC that carries STAT7).
+    p_run_timeout_cause_latch : process(i_tdc_clk)
+    begin
+        if rising_edge(i_tdc_clk) then
+            if s_tdc_aresetn = '0' then
+                s_run_timeout_cause_last_r <= (others => '0');
+            else
+                for i in 0 to c_N_CHIPS - 1 loop
+                    if s_run_timeout(i) = '1' then
+                        s_run_timeout_cause_last_r <= s_run_timeout_cause(i);
+                    end if;
+                end loop;
+            end if;
+        end if;
+    end process p_run_timeout_cause_latch;
+    o_run_timeout_cause <= s_run_timeout_cause_last_r;
     o_reg_arb_timeout   <= s_reg_arb_timeout;
     o_err_active        <= s_err_active;
     -- Round 6 B1: surface per-chip stickies to top
@@ -714,7 +741,7 @@ begin
             o_reg_loop_resume    => s_reg_loop_resume,
             o_cmd_reg_addr_out   => s_cmd_reg_addr_out,
             o_reg_timeout        => s_reg_arb_timeout,
-            o_reg_timeout_mask   => open,  -- per-chip mask available but not surfaced yet
+            o_reg_timeout_mask   => o_reg_timeout_mask,  -- Round 11 C: surface to top
             o_reg_rejected       => o_reg_rejected,  -- surfaced to top via config_ctrl port
             o_reg_zero_mask      => o_reg_zero_mask  -- surfaced to top via config_ctrl port
         );
@@ -1332,7 +1359,8 @@ begin
                 o_err_rsp_mismatch  => s_err_rsp_mismatch(i),
                 o_err_raw_overflow  => s_err_raw_overflow(i),
                 o_err_reg_overflow  => s_err_reg_overflow(i),  -- Round 6 B1: CDC'd below
-                o_run_timeout       => s_run_timeout(i)
+                o_run_timeout       => s_run_timeout(i),
+                o_run_timeout_cause => s_run_timeout_cause(i)
             );
 
         -- ----- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk) -----

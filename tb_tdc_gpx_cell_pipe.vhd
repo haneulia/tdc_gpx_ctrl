@@ -123,7 +123,9 @@ begin
             o_shot_dropped        => open,
             o_shot_fall_dropped   => open,
             o_slice_timeout       => open,
-            o_slice_fall_timeout  => open
+            o_slice_fall_timeout  => open,
+            o_stop_id_error       => open,
+            o_stop_id_fall_error  => open
         );
 
     -- =========================================================================

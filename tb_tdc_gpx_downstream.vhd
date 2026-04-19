@@ -181,7 +181,8 @@ begin
             o_frame_done        => frame_done,
             o_draining          => open,
             o_last_line         => open,
-            o_idle              => open
+            o_idle              => open,
+            o_face_start_collapsed_count => open
         );
 
     -- =========================================================================

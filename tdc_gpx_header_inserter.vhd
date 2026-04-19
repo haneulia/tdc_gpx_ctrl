@@ -132,7 +132,10 @@ entity tdc_gpx_header_inserter is
         o_frame_done        : out std_logic;    -- 1-clk pulse: face complete
         o_draining          : out std_logic;    -- '1' in ST_DRAIN_LAST (final beat pending)
         o_last_line         : out std_logic;    -- '1' when processing last line of face
-        o_idle              : out std_logic     -- '1' when FSM is in ST_IDLE
+        o_idle              : out std_logic;    -- '1' when FSM is in ST_IDLE
+        -- Round 11 C: face_start pulse-collapse counter surface (Round 9 #10
+        -- added the sticky, this port exposes it). Wrap-counter 8-bit.
+        o_face_start_collapsed_count : out unsigned(7 downto 0)
     );
 end entity tdc_gpx_header_inserter;
 
@@ -249,6 +252,7 @@ begin
     o_frame_done      <= s_frame_done_r;
     o_draining        <= '1' when s_state_r = ST_DRAIN_LAST else '0';
     o_idle            <= '1' when s_state_r = ST_IDLE else '0';
+    o_face_start_collapsed_count <= s_face_start_collapsed_cnt_r;
     -- '1' during the entire last line: from ST_PREFIX/ST_DATA on the last col
     -- through ST_DRAIN_LAST.  Closes the window where assembler output skid
     -- holds the final beat but header hasn't consumed it yet.

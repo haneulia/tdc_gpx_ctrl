@@ -67,7 +67,10 @@ entity tdc_gpx_cell_pipe is
         o_shot_dropped          : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_shot_fall_dropped     : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_slice_timeout         : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_slice_fall_timeout    : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        o_slice_fall_timeout    : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        -- Round 11 C: distinct stop_id error cause (separate from hit overflow)
+        o_stop_id_error         : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_stop_id_fall_error    : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
 end entity tdc_gpx_cell_pipe;
 
@@ -259,7 +262,8 @@ begin
                 o_slice_done        => open,
                 o_hit_dropped_any   => o_hit_dropped(i),
                 o_shot_dropped      => o_shot_dropped(i),
-                o_slice_timeout     => o_slice_timeout(i)
+                o_slice_timeout     => o_slice_timeout(i),
+                o_stop_id_error     => o_stop_id_error(i)
             );
 
         -- Falling-slope cell builder
@@ -286,7 +290,8 @@ begin
                 o_slice_done        => open,
                 o_hit_dropped_any   => o_hit_fall_dropped(i),
                 o_shot_dropped      => o_shot_fall_dropped(i),
-                o_slice_timeout     => o_slice_fall_timeout(i)
+                o_slice_timeout     => o_slice_fall_timeout(i),
+                o_stop_id_error     => o_stop_id_fall_error(i)
             );
 
     end generate gen_chip;

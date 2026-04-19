@@ -127,7 +127,10 @@ entity tdc_gpx_output_stage is
         o_shot_flush_drop_rise : out std_logic;                       -- rise shot_start drop sticky
         o_shot_flush_drop_fall : out std_logic;                       -- fall shot_start drop sticky
         o_shot_overrun_count_rise : out unsigned(7 downto 0);        -- rise blank-fill wrap count
-        o_shot_overrun_count_fall : out unsigned(7 downto 0)         -- fall blank-fill wrap count
+        o_shot_overrun_count_fall : out unsigned(7 downto 0);        -- fall blank-fill wrap count
+        -- Round 11 C: header_inserter per-slope face_start pulse-collapse count
+        o_hdr_face_start_collapsed_rise : out unsigned(7 downto 0);
+        o_hdr_face_start_collapsed_fall : out unsigned(7 downto 0)
     );
 end entity tdc_gpx_output_stage;
 
@@ -383,7 +386,8 @@ begin
             o_frame_done        => o_frame_done,
             o_draining          => o_hdr_draining,
             o_last_line         => open,
-            o_idle              => o_hdr_idle
+            o_idle              => o_hdr_idle,
+            o_face_start_collapsed_count => o_hdr_face_start_collapsed_rise
         );
 
     -- =========================================================================
@@ -420,7 +424,8 @@ begin
             o_frame_done        => o_frame_fall_done,
             o_draining          => o_hdr_fall_draining,
             o_last_line         => open,
-            o_idle              => o_hdr_fall_idle
+            o_idle              => o_hdr_fall_idle,
+            o_face_start_collapsed_count => o_hdr_face_start_collapsed_fall
         );
 
     -- =========================================================================

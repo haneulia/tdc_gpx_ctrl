@@ -173,7 +173,9 @@ entity tdc_gpx_chip_ctrl is
         o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
         o_err_raw_overflow  : out std_logic;    -- sticky: raw hold+skid both full (beat dropped)
         o_err_reg_overflow  : out std_logic;    -- sticky: chip_reg 3rd-pulse queue overflow (Round 5 #12)
-        o_run_timeout       : out std_logic     -- 1-clk pulse: chip_run abnormal drain exit
+        o_run_timeout       : out std_logic;    -- 1-clk pulse: chip_run abnormal drain exit
+        -- Round 11 C: surface chip_run's timeout cause code for SW diagnosis.
+        o_run_timeout_cause : out std_logic_vector(2 downto 0)
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -383,7 +385,7 @@ begin
             o_done              => s_run_done,
             o_range_active      => s_run_range_active,
             o_timeout           => s_run_timeout,
-            o_timeout_cause     => open,  -- cause code not needed at top level
+            o_timeout_cause     => o_run_timeout_cause,  -- Round 11 C: surface to SW
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
             i_n_drain_cap       => s_n_drain_cap_snap_r,
