@@ -311,6 +311,9 @@ architecture rtl of tdc_gpx_top is
     signal s_err_read_timeout     : std_logic;
     signal s_reg_rejected         : std_logic;
     signal s_reg_zero_mask        : std_logic;
+    -- Round 6 B1: per-chip observability (CDC'd to AXI-S by config_ctrl)
+    signal s_err_reg_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_drain_complete   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- Error handler status (from config_ctrl)
@@ -486,6 +489,9 @@ begin
             o_err_read_timeout   => s_err_read_timeout,
             o_reg_rejected       => s_reg_rejected,
             o_reg_zero_mask      => s_reg_zero_mask,
+            -- Round 6 B1: per-chip observability (CDC'd inside config_ctrl)
+            o_err_reg_overflow   => s_err_reg_overflow,
+            o_run_drain_complete => s_run_drain_complete,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -774,11 +780,11 @@ begin
     s_status.err_read_timeout    <= s_err_read_timeout;
     s_status.reg_rejected        <= s_reg_rejected;
     s_status.reg_zero_mask       <= s_reg_zero_mask;
-    -- Per-chip and per-slope stickies: TDC-domain sources require CDC before
-    -- reaching this s_axi_aclk-adjacent status bundle. Wired to '0' until the
-    -- CDC path is added (Round 5 follow-up, second phase).
-    s_status.err_reg_overflow_mask   <= (others => '0');
-    s_status.run_drain_complete_mask <= (others => '0');
+    -- Round 6 B1: per-chip stickies now CDC'd through config_ctrl
+    s_status.err_reg_overflow_mask   <= s_err_reg_overflow;
+    s_status.run_drain_complete_mask <= s_run_drain_complete;
+    -- Per-slope face_assembler stickies remain as follow-up (need CDC from
+    -- output_stage instance through top). Wire as '0' until that path lands.
     s_status.rise_shot_flush_drop    <= '0';
     s_status.fall_shot_flush_drop    <= '0';
     s_status.rise_shot_overrun_count <= (others => '0');

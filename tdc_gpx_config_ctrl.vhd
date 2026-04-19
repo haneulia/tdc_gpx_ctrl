@@ -196,6 +196,10 @@ entity tdc_gpx_config_ctrl is
         o_reg_rejected       : out std_logic;  -- cmd_arb overlap queue full (request lost)
         o_reg_zero_mask      : out std_logic;  -- cmd_arb got zero chip_mask request
 
+        -- Round 6 B1: per-chip observability (TDC-domain sources, CDC'd here)
+        o_err_reg_overflow   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg 3rd-pulse sticky
+        o_run_drain_complete : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_run internal drain-complete sticky
+
         -- =====================================================================
         -- Interrupt
         -- =====================================================================
@@ -300,6 +304,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_sequence      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_raw_overflow  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 6 B1: additional per-chip observability from chip_ctrl (TDC domain)
+    signal s_err_reg_overflow  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_drain_complete : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- pulse
+    signal s_run_drain_complete_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_run_timeout       : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_reg_arb_timeout   : std_logic;
 
@@ -386,6 +394,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_sequence_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_raw_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 6 B1: additional per-chip observability in AXI-Stream domain
+    signal s_err_reg_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_drain_complete_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_errflag_sync_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Per-chip pulse status (xpm_cdc_pulse)
     signal s_cmd_reg_done_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -535,6 +546,9 @@ begin
     o_run_timeout       <= s_run_timeout_axi;
     o_reg_arb_timeout   <= s_reg_arb_timeout;
     o_err_active        <= s_err_active;
+    -- Round 6 B1: surface per-chip stickies to top
+    o_err_reg_overflow    <= s_err_reg_overflow_axi;
+    o_run_drain_complete  <= s_run_drain_complete_axi;
 
     -- =========================================================================
     -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
@@ -1068,6 +1082,38 @@ begin
                 dest_out => s_err_raw_overflow_axi(i)
             );
 
+        -- Round 6 B1: per-chip chip_reg 3rd-pulse overflow (level sticky)
+        u_cdc_err_reg_overflow : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_err_reg_overflow(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_err_reg_overflow_axi(i)
+            );
+
+        -- Round 6 B1: chip_run internal drain-complete is a 1-clk pulse. Latch
+        -- it to sticky in TDC domain, then CDC the sticky level.
+        p_run_drain_sticky : process(i_tdc_clk)
+        begin
+            if rising_edge(i_tdc_clk) then
+                if s_tdc_aresetn = '0' then
+                    s_run_drain_complete_sticky_r(i) <= '0';
+                elsif s_run_drain_complete(i) = '1' then
+                    s_run_drain_complete_sticky_r(i) <= '1';
+                end if;
+            end if;
+        end process p_run_drain_sticky;
+
+        u_cdc_run_drain_complete : xpm_cdc_single
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            port map (
+                src_clk  => i_tdc_clk,
+                src_in   => s_run_drain_complete_sticky_r(i),
+                dest_clk => i_axis_aclk,
+                dest_out => s_run_drain_complete_axi(i)
+            );
+
         u_cdc_errflag : xpm_cdc_single
             generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
             port map (
@@ -1182,14 +1228,14 @@ begin
                 o_m_raw_axis_tuser  => s_raw_axis_tuser(i),
                 i_m_raw_axis_tready => s_raw_axis_tready(i),
                 o_drain_done        => s_drain_done(i),
-                o_run_drain_complete => open,  -- Round 5 #11 internal drain-complete pulse; not yet surfaced
+                o_run_drain_complete => s_run_drain_complete(i),  -- Round 6 B1: latched+CDC'd below
                 o_shot_seq          => s_chip_shot_seq(i),
                 o_busy              => s_chip_busy(i),
                 o_err_drain_timeout => s_err_drain_timeout(i),
                 o_err_sequence      => s_err_sequence(i),
                 o_err_rsp_mismatch  => s_err_rsp_mismatch(i),
                 o_err_raw_overflow  => s_err_raw_overflow(i),
-                o_err_reg_overflow  => open,  -- Round 5 #12 chip_reg queue-overflow sticky; not yet surfaced to CSR
+                o_err_reg_overflow  => s_err_reg_overflow(i),  -- Round 6 B1: CDC'd below
                 o_run_timeout       => s_run_timeout(i)
             );
 
