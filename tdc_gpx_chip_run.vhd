@@ -137,6 +137,10 @@ entity tdc_gpx_chip_run is
         o_range_active      : out std_logic;           -- '1' during capture+drain window
         o_timeout           : out std_logic;           -- 1-clk pulse: abnormal drain exit
         o_timeout_cause     : out std_logic_vector(2 downto 0);  -- cause code (valid with o_timeout)
+        -- Round 12 A4: sticky set when ST_DRAIN_CHECK fallback completion
+        -- finalizes with drain_cnt != expected_ififo. Distinguishes clean
+        -- drain completion from premature/drifted termination.
+        o_err_drain_mismatch : out std_logic;
         -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
         --              "100"=burst_rsp, "101"=flush_rsp, "110"=overrun_flush,
         --              "111"=capture_stop_fallback (irflag missing after cmd_stop)
@@ -198,6 +202,14 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_done_r            : std_logic := '0';
     signal s_timeout_r         : std_logic := '0';
     signal s_timeout_cause_r   : std_logic_vector(2 downto 0) := (others => '0');
+    -- Round 12 A4: drain expected-vs-actual mismatch sticky. Fires when
+    -- the ST_DRAIN_CHECK fallback completion path finalizes with
+    -- s_drain_cnt_ififo1/2_r != s_expected_ififo1/2_r. Pre-fallback the
+    -- two counts are expected to match (drain_cnt ticks up to expected);
+    -- a mismatch at fallback time means upstream count drift or premature
+    -- completion. Distinguishes "clean completion" from "forced exit
+    -- with wrong count" — the latter previously passed silently.
+    signal s_err_drain_mismatch_r : std_logic := '0';
 
     -- Round 9 #1: Secondary watchdog for "pending stuck" deadlock.
     -- Round 5 #1 made EF1/EF2/BURST freeze s_wait_cnt_r while i_bus_rsp_pending
@@ -282,6 +294,7 @@ begin
                 s_timeout_r          <= '0';
                 s_timeout_cause_r    <= (others => '0');
                 s_pending_stuck_cnt_r <= (others => '0');
+                s_err_drain_mismatch_r <= '0';
             else
                 s_raw_valid_r        <= '0';
                 s_drain_done_r       <= '0';
@@ -507,6 +520,19 @@ begin
                             s_wait_cnt_r      <= (others => '0');
                             if s_purge_mode_r = '1' then
                                 s_purge_mode_r <= '0';
+                            end if;
+                            -- Round 12 A4: expected-vs-actual drain count
+                            -- check at fallback. Under normal termination
+                            -- the two counts would have been bumped in
+                            -- lockstep by the main drain loop. If the
+                            -- loop fell through here without a match,
+                            -- something went wrong upstream — flag it.
+                            -- Purge-mode bypasses the check (it doesn't
+                            -- track against expected counts).
+                            if s_purge_mode_r = '0'
+                               and (s_drain_cnt_ififo1_r /= s_expected_ififo1_r
+                                    or s_drain_cnt_ififo2_r /= s_expected_ififo2_r) then
+                                s_err_drain_mismatch_r <= '1';
                             end if;
                             -- Always emit final drain_done (normal + purge)
                             s_drain_done_r <= '1';
@@ -872,6 +898,7 @@ begin
     o_range_active      <= s_range_active_r;
     o_timeout           <= s_timeout_r;
     o_timeout_cause     <= s_timeout_cause_r;
+    o_err_drain_mismatch <= s_err_drain_mismatch_r;
     o_armed             <= '1' when s_state_r = ST_ARMED else '0';
 
 end architecture rtl;

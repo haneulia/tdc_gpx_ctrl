@@ -272,6 +272,15 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_quarantine_tick_r          : unsigned(3 downto 0) := (others => '0');
     signal s_quarantine_escape_sticky_r : std_logic := '0';
 
+    -- Round 12 B6: post-escape absorb window. After a QUARANTINE forced
+    -- escape, late in-flight stale beats still arrive from upstream.
+    -- During this window (4096 cycles ≈ 20us @ 200MHz) we continue to
+    -- accept (tready=1) but do NOT process data (buffers stay free,
+    -- s_cstate_r = ST_C_IDLE). This prevents the "forced-escape then
+    -- IDLE then stale beat arrives then upstream stalls" failure mode.
+    constant c_POST_ESCAPE_ABSORB_CYCLES : unsigned(11 downto 0) := (others => '1');
+    signal s_post_escape_cnt_r : unsigned(11 downto 0) := (others => '0');
+
     -- Round 9 #8: effective max_hits_cfg. i_max_hits_cfg="000" is an invalid
     -- SW setting; canonical spec is 1..7. To keep the collect path (hit
     -- storage limit) and the output path (beat count formatting, fn_
@@ -342,12 +351,18 @@ begin
     s_max_hits_eff_u <= "0111" when i_max_hits_cfg = "000"
                         else ('0' & i_max_hits_cfg);
 
-    -- AXI-Stream slave: accept during collect, drop, or quarantine.
-    -- QUARANTINE continues to absorb late stale beats after a DROP timeout
-    -- so upstream doesn't stall (Round 5 #6).
+    -- AXI-Stream slave: accept during collect, drop, quarantine, or during
+    -- the Round 12 B6 post-escape absorb window. QUARANTINE continues to
+    -- absorb late stale beats after a DROP timeout so upstream doesn't
+    -- stall (Round 5 #6). After a Round 11 item 4 forced escape to IDLE,
+    -- late stale beats that arrive a few cycles later would hit tready=0
+    -- and stall upstream (review Round 12 B6). The s_post_escape_cnt_r
+    -- window keeps tready='1' for N cycles after escape so in-flight
+    -- stale beats are absorbed cleanly before normal IDLE gating applies.
     o_s_axis_tready <= '1' when s_cstate_r = ST_C_ACTIVE
                            or s_cstate_r = ST_C_DROP
                            or s_cstate_r = ST_C_QUARANTINE
+                           or s_post_escape_cnt_r /= 0
                   else '0';
 
     -- =========================================================================
@@ -382,6 +397,8 @@ begin
                 -- Round 11 item 4: QUARANTINE escalation reset
                 s_quarantine_tick_r          <= (others => '0');
                 s_quarantine_escape_sticky_r <= '0';
+                -- Round 12 B6: post-escape absorb window counter
+                s_post_escape_cnt_r          <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r   <= '0';
@@ -648,6 +665,8 @@ begin
                                     s_shot_pending_r             <= '0';
                                     s_quarantine_tick_r          <= (others => '0');
                                     s_quarantine_escape_sticky_r <= '1';
+                                    -- Round 12 B6: arm post-escape absorb window
+                                    s_post_escape_cnt_r          <= c_POST_ESCAPE_ABSORB_CYCLES;
                                 else
                                     s_quarantine_tick_r <= s_quarantine_tick_r + 1;
                                 end if;
@@ -686,6 +705,15 @@ begin
                     end if;  -- deferred auto-start
 
                 end if;  -- not abort
+
+                -- Round 12 B6: post-escape absorb window countdown.
+                -- Runs unconditionally (independent of abort branch) so
+                -- the absorb window continues even through minor state
+                -- perturbations. Cleared faster by i_abort (handled in
+                -- the abort branch above).
+                if s_post_escape_cnt_r /= 0 then
+                    s_post_escape_cnt_r <= s_post_escape_cnt_r - 1;
+                end if;
             end if;  -- rst_n
         end if;  -- rising_edge
     end process p_collect;

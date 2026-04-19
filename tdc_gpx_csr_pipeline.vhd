@@ -106,6 +106,8 @@ entity tdc_gpx_csr_pipeline is
         i_cmd_start_accepted : in  std_logic;
         o_cmd_stop          : out std_logic;
         o_cmd_soft_reset    : out std_logic;
+        -- Round 12 A1: force-reinit escape command (SW pulse).
+        o_cmd_force_reinit  : out std_logic;
         o_cmd_cfg_write     : out std_logic;
 
         -- Status input (i_axis_aclk domain)
@@ -176,7 +178,9 @@ architecture rtl of tdc_gpx_csr_pipeline is
     -- =========================================================================
     -- Constants
     -- =========================================================================
-    constant C_NUM_CTL_CDC  : natural := 2;   -- CTL0 (MAIN_CTRL), CTL1 (RANGE_COLS)
+    -- CTL CDC slots (s_axi_aclk → i_axis_aclk). Round 12 A1: added CTL2
+    -- for auxiliary recovery commands (currently just force_reinit).
+    constant C_NUM_CTL_CDC  : natural := 3;   -- CTL0 (MAIN_CTRL), CTL1 (RANGE_COLS), CTL2 (AUX_CMD)
     constant C_NUM_STAT_CDC : natural := 1;   -- STAT5 (STATUS)
     constant C_ZERO32       : std_logic_vector(31 downto 0) := (others => '0');
 
@@ -236,6 +240,9 @@ architecture rtl of tdc_gpx_csr_pipeline is
     -- Command edge detect (i_axis_aclk domain)
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_pulse_r : std_logic_vector(3 downto 0) := (others => '0');
+    -- Round 12 A1: force-reinit command via CTL2[0] edge detect
+    signal s_force_reinit_prev_r  : std_logic := '0';
+    signal s_force_reinit_pulse_r : std_logic := '0';
 
     -- Pending latches (i_axis_aclk domain)
     signal s_cfg_write_pending_r : std_logic := '0';
@@ -600,9 +607,17 @@ begin
             if i_axis_aresetn = '0' then
                 s_cmd_prev_r  <= (others => '0');
                 s_cmd_pulse_r <= (others => '0');
+                -- Round 12 A1: force-reinit edge detect
+                s_force_reinit_prev_r  <= '0';
+                s_force_reinit_pulse_r <= '0';
             else
                 s_cmd_prev_r  <= s_ctl_out(0)(31 downto 28);
                 s_cmd_pulse_r <= s_ctl_out(0)(31 downto 28) and (not s_cmd_prev_r);
+                -- Round 12 A1: CTL2[0] rising edge → force_reinit pulse.
+                -- SW writes CTL2[0]=1 then CTL2[0]=0 to issue a single
+                -- recovery attempt. Higher bits of CTL2 are reserved.
+                s_force_reinit_prev_r  <= s_ctl_out(2)(0);
+                s_force_reinit_pulse_r <= s_ctl_out(2)(0) and (not s_force_reinit_prev_r);
             end if;
         end if;
     end process p_cmd_edge;
@@ -632,6 +647,7 @@ begin
     o_cmd_start      <= s_start_pending_r and s_cdc_all_idle_ff(1);
     o_cmd_stop       <= s_cmd_pulse_r(1);
     o_cmd_soft_reset <= s_cmd_pulse_r(2);
+    o_cmd_force_reinit <= s_force_reinit_pulse_r;  -- Round 12 A1
 
     -- cfg_write pending latch
     p_cfg_write_pending : process(i_axis_aclk)

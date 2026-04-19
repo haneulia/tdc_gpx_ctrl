@@ -172,6 +172,13 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_start        : std_logic;
     signal s_cmd_stop         : std_logic;
     signal s_cmd_soft_reset   : std_logic;
+    signal s_cmd_force_reinit : std_logic;  -- Round 12 A1
+    signal s_err_force_reinit_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_raw_ctrl_drop_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A2
+    signal s_err_drain_mismatch_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A4
+    signal s_err_rw_ambiguous_arb    : std_logic;  -- Round 12 A5
+    signal s_err_rw_ambiguous_reg_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A5
+    signal s_err_stopdis_mid_shot_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 B8
     signal s_cmd_cfg_write    : std_logic;
     -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
     -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
@@ -404,6 +411,7 @@ begin
             i_cmd_start_accepted => s_cmd_start_accepted,
             o_cmd_stop          => s_cmd_stop,
             o_cmd_soft_reset    => s_cmd_soft_reset,
+            o_cmd_force_reinit  => s_cmd_force_reinit,   -- Round 12 A1
             o_cmd_cfg_write     => s_cmd_cfg_write,
             i_status            => s_status,
             o_irq               => o_irq_pipe
@@ -474,6 +482,7 @@ begin
             i_cmd_start_accepted => s_cmd_start_accepted,
             i_cmd_stop           => s_cmd_stop,
             i_cmd_soft_reset     => s_cmd_soft_reset,
+            i_cmd_force_reinit   => s_cmd_force_reinit,  -- Round 12 A1
             i_cmd_cfg_write      => s_cmd_cfg_write,
             i_err_soft_clear     => s_err_soft_clear,
             i_shot_start_per_chip => s_shot_start_per_chip,
@@ -534,6 +543,17 @@ begin
             o_init_cfg_coalesced_mask => s_init_cfg_coalesced_mask,
             -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
             o_cmd_collision_mask      => s_cmd_collision_mask,
+            -- Round 12 A1: per-chip force-reinit used sticky
+            o_err_force_reinit_mask   => s_err_force_reinit_mask,
+            -- Round 12 A2: per-chip raw control-beat drop sticky
+            o_err_raw_ctrl_drop_mask  => s_err_raw_ctrl_drop_mask,
+            -- Round 12 A4: per-chip chip_run drain mismatch sticky
+            o_err_drain_mismatch_mask => s_err_drain_mismatch_mask,
+            -- Round 12 A5: concurrent R+W ambiguity stickies
+            o_err_rw_ambiguous_arb    => s_err_rw_ambiguous_arb,
+            o_err_rw_ambiguous_reg    => s_err_rw_ambiguous_reg_mask,
+            -- Round 12 B8: per-chip stopdis_override mid-shot sticky
+            o_err_stopdis_mid_shot_mask => s_err_stopdis_mid_shot_mask,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -903,6 +923,17 @@ begin
         s_shot_flush_drop_mask_rise or s_shot_flush_drop_mask_fall;
     -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
     s_status.cmd_collision_mask <= s_cmd_collision_mask;
+    -- Round 12 A1: per-chip force-reinit used sticky
+    s_status.force_reinit_mask  <= s_err_force_reinit_mask;
+    -- Round 12 A2: per-chip raw control-beat drop sticky
+    s_status.raw_ctrl_drop_mask <= s_err_raw_ctrl_drop_mask;
+    -- Round 12 A4: per-chip chip_run drain mismatch sticky
+    s_status.drain_mismatch_mask <= s_err_drain_mismatch_mask;
+    -- Round 12 A5: R+W ambiguity stickies
+    s_status.rw_ambiguous_arb      <= s_err_rw_ambiguous_arb;
+    s_status.rw_ambiguous_reg_mask <= s_err_rw_ambiguous_reg_mask;
+    -- Round 12 B8: stopdis_override mid-shot sticky
+    s_status.stopdis_mid_shot_mask <= s_err_stopdis_mid_shot_mask;
 
     -- stop_id_error_mask: per-chip sticky aggregating rise + fall pulses.
     p_stop_id_error_sticky : process(i_axis_aclk)

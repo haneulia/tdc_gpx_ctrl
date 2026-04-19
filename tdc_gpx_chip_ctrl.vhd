@@ -68,6 +68,15 @@ entity tdc_gpx_chip_ctrl is
         i_cmd_stop          : in  std_logic;         -- ARMED/CAPTURE -> IDLE
         i_cmd_soft_reset    : in  std_logic;         -- any -> POWERUP (global)
         i_cmd_soft_reset_err: in  std_logic;         -- per-chip error recovery -> POWERUP
+        -- Round 12 A1: SW-issued force re-init escape from PH_RESP_DRAIN
+        -- permanent quarantine. Highest priority — bypasses PH_RESP_DRAIN
+        -- and jumps directly to PH_INIT. SW is responsible for externally
+        -- flushing the bus before issuing this pulse (e.g. via FPGA-side
+        -- GPIO reset to the TDC chip); otherwise stale responses may
+        -- pollute the init sequence. Use only when PH_RESP_DRAIN is stuck
+        -- and s_err_drain_cap_r is observed. Setting the sticky below
+        -- marks the fact that bus synchronization was bypassed.
+        i_cmd_force_reinit  : in  std_logic := '0';
         i_cmd_cfg_write     : in  std_logic;         -- IDLE -> CFG_WRITE
         -- Round 7 B-5: SW-initiated sticky clear, forwarded to u_reg so its
         -- s_err_req_overflow_r follows the same clear semantic as status_agg.
@@ -184,7 +193,17 @@ entity tdc_gpx_chip_ctrl is
         -- outputs into a mask so SW can see WHICH chip saw the collision.
         -- Investigate cmd_arb (source serialization failure), not the
         -- dropped command itself.
-        o_err_cmd_collision  : out std_logic
+        o_err_cmd_collision  : out std_logic;
+        -- Round 12 A1: force-reinit used sticky (SW bypassed PH_RESP_DRAIN).
+        o_err_force_reinit   : out std_logic;
+        -- Round 12 A2: control-beat drop sticky (distinct from data drop).
+        o_err_raw_ctrl_drop  : out std_logic;
+        -- Round 12 A4: chip_run drain count mismatch sticky.
+        o_err_drain_mismatch : out std_logic;
+        -- Round 12 A5: chip_reg concurrent R+W ambiguity sticky (per-chip).
+        o_err_reg_rw_ambiguous : out std_logic;
+        -- Round 12 B8: sticky for stopdis_override asserted during PH_RUN.
+        o_err_stopdis_mid_shot : out std_logic
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -343,8 +362,25 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: raw hold+skid both full, beat dropped
+    -- Round 12 A2: distinct control-beat drop sticky. Fires only when a
+    -- control beat (drain_done / ififo1_done) was dropped — which with
+    -- the 2-slot reserve below should only be possible if chip_run
+    -- emits 5+ consecutive control beats without the downstream draining.
+    -- If this ever fires, the separate-FIFO refactor (architectural,
+    -- not done here) is required because the workload has changed.
+    signal s_err_raw_ctrl_drop_r  : std_logic := '0';
+    signal s_err_drain_mismatch   : std_logic;  -- Round 12 A4: from chip_run
+    signal s_err_reg_rw_ambiguous : std_logic;  -- Round 12 A5: from chip_reg
+    -- Round 12 B8: sticky for "stopdis_override asserted mid-shot".
+    -- The override is intentionally live (debug escape hatch), but using
+    -- it during PH_RUN almost certainly corrupts the in-flight shot.
+    -- This sticky surfaces the event so SW can correlate dropped shots
+    -- with override pulses. Intended use: leave override inactive in
+    -- production; any set bit here implies debug intervention or bug.
+    signal s_err_stopdis_mid_shot_r : std_logic := '0';
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
     signal s_err_cmd_collision_r  : std_logic := '0';  -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision sticky (cmd_arb contract violation)
+    signal s_err_force_reinit_r   : std_logic := '0';  -- Round 12 A1: sticky — force-reinit was used (stale pollution risk acknowledged)
     -- #13: i_stop_tdc CDC moved to config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse);
     -- arrives here as a clean 1-cycle pulse in the TDC clock domain, so no
     -- internal 2-FF sync or edge-detect is needed.
@@ -402,6 +438,7 @@ begin
             o_range_active      => s_run_range_active,
             o_timeout           => s_run_timeout,
             o_timeout_cause     => o_run_timeout_cause,  -- Round 11 C: surface to SW
+            o_err_drain_mismatch => s_err_drain_mismatch,  -- Round 12 A4
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
             i_n_drain_cap       => s_n_drain_cap_snap_r,
@@ -457,6 +494,7 @@ begin
             i_bus_rsp_valid => s_reg_rsp_valid,
             i_bus_rsp_rdata => s_reg_rsp_rdata,
             o_err_req_overflow => o_err_reg_overflow,
+            o_err_rw_ambiguous => s_err_reg_rw_ambiguous,  -- Round 12 A5
             i_soft_clear       => i_soft_clear
         );
 
@@ -547,6 +585,8 @@ begin
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_err_drain_cap_r    <= '0';
                 s_err_cmd_collision_r <= '0';
+                s_err_force_reinit_r  <= '0';
+                s_err_stopdis_mid_shot_r <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
@@ -629,6 +669,13 @@ begin
 
                     when PH_RUN =>
                         s_stopdis_latch_r <= s_run_stopdis;
+                        -- Round 12 B8: detect mid-shot stopdis_override use.
+                        -- The override bypasses FSM state to drive the pin
+                        -- directly; firing during PH_RUN almost always means
+                        -- the in-flight shot is being corrupted.
+                        if i_cfg.stopdis_override(4) = '1' then
+                            s_err_stopdis_mid_shot_r <= '1';
+                        end if;
                         if s_run_done = '1' then
                             -- chip_run has multiple internal timeout paths;
                             -- any of them may leave stale responses in bus_phy.
@@ -722,6 +769,21 @@ begin
                     s_phase_r            <= PH_RESP_DRAIN;
                     s_drain_cnt_r        <= (others => '0');
                     s_drain_to_init_r    <= '1';  -- soft reset → drain then init
+                end if;
+
+                -- Round 12 A1: force-reinit escape. Highest-priority override
+                -- (last-assignment wins in this sequential process). Bypasses
+                -- PH_RESP_DRAIN entirely — SW MUST have flushed the bus
+                -- externally before pulsing this. Sets the force_reinit
+                -- sticky so the event is SW-visible for post-mortem.
+                if i_cmd_force_reinit = '1' then
+                    s_cfg_image_snap_r       <= i_cfg_image;
+                    s_phase_r                <= PH_INIT;
+                    s_init_start             <= '1';
+                    s_drain_cnt_r            <= (others => '0');
+                    s_drain_to_init_r        <= '0';
+                    s_drain_quarantine_cnt_r <= (others => '0');
+                    s_err_force_reinit_r     <= '1';
                 end if;
             end if;
         end if;
@@ -822,6 +884,7 @@ begin
             if s_sub_rst_n = '0' then
                 s_raw_fifo_r <= (others => c_RAW_ENTRY_EMPTY);
                 s_err_raw_overflow_r <= '0';
+                s_err_raw_ctrl_drop_r <= '0';
             else
                 -- Round 6 B2: previously OR-folded chip_run's
                 -- s_err_overrun_drop here; that sticky has been removed
@@ -878,6 +941,16 @@ begin
                         end if;
                     end loop;
 
+                    -- Round 12 A2: reserve policy strengthened to 2 slots.
+                    -- Was Round 11 item 6 (reserve=1). Data beats now require
+                    -- 3+ free slots (data capacity 6−2 = 4), so at any time
+                    -- at least 2 slots are guaranteed available for control.
+                    -- This keeps control-beat drops structurally impossible
+                    -- for the normal workload (chip_run emits at most 2
+                    -- consecutive control beats per phase). Control only
+                    -- drops when 5+ back-to-back control beats collide with
+                    -- stuck downstream — a chip_run misbehavior, flagged by
+                    -- the separate s_err_raw_ctrl_drop_r sticky.
                     if v_new.tuser(7) = '1' then
                         -- Control beat: enqueue if any slot is free.
                         if v_free >= 1 then
@@ -889,9 +962,9 @@ begin
                             end loop;
                         end if;
                     else
-                        -- Data beat: enqueue only if 2+ slots are free, so
-                        -- one remains for a future control beat.
-                        if v_free >= 2 then
+                        -- Data beat: enqueue only if 3+ slots are free, so
+                        -- two remain reserved for future control beats.
+                        if v_free >= 3 then
                             for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
                                 if not v_placed and v_fifo(i).valid = '0' then
                                     v_fifo(i) := v_new;
@@ -902,11 +975,11 @@ begin
                     end if;
 
                     if not v_placed then
-                        -- Drop. For data beats this is the new reserve
-                        -- threshold (free=1 slot left); for control beats
-                        -- it means the FIFO is genuinely saturated (should
-                        -- not happen with proper backpressure).
                         s_err_raw_overflow_r <= '1';
+                        -- Round 12 A2: control vs data drop distinction.
+                        if v_new.tuser(7) = '1' then
+                            s_err_raw_ctrl_drop_r <= '1';
+                        end if;
                         -- synthesis translate_off
                         assert false
                             report "chip_ctrl: raw beat DROPPED (kind=" &
@@ -991,6 +1064,11 @@ begin
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
     o_init_cfg_coalesced <= s_init_cfg_coalesced;
     o_err_cmd_collision  <= s_err_cmd_collision_r;
+    o_err_force_reinit   <= s_err_force_reinit_r;
+    o_err_raw_ctrl_drop  <= s_err_raw_ctrl_drop_r;
+    o_err_drain_mismatch <= s_err_drain_mismatch;
+    o_err_reg_rw_ambiguous <= s_err_reg_rw_ambiguous;
+    o_err_stopdis_mid_shot <= s_err_stopdis_mid_shot_r;
     -- raw_overflow aggregates multiple "integrity compromised" events so SW
     -- only needs to observe one flag per chip. Individual cause codes can be
     -- split into dedicated ports later if needed:

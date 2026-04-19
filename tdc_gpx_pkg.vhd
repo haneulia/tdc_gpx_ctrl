@@ -367,6 +367,27 @@ package tdc_gpx_pkg is
         -- (cmd_arb enforces mutual exclusion at source); a fire indicates a
         -- cmd_arb contract violation, not a chip_ctrl bug.
         cmd_collision_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 A1: per-chip force-reinit used sticky. Bit i = '1' means
+        -- SW issued force_reinit while chip i's chip_ctrl was in PH_RESP_DRAIN
+        -- quarantine. Bus synchronization was bypassed — SW is responsible
+        -- for the prior external flush.
+        force_reinit_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 A2: per-chip raw control-beat drop sticky.
+        raw_ctrl_drop_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 A4: per-chip chip_run drain expected-vs-actual mismatch
+        -- sticky. Bit i = '1' means chip i's chip_run ST_DRAIN_CHECK
+        -- fallback completion finalized with drain_cnt != expected_ififo.
+        drain_mismatch_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 A5: concurrent R+W ambiguity stickies.
+        --   _arb = cmd_arb saw start_read=1 AND start_write=1 same cycle
+        --   _reg = chip_reg (per chip) saw it in ST_ACTIVE (write wins,
+        --          read intent lost)
+        rw_ambiguous_arb     : std_logic;
+        rw_ambiguous_reg_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 12 B8: per-chip stopdis_override asserted during PH_RUN.
+        -- Non-zero means debug override was used mid-shot — the affected
+        -- frame should be treated as suspect.
+        stopdis_mid_shot_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -414,7 +435,13 @@ package tdc_gpx_pkg is
         err_frame_wait_escape   => '0',
         init_cfg_coalesced_mask => (others => '0'),
         shot_flush_drop_mask    => (others => '0'),
-        cmd_collision_mask      => (others => '0')
+        cmd_collision_mask      => (others => '0'),
+        force_reinit_mask       => (others => '0'),
+        raw_ctrl_drop_mask      => (others => '0'),
+        drain_mismatch_mask     => (others => '0'),
+        rw_ambiguous_arb        => '0',
+        rw_ambiguous_reg_mask   => (others => '0'),
+        stopdis_mid_shot_mask   => (others => '0')
     );
 
     -- =========================================================================

@@ -167,7 +167,12 @@ architecture rtl of tdc_gpx_header_inserter is
     -- ST_IDLE can consume it. Prevents silent loss of 1-cycle pulses
     -- when upstream issues face_start before hdr_idle reports.
     -- Dropped on face_abort (abort cancels any queued restart).
-    signal s_face_start_pending_r : std_logic := '0';
+    -- Round 12 B7: face_start pending queue expanded from 1-depth to
+    -- 2-depth. Round 11 item 1's 1-cycle pulse guarantee makes multi-
+    -- pulse bursts unlikely, but the extra slot adds safety margin
+    -- against future upstream changes. Pulses beyond 2 still collapse
+    -- into s_face_start_collapsed_cnt_r for observability.
+    signal s_face_start_pending_cnt_r : unsigned(1 downto 0) := (others => '0');
     -- Round 9 #10: face_start pending is 1-depth (intentional — multiple
     -- pulses during a busy window collapse to the same latent restart). To
     -- preserve observability, count each additional non-IDLE face_start that
@@ -385,7 +390,7 @@ begin
                 s_chip_error_cnt_r  <= (others => '0');
                 s_hdr_rom_pending_r <= '0';
                 s_hdr_rom_r         <= (others => (others => '0'));
-                s_face_start_pending_r <= '0';
+                s_face_start_pending_cnt_r <= (others => '0');
                 -- Round 11 item 3: watchdog reset
                 s_drain_wdt_r            <= (others => '0');
                 s_drain_timeout_sticky_r <= '0';
@@ -572,14 +577,15 @@ begin
                 --   "item 1 guarantee somehow failed" — nonzero is a bug.
                 -- =============================================================
                 if i_face_start = '1' and s_state_r /= ST_IDLE then
-                    -- Round 9 #10: count collapsed pulses. If a pending was
-                    -- already latched, the new pulse is coalesced — increment
-                    -- the wrap-counter for SW visibility.
-                    if s_face_start_pending_r = '1' then
+                    -- Round 9 #10 + Round 12 B7: count collapsed pulses
+                    -- beyond the 2-depth queue; increment within-queue.
+                    if s_face_start_pending_cnt_r = 2 then
                         s_face_start_collapsed_cnt_r <=
                             s_face_start_collapsed_cnt_r + 1;
+                    else
+                        s_face_start_pending_cnt_r <=
+                            s_face_start_pending_cnt_r + 1;
                     end if;
-                    s_face_start_pending_r <= '1';
                     -- synthesis translate_off
                     assert false
                         report "header_inserter: face_start pending-latched (not IDLE, state=" &
@@ -587,9 +593,13 @@ begin
                         severity note;
                     -- synthesis translate_on
                 end if;
-                if (i_face_start = '1' or s_face_start_pending_r = '1')
+                if (i_face_start = '1' or s_face_start_pending_cnt_r > 0)
                    and s_state_r = ST_IDLE then
-                    s_face_start_pending_r <= '0';  -- consume
+                    -- Round 12 B7: consume one from queue per IDLE entry.
+                    if s_face_start_pending_cnt_r > 0 then
+                        s_face_start_pending_cnt_r <=
+                            s_face_start_pending_cnt_r - 1;
+                    end if;
 
                     -- All fields latched at face_start (= s_face_start_r in top).
                     -- Error fields (chip_error_mask, chip_error_cnt) are a
@@ -667,7 +677,7 @@ begin
                 -- =============================================================
                 if i_face_abort = '1' then
                     -- Abort cancels any queued face_start (SW must re-arm).
-                    s_face_start_pending_r <= '0';
+                    s_face_start_pending_cnt_r <= (others => '0');
                     -- #34: if face_start was accepted SAME cycle, the face_start
                     -- block above already set s_hdr_rom_pending_r <= '1' and
                     -- s_state_r <= ST_PREFIX. Abort runs after face_start in
