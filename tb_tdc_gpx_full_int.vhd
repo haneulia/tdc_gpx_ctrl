@@ -81,7 +81,13 @@ entity tb_tdc_gpx_full_int is
         G_POWERUP_CLKS    : positive := 16;      -- chip_ctrl powerup (short sim)
         G_RECOVERY_CLKS   : positive := 4;
         G_ALU_PULSE_CLKS  : positive := 3;
-        G_ENC_RUN_US      : real    := 100.0     -- how long encoder spins
+        G_ENC_RUN_US      : real    := 100.0;    -- how long encoder spins
+        -- Debug / experiment:
+        --   'lc'     = i_shot_start / i_stop_tdc driven from laser_ctrl (normal)
+        --   'direct' = TB drives them directly as 1-clk pulses (bypass lc), used
+        --              to isolate whether the chain breaks inside TDC vs at the
+        --              laser_ctrl -> TDC handshake.
+        G_TDC_STIM_MODE   : string  := "lc"
     );
 end entity tb_tdc_gpx_full_int;
 
@@ -264,6 +270,12 @@ architecture sim of tb_tdc_gpx_full_int is
     signal lc_fire_pulse   : std_logic;
     signal lc_start_tdc    : std_logic;
     signal lc_stop_tdc     : std_logic;
+
+    -- TB-generated direct-stim pulses (only used when G_TDC_STIM_MODE="direct")
+    signal tb_shot_start   : std_logic := '0';
+    signal tb_stop_tdc     : std_logic := '0';
+    signal td_shot_start_mux : std_logic;
+    signal td_stop_tdc_mux   : std_logic;
     signal lc_laser_active : std_logic;
     signal lc_warning      : std_logic_vector(4 downto 0);
     signal lc_warning_any  : std_logic;
@@ -452,6 +464,13 @@ begin
     -- Clock / Reset
     -- =========================================================================
     clk <= not clk after C_CLK_PERIOD / 2 when not sim_done else '0';
+
+    -- i_shot_start / i_stop_tdc source mux. Default ("lc") routes from the
+    -- laser_ctrl outputs; "direct" exposes a TB-controlled pulse for debug.
+    td_shot_start_mux <= tb_shot_start when G_TDC_STIM_MODE = "direct"
+                                       else lc_start_tdc;
+    td_stop_tdc_mux   <= tb_stop_tdc   when G_TDC_STIM_MODE = "direct"
+                                       else lc_stop_tdc;
 
     p_reset : process
     begin
@@ -719,8 +738,8 @@ begin
             s_axi_pipe_rresp   => tp_rresp,
             i_lsr_tvalid      => lc_m_tvalid,
             i_lsr_tdata       => lc_m_tdata,
-            i_shot_start      => lc_start_tdc,
-            i_stop_tdc        => lc_stop_tdc,
+            i_shot_start      => td_shot_start_mux,
+            i_stop_tdc        => td_stop_tdc_mux,
             i_stop_evt_tvalid => er_stop_tvalid,
             i_stop_evt_tdata  => er_stop_tdata,
             i_stop_evt_tkeep  => er_stop_tkeep,
@@ -852,8 +871,11 @@ begin
                 fifo_load_req <= (others => '0');
                 pd_n <= (others => '1');   -- differential complement, inactive HI
 
-                -- Detect fire_pulse rising edge -> start echo delay
-                if lc_fire_pulse = '1' and v_fire_prev = '0' then
+                -- Rising edge detect: lc mode watches fire_pulse,
+                -- direct mode watches tb_shot_start (since fire_pulse=0 there).
+                if ((G_TDC_STIM_MODE /= "direct" and lc_fire_pulse = '1')
+                    or (G_TDC_STIM_MODE  = "direct" and tb_shot_start = '1'))
+                   and v_fire_prev = '0' then
                     v_delay_cnt := C_ECHO_DELAY;
                     v_pulse_wait := true;
                     -- Preload chip FIFOs so chip_ctrl drains them after IrFlag
@@ -863,7 +885,11 @@ begin
                     end loop;
                     fifo_load_req <= (others => '1');
                 end if;
-                v_fire_prev := lc_fire_pulse;
+                if G_TDC_STIM_MODE = "direct" then
+                    v_fire_prev := tb_shot_start;
+                else
+                    v_fire_prev := lc_fire_pulse;
+                end if;
 
                 -- Emit pd rising pulse after delay, hold for 10 cycles
                 if v_pulse_wait then
@@ -1065,6 +1091,41 @@ begin
             bready <= '0';
         end procedure;
 
+        -- AXI-Lite read: Pipeline CSR (7-bit addr) - for diagnostic readback
+        procedure pipe_rd(addr : std_logic_vector(6 downto 0);
+                          msg  : string) is
+            variable lv : line;
+        begin
+            wait until rising_edge(clk);
+            tp_araddr  <= addr;
+            tp_arvalid <= '1';
+            tp_rready  <= '1';
+            while tp_arready = '0' loop
+                wait until rising_edge(clk);
+            end loop;
+            wait until rising_edge(clk);
+            tp_arvalid <= '0';
+            while tp_rvalid = '0' loop
+                wait until rising_edge(clk);
+            end loop;
+            write(lv, now, right, 12);
+            write(lv, string'("  pipe_rd @0x"));
+            for i in addr'length - 1 downto 0 loop
+                if addr(i) = '1' then write(lv, string'("1"));
+                else                  write(lv, string'("0")); end if;
+            end loop;
+            write(lv, string'(" ("));
+            write(lv, msg);
+            write(lv, string'(") = 0x"));
+            for i in 7 downto 0 loop
+                write(lv, integer'image(
+                    to_integer(unsigned(tp_rdata(i*4+3 downto i*4)))));
+            end loop;
+            writeline(output, lv);
+            tp_rready <= '0';
+            wait until rising_edge(clk);
+        end procedure;
+
     begin
         wait until rst_n = '1';
         wait_clk(10);
@@ -1205,16 +1266,57 @@ begin
 
         --------------------------------------------------------------
         -- [S4] Start encoder motion and let chain run for long time
+        --   In "direct" mode the TB also fires two shots via tb_shot_start
+        --   so the TDC path gets triggered regardless of laser_ctrl.
         --------------------------------------------------------------
-        pl("[S4] enable encoder motion");
-        enc_run <= '1';
-        wait_clk(C_ENC_RUN_CLKS);  -- G_ENC_RUN_US worth of encoder motion
-        pl("[S5] stop encoder, wait for pending frames");
-        enc_run <= '0';
-        wait_clk(C_ENC_RUN_CLKS / 4);  -- 25% drain tail
+        if G_TDC_STIM_MODE = "direct" then
+            pl("[S4] DIRECT mode: firing 2 TB-generated shots into TDC");
+            -- Fire 2 shots. The p_pd / p_irflag processes key off lc_fire_pulse
+            -- which is zero in direct mode, so we manually drive IrFlag here.
+            for shot in 0 to 1 loop
+                tb_shot_start <= '1';
+                wait_clk(1);
+                tb_shot_start <= '0';
+                -- Inline chip FIFO preload (bypassing p_pd since no fire_pulse)
+                wait_clk(4);
+                i_tdc_irflag <= (others => '0');
+                wait_clk(20);
+                i_tdc_irflag <= (others => '1');
+                wait_clk(1000);
+                i_tdc_irflag <= (others => '0');
+                wait_clk(G_ALU_PULSE_CLKS + G_RECOVERY_CLKS + 8);
+                if shot = 0 then wait_clk(C_SHOT_PERIOD_CLKS); end if;
+            end loop;
+            wait_clk(2000);
+            tb_stop_tdc <= '1'; wait_clk(2); tb_stop_tdc <= '0';
+            wait_clk(500);
+        else
+            pl("[S4] enable encoder motion (laser_ctrl drives shot_start)");
+            enc_run <= '1';
+            wait_clk(C_ENC_RUN_CLKS);
+            pl("[S5] stop encoder, wait for pending frames");
+            enc_run <= '0';
+            wait_clk(C_ENC_RUN_CLKS / 4);
+        end if;
 
         --------------------------------------------------------------
-        -- [S6] Summary
+        -- [S6] Diagnostic readback: pipeline CSR STAT5/STAT6/STAT7
+        --   STAT5 (0x54) STATUS    : [0] busy [1] overrun [2] err_fatal
+        --                             [7:4] chip_err [11:8] drain_to [15:12] seq_err
+        --   STAT6 (0x58) STATUS_EXT: [0] err_read_timeout [1] reg_rejected
+        --                             [2] reg_zero_mask [3/4] shot_flush_drop r/f
+        --                             [5/6] hdr_drain_timeout r/f [7] err_frame_wait
+        --   STAT7 (0x5C) STATUS_EXT2: [3:0] reg_timeout_mask [7:4] stop_id_err
+        --                              [10:8] run_timeout_cause_last
+        --   Ideal "healthy" read: STAT5=0, STAT6=0, STAT7=0.
+        --------------------------------------------------------------
+        pipe_rd("1010100", "STAT5 STATUS");          -- 0x54
+        pipe_rd("1011000", "STAT6 STATUS_EXT");      -- 0x58
+        pipe_rd("1011100", "STAT7 STATUS_EXT2");     -- 0x5C
+        pipe_rd("1010000", "STAT4 MAX_HSIZE");       -- 0x50 (constant; checks read path)
+
+        --------------------------------------------------------------
+        -- [S7] Summary
         --------------------------------------------------------------
         pl("======================================================");
         pl(" full integration TB summary:");
