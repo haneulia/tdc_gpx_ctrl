@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>TDC-GPX VDMA Packet Structure</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f4f6f8; color: #1a1a2e; padding: 24px; }
+  h1 { font-size: 22px; margin-bottom: 8px; }
+  h2 { font-size: 17px; margin: 24px 0 10px; color: #16213e; border-bottom: 2px solid #0f3460; padding-bottom: 4px; }
+  h3 { font-size: 14px; margin: 16px 0 6px; color: #533483; }
+  .subtitle { font-size: 13px; color: #666; margin-bottom: 20px; }
+  .note { font-size: 12px; color: #888; margin: 4px 0; }
+
+  /* Frame diagram */
+  .frame-box { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; }
+  .line { display: flex; align-items: stretch; min-height: 38px; }
+  .line-label { width: 80px; font-size: 11px; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; color: #555; font-weight: 600; }
+  .hdr-block { background: #0f3460; color: #fff; min-width: 90px; display: flex; align-items: center; justify-content: center; font-size: 11px; border-radius: 3px 0 0 3px; padding: 4px 8px; }
+  .data-block { background: #e94560; color: #fff; flex: 1; display: flex; align-items: center; justify-content: center; font-size: 11px; border-radius: 0 3px 3px 0; padding: 4px 8px; }
+  .data-block.empty { background: #ddd; color: #999; }
+  .sof-marker { position: relative; }
+  .sof-marker::before { content: 'SOF'; position: absolute; top: -14px; left: 4px; font-size: 9px; color: #0f3460; font-weight: 700; }
+  .eol-marker { position: relative; }
+  .eol-marker::after { content: 'EOL'; position: absolute; top: -14px; right: 4px; font-size: 9px; color: #e94560; font-weight: 700; }
+
+  /* Header detail table */
+  table { border-collapse: collapse; margin: 8px 0; font-size: 12px; width: 100%; max-width: 780px; }
+  th, td { border: 1px solid #ccc; padding: 5px 8px; text-align: left; }
+  th { background: #0f3460; color: #fff; font-weight: 600; }
+  tr:nth-child(even) { background: #f0f0f5; }
+  td:first-child { font-family: monospace; text-align: center; width: 50px; }
+  td:nth-child(2) { font-family: monospace; text-align: center; width: 60px; }
+
+  /* Cell detail */
+  .cell-row { display: flex; gap: 1px; margin: 4px 0; }
+  .beat { padding: 6px 4px; font-size: 10px; text-align: center; border-radius: 2px; min-width: 70px; }
+  .beat.hit { background: #533483; color: #fff; }
+  .beat.meta { background: #fca311; color: #1a1a2e; font-weight: 600; }
+  .beat-label { width: 70px; font-size: 10px; display: flex; align-items: center; color: #555; }
+
+  /* Row detail */
+  .row-chips { display: flex; gap: 2px; margin: 4px 0; flex-wrap: wrap; }
+  .chip-block { padding: 6px 10px; border-radius: 3px; font-size: 11px; text-align: center; min-width: 120px; }
+  .chip0 { background: #2196F3; color: #fff; }
+  .chip1 { background: #4CAF50; color: #fff; }
+  .chip2 { background: #FF9800; color: #fff; }
+  .chip3 { background: #9C27B0; color: #fff; }
+
+  .config-table { max-width: 500px; }
+  .config-table td:first-child { width: 180px; font-weight: 600; }
+
+  .pipeline { display: flex; gap: 0; margin: 16px 0; align-items: center; }
+  .pipe-stage { padding: 8px 12px; font-size: 11px; text-align: center; border: 1px solid #ccc; background: #fff; }
+  .pipe-arrow { font-size: 16px; color: #0f3460; padding: 0 2px; }
+  .pipe-stage.active { background: #0f3460; color: #fff; }
+</style>
+</head>
+<body>
+
+<h1>TDC-GPX VDMA Packet Structure</h1>
+<p class="subtitle">tdc_gpx_header_inserter + tdc_gpx_face_assembler + tdc_gpx_cell_builder &mdash; 64-bit mode 기준</p>
+
+<!-- ============================================================ -->
+<h2>1. VDMA Frame Overview</h2>
+
+<p class="note">1 Frame = 1 Face = cols_per_face lines &times; HSIZE bytes/line</p>
+
+<div class="frame-box">
+  <div class="line">
+    <div class="line-label">Line 0<br>(col 0)</div>
+    <div class="hdr-block sof-marker">Header 48B<br>(6 beats &times; 8B)</div>
+    <div class="data-block eol-marker">Cell Data (chip0 &times; 8stops &times; 4beats + chip1 &times; ... + chip2 + chip3)</div>
+  </div>
+  <div class="line">
+    <div class="line-label">Line 1<br>(col 1)</div>
+    <div class="hdr-block">Zero Prefix 48B</div>
+    <div class="data-block eol-marker">Cell Data (chip0 &rarr; chip1 &rarr; chip2 &rarr; chip3, in-order)</div>
+  </div>
+  <div class="line">
+    <div class="line-label">Line 2</div>
+    <div class="hdr-block">Zero Prefix 48B</div>
+    <div class="data-block eol-marker">Cell Data</div>
+  </div>
+  <div class="line">
+    <div class="line-label" style="color:#aaa;">...</div>
+    <div class="hdr-block" style="opacity:0.4;">...</div>
+    <div class="data-block" style="opacity:0.4;">...</div>
+  </div>
+  <div class="line">
+    <div class="line-label">Line N-1<br>(last col)</div>
+    <div class="hdr-block">Zero Prefix 48B</div>
+    <div class="data-block eol-marker">Cell Data &rarr; frame_done</div>
+  </div>
+</div>
+
+<table class="config-table">
+  <tr><td>HSIZE (bytes)</td><td>(HDR_PREFIX_BEATS + DATA_BEATS) &times; TDATA_BYTES</td></tr>
+  <tr><td>VSIZE (lines)</td><td>cols_per_face</td></tr>
+  <tr><td>STRIDE</td><td>= HSIZE</td></tr>
+  <tr><td>SOF</td><td>tuser[0]=1 on first beat of Line 0</td></tr>
+  <tr><td>EOL</td><td>tlast=1 on last beat of each line</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>2. Header Prefix (48 Bytes, Line 0 only)</h2>
+<p class="note">Line 1+ 의 prefix는 전부 0x00. 64-bit mode: 2 words packed per beat (6 beats).</p>
+
+<table>
+  <tr><th>Beat</th><th>Offset</th><th>Field</th><th>Bits</th><th>Description</th></tr>
+  <tr><td>0</td><td>0x00</td><td>magic</td><td>[31:0]</td><td>"TDCG" (0x47434454)</td></tr>
+  <tr><td>1</td><td>0x04</td><td>vdma_frame_id</td><td>[31:0]</td><td>VDMA frame counter</td></tr>
+  <tr><td>2</td><td>0x08</td><td>scan_frame_id</td><td>[31:0]</td><td>Reserved (=0)</td></tr>
+  <tr><td>3</td><td>0x0C</td><td>face_config</td><td>[29:0]</td><td>face_id[7:0], mask[11:8], n_faces[14:12],<br>stops[18:15], ndcap[22:19], pipe_en[23],<br>hit_store[25:24], dist_scale[28:26], drain[29]</td></tr>
+  <tr><td>4</td><td>0x10</td><td>geometry</td><td>[31:0]</td><td>rows_per_face[15:0] | cols_per_face[31:16]</td></tr>
+  <tr><td>5</td><td>0x14</td><td>cell_info</td><td>[31:0]</td><td>max_hits[7:0], cell_size[15:8],<br>hit_slot_w[23:16], n_chips[27:24], max_stops[31:28]</td></tr>
+  <tr><td>6</td><td>0x18</td><td>timing</td><td>[31:0]</td><td>shot_seq[15:0] | bin_res_ps[31:16]</td></tr>
+  <tr><td>7</td><td>0x1C</td><td>calibration</td><td>[25:0]</td><td>start_off1[17:0], cell_fmt[21:18],<br>chip_err_mask[25:22]</td></tr>
+  <tr><td>8</td><td>0x20</td><td>k_dist_fixed</td><td>[31:0]</td><td>Distance calculation constant</td></tr>
+  <tr><td>9</td><td>0x24</td><td>timestamp_lo</td><td>[31:0]</td><td>timestamp_ns[31:0]</td></tr>
+  <tr><td>10</td><td>0x28</td><td>timestamp_hi</td><td>[31:0]</td><td>timestamp_ns[63:32]</td></tr>
+  <tr><td>11</td><td>0x2C</td><td>error_count</td><td>[31:0]</td><td>Cumulative error counter</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>3. Line Data (Row) &mdash; Strict In-Order</h2>
+<p class="note">1 Line = Header Prefix + (active_chips &times; stops_per_chip) cells. Chip 순서: 항상 chip0 &rarr; chip1 &rarr; chip2 &rarr; chip3.</p>
+
+<h3>Example: 4 chips, 8 stops, max_hits=7, 64-bit</h3>
+
+<div class="row-chips">
+  <div class="chip-block chip0">Chip 0<br>stop0 stop1 ... stop7<br>(8 cells &times; 4 beats = 32 beats)</div>
+  <div style="font-size:18px; display:flex; align-items:center;">&rarr;</div>
+  <div class="chip-block chip1">Chip 1<br>stop0 stop1 ... stop7<br>(32 beats)</div>
+  <div style="font-size:18px; display:flex; align-items:center;">&rarr;</div>
+  <div class="chip-block chip2">Chip 2<br>(32 beats)</div>
+  <div style="font-size:18px; display:flex; align-items:center;">&rarr;</div>
+  <div class="chip-block chip3">Chip 3<br>(32 beats)</div>
+</div>
+
+<p class="note">Total data: 4 chips &times; 32 beats = 128 beats &times; 8B = 1024B per row</p>
+<p class="note">Total line: 48B (header) + 1024B (data) = 1072B = 134 beats @64-bit</p>
+
+<!-- ============================================================ -->
+<h2>4. Cell Structure (per stop)</h2>
+<p class="note">1 Cell = fn_beats_per_cell_rt(max_hits, tdata_width) beats. 마지막 beat = metadata.</p>
+
+<h3>64-bit mode, max_hits=7 &rarr; 4 beats/cell</h3>
+<div style="display:flex; align-items:center; gap:2px;">
+  <div class="beat-label">Cell:</div>
+  <div class="beat hit">Beat 0<br>hit0[15:0] | hit1[15:0]<br>hit2[15:0] | hit3[15:0]</div>
+  <div class="beat hit">Beat 1<br>hit4[15:0] | hit5[15:0]<br>hit6[15:0] | (pad)</div>
+  <div class="beat hit">Beat 2<br>(hit overflow /<br>reserved)</div>
+  <div class="beat meta">Beat 3 (META)<br>chip_id[9:8]<br>error_fill[10]<br>hit_count[3:0]<br>stop_id, slope...</div>
+</div>
+
+<h3>64-bit mode, max_hits=1 &rarr; 1 beat/cell (runtime truncated)</h3>
+<div style="display:flex; align-items:center; gap:2px;">
+  <div class="beat-label">Cell:</div>
+  <div class="beat meta">Beat 0 (META)<br>hit0[15:0] + metadata<br>chip_id, error_fill...</div>
+</div>
+
+<h3>32-bit mode, max_hits=7 &rarr; 8 beats/cell</h3>
+<div style="display:flex; align-items:center; gap:2px; flex-wrap:wrap;">
+  <div class="beat-label">Cell:</div>
+  <div class="beat hit">B0<br>hit0+hit1</div>
+  <div class="beat hit">B1<br>hit2+hit3</div>
+  <div class="beat hit">B2<br>hit4+hit5</div>
+  <div class="beat hit">B3<br>hit6+pad</div>
+  <div class="beat hit">B4</div>
+  <div class="beat hit">B5</div>
+  <div class="beat hit">B6</div>
+  <div class="beat meta">B7<br>META</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>5. Runtime Distance-Adaptive Throughput</h2>
+<p class="note">max_hits_cfg (CTL21[18:16]) 로 cell 크기를 런타임 조절. 가까운 거리일수록 cell 작게 → 높은 쓰루풋.</p>
+
+<table>
+  <tr><th>Distance</th><th>max_hits</th><th>beats/cell (64b)</th><th>face_asm/row</th><th>Shot Period</th><th>Margin</th></tr>
+  <tr><td>100m</td><td>1</td><td>1</td><td>0.095 &mu;s</td><td>1.0 &mu;s</td><td>90%</td></tr>
+  <tr><td>500m</td><td>3</td><td>1</td><td>0.095 &mu;s</td><td>3.33 &mu;s</td><td>97%</td></tr>
+  <tr><td>700m</td><td>5</td><td>2</td><td>0.185 &mu;s</td><td>4.67 &mu;s</td><td>96%</td></tr>
+  <tr><td>1000m</td><td>7</td><td>4</td><td>0.365 &mu;s</td><td>6.67 &mu;s</td><td>95%</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>6. Pipeline Data Flow</h2>
+
+<div class="pipeline">
+  <div class="pipe-stage">bus_phy<br><span style="font-size:9px;">28b raw</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage">chip_ctrl<br><span style="font-size:9px;">AXI-S 32b</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage">decoder<br>i_mode<br><span style="font-size:9px;">field extract</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage">event<br>builder<br><span style="font-size:9px;">+chip_id</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage active">cell<br>builder<br><span style="font-size:9px;">ping-pong</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage active">face<br>assembler<br><span style="font-size:9px;">in-order</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage">FIFO<br><span style="font-size:9px;">xpm_axis</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage active">header<br>inserter<br><span style="font-size:9px;">48B prefix</span></div>
+  <div class="pipe-arrow">&rarr;</div>
+  <div class="pipe-stage" style="background:#e94560;color:#fff;">VDMA<br><span style="font-size:9px;">DMA to DDR</span></div>
+</div>
+
+<p class="note">&times;4 chips parallel &rarr; slope demux (rise/fall) &rarr; 2&times; independent pipelines &rarr; 2&times; VDMA channels</p>
+
+<!-- ============================================================ -->
+<h2>7. Error Handling in Packet</h2>
+
+<table>
+  <tr><th>Condition</th><th>Packet Impact</th><th>Identification</th></tr>
+  <tr><td>Chip timeout (no data)</td><td>Blank cell: hit=0, error_fill=1</td><td>metadata beat[10]=1</td></tr>
+  <tr><td>ErrFlag (FIFO full/PLL)</td><td>Error-fill: hit[16:0]=0x1FFFF</td><td>hit value = all-ones (physically impossible)</td></tr>
+  <tr><td>chip_error_mask</td><td>Header beat 7 [25:22]</td><td>Per-chip error flags in header</td></tr>
+  <tr><td>Shot overrun</td><td>Row truncated, next shot starts</td><td>pipeline_overrun in STATUS register</td></tr>
+</table>
+
+<p style="margin-top:30px; font-size:11px; color:#aaa;">Generated from tdc_gpx_ctrl HDL source &mdash; refactor/module-architecture branch</p>
+</body>
+</html>
