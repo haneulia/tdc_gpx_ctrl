@@ -74,12 +74,14 @@ entity tdc_gpx_cell_pipe is
         -- Round 11 item 4: per-chip cell_builder QUARANTINE escalation sticky.
         o_quarantine_escape_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_quarantine_escape_fall : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted pulses
-        -- (1-clk, co-assert with cell_builder's slice_done). Consumed by
-        -- face_assembler to tag rows as degraded when the drain completion
-        -- for any chip's shot was a faulted fallback.
-        o_slice_done_faulted_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_slice_done_faulted_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        -- Round 13 follow-up P1 (audit 4번): per-chip tuser(0) = faulted,
+        -- co-incident with each chip's cell-stream tlast (non-tlast beats
+        -- always 0). Travels with the cell data through the downstream
+        -- xpm_fifo_axis so face_assembler can tag degraded rows without
+        -- a cross-shot race. Replaces the earlier slice_done_faulted
+        -- side-channel which could mis-align across FIFO latency.
+        o_cell_rise_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_cell_fall_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
 end entity tdc_gpx_cell_pipe;
 
@@ -113,6 +115,13 @@ architecture rtl of tdc_gpx_cell_pipe is
     -- cell_builder tready (architecture scope for cross-generate visibility)
     signal s_rise_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_fall_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+    -- Round 13 follow-up P1: per-chip cell_builder m_axis_tuser (1-bit slv).
+    -- Each bit i holds chip i's tuser(0) = faulted flag on tlast beat.
+    type t_cell_tuser_array is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(0 downto 0);
+    signal s_cell_rise_tuser_int : t_cell_tuser_array;
+    signal s_cell_fall_tuser_int : t_cell_tuser_array;
 
     -- #22 Sprint 2: effective abort per slope.
     -- Global i_abort always forces abort on both slopes; additionally
@@ -286,9 +295,9 @@ begin
                 o_m_axis_tdata      => s_cell_rise_tdata(i),
                 o_m_axis_tvalid     => o_cell_rise_tvalid(i),
                 o_m_axis_tlast      => o_cell_rise_tlast(i),
+                o_m_axis_tuser      => s_cell_rise_tuser_int(i),  -- P1 rework
                 i_m_axis_tready     => i_cell_rise_tready(i),
                 o_slice_done        => open,
-                o_slice_done_faulted => o_slice_done_faulted_rise(i),  -- Round 13 follow-up (audit 4번)
                 o_hit_dropped_any   => o_hit_dropped(i),
                 o_shot_dropped      => o_shot_dropped(i),
                 o_slice_timeout     => o_slice_timeout(i),
@@ -316,9 +325,9 @@ begin
                 o_m_axis_tdata      => s_cell_fall_tdata(i),
                 o_m_axis_tvalid     => o_cell_fall_tvalid(i),
                 o_m_axis_tlast      => o_cell_fall_tlast(i),
+                o_m_axis_tuser      => s_cell_fall_tuser_int(i),  -- P1 rework
                 i_m_axis_tready     => i_cell_fall_tready(i),
                 o_slice_done        => open,
-                o_slice_done_faulted => o_slice_done_faulted_fall(i),  -- Round 13 follow-up (audit 4번)
                 o_hit_dropped_any   => o_hit_fall_dropped(i),
                 o_shot_dropped      => o_shot_fall_dropped(i),
                 o_slice_timeout     => o_slice_fall_timeout(i),
@@ -340,5 +349,11 @@ begin
     o_cell_fall_tdata_1 <= s_cell_fall_tdata(1);
     o_cell_fall_tdata_2 <= s_cell_fall_tdata(2);
     o_cell_fall_tdata_3 <= s_cell_fall_tdata(3);
+
+    -- Round 13 follow-up P1: pack per-chip tuser(0) bit into output vector
+    gen_tuser_map : for i in 0 to c_N_CHIPS - 1 generate
+        o_cell_rise_tuser(i) <= s_cell_rise_tuser_int(i)(0);
+        o_cell_fall_tuser(i) <= s_cell_fall_tuser_int(i)(0);
+    end generate gen_tuser_map;
 
 end architecture rtl;

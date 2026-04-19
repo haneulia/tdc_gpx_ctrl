@@ -49,6 +49,17 @@
 --   positives. max_range_clks = 0 disables distance-based close entirely
 --   (chip_run convention).
 --
+-- Edge-case rules (P5/P6):
+--   - Same-cycle `i_shot_start_gated` + `i_stop_evt_tvalid` → shot_start
+--     wins (resets tracking, window re-opens). The co-incident beat is
+--     NOT counted in running totals — upstream contract says beats
+--     arrive STRICTLY between shot_start pulses, so this coincidence is
+--     a contract violation and silent drop is acceptable.
+--   - `max_range_clks = 0` disables BOTH the range check (chip_run) and
+--     this orphan window. If SW wants orphan detection without a range
+--     limit, set `max_range_clks` to the largest practical value rather
+--     than 0.
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 
@@ -73,11 +84,14 @@ entity tdc_gpx_stop_cfg_decode is
         -- distance / max_hits / shot-period table):
         --   - Must be > typical echo_receiver emission delay (few cycles).
         --   - Must be < (shot_period - max_range_clks) for orphan detection
-        --     to have a non-empty zone; at the near-max-PRF configurations
-        --     (500m+ rows in the doc) this is already near zero, so the
-        --     orphan detection degrades naturally into "pre-first-shot
-        --     only" for tight PRF workloads. That is intentional: trying
-        --     to push margin smaller only buys false positives.
+        --     to have a non-empty zone; at near-max-PRF workloads the gap
+        --     is already near zero, so orphan detection degrades naturally
+        --     into "pre-first-shot only". That is intentional: tightening
+        --     margin further would only buy false positives.
+        --   - UPPER BOUND: ≤ 65535 (16-bit). Combined counter width is
+        --     17-bit (= max_range_clks 16-bit + margin 16-bit headroom).
+        --     Exceeding 65535 wraps silently. Use generic override for
+        --     slower pipeline stacks (e.g. deep CDC) but stay within bound.
         g_WINDOW_MARGIN_CLKS : natural := 32
     );
     port (
@@ -148,9 +162,11 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
     -- chip_run's range-counter convention) — window stays open until the
     -- next shot_start, i.e. orphan only fires pre-first-shot.
     --
-    -- Counter width = 17 bits: max_range_clks (16 bit) + margin (up to ~256)
-    -- fits comfortably with headroom.
-    constant c_WINDOW_CNT_WIDTH : natural := 17;
+    -- Counter width = 24 bits: max_range_clks (16 bit) + margin (up to
+    -- 16-bit generic) fits with ample headroom. 24 bits gives ~84 ms @
+    -- 200 MHz window span which comfortably covers the generic bound
+    -- documented above, with zero overflow risk for any legal override.
+    constant c_WINDOW_CNT_WIDTH : natural := 24;
     signal s_window_active_r    : std_logic := '0';
     signal s_window_cnt_r       : unsigned(c_WINDOW_CNT_WIDTH - 1 downto 0)
                                   := (others => '0');

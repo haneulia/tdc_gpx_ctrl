@@ -152,15 +152,18 @@ entity tdc_gpx_cell_builder is
         o_m_axis_tdata      : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         o_m_axis_tvalid     : out std_logic;
         o_m_axis_tlast      : out std_logic;
+        -- Round 13 follow-up P1 (audit 4번): tuser(0) carries the slice
+        -- faulted flag co-incident with tlast (i.e. only the last beat of
+        -- the chip slice has a non-zero value). Non-tlast beats emit 0.
+        -- Travels with the data through the downstream xpm_fifo_axis so
+        -- face_assembler can tag the specific chip-done event without a
+        -- cross-shot race (replaces the earlier o_slice_done_faulted
+        -- side-channel pulse that could lose alignment across FIFO stalls).
+        o_m_axis_tuser      : out std_logic_vector(0 downto 0);
         i_m_axis_tready     : in  std_logic;
 
         -- Status
         o_slice_done        : out std_logic;    -- 1-clk pulse: chip slice complete
-        -- Round 13 follow-up (audit 4번): 1-clk pulse co-asserts with o_slice_done
-        -- when the shot's final drain_done beat carried the faulted flag
-        -- (chip_run drain-count mismatch). Lets face_assembler tag the row
-        -- as degraded instead of seeing a clean completion.
-        o_slice_done_faulted : out std_logic;
         o_hit_dropped_any   : out std_logic;    -- 1-clk pulse: cell hit overflow
         -- Round 11 C: separate cause for stop_id out-of-range drops so SW
         -- can distinguish routing/config bugs from genuine hit overflow.
@@ -229,13 +232,17 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_out_timeout_r    : unsigned(15 downto 0) := (others => '0');  -- output watchdog
     signal s_slice_timeout_r  : std_logic := '0';  -- 1-clk pulse: IFIFO2 timeout truncation
 
-    -- Round 13 follow-up (audit 4번): per-buffer faulted tag + output pulse.
-    -- Set when final drain_done beat (tuser(7)=1 AND tuser(6)=1) arrives with
-    -- the faulted bit (tuser(5)=1) for that buffer's shot. Co-asserts with
-    -- s_output_done_r via s_output_done_faulted_r pulse so face_assembler can
-    -- mark the row as degraded at the same granularity as slice_done itself.
-    signal s_buf_faulted_r         : std_logic_vector(0 to 1) := (others => '0');
-    signal s_output_done_faulted_r : std_logic := '0';
+    -- Round 13 follow-up (audit 4번, P1 rework): per-buffer faulted tag.
+    -- Set when the final drain_done control beat (tuser(7)=1 AND tuser(6)=1)
+    -- arrives with the faulted bit (tuser(5)=1) for that buffer's shot.
+    -- Used by p_output to drive o_m_axis_tuser(0) on the tlast beat; this
+    -- replaces the earlier s_output_done_faulted_r pulse whose cross-shot
+    -- timing could race with face_assembler's row processing across the
+    -- per-chip xpm_fifo_axis. Now the flag rides with the data.
+    signal s_buf_faulted_r : std_logic_vector(0 to 1) := (others => '0');
+
+    -- Registered tuser output (1 bit = faulted flag, only valid on tlast beat)
+    signal s_tuser_r       : std_logic_vector(0 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Output FSM (p_output)
@@ -414,17 +421,14 @@ begin
                 s_quarantine_escape_sticky_r <= '0';
                 -- Round 12 B6: post-escape absorb window counter
                 s_post_escape_cnt_r          <= (others => '0');
-                -- Round 13 follow-up (audit 4번): faulted tag + pulse reset
+                -- Round 13 follow-up (audit 4번, P1 rework): faulted tag reset
                 s_buf_faulted_r              <= (others => '0');
-                s_output_done_faulted_r      <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_output_req_r   <= '0';
                 s_hit_dropped_r  <= '0';
                 s_stop_id_error_r <= '0';
                 s_shot_dropped_r <= '0';
-                -- Round 13 follow-up (audit 4번): default clear 1-clk pulse.
-                s_output_done_faulted_r <= '0';
 
                 -- ---------------------------------------------------------
                 -- Abort: free all buffers, return to idle
@@ -455,10 +459,11 @@ begin
                         v_done_buf := fn_buf_idx(s_rd_buf_r);
                         s_buf_state_r(v_done_buf) <= BUF_FREE;
                         s_buf_full_r(v_done_buf)  <= '0';
-                        -- Round 13 follow-up (audit 4번): emit faulted pulse
-                        -- co-asserting with slice_done, then clear the tag
-                        -- so the buffer returns to a clean state.
-                        s_output_done_faulted_r <= s_buf_faulted_r(v_done_buf);
+                        -- Round 13 follow-up (audit 4번, P1 rework): clear the
+                        -- faulted tag for the freed buffer. The flag was
+                        -- already carried out on the tlast beat's tuser by
+                        -- p_output, so resetting now keeps the buffer clean
+                        -- for the next shot_start.
                         s_buf_faulted_r(v_done_buf) <= '0';
                         -- Auto-start: if the OTHER buffer is SHARED, start output
                         v_other := 1 - v_done_buf;
@@ -780,6 +785,7 @@ begin
                 s_tdata_r     <= (others => '0');
                 s_tvalid_r    <= '0';
                 s_tlast_r     <= '0';
+                s_tuser_r     <= (others => '0');
                 s_output_done_r   <= '0';
                 s_slice_timeout_r <= '0';
                 s_out_timeout_r   <= (others => '0');
@@ -795,6 +801,7 @@ begin
                     s_ostate_r <= ST_O_IDLE;
                     s_tvalid_r <= '0';
                     s_tlast_r  <= '0';
+                    s_tuser_r  <= (others => '0');
                 else
 
                     case s_ostate_r is
@@ -802,6 +809,7 @@ begin
                         when ST_O_IDLE =>
                             s_tvalid_r <= '0';
                             s_tlast_r  <= '0';
+                            s_tuser_r  <= (others => '0');
 
                             if s_output_req_r = '1' then
                                 -- Latch read buffer, load first cell
@@ -834,9 +842,12 @@ begin
                             s_tvalid_r <= '1';
                             if s_stop_idx_r = s_last_stop_r
                                and s_beat_idx_r = s_rt_last_beat_r then
-                                s_tlast_r <= '1';
+                                s_tlast_r    <= '1';
+                                -- P1 rework: carry buffer's faulted flag on tlast
+                                s_tuser_r(0) <= s_buf_faulted_r(fn_buf_idx(s_rd_buf_r));
                             else
-                                s_tlast_r <= '0';
+                                s_tlast_r    <= '0';
+                                s_tuser_r(0) <= '0';
                             end if;
                             s_ostate_r <= ST_O_ACTIVE;
 
@@ -849,6 +860,7 @@ begin
                                     -- Chip slice complete
                                     s_tvalid_r      <= '0';
                                     s_tlast_r       <= '0';
+                                    s_tuser_r       <= (others => '0');
                                     s_output_done_r <= '1';
                                     s_ostate_r      <= ST_O_IDLE;
 
@@ -860,6 +872,7 @@ begin
                                         -- IFIFO1 stops done, IFIFO2 not ready: wait
                                         s_tvalid_r <= '0';
                                         s_tlast_r  <= '0';
+                                        s_tuser_r  <= (others => '0');
                                         s_ostate_r <= ST_O_WAIT_IFIFO2;
                                     else
                                         -- Normal cell boundary: load next cell
@@ -868,6 +881,7 @@ begin
                                         s_cell_sel_r <= s_cell_buf_r(v_rd)(to_integer(v_nxt_stop));
                                         s_tvalid_r   <= '0';
                                         s_tlast_r    <= '0';
+                                        s_tuser_r    <= (others => '0');
                                         s_ostate_r   <= ST_O_LOAD;
                                     end if;
 
@@ -878,9 +892,12 @@ begin
                                     s_tdata_r    <= fn_cell_beat(s_cell_sel_r, v_nxt_beat, s_rt_last_beat_r);
                                     if s_stop_idx_r = s_last_stop_r
                                        and v_nxt_beat = s_rt_last_beat_r then
-                                        s_tlast_r <= '1';
+                                        s_tlast_r    <= '1';
+                                        -- P1 rework: same-cell last-beat → carry faulted
+                                        s_tuser_r(0) <= s_buf_faulted_r(v_rd);
                                     else
-                                        s_tlast_r <= '0';
+                                        s_tlast_r    <= '0';
+                                        s_tuser_r(0) <= '0';
                                     end if;
                                 end if;
                             end if;
@@ -892,6 +909,7 @@ begin
                             if i_m_axis_tready = '1' then
                                 s_tvalid_r      <= '0';
                                 s_tlast_r       <= '0';
+                                s_tuser_r       <= (others => '0');
                                 s_output_done_r <= '1';
                                 s_ostate_r      <= ST_O_IDLE;
                             end if;
@@ -911,9 +929,12 @@ begin
                                 -- (face_assembler) completes this chip slice.
                                 -- Data is zeroed; s_slice_timeout_r flags the
                                 -- truncation for SW visibility via status.
+                                -- P1 rework: synthetic EOS is a degraded
+                                -- output, so force tuser faulted = 1.
                                 s_tdata_r         <= (others => '0');
                                 s_tvalid_r        <= '1';
                                 s_tlast_r         <= '1';
+                                s_tuser_r(0)      <= '1';
                                 s_slice_timeout_r <= '1';
                                 s_out_timeout_r   <= (others => '0');
                                 s_ostate_r        <= ST_O_TIMEOUT_EOS;
@@ -935,7 +956,7 @@ begin
     o_m_axis_tvalid   <= s_tvalid_r;
     o_m_axis_tlast    <= s_tlast_r;
     o_slice_done      <= s_output_done_r;
-    o_slice_done_faulted <= s_output_done_faulted_r;  -- Round 13 follow-up (audit 4번)
+    o_m_axis_tuser    <= s_tuser_r;  -- Round 13 follow-up P1 rework (audit 4번)
     o_hit_dropped_any <= s_hit_dropped_r;
     o_stop_id_error   <= s_stop_id_error_r;
     o_shot_dropped    <= s_shot_dropped_r;

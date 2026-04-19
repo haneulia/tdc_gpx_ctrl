@@ -185,10 +185,11 @@ architecture rtl of tdc_gpx_top is
     signal s_run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);  -- Round 12 #17
     signal s_err_bus_fatal_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 2
     signal s_drain_faulted_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 1a
-    -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted from
-    -- cell_pipe → output_stage (which feeds face_assembler).
-    signal s_slice_done_faulted_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_slice_done_faulted_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 13 follow-up P1 (audit 4번): per-chip cell tuser(0) = faulted
+    -- flag, carried on each chip's tlast beat. Threaded cell_pipe →
+    -- output_stage → face_assembler (via its per-chip xpm_fifo_axis).
+    signal s_cell_rise_tuser : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_fall_tuser : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_cfg_write    : std_logic;
     -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
     -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
@@ -678,9 +679,9 @@ begin
             -- Round 11 item 4: per-chip cell_builder QUARANTINE escalation sticky
             o_quarantine_escape_rise => s_quarantine_escape_rise,
             o_quarantine_escape_fall => s_quarantine_escape_fall,
-            -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted
-            o_slice_done_faulted_rise => s_slice_done_faulted_rise,
-            o_slice_done_faulted_fall => s_slice_done_faulted_fall
+            -- Round 13 follow-up P1: per-chip cell tuser (faulted flag on tlast)
+            o_cell_rise_tuser => s_cell_rise_tuser,
+            o_cell_fall_tuser => s_cell_fall_tuser
         );
 
     -- =========================================================================
@@ -710,9 +711,9 @@ begin
             i_cell_fall_tvalid   => s_cell_fall_tvalid,
             i_cell_fall_tlast    => s_cell_fall_tlast,
             o_cell_fall_tready   => s_cell_fall_tready,
-            -- Round 13 follow-up (audit 4번): per-chip faulted pulses
-            i_slice_done_faulted_rise => s_slice_done_faulted_rise,
-            i_slice_done_faulted_fall => s_slice_done_faulted_fall,
+            -- Round 13 follow-up P1: per-chip cell tuser (faulted on tlast)
+            i_cell_rise_tuser    => s_cell_rise_tuser,
+            i_cell_fall_tuser    => s_cell_fall_tuser,
             -- Control from face_seq
             i_shot_start_gated   => s_shot_start_gated,
             i_pipeline_abort     => s_pipeline_abort,       -- legacy global

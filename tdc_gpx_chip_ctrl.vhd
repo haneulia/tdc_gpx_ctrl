@@ -40,10 +40,11 @@
 -- PH_RESP_DRAIN auto-recover (Round 13 follow-up, audit 3번):
 --   After s_err_bus_fatal_r is latched (quarantine counter reached 65K
 --   with bus still active), a secondary observer tracks how long the bus
---   has been stably idle. If it stays idle for c_BUS_IDLE_STABLE cycles,
---   the phase auto-transitions to PH_INIT. This reclaims liveness when
---   the bus recovers on its own, without relying on SW force_reinit. The
---   event is logged in s_err_force_reinit_r (shared observability path).
+--   has been stably idle. If it stays idle for g_BUS_IDLE_STABLE_CLKS
+--   cycles (generic, default 4096 ≈ 20us @200MHz), the phase auto-
+--   transitions to PH_INIT. This reclaims liveness when the bus recovers
+--   on its own, without relying on SW force_reinit. The event is logged
+--   in s_err_force_reinit_r (shared observability path).
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -61,7 +62,15 @@ entity tdc_gpx_chip_ctrl is
         g_CHIP_ID           : natural := 0;                  -- 0..3
         g_POWERUP_CLKS      : positive := 48;    -- PuResN low duration (>200ns, ~240ns @ 200MHz)
         g_RECOVERY_CLKS     : positive := 8;      -- Reset/ALU recovery (~40ns @ 200MHz)
-        g_ALU_PULSE_CLKS    : positive := 4        -- AluTrigger pulse width (~20ns @ 200MHz)
+        g_ALU_PULSE_CLKS    : positive := 4;       -- AluTrigger pulse width (~20ns @ 200MHz)
+        -- Round 13 follow-up P4 (audit 3번): bus-idle stability window for
+        -- auto-recover from PH_RESP_DRAIN quarantine. After s_err_bus_fatal_r
+        -- latches, the bus must stay idle (busy='0' AND rsp_pending='0') for
+        -- this many consecutive cycles before auto-transitioning to PH_INIT.
+        -- Default 4096 (~20us @200MHz). Tunable per PCB / TDC chip response
+        -- characteristics: raise for noisy buses, lower if recovery latency
+        -- matters more than stability confidence.
+        g_BUS_IDLE_STABLE_CLKS : positive := 4096
     );
     port (
         i_clk               : in  std_logic;
@@ -416,15 +425,17 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_bus_fatal_r        : std_logic := '0';
     -- Round 13 follow-up (audit 3번): bounded auto-recover from quarantine.
     -- After s_err_bus_fatal_r is set, if the bus later stabilises at idle
-    -- (busy='0' AND rsp_pending='0') for c_BUS_IDLE_STABLE consecutive
+    -- (busy='0' AND rsp_pending='0') for g_BUS_IDLE_STABLE_CLKS consecutive
     -- cycles, auto-transition to PH_INIT. This reclaims liveness when the
     -- bus recovers on its own without requiring SW force_reinit, while
     -- still guarding against phase pollution via the idle-stable window.
     -- The existing s_err_force_reinit_r sticky is set to surface the event
     -- (SW cannot distinguish auto vs SW-initiated; both imply "bus was
     -- flushed without full hard reset").
-    constant c_BUS_IDLE_STABLE      : natural := 4096;  -- ~20us @200MHz
-    signal   s_bus_idle_stable_cnt_r : unsigned(12 downto 0) := (others => '0');
+    -- Counter width: 24-bit accommodates generic override up to ~84 ms.
+    constant c_BUS_IDLE_CNT_WIDTH   : natural := 24;
+    signal   s_bus_idle_stable_cnt_r : unsigned(c_BUS_IDLE_CNT_WIDTH - 1 downto 0)
+                                       := (others => '0');
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
     signal s_err_cmd_collision_r  : std_logic := '0';  -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision sticky (cmd_arb contract violation)
     -- Round 12 #20: collision vector — records WHICH commands collided.
@@ -848,7 +859,8 @@ begin
                 if s_phase_r = PH_RESP_DRAIN and s_err_bus_fatal_r = '1' then
                     if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
                         if s_bus_idle_stable_cnt_r <
-                           to_unsigned(c_BUS_IDLE_STABLE, s_bus_idle_stable_cnt_r'length) then
+                           to_unsigned(g_BUS_IDLE_STABLE_CLKS,
+                                       s_bus_idle_stable_cnt_r'length) then
                             s_bus_idle_stable_cnt_r <= s_bus_idle_stable_cnt_r + 1;
                         else
                             s_phase_r                <= PH_INIT;

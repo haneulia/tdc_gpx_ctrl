@@ -93,12 +93,12 @@ entity tdc_gpx_face_assembler is
         i_s_axis_tlast       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_s_axis_tready      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-        -- Round 13 follow-up (audit 4번): per-chip slice_done_faulted pulses
-        -- from cell_builder. A '1' on bit i asserts for 1 clock co-incident
-        -- with cell_builder[i]'s slice_done; face_assembler latches it per
-        -- chip and ORs the pending mask into s_row_done_faulted_r when the
-        -- row completes. Fed zero by legacy instantiations remains safe.
-        i_slice_done_faulted : in  std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+        -- Round 13 follow-up P1 (audit 4번): per-chip tuser(0) = faulted,
+        -- carried with each chip's tlast beat. Threaded through the per-
+        -- chip xpm_fifo_axis below so the flag is sampled at the EXACT
+        -- chip-done moment for the matching shot (no cross-shot race).
+        -- Default 0000 keeps legacy instantiations safe (faulted=0).
+        i_s_axis_tuser       : in  std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
         -- Shot control
         i_shot_start         : in  std_logic;
@@ -183,6 +183,9 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_in_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 13 follow-up P1: per-chip FIFO tuser(0) = faulted flag, valid
+    -- on the same cycle as s_in_tlast(i) for the matching shot.
+    signal s_in_tuser    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Output pipe signals (FSM → output skid buffer)
@@ -348,7 +351,7 @@ begin
                 s_axis_tlast    => i_s_axis_tlast(i),
                 s_axis_tkeep    => (others => '1'),
                 s_axis_tstrb    => (others => '1'),
-                s_axis_tuser    => "0",
+                s_axis_tuser    => i_s_axis_tuser(i downto i),  -- P1 rework
                 s_axis_tid      => "0",
                 s_axis_tdest    => "0",
                 m_axis_tdata    => s_in_tdata(i),
@@ -357,7 +360,7 @@ begin
                 m_axis_tlast    => s_in_tlast(i),
                 m_axis_tkeep    => open,
                 m_axis_tstrb    => open,
-                m_axis_tuser    => open,
+                m_axis_tuser    => s_in_tuser(i downto i),  -- P1 rework
                 m_axis_tid      => open,
                 m_axis_tdest    => open,
                 m_aclk          => '0',
@@ -519,12 +522,17 @@ begin
                 s_shot_overrun_r <= '0';
                 s_face_abort_r   <= '0';
 
-                -- Round 13 follow-up (audit 4번): latch per-chip slice-done
-                -- faulted pulses. The pending mask accumulates while the row
-                -- is being scheduled / forwarded, then is folded into
-                -- s_row_done_faulted_r at row completion below and cleared.
+                -- Round 13 follow-up P1 rework (audit 4번): latch per-chip
+                -- faulted only when the matching chip's tlast is consumed
+                -- (s_in_tlast(i) AND s_in_tready(i)). Sampling at chip-done
+                -- guarantees the tuser bit belongs to THIS shot, preventing
+                -- the cross-shot race that the earlier pulse side-channel
+                -- was vulnerable to. Fold into s_row_done_faulted_r at row
+                -- completion below, then clear.
                 for i in 0 to c_N_CHIPS - 1 loop
-                    if i_slice_done_faulted(i) = '1' then
+                    if s_in_tvalid(i) = '1' and s_in_tready(i) = '1'
+                       and s_in_tlast(i) = '1'
+                       and s_in_tuser(i) = '1' then
                         s_chip_faulted_pending_r(i) <= '1';
                     end if;
                 end loop;
