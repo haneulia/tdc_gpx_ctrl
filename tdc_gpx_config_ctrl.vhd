@@ -372,9 +372,12 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- c_RAW_FIFO_RST_CLKS cycles before deassert. Covers both the global
     -- soft_reset (s_cmd_soft_reset_tdc) and per-chip err recovery
     -- (s_err_cmd_soft_reset_tdc(i)).
-    constant c_RAW_FIFO_RST_CLKS : natural := 8;  -- > XPM async rst minimum
+    -- Round 7 B-1: widened from 8 to 16 TDC cycles so the reset holds ≥ 5
+    -- cycles of the slowest expected AXI clock (even if it drops below the
+    -- current 150 MHz). XPM async FIFO requires rst hold ≥ 5 × slowest-clk.
+    constant c_RAW_FIFO_RST_CLKS : natural := 16;
     type t_raw_fifo_rst_cnt_arr is array (0 to c_N_CHIPS - 1)
-        of unsigned(3 downto 0);
+        of unsigned(4 downto 0);
     signal s_raw_fifo_rst_cnt_r : t_raw_fifo_rst_cnt_arr := (others => (others => '0'));
     signal s_raw_fifo_rst       : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
@@ -387,6 +390,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_soft_reset_tdc  : std_logic;
     signal s_cmd_cfg_write_g_tdc : std_logic;
     signal s_stop_tdc_tdc        : std_logic;  -- stop_tdc after xpm_cdc_pulse (#13)
+    -- Round 7 B-5: i_err_soft_clear CDC'd to TDC domain so chip_reg can
+    -- follow the same sticky-clear policy as status_agg / err_handler.
+    signal s_soft_clear_tdc      : std_logic;
     -- Per-chip command pulses
     signal s_err_cmd_soft_reset_tdc : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_shot_start_tdc         : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -817,6 +823,20 @@ begin
             dest_pulse => s_stop_tdc_tdc
         );
 
+    -- Round 7 B-5: i_err_soft_clear crosses AXI-Stream → TDC clock so all
+    -- chip_reg instances can clear their s_err_req_overflow_r sticky on
+    -- SW-initiated soft_clear, matching the status_agg / err_handler policy.
+    u_cdc_soft_clear : xpm_cdc_pulse
+        generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+        port map (
+            src_clk    => i_axis_aclk,
+            src_rst    => '0',
+            src_pulse  => i_err_soft_clear,
+            dest_clk   => i_tdc_clk,
+            dest_rst   => '0',
+            dest_pulse => s_soft_clear_tdc
+        );
+
     -- =========================================================================
     -- CDC Stage 3: Quasi-static config snapshot (AXI-Stream -> TDC)
     --
@@ -1111,11 +1131,19 @@ begin
             );
 
         -- Round 6 B1: chip_run internal drain-complete is a 1-clk pulse. Latch
-        -- it to sticky in TDC domain, then CDC the sticky level.
+        -- to a per-shot sticky in TDC domain, then CDC the level.
+        -- Round 7 A-3: the sticky now clears on the next i_shot_start so SW
+        -- polling sees "this shot's drain finished" rather than "at least one
+        -- shot drain finished since reset" (which the Round 6 version could
+        -- only ever report — permanently '1' after the first shot).
         p_run_drain_sticky : process(i_tdc_clk)
         begin
             if rising_edge(i_tdc_clk) then
                 if s_tdc_aresetn = '0' then
+                    s_run_drain_complete_sticky_r(i) <= '0';
+                elsif s_shot_start_tdc(i) = '1' then
+                    -- New shot starting: clear stale sticky so the next
+                    -- drain_complete event is visible edge-to-edge.
                     s_run_drain_complete_sticky_r(i) <= '0';
                 elsif s_run_drain_complete(i) = '1' then
                     s_run_drain_complete_sticky_r(i) <= '1';
@@ -1206,6 +1234,7 @@ begin
                 i_cmd_stop          => s_cmd_stop_tdc,
                 i_cmd_soft_reset    => s_cmd_soft_reset_tdc,
                 i_cmd_soft_reset_err => s_err_cmd_soft_reset_tdc(i),
+                i_soft_clear        => s_soft_clear_tdc,  -- Round 7 B-5
                 i_cmd_cfg_write     => s_cmd_cfg_write_g_tdc,
                 i_cmd_reg_read      => s_cmd_reg_read_tdc(i),
                 i_cmd_reg_write     => s_cmd_reg_write_tdc(i),
@@ -1283,8 +1312,12 @@ begin
             end if;
         end process p_raw_fifo_rst;
 
+        -- Round 7 B-2: use s_tdc_aresetn (synchronized) instead of raw
+        -- i_axis_aresetn in this combinational gate. The stretcher counter
+        -- already lives in TDC domain; mixing an AXI-domain async reset
+        -- into the same expression created an unnecessary CDC boundary.
         s_raw_fifo_rst(i) <= '1' when s_raw_fifo_rst_cnt_r(i) /= 0
-                                   or i_axis_aresetn = '0'
+                                   or s_tdc_aresetn = '0'
                              else '0';
 
         u_raw_cdc : xpm_fifo_async

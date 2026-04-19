@@ -240,11 +240,11 @@ architecture rtl of tdc_gpx_top is
     signal s_chip_fall_error      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_shot_overrun         : std_logic;
     signal s_shot_fall_overrun    : std_logic;
-    -- Round 6 B5: kept as constants '0' (see output_stage instantiation note).
-    -- Driving them through face_seq OR with a runtime-zero source is harmless
-    -- but fragile; grounding at top is the opt-in guard.
-    signal s_face_abort           : std_logic := '0';
-    signal s_face_fall_abort      : std_logic := '0';
+    -- Round 7 C-1: s_face_abort / s_face_fall_abort declarations removed.
+    -- The face_seq inputs are now tied to '0' literals at the port map so
+    -- there is no dangling named wire to later be "reconnected" by accident.
+    -- See Round 6 B5 for the background — face_assembler.o_face_abort has
+    -- been a permanent '0' since Round 4.
     signal s_frame_done           : std_logic;
     signal s_frame_fall_done      : std_logic;
 
@@ -702,8 +702,9 @@ begin
             i_shot_start_raw       => i_shot_start,
             i_frame_done           => s_frame_done,
             i_frame_fall_done      => s_frame_fall_done,
-            i_face_abort           => s_face_abort,
-            i_face_fall_abort      => s_face_fall_abort,
+            -- Round 7 C-1: ground explicit (see removed signal comment above)
+            i_face_abort           => '0',
+            i_face_fall_abort      => '0',
             i_shot_overrun         => s_shot_overrun,
             i_shot_fall_overrun    => s_shot_fall_overrun,
             i_hdr_draining         => s_hdr_draining,

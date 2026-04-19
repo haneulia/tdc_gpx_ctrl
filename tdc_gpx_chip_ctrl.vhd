@@ -69,6 +69,10 @@ entity tdc_gpx_chip_ctrl is
         i_cmd_soft_reset    : in  std_logic;         -- any -> POWERUP (global)
         i_cmd_soft_reset_err: in  std_logic;         -- per-chip error recovery -> POWERUP
         i_cmd_cfg_write     : in  std_logic;         -- IDLE -> CFG_WRITE
+        -- Round 7 B-5: SW-initiated sticky clear, forwarded to u_reg so its
+        -- s_err_req_overflow_r follows the same clear semantic as status_agg.
+        -- Default '0' keeps legacy instantiations unaffected.
+        i_soft_clear        : in  std_logic := '0';
 
         -- Individual register access (from CSR, 1-clk pulses, IDLE only)
         i_cmd_reg_read      : in  std_logic;
@@ -422,7 +426,8 @@ begin
             o_bus_req_wdata => s_reg_bus_wdata,
             i_bus_rsp_valid => s_reg_rsp_valid,
             i_bus_rsp_rdata => s_reg_rsp_rdata,
-            o_err_req_overflow => o_err_reg_overflow
+            o_err_req_overflow => o_err_reg_overflow,
+            i_soft_clear       => i_soft_clear
         );
 
     -- =========================================================================
