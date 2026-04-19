@@ -240,8 +240,11 @@ architecture rtl of tdc_gpx_top is
     signal s_chip_fall_error      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_shot_overrun         : std_logic;
     signal s_shot_fall_overrun    : std_logic;
-    signal s_face_abort           : std_logic;
-    signal s_face_fall_abort      : std_logic;
+    -- Round 6 B5: kept as constants '0' (see output_stage instantiation note).
+    -- Driving them through face_seq OR with a runtime-zero source is harmless
+    -- but fragile; grounding at top is the opt-in guard.
+    signal s_face_abort           : std_logic := '0';
+    signal s_face_fall_abort      : std_logic := '0';
     signal s_frame_done           : std_logic;
     signal s_frame_fall_done      : std_logic;
 
@@ -307,6 +310,18 @@ architecture rtl of tdc_gpx_top is
     signal s_err_raw_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout          : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_reg_arb_timeout      : std_logic;
+    -- Round 5 follow-up: pipeline-wide sticky observability
+    signal s_err_read_timeout     : std_logic;
+    signal s_reg_rejected         : std_logic;
+    signal s_reg_zero_mask        : std_logic;
+    -- Round 6 B1: per-chip observability (CDC'd to AXI-S by config_ctrl)
+    signal s_err_reg_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_drain_complete   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 6 follow-up: per-slope face_assembler stickies (AXI-Stream domain)
+    signal s_shot_flush_drop_rise    : std_logic;
+    signal s_shot_flush_drop_fall    : std_logic;
+    signal s_shot_overrun_count_rise : unsigned(7 downto 0);
+    signal s_shot_overrun_count_fall : unsigned(7 downto 0);
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- Error handler status (from config_ctrl)
@@ -478,6 +493,13 @@ begin
             o_reg_loop_resume    => open,  -- reserved: future use for gating face_seq resume
             o_run_timeout        => s_run_timeout,
             o_reg_arb_timeout    => s_reg_arb_timeout,
+            -- Round 5 follow-up: pipeline-wide observability stickies
+            o_err_read_timeout   => s_err_read_timeout,
+            o_reg_rejected       => s_reg_rejected,
+            o_reg_zero_mask      => s_reg_zero_mask,
+            -- Round 6 B1: per-chip observability (CDC'd inside config_ctrl)
+            o_err_reg_overflow   => s_err_reg_overflow,
+            o_run_drain_complete => s_run_drain_complete,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -624,8 +646,14 @@ begin
             o_chip_fall_error    => s_chip_fall_error,
             o_shot_overrun       => s_shot_overrun,
             o_shot_fall_overrun  => s_shot_fall_overrun,
-            o_face_abort         => s_face_abort,
-            o_face_fall_abort    => s_face_fall_abort,
+            -- Round 6 B5: o_face_abort has been a permanent '0' since Round 4
+            -- (face self-completes via blank-fill instead of aborting). The
+            -- port is retained for backward compatibility but we intentionally
+            -- ground the downstream signal so a future re-enable in
+            -- face_assembler cannot silently reactivate s_pipeline_abort
+            -- through face_seq's OR logic without an explicit opt-in here.
+            o_face_abort         => open,
+            o_face_fall_abort    => open,
             o_face_asm_idle      => s_face_asm_idle,
             o_face_asm_fall_idle => s_face_asm_fall_idle,
             o_frame_done         => s_frame_done,
@@ -638,7 +666,12 @@ begin
             o_face_tvalid          => s_face_tvalid,
             o_face_fall_tvalid     => s_face_fall_tvalid,
             o_face_buf_tvalid      => s_face_buf_tvalid,
-            o_face_fall_buf_tvalid => s_face_fall_buf_tvalid
+            o_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
+            -- Round 6 follow-up: per-slope face_assembler observability
+            o_shot_flush_drop_rise    => s_shot_flush_drop_rise,
+            o_shot_flush_drop_fall    => s_shot_flush_drop_fall,
+            o_shot_overrun_count_rise => s_shot_overrun_count_rise,
+            o_shot_overrun_count_fall => s_shot_overrun_count_fall
         );
 
     -- =========================================================================
@@ -762,6 +795,19 @@ begin
     s_status.cfg_rejected        <= s_cfg_rejected_r;
     s_status.run_timeout_mask    <= s_run_timeout_sticky_r;
     s_status.reg_arb_timeout     <= s_reg_arb_timeout;
+    -- Round 5 follow-up: newly exposed stickies
+    s_status.err_read_timeout    <= s_err_read_timeout;
+    s_status.reg_rejected        <= s_reg_rejected;
+    s_status.reg_zero_mask       <= s_reg_zero_mask;
+    -- Round 6 B1: per-chip stickies now CDC'd through config_ctrl
+    s_status.err_reg_overflow_mask   <= s_err_reg_overflow;
+    s_status.run_drain_complete_mask <= s_run_drain_complete;
+    -- Round 6 follow-up: per-slope face_assembler stickies (AXI-Stream domain;
+    -- no CDC needed because csr_pipeline packs STAT6 in the same domain).
+    s_status.rise_shot_flush_drop    <= s_shot_flush_drop_rise;
+    s_status.fall_shot_flush_drop    <= s_shot_flush_drop_fall;
+    s_status.rise_shot_overrun_count <= s_shot_overrun_count_rise;
+    s_status.fall_shot_overrun_count <= s_shot_overrun_count_fall;
     s_status.shot_drop_any       <= '1' when (s_shot_dropped or s_shot_fall_dropped)
                                               /= (s_shot_dropped'range => '0') else '0';
     s_status.slice_timeout_any   <= '1' when (s_slice_timeout or s_slice_fall_timeout)

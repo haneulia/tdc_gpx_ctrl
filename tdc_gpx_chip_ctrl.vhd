@@ -20,16 +20,16 @@
 --     - AXI-Stream raw word output (passthrough from chip_run)
 --     - 2-deep raw hold/skid absorbing 1-cycle-late busy backpressure
 --
--- Raw beat overflow diagnostics (Round 2 #5/#6):
+-- Raw beat overflow diagnostics (Round 2 #5/#6, updated Round 6 B2):
 --   s_err_raw_overflow_r (sticky) captures "some raw/control beat was
 --   dropped for diagnostic reasons":
---     - chip_ctrl hold+skid both full → beat silently lost
---     - chip_run overrun override dropped same-cycle bus response (OR-folded
---       via s_run_overrun_drop)
+--     - chip_ctrl raw FIFO (3-slot array, Round 5 #3/#4) all slots full
+--       → new beat silently lost
 --     - PH_RESP_DRAIN hard cap (15 cycles) hit while bus still busy/pending
 --       (s_err_drain_cap_r, OR'd into o_err_raw_overflow)
---   Exposed via new o_err_raw_overflow port (Round 2 added this port — the
---   entity interface is NO LONGER unchanged from the original split).
+--   Round 5 #5 removed the overrun-drop path; the matching OR fold and
+--   the chip_run s_run_overrun_drop signal were deleted in Round 6 B2.
+--   Exposed via o_err_raw_overflow port.
 --
 -- PH_RESP_DRAIN hard-cap behavior (Round 3 #9):
 --   Every PH_RUN completion enters PH_RESP_DRAIN to flush potential stale
@@ -222,7 +222,8 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_range_active : std_logic;
     signal s_run_shot_seq    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal s_run_timeout     : std_logic;
-    signal s_run_overrun_drop : std_logic;  -- chip_run sticky: overrun dropped bus response
+    -- Round 6 B2: s_run_overrun_drop removed. chip_run no longer drops beats
+    -- on overrun (Round 5 #5), so the previously-OR-folded sticky was dead.
 
     -- =========================================================================
     -- Raw AXI-Stream N-deep holding FIFO (slot 0 = output, slot N-1 = tail)
@@ -367,7 +368,6 @@ begin
             o_range_active      => s_run_range_active,
             o_timeout           => s_run_timeout,
             o_timeout_cause     => open,  -- cause code not needed at top level
-            o_err_overrun_drop  => s_run_overrun_drop,
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
             i_n_drain_cap       => s_n_drain_cap_snap_r,
@@ -588,25 +588,23 @@ begin
                         end if;
 
                     when PH_CFG_WRITE =>
+                        -- Round 6 A4: always enter PH_RESP_DRAIN on completion
+                        -- (matches PH_RUN's defensive policy). A late bus
+                        -- response that fires after s_init_done could otherwise
+                        -- land in the skid and be consumed as a bogus response
+                        -- by the next PH_REG / PH_CFG_WRITE transaction.
                         if s_init_done = '1' then
-                            if s_init_timeout = '1' then
-                                s_phase_r         <= PH_RESP_DRAIN;
-                                s_drain_cnt_r     <= (others => '0');
-                                s_drain_to_init_r <= '0';
-                            else
-                                s_phase_r <= PH_IDLE;
-                            end if;
+                            s_phase_r         <= PH_RESP_DRAIN;
+                            s_drain_cnt_r     <= (others => '0');
+                            s_drain_to_init_r <= '0';
                         end if;
 
                     when PH_REG =>
+                        -- Round 6 A4: same policy as PH_CFG_WRITE.
                         if s_reg_done = '1' then
-                            if s_reg_timeout = '1' then
-                                s_phase_r         <= PH_RESP_DRAIN;
-                                s_drain_cnt_r     <= (others => '0');
-                                s_drain_to_init_r <= '0';
-                            else
-                                s_phase_r <= PH_IDLE;
-                            end if;
+                            s_phase_r         <= PH_RESP_DRAIN;
+                            s_drain_cnt_r     <= (others => '0');
+                            s_drain_to_init_r <= '0';
                         end if;
 
                     when PH_RESP_DRAIN =>
@@ -766,12 +764,9 @@ begin
                 s_raw_fifo_r <= (others => c_RAW_ENTRY_EMPTY);
                 s_err_raw_overflow_r <= '0';
             else
-                -- Fold chip_run's own overrun-drop sticky into the unified
-                -- raw_overflow flag so SW only needs to observe one signal
-                -- per chip for "some beat was dropped for diagnostic reasons".
-                if s_run_overrun_drop = '1' then
-                    s_err_raw_overflow_r <= '1';
-                end if;
+                -- Round 6 B2: previously OR-folded chip_run's
+                -- s_err_overrun_drop here; that sticky has been removed
+                -- because Round 5 #5 eliminated the overrun drop.
 
                 -- Capture new beat from chip_run (at most one per cycle)
                 v_new := c_RAW_ENTRY_EMPTY;

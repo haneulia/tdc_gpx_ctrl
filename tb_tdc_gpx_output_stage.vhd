@@ -228,7 +228,11 @@ begin
             o_face_tvalid          => face_tvalid,
             o_face_fall_tvalid     => face_fall_tvalid,
             o_face_buf_tvalid      => face_buf_tvalid,
-            o_face_fall_buf_tvalid => face_fall_buf_tvalid
+            o_face_fall_buf_tvalid => face_fall_buf_tvalid,
+            o_shot_flush_drop_rise    => open,
+            o_shot_flush_drop_fall    => open,
+            o_shot_overrun_count_rise => open,
+            o_shot_overrun_count_fall => open
         );
 
     -- =========================================================================
