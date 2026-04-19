@@ -137,12 +137,15 @@ architecture sim of tb_tdc_gpx_full_int is
     end function;
     constant C_MAX_HITS       : natural := fn_max_hits(G_MAX_RANGE_M);
 
-    -- pulse / trigger widths (kept short but >= 1 clk, >= 4 for safety)
+    -- pulse / trigger widths. Kept at tb_laser_ctrl_pkg values (1 clk) so
+    -- lc_start_tdc matches the 1-clk pulse that face_seq edge-detects in
+    -- direct mode. A >= 4 clk floor was tried earlier but does not help
+    -- (face_seq only needs one rising edge per shot).
     function fn_max_nat(a, b : natural) return natural is
     begin if a > b then return a; else return b; end if; end function;
-    constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_CLKS, 4);
-    constant C_START_TDC_W    : natural := fn_max_nat(C_START_TDC_CLKS, 4);
-    constant C_STOP_TDC_W     : natural := fn_max_nat(C_STOP_TDC_CLKS, 4);
+    constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_CLKS, 1);
+    constant C_START_TDC_W    : natural := fn_max_nat(C_START_TDC_CLKS, 1);
+    constant C_STOP_TDC_W     : natural := fn_max_nat(C_STOP_TDC_CLKS, 1);
     constant C_CTL3_VAL_LOCAL : natural := C_STOP_TDC_W * 65536 + C_START_TDC_W;
 
     -- CTL5 packed for laser_ctrl:
@@ -426,8 +429,38 @@ architecture sim of tb_tdc_gpx_full_int is
     signal chip_d_oe  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- =========================================================================
+    -- DUT internal observability NOTE
+    --   VHDL-2008 external names (<<signal .x.y.z : type>>) were attempted
+    --   to mirror tdc_gpx_top internals like s_cmd_start_accepted, s_chip_busy,
+    --   s_shot_start_gated, but xsim 2025.2.1 rejects them with
+    --   "only elaborated instance can be referenced in an external name".
+    --   Waveform inspection via --debug typical + xsim gui is the intended
+    --   follow-up path. Stubs kept so the monitor process can compile.
+    -- =========================================================================
+    signal dbg_cmd_start        : std_logic := '0';
+    signal dbg_cmd_start_accept : std_logic := '0';
+    signal dbg_chip_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal dbg_shot_gated       : std_logic := '0';
+    signal dbg_shot_per_chip    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal dbg_cfg_rejected_r   : std_logic := '0';
+    signal dbg_pipeline_abort   : std_logic := '0';
+
+    -- =========================================================================
     -- Activity counters (per handoff point)
     -- =========================================================================
+    signal mon_cmd_start_cnt   : natural := 0;
+    signal mon_cmd_accept_cnt  : natural := 0;
+    signal mon_chip_busy_any   : natural := 0;   -- cycles with any chip busy
+    signal mon_shot_gated_cnt  : natural := 0;
+    signal mon_shot_chip_any   : natural := 0;
+    signal mon_cfg_rejected    : natural := 0;
+    signal mon_pipe_abort      : natural := 0;
+
+    -- Sticky "have I ever been high" latches so slow-poll probes catch short pulses
+    signal dbg_lc_start_ever : std_logic := '0';
+    signal dbg_lc_fire_ever  : std_logic := '0';
+
+
     signal mon_md_beats     : natural := 0;
     signal mon_lc_fire_cnt  : natural := 0;
     signal mon_lc_start_cnt : natural := 0;
@@ -956,6 +989,9 @@ begin
     -- =========================================================================
     p_mon : process(clk)
         variable v_prev_fire, v_prev_start, v_prev_stop : std_logic := '0';
+        variable v_prev_cmd_start, v_prev_cmd_accept   : std_logic := '0';
+        variable v_prev_shot_gated                     : std_logic := '0';
+        variable v_prev_cfg_rej, v_prev_pipe_abort     : std_logic := '0';
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
@@ -970,10 +1006,56 @@ begin
                 mon_td_fall_beats <= 0;
                 mon_td_rise_frame_end <= 0;
                 mon_td_fall_frame_end <= 0;
+                mon_cmd_start_cnt  <= 0;
+                mon_cmd_accept_cnt <= 0;
+                mon_chip_busy_any  <= 0;
+                mon_shot_gated_cnt <= 0;
+                mon_shot_chip_any  <= 0;
+                mon_cfg_rejected   <= 0;
+                mon_pipe_abort     <= 0;
                 v_prev_fire := '0';
                 v_prev_start := '0';
                 v_prev_stop := '0';
+                v_prev_cmd_start := '0';
+                v_prev_cmd_accept := '0';
+                v_prev_shot_gated := '0';
+                v_prev_cfg_rej := '0';
+                v_prev_pipe_abort := '0';
+                dbg_lc_start_ever <= '0';
+                dbg_lc_fire_ever  <= '0';
             else
+                -- DUT internal rising-edge counters (via VHDL-2008 aliases)
+                if dbg_cmd_start = '1' and v_prev_cmd_start = '0' then
+                    mon_cmd_start_cnt <= mon_cmd_start_cnt + 1;
+                end if;
+                if dbg_cmd_start_accept = '1' and v_prev_cmd_accept = '0' then
+                    mon_cmd_accept_cnt <= mon_cmd_accept_cnt + 1;
+                end if;
+                if dbg_chip_busy /= (dbg_chip_busy'range => '0') then
+                    mon_chip_busy_any <= mon_chip_busy_any + 1;
+                end if;
+                if dbg_shot_gated = '1' and v_prev_shot_gated = '0' then
+                    mon_shot_gated_cnt <= mon_shot_gated_cnt + 1;
+                end if;
+                if dbg_shot_per_chip /= (dbg_shot_per_chip'range => '0') then
+                    mon_shot_chip_any <= mon_shot_chip_any + 1;
+                end if;
+                if dbg_cfg_rejected_r = '1' and v_prev_cfg_rej = '0' then
+                    mon_cfg_rejected <= mon_cfg_rejected + 1;
+                end if;
+                if dbg_pipeline_abort = '1' and v_prev_pipe_abort = '0' then
+                    mon_pipe_abort <= mon_pipe_abort + 1;
+                end if;
+                v_prev_cmd_start  := dbg_cmd_start;
+                v_prev_cmd_accept := dbg_cmd_start_accept;
+                v_prev_shot_gated := dbg_shot_gated;
+                v_prev_cfg_rej    := dbg_cfg_rejected_r;
+                v_prev_pipe_abort := dbg_pipeline_abort;
+
+                -- Sticky latches (never clear except on reset) so slow probes
+                -- can observe that an event happened at least once
+                if lc_start_tdc = '1' then dbg_lc_start_ever <= '1'; end if;
+                if lc_fire_pulse = '1' then dbg_lc_fire_ever <= '1'; end if;
                 if md_tvalid = '1' then
                     mon_md_beats <= mon_md_beats + 1;
                 end if;
@@ -1331,6 +1413,14 @@ begin
            & "  tlast cnt = " & integer'image(mon_td_rise_frame_end));
         pl("  td     fall VDMA beats = " & integer'image(mon_td_fall_beats)
            & "  tlast cnt = " & integer'image(mon_td_fall_frame_end));
+        pl("  -- DUT internal (VHDL-2008 alias) --");
+        pl("  td     cmd_start rising     = " & integer'image(mon_cmd_start_cnt));
+        pl("  td     cmd_start_accepted   = " & integer'image(mon_cmd_accept_cnt));
+        pl("  td     chip_busy any cycles = " & integer'image(mon_chip_busy_any));
+        pl("  td     shot_start_gated     = " & integer'image(mon_shot_gated_cnt));
+        pl("  td     shot_per_chip any    = " & integer'image(mon_shot_chip_any));
+        pl("  td     cfg_rejected         = " & integer'image(mon_cfg_rejected));
+        pl("  td     pipeline_abort       = " & integer'image(mon_pipe_abort));
         pl("======================================================");
 
         if mon_md_beats > 0 and mon_lc_start_cnt > 0 then
