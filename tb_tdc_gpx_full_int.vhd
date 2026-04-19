@@ -94,8 +94,31 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_FIFO_DEPTH   : natural := 32;
     constant C_LF_THRESH    : natural := 4;
 
-    -- Photodiode echo delay (from fire_pulse to pd rising edge)
-    constant C_ECHO_DELAY   : natural := 200;  -- cycles (1 us)
+    -- Photodiode echo delay (from fire_pulse to pd rising edge).
+    -- Target at 375 m (well within the 500 m max window of 667 clk) so the
+    -- echo arrives strictly before max_roundtrip timeout and is captured.
+    constant C_ECHO_DELAY   : natural := 500;  -- 2.5 us round-trip (375 m)
+
+    -- =========================================================================
+    -- 500 m profile overrides for laser_ctrl CSR
+    --   tb_laser_ctrl_pkg assumes AXIS=150 MHz + 216 m max range, which does
+    --   not match our 200 MHz single-clock + 500 m TDC profile. Recompute
+    --   the range-dependent registers here.
+    --
+    --   @200 MHz:  1 m round-trip  = 2 m / 2.998e8 m/s * 200e6 = 1.334 clk/m
+    --              500 m           = 667 clk
+    --              shot_period(500 m) >= 1.5 * 667 = 1000 clk = 5 us
+    --
+    --   motor_decoder emits 1 AXI-S beat per encoder state. With TICKS_LO=13
+    --   clk/state (pkg derived), shot_period(80 states) ~= 1040 clk -> OK.
+    -- =========================================================================
+    constant C_LC_MAX_ROUNDTRIP_500M : natural := 667;  -- CTL2
+    constant C_LC_VIRT_OFFSET_500M   : natural := 667;  -- CTL4 (sim target = 500 m)
+    constant C_LC_STEP_INTERVAL_500M : natural := 80;   -- CTL5[15:0]
+
+    -- CTL5 packed: [20:16] face_enable=0x1F (all 5 faces), [15:0] step_interval=80
+    --   0x1F<<16 | 80 = 0x001F_0050
+    constant C_LC_CTL5_500M : std_logic_vector(31 downto 0) := x"001F0050";
 
     -- =========================================================================
     -- Clock / Reset
@@ -1041,26 +1064,30 @@ begin
                  md_bvalid, md_bready, C_MD_CTL7, C_MD_CTL7_APPLY);
         wait_clk(200);
 
-        pl("[S1] echo_receiver CSR: SIM_EN + multi_hit_limit=7");
+        pl("[S1] echo_receiver CSR: physical mode (SIM_EN=0) + multi_hit_limit=7");
+        -- CTL0: SIM_EN=0 (physical pd_lvds path), multi_hit_limit=7 ([12:8])
         axilw_9b(er_awaddr, er_awvalid, er_awready, er_wdata, er_wvalid, er_wready,
-                 er_bvalid, er_bready, C_ER_CTL0, x"00000701");
+                 er_bvalid, er_bready, C_ER_CTL0, x"00000700");
         wait_clk(10);
 
-        pl("[S1] laser_ctrl CSR: width + sched defaults + enable");
+        pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL1,
                  std_logic_vector(to_unsigned(C_FIRE_WIDTH_CLKS, 32)));
+        -- CTL2 max_roundtrip = 500 m @200 MHz
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL2,
-                 std_logic_vector(to_unsigned(C_MAX_ROUNDTRIP_CLKS, 32)));
+                 std_logic_vector(to_unsigned(C_LC_MAX_ROUNDTRIP_500M, 32)));
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL3,
                  std_logic_vector(to_unsigned(C_CTL3_VAL, 32)));
+        -- CTL4 sim target = 500 m
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL4,
-                 std_logic_vector(to_unsigned(C_VIRT_OFFSET_CLKS, 32)));
+                 std_logic_vector(to_unsigned(C_LC_VIRT_OFFSET_500M, 32)));
+        -- CTL5 step_interval = 80 states (shot_period ~= 5 us @200 MHz)
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL5, C_LC_CTL5_DEFAULT);
+                 lc_bvalid, lc_bready, C_LC_CTL5, C_LC_CTL5_500M);
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
                  lc_bvalid, lc_bready, C_LC_CTL6, C_LC_CTL6_DEFAULT);
         axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
