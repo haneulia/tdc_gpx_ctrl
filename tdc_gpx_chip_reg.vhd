@@ -63,8 +63,12 @@ entity tdc_gpx_chip_reg is
         -- Sticky: 3rd-pulse queue overflow (Round 5 #12 — was internal only)
         --   Asserts '1' whenever a new i_start_read / i_start_write arrives
         --   while ST_ACTIVE AND the 1-depth pending queue is already full
-        --   (i.e. a request was actually dropped). Cleared only by reset.
-        o_err_req_overflow : out std_logic
+        --   (i.e. a request was actually dropped). Cleared by reset or by
+        --   i_soft_clear (Round 7 B-5, shared with status_agg / err_handler).
+        o_err_req_overflow : out std_logic;
+
+        -- SW-initiated sticky clear (Round 7 B-5). Default '0' keeps legacy.
+        i_soft_clear       : in  std_logic := '0'
     );
 end entity tdc_gpx_chip_reg;
 
@@ -123,6 +127,13 @@ begin
                 s_rvalid_r      <= '0';
                 s_done_r        <= '0';
                 s_timeout_out_r <= '0';
+
+                -- Round 7 B-5: SW-initiated sticky clear, shared with
+                -- status_agg / err_handler. Runs alongside the main case
+                -- so normal FSM progress is unaffected.
+                if i_soft_clear = '1' then
+                    s_err_req_overflow_r <= '0';
+                end if;
 
                 case s_state_r is
 

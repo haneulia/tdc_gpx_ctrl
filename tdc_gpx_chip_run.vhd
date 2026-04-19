@@ -176,6 +176,13 @@ architecture rtl of tdc_gpx_chip_run is
     constant c_RECOVERY_LAST  : unsigned(15 downto 0) := to_unsigned(g_RECOVERY_CLKS - 1, 16);
     constant c_ALU_PULSE_LAST : unsigned(15 downto 0) := to_unsigned(g_ALU_PULSE_CLKS - 1, 16);
     constant c_FLAG_SETTLE_LAST : unsigned(15 downto 0) := to_unsigned(2, 16);
+    -- Round 7 A-2: expected_ififo handshake (config_ctrl u_cdc_exp1/2) has up
+    -- to ~8 TDC cycles of latency. If the final stop event arrives close to
+    -- irflag, the handshake may still be in flight when ST_DRAIN_LATCH
+    -- samples — latching a stale value. Hold ST_DRAIN_LATCH for 16 cycles
+    -- past irflag before sampling so the latest completed handshake value
+    -- has landed on the dest side.
+    constant c_EXP_LATCH_SETTLE_LAST : unsigned(15 downto 0) := to_unsigned(15, 16);
 
     signal s_wait_cnt_r        : unsigned(15 downto 0) := (others => '0');
     signal s_req_valid_r       : std_logic := '0';
@@ -344,6 +351,7 @@ begin
                             s_drain_cnt_ififo2_r <= (others => '0');
                             s_expected_ififo1_r  <= (others => '0');
                             s_expected_ififo2_r  <= (others => '0');
+                            s_wait_cnt_r         <= (others => '0');  -- Round 7 A-2: settle counter
                             s_state_r <= ST_DRAIN_LATCH;
                         elsif s_stop_pending_r = '1' then
                             -- Fallback watchdog: irflag never arrived after
@@ -373,13 +381,19 @@ begin
                         end if;
 
                     when ST_DRAIN_LATCH =>
-                        -- Latch final expected IFIFO counts after irflag.
-                        -- By this point stop_cfg_decode has finished accumulating
-                        -- stop events for this shot, so i_expected_ififo1/2 hold
-                        -- the final per-shot totals used to drive drain bursts.
-                        s_expected_ififo1_r <= i_expected_ififo1;
-                        s_expected_ififo2_r <= i_expected_ififo2;
-                        s_state_r           <= ST_DRAIN_CHECK;
+                        -- Round 7 A-2: settle window for the expected_ififo
+                        -- handshake (~8 TDC cycles worst case). Hold here
+                        -- until c_EXP_LATCH_SETTLE_LAST before sampling so
+                        -- the last stop event that landed close to irflag
+                        -- has propagated through the handshake.
+                        if s_wait_cnt_r = c_EXP_LATCH_SETTLE_LAST then
+                            s_expected_ififo1_r <= i_expected_ififo1;
+                            s_expected_ififo2_r <= i_expected_ififo2;
+                            s_wait_cnt_r        <= (others => '0');
+                            s_state_r           <= ST_DRAIN_CHECK;
+                        else
+                            s_wait_cnt_r <= s_wait_cnt_r + 1;
+                        end if;
 
                     when ST_DRAIN_CHECK =>
                       if i_raw_busy = '0' then
