@@ -352,7 +352,7 @@ begin
     --   bits[11:8]  rise_shot_overrun_count[3:0]  (reduced 8→4; wrap)
     --   bits[15:12] shot_flush_drop_mask          (Round 11 item 15, per-chip)
     --   bits[19:16] fall_shot_overrun_count[3:0]  (reduced 8→4; wrap)
-    --   bits[23:20] reserved
+    --   bits[23:20] cmd_collision_mask            (Round 11 item 18 C, per-chip)
     --   bits[27:24] err_reg_overflow_mask (per-chip)
     --   bits[31:28] run_drain_complete_mask (per-chip)
     --
@@ -373,7 +373,7 @@ begin
     s_stat6_src(11 downto 8)  <= std_logic_vector(i_status.rise_shot_overrun_count(3 downto 0));
     s_stat6_src(15 downto 12) <= i_status.shot_flush_drop_mask;
     s_stat6_src(19 downto 16) <= std_logic_vector(i_status.fall_shot_overrun_count(3 downto 0));
-    s_stat6_src(23 downto 20) <= (others => '0');
+    s_stat6_src(23 downto 20) <= i_status.cmd_collision_mask;
     s_stat6_src(27 downto 24) <= i_status.err_reg_overflow_mask;
     s_stat6_src(31 downto 28) <= i_status.run_drain_complete_mask;
 

@@ -361,6 +361,12 @@ package tdc_gpx_pkg is
         -- Bit i = '1' (latched) if chip i's face_assembler input FIFO held
         -- old-shot tail data at a shot_start boundary on either slope.
         shot_flush_drop_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask.
+        -- Bit i = '1' means chip i's chip_ctrl saw >1 command pulse in the
+        -- same PH_IDLE cycle. Under correct operation this should stay zero
+        -- (cmd_arb enforces mutual exclusion at source); a fire indicates a
+        -- cmd_arb contract violation, not a chip_ctrl bug.
+        cmd_collision_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -407,7 +413,8 @@ package tdc_gpx_pkg is
         mono_violation_mask     => (others => '0'),
         err_frame_wait_escape   => '0',
         init_cfg_coalesced_mask => (others => '0'),
-        shot_flush_drop_mask    => (others => '0')
+        shot_flush_drop_mask    => (others => '0'),
+        cmd_collision_mask      => (others => '0')
     );
 
     -- =========================================================================

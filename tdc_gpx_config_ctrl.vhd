@@ -230,6 +230,9 @@ entity tdc_gpx_config_ctrl is
         -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky.
         o_init_cfg_coalesced_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
+        -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask.
+        o_cmd_collision_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+
         -- =====================================================================
         -- Interrupt
         -- =====================================================================
@@ -344,6 +347,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_run_timeout_cause     : t_timeout_cause_arr;
     -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
     signal s_init_cfg_coalesced    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask
+    signal s_cmd_collision_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_last_r : std_logic_vector(2 downto 0) := (others => '0');
     signal s_reg_arb_timeout   : std_logic;
 
@@ -661,6 +666,10 @@ begin
     -- If cross-domain sampling causes metastability concerns, wrap in a
     -- 2-FF sync later.
     o_init_cfg_coalesced_mask <= s_init_cfg_coalesced;
+    -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision mask (TDC domain).
+    -- Same non-CDC rationale as init_cfg_coalesced: observability only, not
+    -- latency-critical; 2-FF wrap can be added later if needed.
+    o_cmd_collision_mask <= s_cmd_collision_mask;
 
     -- =========================================================================
     -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
@@ -1494,7 +1503,8 @@ begin
                 o_err_reg_overflow  => s_err_reg_overflow(i),  -- Round 6 B1: CDC'd below
                 o_run_timeout       => s_run_timeout(i),
                 o_run_timeout_cause => s_run_timeout_cause(i),
-                o_init_cfg_coalesced => s_init_cfg_coalesced(i)
+                o_init_cfg_coalesced => s_init_cfg_coalesced(i),
+                o_err_cmd_collision  => s_cmd_collision_mask(i)
             );
 
         -- ----- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk) -----

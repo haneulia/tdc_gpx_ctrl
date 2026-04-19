@@ -177,7 +177,14 @@ entity tdc_gpx_chip_ctrl is
         -- Round 11 C: surface chip_run's timeout cause code for SW diagnosis.
         o_run_timeout_cause : out std_logic_vector(2 downto 0);
         -- Round 11 item 14: chip_init cfg_write coalesce sticky (per-chip).
-        o_init_cfg_coalesced : out std_logic
+        o_init_cfg_coalesced : out std_logic;
+        -- Round 11 item 18 (C): cmd_arb contract violation sticky (per-chip).
+        -- Fires on this chip's instance when PH_IDLE observes >1 command
+        -- pulse in the same cycle. config_ctrl aggregates all c_N_CHIPS
+        -- outputs into a mask so SW can see WHICH chip saw the collision.
+        -- Investigate cmd_arb (source serialization failure), not the
+        -- dropped command itself.
+        o_err_cmd_collision  : out std_logic
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -337,6 +344,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: raw hold+skid both full, beat dropped
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
+    signal s_err_cmd_collision_r  : std_logic := '0';  -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision sticky (cmd_arb contract violation)
     -- #13: i_stop_tdc CDC moved to config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse);
     -- arrives here as a clean 1-cycle pulse in the TDC clock domain, so no
     -- internal 2-FF sync or edge-detect is needed.
@@ -538,6 +546,7 @@ begin
                 s_bus_clk_div_snap_r <= to_unsigned(2, 6);
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_err_drain_cap_r    <= '0';
+                s_err_cmd_collision_r <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
@@ -567,30 +576,29 @@ begin
                     when PH_IDLE =>
                         -- Priority: start > cfg_write > reg_read > reg_write
                         --
-                        -- Round 11 item 18: policy statement.
-                        --   When multiple commands arrive in the SAME cycle,
-                        --   priority is fixed (above). Lower-priority
-                        --   commands are DROPPED with no runtime sticky —
-                        --   only a sim-time WARNING fires.
-                        --   Rationale: cmd_arb and higher-level command
-                        --   dispatch at config_ctrl serialize these pulses;
-                        --   simultaneous arrival here would indicate a bug
-                        --   in that layer rather than a workload to
-                        --   accommodate. Adding a runtime sticky is a
-                        --   reasonable follow-up if silicon shows the
-                        --   contract being violated (e.g. CDC skew between
-                        --   pulses). For now the sim assert is the only
-                        --   detection.
-                        -- synthesis translate_off
-                        -- Warn if multiple commands arrive simultaneously
+                        -- Round 11 item 18 (follow-up, option C): per-chip
+                        -- runtime sticky. cmd_arb's mutual-exclusion
+                        -- gating (source-side, AXI-Stream domain) means
+                        -- simultaneous arrival here should be structurally
+                        -- impossible in the nominal workflow. The sticky
+                        -- below is therefore a SAFETY NET for:
+                        --   - cmd_arb contract violation (its own bug)
+                        --   - Unforeseen CDC skew in future clock-domain
+                        --     restructuring
+                        --   - SW that bypasses cmd_arb and drives pulses
+                        --     directly (should never happen, but caught)
+                        -- A fire of this sticky is a RED FLAG: investigate
+                        -- cmd_arb, not the dropped command itself.
                         if (i_cmd_start and i_cmd_cfg_write) = '1'
                            or (i_cmd_start and (i_cmd_reg_read or i_cmd_reg_write)) = '1'
                            or (i_cmd_cfg_write and (i_cmd_reg_read or i_cmd_reg_write)) = '1' then
+                            s_err_cmd_collision_r <= '1';
+                            -- synthesis translate_off
                             assert false
                                 report "chip_ctrl: multiple commands in PH_IDLE (lower priority dropped)"
                                 severity warning;
+                            -- synthesis translate_on
                         end if;
-                        -- synthesis translate_on
                         if i_cmd_start = '1' then
                             -- Snapshot ALL config for run (including cfg_image for chip_run)
                             s_cfg_image_snap_r   <= i_cfg_image;
@@ -982,6 +990,7 @@ begin
     o_err_sequence      <= s_err_sequence_r;
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
     o_init_cfg_coalesced <= s_init_cfg_coalesced;
+    o_err_cmd_collision  <= s_err_cmd_collision_r;
     -- raw_overflow aggregates multiple "integrity compromised" events so SW
     -- only needs to observe one flag per chip. Individual cause codes can be
     -- split into dedicated ports later if needed:

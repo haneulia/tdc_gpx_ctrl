@@ -331,6 +331,8 @@ architecture rtl of tdc_gpx_top is
     signal s_mono_violation_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
     signal s_init_cfg_coalesced_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
+    signal s_cmd_collision_mask      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_last  : std_logic_vector(2 downto 0);
     signal s_hdr_face_start_collapsed_rise : unsigned(7 downto 0);
     signal s_hdr_drain_timeout_rise : std_logic;
@@ -530,6 +532,8 @@ begin
             o_mono_violation_mask => s_mono_violation_mask,
             -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
             o_init_cfg_coalesced_mask => s_init_cfg_coalesced_mask,
+            -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
+            o_cmd_collision_mask      => s_cmd_collision_mask,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -897,6 +901,8 @@ begin
     -- Round 11 item 15: per-chip shot_flush_drop mask (OR of rise+fall slopes)
     s_status.shot_flush_drop_mask <=
         s_shot_flush_drop_mask_rise or s_shot_flush_drop_mask_fall;
+    -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
+    s_status.cmd_collision_mask <= s_cmd_collision_mask;
 
     -- stop_id_error_mask: per-chip sticky aggregating rise + fall pulses.
     p_stop_id_error_sticky : process(i_axis_aclk)
