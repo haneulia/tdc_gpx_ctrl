@@ -431,9 +431,14 @@ begin
                                 v_stop := to_integer(unsigned(i_s_axis_tuser(5 downto 3)));
 
                                 -- synthesis translate_off
+                                -- Round 10 #9: severity note (was error).
+                                -- Round 9 #8 established the canonical 000→7
+                                -- mapping so synth no longer treats 000 as
+                                -- "invalid". Keeping a note lets TB still
+                                -- trace the event without failing.
                                 assert i_max_hits_cfg /= "000"
-                                    report "cell_builder: i_max_hits_cfg=0 is invalid"
-                                    severity error;
+                                    report "cell_builder: i_max_hits_cfg=0 aliased to 7 (canonical mapping)"
+                                    severity note;
                                 assert unsigned(i_s_axis_tuser(2 downto 1)) = g_CHIP_ID
                                     report "cell_builder: input chip_id mismatch (got " &
                                            integer'image(to_integer(unsigned(i_s_axis_tuser(2 downto 1)))) &

@@ -293,7 +293,15 @@ begin
                     word(15 downto 0)  := std_logic_vector(s_rows_per_face_r);
                     word(31 downto 16) := std_logic_vector(s_cols_per_face_r);
                 when 5  =>
-                    word(7 downto 0)   := "00000" & std_logic_vector(s_max_hits_cfg_r);
+                    -- Round 10 #7: alias max_hits_cfg=000 to 7 in the header
+                    -- low byte too, so the header is self-consistent with the
+                    -- cell_size computed below (`others => 7`). Matches
+                    -- cell_builder's Round 9 #8 canonical 000 → 7 convention.
+                    if s_max_hits_cfg_r = "000" then
+                        word(7 downto 0)   := "00000" & "111";
+                    else
+                        word(7 downto 0)   := "00000" & std_logic_vector(s_max_hits_cfg_r);
+                    end if;
                     -- Runtime cell_size from max_hits_cfg
                     case s_max_hits_cfg_r is
                         when "001" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(1), 8));

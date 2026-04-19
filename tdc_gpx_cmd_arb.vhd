@@ -311,18 +311,45 @@ begin
                         s_reg_timeout_mask_r <= (others => '0');
                     end if;
 
-                    -- Queue kickoff (Round 5 #10): if a pending request was
-                    -- latched during the just-finished transaction, start it
-                    -- immediately instead of going idle. Dispatch happens next
-                    -- cycle through the existing "active + dispatch pending"
-                    -- branch.
+                    -- Round 10 #3: capture a same-cycle new request.
+                    -- Priority inside the all-done cycle: queue takes over
+                    -- first (already-latched prior overlap), then a fresh
+                    -- in-flight pulse is absorbed into the queue so the
+                    -- next cycle's queue-kickoff path picks it up. Without
+                    -- this, a 1-clk v_new_request pulse that coincided with
+                    -- s_all_done could be silently lost.
                     if s_reg_queue_valid_r = '1' then
+                        -- Queue kickoff (Round 5 #10): prior overlap takes
+                        -- priority over any brand-new pulse (both land in
+                        -- the same cycle extremely rarely; queue-first is
+                        -- the predictable ordering).
                         s_reg_queue_valid_r  <= '0';
                         s_reg_active_r       <= '1';
                         s_reg_target_mask_r  <= s_reg_queue_mask_r;
                         s_reg_pending_rw_r   <= s_reg_queue_rw_r;
                         s_reg_pending_addr_r <= s_reg_queue_addr_r;
                         s_reg_pending_r      <= s_reg_queue_mask_r;
+                        s_reg_timeout_r      <= '0';
+                        s_reg_timeout_mask_r <= (others => '0');
+                        -- If a new request also arrived this cycle, latch
+                        -- it into the now-emptied queue so the next cycle's
+                        -- queue-kickoff serves it on transaction completion.
+                        if v_new_request = '1'
+                           and i_cmd_reg_chip_address /= C_ZEROS then
+                            s_reg_queue_valid_r <= '1';
+                            s_reg_queue_mask_r  <= i_cmd_reg_chip_address;
+                            s_reg_queue_rw_r    <= v_rw;
+                            s_reg_queue_addr_r  <= i_cmd_reg_addr;
+                        end if;
+                    elsif v_new_request = '1'
+                          and i_cmd_reg_chip_address /= C_ZEROS then
+                        -- No prior queue — directly start the new request
+                        -- so the pulse isn't lost.
+                        s_reg_active_r       <= '1';
+                        s_reg_target_mask_r  <= i_cmd_reg_chip_address;
+                        s_reg_pending_rw_r   <= v_rw;
+                        s_reg_pending_addr_r <= i_cmd_reg_addr;
+                        s_reg_pending_r      <= i_cmd_reg_chip_address;
                         s_reg_timeout_r      <= '0';
                         s_reg_timeout_mask_r <= (others => '0');
                     else

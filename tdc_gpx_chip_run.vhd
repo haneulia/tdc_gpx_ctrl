@@ -669,6 +669,7 @@ begin
                             s_raw_word_r  <= i_bus_rsp_rdata;
                             s_raw_valid_r <= '1';
                             s_wait_cnt_r  <= (others => '0');
+                            s_pending_stuck_cnt_r <= (others => '0');
                             if s_ififo_id_r = '0' then
                                 s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
                             else
@@ -678,6 +679,25 @@ begin
                             -- Nothing lingering at bus_phy/skid; advance watchdog
                             -- only when not being stalled by backpressure.
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
+                            s_pending_stuck_cnt_r <= (others => '0');
+                        else
+                            -- Round 10 #1: pending stays high → raw path may be
+                            -- permanently backed up. Independent pending-stuck
+                            -- watchdog (separate from s_wait_cnt_r) forces an
+                            -- exit if pending never releases, matching the
+                            -- Round 9 #1 pattern for EF/BURST states.
+                            if s_pending_stuck_cnt_r = x"FFFF" then
+                                s_oen_permanent_r <= '0';
+                                s_range_active_r  <= '0';
+                                s_drain_done_r    <= '1';
+                                s_ififo_id_r      <= '1';
+                                s_timeout_r       <= '1';
+                                s_timeout_cause_r <= "001";  -- raw_busy (downstream deadlock)
+                                s_pending_stuck_cnt_r <= (others => '0');
+                                s_state_r         <= ST_ALU_PULSE;
+                            else
+                                s_pending_stuck_cnt_r <= s_pending_stuck_cnt_r + 1;
+                            end if;
                         end if;
                         -- Flush complete only when bus is idle AND no response
                         -- is still pending anywhere in the bus_phy/skid path.
@@ -686,6 +706,7 @@ begin
                         -- response unfired in the skid (Round 5 #2).
                         if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
                             s_wait_cnt_r <= (others => '0');
+                            s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r    <= ST_DRAIN_SETTLE;
                         elsif s_wait_cnt_r = x"FFFF" then
                             -- Bus hung during flush: force completion
