@@ -259,6 +259,12 @@ begin
                 -- err_handler for their shared i_soft_clear paths.
                 if i_soft_clear = '1' then
                     s_err_req_overflow_r <= '0';
+                    -- Round 13 axis 3 (M-6 fix): align rw_ambiguous with
+                    -- req_overflow so both stickies obey the same
+                    -- "SOFT-CLEAR" category. Previously this sticky was
+                    -- HARD-RESET-ONLY which was inconsistent with its
+                    -- neighbor.
+                    s_err_rw_ambiguous_r <= '0';
                 end if;
             end if;
         end if;

@@ -291,6 +291,40 @@ package tdc_gpx_pkg is
     function fn_unpack_tdc_cfg(v  : std_logic_vector) return t_tdc_cfg;
 
     -- =========================================================================
+    -- Round 13 axis 3: STICKY LIFETIME CATEGORIES
+    -- =========================================================================
+    -- Every sticky / status field in this record falls into one of four
+    -- lifetime categories. The category determines what CLEARS the sticky:
+    --
+    --   HISTORICAL   — hard reset (i_rst_n) only. Survives soft_reset,
+    --                  err_soft_clear, cmd_stop, cmd_start.
+    --                  Example: chip_error_mask, quarantine_escape_mask,
+    --                  mono_violation_mask, bus_fatal_mask, force_reinit_mask,
+    --                  drain_faulted_mask.
+    --                  Use when SW needs "did this EVER happen?" answer.
+    --
+    --   LAST-TX      — cleared on next transaction accept. Overrides
+    --                  historical — this category reflects THIS op's state.
+    --                  Example: cmd_arb reg_timeout_mask (cleared on new
+    --                  reg request).
+    --                  Use when "state of the current/just-finished op".
+    --
+    --   SOFT-CLEAR   — cleared by i_err_soft_clear pulse (SW-initiated).
+    --                  Example: err_chip_mask, err_cause, err_reg_overflow,
+    --                  chip_reg req_overflow.
+    --                  Use for per-run error history that SW explicitly
+    --                  acks before starting a new run.
+    --
+    --   RUN-SCOPED   — cleared on cmd_start_accepted. Reflects this run's
+    --                  outcome only.
+    --                  Example: shot_drop_count, frame_abort_count.
+    --                  Use for per-run counters.
+    --
+    -- When adding new fields, put the category in the comment so reviewers
+    -- and SW can map CSR semantics consistently across modules.
+    -- =========================================================================
+
+    -- =========================================================================
     -- t_tdc_status : Status feedback (submodules -> CSR)
     -- =========================================================================
     type t_tdc_status is record
@@ -401,6 +435,19 @@ package tdc_gpx_pkg is
         fall_chip_error_blank    : std_logic_vector(c_N_CHIPS - 1 downto 0);
         -- Round 12 #16: stop_cfg_decode orphan-event sticky.
         orphan_stop_evt_sticky   : std_logic;
+        -- Round 13 axis 2: per-chip bus fatal sticky mask.
+        bus_fatal_mask           : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 13 axis 1a: per-chip drain-completion-faulted sticky.
+        -- Set when chip_run finalized ST_DRAIN_CHECK via mismatch fallback.
+        -- Distinguishes "clean completion" (not set) from "done with
+        -- wrong counts" (set) at SW.
+        drain_faulted_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- Round 13 axis 1b: header_inserter frame_done_faulted sticky
+        -- (either slope's drain-watchdog escape → frame is synthetic).
+        frame_done_faulted_sticky : std_logic;
+        -- Round 13 axis 1c: face_assembler row_done_faulted sticky
+        -- (either slope's row had blank-fill / chip_error).
+        row_done_faulted_sticky  : std_logic;
         -- Round 12 #15: distinct per-chip raw-overflow cause masks.
         raw_drop_mask            : std_logic_vector(c_N_CHIPS - 1 downto 0);
         drain_cap_mask           : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -470,7 +517,11 @@ package tdc_gpx_pkg is
         rise_chip_error_blank    => (others => '0'),
         fall_chip_error_partial  => (others => '0'),
         fall_chip_error_blank    => (others => '0'),
-        orphan_stop_evt_sticky   => '0'
+        orphan_stop_evt_sticky   => '0',
+        bus_fatal_mask           => (others => '0'),
+        drain_faulted_mask       => (others => '0'),
+        frame_done_faulted_sticky => '0',
+        row_done_faulted_sticky  => '0'
     );
 
     -- =========================================================================

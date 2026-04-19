@@ -183,6 +183,8 @@ architecture rtl of tdc_gpx_top is
     signal s_err_raw_drop_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
     signal s_err_drain_cap_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
     signal s_run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);  -- Round 12 #17
+    signal s_err_bus_fatal_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 2
+    signal s_drain_faulted_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 1a
     signal s_cmd_cfg_write    : std_logic;
     -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
     -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
@@ -351,6 +353,13 @@ architecture rtl of tdc_gpx_top is
     signal s_hdr_drain_timeout_fall : std_logic;
     signal s_hdr_abort_truncated_rise : std_logic;  -- Round 12 #19
     signal s_hdr_abort_truncated_fall : std_logic;  -- Round 12 #19
+    signal s_frame_done_faulted_rise  : std_logic;  -- Round 13 axis 1b (pulse)
+    signal s_frame_done_faulted_fall  : std_logic;  -- Round 13 axis 1b (pulse)
+    -- Latched sticky at top for SW observability
+    signal s_frame_done_faulted_sticky_r : std_logic := '0';
+    signal s_row_done_faulted_rise    : std_logic;  -- Round 13 axis 1c (pulse)
+    signal s_row_done_faulted_fall    : std_logic;  -- Round 13 axis 1c (pulse)
+    signal s_row_done_faulted_sticky_r : std_logic := '0';
     -- Round 12 #18: partial/blank chip_error split per slope
     signal s_chip_error_partial_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_chip_error_blank_rise   : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -575,6 +584,10 @@ begin
             o_err_drain_cap_mask       => s_err_drain_cap_mask,
             -- Round 12 #17: per-chip run_timeout_cause packed vector
             o_run_timeout_cause_per_chip => s_run_timeout_cause_per_chip,
+            -- Round 13 axis 2: per-chip bus fatal sticky mask
+            o_err_bus_fatal_mask       => s_err_bus_fatal_mask,
+            -- Round 13 axis 1a: per-chip drain_done_faulted sticky
+            o_drain_faulted_mask       => s_drain_faulted_mask,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -771,6 +784,12 @@ begin
             -- Round 12 #19: per-slope abort-truncation sticky
             o_hdr_abort_truncated_rise => s_hdr_abort_truncated_rise,
             o_hdr_abort_truncated_fall => s_hdr_abort_truncated_fall,
+            -- Round 13 axis 1b: per-slope frame_done_faulted pulse
+            o_frame_done_faulted_rise  => s_frame_done_faulted_rise,
+            o_frame_done_faulted_fall  => s_frame_done_faulted_fall,
+            -- Round 13 axis 1c: per-slope row_done_faulted pulse
+            o_row_done_faulted_rise    => s_row_done_faulted_rise,
+            o_row_done_faulted_fall    => s_row_done_faulted_fall,
             -- Round 12 #18: partial/blank chip_error split per slope
             o_chip_error_partial_rise => s_chip_error_partial_rise,
             o_chip_error_blank_rise   => s_chip_error_blank_rise,
@@ -883,7 +902,12 @@ begin
     -- =========================================================================
     -- Status field assignments (remaining fields not populated by status_agg)
     -- =========================================================================
-    s_status.err_fatal        <= s_err_fatal;  -- repurposed: err_handler fatal recovery failure
+    -- Round 13 axis 2: err_fatal now folds BOTH err_handler fatal recovery
+    -- failure AND any chip's bus_fatal (PH_RESP_DRAIN quarantine + stuck bus).
+    -- SW's existing err_fatal watcher captures both without code changes;
+    -- granularity is in bus_fatal_mask for which-chip diagnosis.
+    s_status.err_fatal        <= s_err_fatal when s_err_bus_fatal_mask = (s_err_bus_fatal_mask'range => '0')
+                                 else '1';
     s_status.chip_error_mask     <= s_chip_error_raw;  -- unmasked: SW sees all chips
     s_status.drain_timeout_mask  <= s_err_drain_to_sticky_r;
     s_status.sequence_error_mask <= s_err_seq_sticky_r;
@@ -980,6 +1004,38 @@ begin
     s_status.fall_chip_error_blank   <= s_chip_error_blank_fall;
     -- Round 12 #16: stop_cfg_decode orphan-event sticky
     s_status.orphan_stop_evt_sticky <= s_orphan_stop_evt_sticky;
+    -- Round 13 axis 2: bus fatal sticky — mask and OR-folded into err_fatal
+    s_status.bus_fatal_mask <= s_err_bus_fatal_mask;
+    -- Round 13 axis 1a: drain-completion-faulted per-chip sticky
+    s_status.drain_faulted_mask <= s_drain_faulted_mask;
+
+    -- Round 13 axis 1b: latch frame_done_faulted pulses into a sticky
+    -- (either slope firing sets it). AXI-Stream domain; no CDC needed
+    -- since source is in the same domain.
+    p_frame_faulted_sticky : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_frame_done_faulted_sticky_r <= '0';
+            elsif s_frame_done_faulted_rise = '1' or s_frame_done_faulted_fall = '1' then
+                s_frame_done_faulted_sticky_r <= '1';
+            end if;
+        end if;
+    end process p_frame_faulted_sticky;
+    s_status.frame_done_faulted_sticky <= s_frame_done_faulted_sticky_r;
+
+    -- Round 13 axis 1c: row_done_faulted sticky latch.
+    p_row_faulted_sticky : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_row_done_faulted_sticky_r <= '0';
+            elsif s_row_done_faulted_rise = '1' or s_row_done_faulted_fall = '1' then
+                s_row_done_faulted_sticky_r <= '1';
+            end if;
+        end if;
+    end process p_row_faulted_sticky;
+    s_status.row_done_faulted_sticky <= s_row_done_faulted_sticky_r;
 
     -- stop_id_error_mask: per-chip sticky aggregating rise + fall pulses.
     p_stop_id_error_sticky : process(i_axis_aclk)

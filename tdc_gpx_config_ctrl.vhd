@@ -268,6 +268,12 @@ entity tdc_gpx_config_ctrl is
         -- Replaces the "last cause only" behavior of o_run_timeout_cause.
         o_run_timeout_cause_per_chip : out std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
 
+        -- Round 13 axis 2: per-chip bus fatal sticky mask.
+        o_err_bus_fatal_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+
+        -- Round 13 axis 1a: per-chip drain_done_faulted sticky mask.
+        o_drain_faulted_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+
         -- =====================================================================
         -- Interrupt
         -- =====================================================================
@@ -468,6 +474,14 @@ architecture rtl of tdc_gpx_config_ctrl is
 
     -- Round 12 B8: per-chip stopdis_override mid-shot sticky (TDC domain)
     signal s_err_stopdis_mid_shot : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 13 axis 2: per-chip bus fatal sticky (TDC domain)
+    signal s_err_bus_fatal        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- Round 13 axis 1a: per-chip drain_done_faulted pulse (TDC domain).
+    -- OR-aggregated to a sticky mask surfaced to SW.
+    signal s_drain_done_faulted   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_drain_faulted_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_drain_faulted_mask_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_drain_faulted_mask_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_err_stopdis_mid_shot_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_err_stopdis_mid_shot_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
@@ -492,6 +506,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_run_timeout_cause_packed   : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_arr_meta_r : std_logic_vector(3 * c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_run_timeout_cause_arr_axi_r  : std_logic_vector(3 * c_N_CHIPS - 1 downto 0) := (others => '0');
+
+    -- Round 13 axis 2: bus fatal CDC (TDC → AXI-Stream domain).
+    signal s_err_bus_fatal_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_bus_fatal_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_init_cfg_coalesced_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_init_cfg_coalesced_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_cmd_collision_meta_r      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
@@ -524,6 +542,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     attribute ASYNC_REG of s_cmd_collision_vec_axi_r     : signal is "TRUE";
     attribute ASYNC_REG of s_run_timeout_cause_arr_meta_r : signal is "TRUE";
     attribute ASYNC_REG of s_run_timeout_cause_arr_axi_r  : signal is "TRUE";
+    attribute ASYNC_REG of s_err_bus_fatal_meta_r         : signal is "TRUE";
+    attribute ASYNC_REG of s_err_bus_fatal_axi_r          : signal is "TRUE";
+    attribute ASYNC_REG of s_drain_faulted_mask_meta_r    : signal is "TRUE";
+    attribute ASYNC_REG of s_drain_faulted_mask_axi_r     : signal is "TRUE";
     signal s_cmd_cfg_write_g_tdc : std_logic;
     signal s_stop_tdc_tdc        : std_logic;  -- stop_tdc after xpm_cdc_pulse (#13)
     -- Round 7 B-5: i_err_soft_clear CDC'd to TDC domain so chip_reg can
@@ -756,6 +778,19 @@ begin
     -- run_timeout pulse so SW always sees the latest non-stale value. TDC
     -- domain; consumers are quasi-static so a 2-FF sync at consumer side is
     -- sufficient (handled by the status CDC that carries STAT7).
+    -- Round 13 axis 1a: latch drain_done_faulted pulses into sticky mask
+    -- (TDC domain) so CDC carries a level not a pulse.
+    p_drain_faulted_latch : process(i_tdc_clk)
+    begin
+        if rising_edge(i_tdc_clk) then
+            if s_tdc_aresetn = '0' then
+                s_drain_faulted_mask_r <= (others => '0');
+            else
+                s_drain_faulted_mask_r <= s_drain_faulted_mask_r or s_drain_done_faulted;
+            end if;
+        end if;
+    end process p_drain_faulted_latch;
+
     -- Round 12 #17: per-chip cause latch (keeps the last cause that fired
     -- on each chip, instead of the previous behavior that overwrote a
     -- single register with whichever chip iterated last).
@@ -815,6 +850,10 @@ begin
                 s_cmd_collision_vec_axi_r     <= (others => '0');
                 s_run_timeout_cause_arr_meta_r <= (others => '0');
                 s_run_timeout_cause_arr_axi_r  <= (others => '0');
+                s_err_bus_fatal_meta_r         <= (others => '0');
+                s_err_bus_fatal_axi_r          <= (others => '0');
+                s_drain_faulted_mask_meta_r    <= (others => '0');
+                s_drain_faulted_mask_axi_r     <= (others => '0');
             else
                 s_run_timeout_cause_meta_r  <= s_run_timeout_cause_last_r;
                 s_run_timeout_cause_axi_r   <= s_run_timeout_cause_meta_r;
@@ -836,6 +875,10 @@ begin
                 s_cmd_collision_vec_axi_r     <= s_cmd_collision_vec_meta_r;
                 s_run_timeout_cause_arr_meta_r <= s_run_timeout_cause_packed;
                 s_run_timeout_cause_arr_axi_r  <= s_run_timeout_cause_arr_meta_r;
+                s_err_bus_fatal_meta_r         <= s_err_bus_fatal;
+                s_err_bus_fatal_axi_r          <= s_err_bus_fatal_meta_r;
+                s_drain_faulted_mask_meta_r    <= s_drain_faulted_mask_r;
+                s_drain_faulted_mask_axi_r     <= s_drain_faulted_mask_meta_r;
             end if;
         end if;
     end process p_tdc_to_axi_status_sync;
@@ -872,6 +915,9 @@ begin
         s_run_timeout_cause_packed(3*i + 2 downto 3*i) <= s_run_timeout_cause_per_chip_r(i);
     end generate;
     o_run_timeout_cause_per_chip <= s_run_timeout_cause_arr_axi_r;
+    -- Round 13 axis 2: bus fatal mask.
+    o_err_bus_fatal_mask     <= s_err_bus_fatal_axi_r;
+    o_drain_faulted_mask     <= s_drain_faulted_mask_axi_r;
 
     -- =========================================================================
     -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
@@ -1749,7 +1795,9 @@ begin
                 o_err_drain_mismatch => s_err_drain_mismatch(i),
                 o_err_reg_rw_ambiguous => s_err_rw_ambiguous_reg(i),
                 o_err_stopdis_mid_shot => s_err_stopdis_mid_shot(i),
-                o_err_cmd_collision_vec => s_cmd_collision_vec_per(i)
+                o_err_cmd_collision_vec => s_cmd_collision_vec_per(i),
+                o_err_bus_fatal        => s_err_bus_fatal(i),
+                o_drain_done_faulted   => s_drain_done_faulted(i)
             );
 
         -- ----- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk) -----

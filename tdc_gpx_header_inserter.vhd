@@ -145,7 +145,10 @@ entity tdc_gpx_header_inserter is
         -- frame as truncated and clear by asserting cmd_soft_reset.
         o_drain_timeout_sticky       : out std_logic;
         -- Round 12 #19: abort truncation sticky (frame ended with no EOL).
-        o_abort_truncated_sticky     : out std_logic
+        o_abort_truncated_sticky     : out std_logic;
+        -- Round 13 axis 1b: 1-clk pulse co-asserting with o_frame_done
+        -- when the frame closed via drain-watchdog escape (synthetic).
+        o_frame_done_faulted         : out std_logic
     );
 end entity tdc_gpx_header_inserter;
 
@@ -195,6 +198,13 @@ architecture rtl of tdc_gpx_header_inserter is
     -- incomplete frame. This sticky lets SW correlate "discarded frame"
     -- with an actual hdr-side abort instead of inferring from drain state.
     signal s_abort_truncated_sticky_r : std_logic := '0';
+
+    -- Round 13 axis 1b: per-frame "faulted" pulse, co-asserts with
+    -- o_frame_done when the frame was closed via drain-watchdog escape
+    -- (beat dropped). SW that consumes frame_done can tell a clean
+    -- close from a synthetic one WITHOUT needing to cross-reference
+    -- the persistent drain_timeout_sticky. 1-clk pulse semantics.
+    signal s_frame_done_faulted_r : std_logic := '0';
 
     -- =========================================================================
     -- Latched header fields (captured at face_start)
@@ -285,6 +295,7 @@ begin
     o_face_start_collapsed_count <= s_face_start_collapsed_cnt_r;
     o_drain_timeout_sticky       <= s_drain_timeout_sticky_r;
     o_abort_truncated_sticky     <= s_abort_truncated_sticky_r;
+    o_frame_done_faulted         <= s_frame_done_faulted_r;
     -- '1' during the entire last line: from ST_PREFIX/ST_DATA on the last col
     -- through ST_DRAIN_LAST.  Closes the window where assembler output skid
     -- holds the final beat but header hasn't consumed it yet.
@@ -407,6 +418,7 @@ begin
             else
                 -- Default: clear single-cycle pulses
                 s_frame_done_r <= '0';
+                s_frame_done_faulted_r <= '0';  -- Round 13 axis 1b
 
                 -- Default: clear output register on handshake
                 if s_out_tvalid_r = '1' and i_m_axis_tready = '1' then
@@ -525,6 +537,7 @@ begin
                         s_state_r      <= ST_IDLE;
                     elsif s_drain_wdt_r = c_DRAIN_WDT_CAP then
                         s_frame_done_r           <= '1';
+                        s_frame_done_faulted_r   <= '1';  -- Round 13 axis 1b
                         s_out_tvalid_r           <= '0';
                         s_state_r                <= ST_IDLE;
                         s_drain_timeout_sticky_r <= '1';

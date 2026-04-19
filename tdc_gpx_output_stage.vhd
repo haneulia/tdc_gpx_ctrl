@@ -144,7 +144,13 @@ entity tdc_gpx_output_stage is
         o_hdr_drain_timeout_fall        : out std_logic;
         -- Round 12 #19: per-slope abort-truncation sticky.
         o_hdr_abort_truncated_rise      : out std_logic;
-        o_hdr_abort_truncated_fall      : out std_logic
+        o_hdr_abort_truncated_fall      : out std_logic;
+        -- Round 13 axis 1b: per-slope frame_done_faulted pulse.
+        o_frame_done_faulted_rise       : out std_logic;
+        o_frame_done_faulted_fall       : out std_logic;
+        -- Round 13 axis 1c: per-slope row_done_faulted pulse.
+        o_row_done_faulted_rise         : out std_logic;
+        o_row_done_faulted_fall         : out std_logic
     );
 end entity tdc_gpx_output_stage;
 
@@ -233,6 +239,7 @@ begin
             o_m_axis_tlast     => s_face_tlast,
             i_m_axis_tready    => s_face_tready,
             o_row_done         => o_row_done,
+            o_row_done_faulted => o_row_done_faulted_rise,
             o_chip_error_flags => o_chip_error_flags,
             o_chip_error_partial => o_chip_error_partial_rise,
             o_chip_error_blank   => o_chip_error_blank_rise,
@@ -273,6 +280,7 @@ begin
             o_m_axis_tlast     => s_face_fall_tlast,
             i_m_axis_tready    => s_face_fall_tready,
             o_row_done         => o_row_fall_done,
+            o_row_done_faulted => o_row_done_faulted_fall,
             o_chip_error_flags => o_chip_fall_error,
             o_chip_error_partial => o_chip_error_partial_fall,
             o_chip_error_blank   => o_chip_error_blank_fall,
@@ -409,7 +417,8 @@ begin
             o_idle              => o_hdr_idle,
             o_face_start_collapsed_count => o_hdr_face_start_collapsed_rise,
             o_drain_timeout_sticky       => o_hdr_drain_timeout_rise,
-            o_abort_truncated_sticky     => o_hdr_abort_truncated_rise
+            o_abort_truncated_sticky     => o_hdr_abort_truncated_rise,
+            o_frame_done_faulted         => o_frame_done_faulted_rise
         );
 
     -- =========================================================================
@@ -449,7 +458,8 @@ begin
             o_idle              => o_hdr_fall_idle,
             o_face_start_collapsed_count => o_hdr_face_start_collapsed_fall,
             o_drain_timeout_sticky       => o_hdr_drain_timeout_fall,
-            o_abort_truncated_sticky     => o_hdr_abort_truncated_fall
+            o_abort_truncated_sticky     => o_hdr_abort_truncated_fall,
+            o_frame_done_faulted         => o_frame_done_faulted_fall
         );
 
     -- =========================================================================

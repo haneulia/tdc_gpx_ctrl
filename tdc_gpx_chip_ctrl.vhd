@@ -212,7 +212,12 @@ entity tdc_gpx_chip_ctrl is
         o_err_stopdis_mid_shot : out std_logic;
         -- Round 12 #20: PH_IDLE collision vector (OR-accumulated).
         --   [0] start, [1] cfg_write, [2] reg_read, [3] reg_write
-        o_err_cmd_collision_vec : out std_logic_vector(3 downto 0)
+        o_err_cmd_collision_vec : out std_logic_vector(3 downto 0);
+        -- Round 13 axis 2: bus fatal sticky (PH_RESP_DRAIN quarantine cap
+        -- reached AND bus still stuck). In-band recovery impossible.
+        o_err_bus_fatal        : out std_logic;
+        -- Round 13 axis 1a: drain completion faulted pulse (chip_run passthrough).
+        o_drain_done_faulted   : out std_logic
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -380,6 +385,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_raw_ctrl_drop_r  : std_logic := '0';
     signal s_err_drain_mismatch   : std_logic;  -- Round 12 A4: from chip_run
     signal s_err_reg_rw_ambiguous : std_logic;  -- Round 12 A5: from chip_reg
+    signal s_drain_done_faulted   : std_logic;  -- Round 13 axis 1a: from chip_run
     -- Round 12 B8: sticky for "stopdis_override asserted mid-shot".
     -- The override is intentionally live (debug escape hatch), but using
     -- it during PH_RUN almost certainly corrupts the in-flight shot.
@@ -387,6 +393,13 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- with override pulses. Intended use: leave override inactive in
     -- production; any set bit here implies debug intervention or bug.
     signal s_err_stopdis_mid_shot_r : std_logic := '0';
+    -- Round 13 axis 2: bus fatal sticky.
+    -- Set when PH_RESP_DRAIN quarantine reaches saturation (~65K cycles
+    -- @200MHz = ~327us) with bus still busy/rsp_pending. Means in-band
+    -- recovery is impossible; SW must hard-reset or power-cycle.
+    -- OR-folded into top-level status.err_fatal so it joins the
+    -- err_handler fatal path that SW already watches.
+    signal s_err_bus_fatal_r        : std_logic := '0';
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
     signal s_err_cmd_collision_r  : std_logic := '0';  -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision sticky (cmd_arb contract violation)
     -- Round 12 #20: collision vector — records WHICH commands collided.
@@ -454,6 +467,7 @@ begin
             o_timeout           => s_run_timeout,
             o_timeout_cause     => o_run_timeout_cause,  -- Round 11 C: surface to SW
             o_err_drain_mismatch => s_err_drain_mismatch,  -- Round 12 A4
+            o_drain_done_faulted => s_drain_done_faulted,  -- Round 13 axis 1a
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
             i_n_drain_cap       => s_n_drain_cap_snap_r,
@@ -603,6 +617,7 @@ begin
                 s_err_cmd_collision_vec_r <= (others => '0');
                 s_err_force_reinit_r  <= '0';
                 s_err_stopdis_mid_shot_r <= '0';
+                s_err_bus_fatal_r        <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
@@ -765,8 +780,20 @@ begin
                                 if s_drain_quarantine_cnt_r /= x"FFFF" then
                                     s_drain_quarantine_cnt_r <=
                                         s_drain_quarantine_cnt_r + 1;
+                                elsif s_err_bus_fatal_r = '0' then
+                                    -- Round 13 axis 2: at quarantine cap AND
+                                    -- bus still stuck → escalate to fatal.
+                                    -- This is the "dead-end" signal for SW:
+                                    -- in-band recovery (soft_reset, force_
+                                    -- reinit) cannot fix a bus that has been
+                                    -- unresponsive for 65K consecutive cycles.
+                                    -- OR-folded into status.err_fatal at top
+                                    -- so it joins err_handler's fatal path.
+                                    s_err_bus_fatal_r <= '1';
                                 end if;
-                                -- At x"FFFF": saturate in place. No escalation.
+                                -- At x"FFFF": saturate in place. No in-band
+                                -- escalation — but fatal sticky above is now
+                                -- set the first time we reach saturation.
                             else
                                 if s_drain_to_init_r = '1' then
                                     s_phase_r    <= PH_INIT;
@@ -963,16 +990,18 @@ begin
                         end if;
                     end loop;
 
-                    -- Round 12 A2: reserve policy strengthened to 2 slots.
-                    -- Was Round 11 item 6 (reserve=1). Data beats now require
-                    -- 3+ free slots (data capacity 6−2 = 4), so at any time
-                    -- at least 2 slots are guaranteed available for control.
-                    -- This keeps control-beat drops structurally impossible
-                    -- for the normal workload (chip_run emits at most 2
-                    -- consecutive control beats per phase). Control only
-                    -- drops when 5+ back-to-back control beats collide with
-                    -- stuck downstream — a chip_run misbehavior, flagged by
-                    -- the separate s_err_raw_ctrl_drop_r sticky.
+                    -- Round 13 axis 4: reserve strengthened further.
+                    -- History: Round 11 item 6 reserve=1; Round 12 A2 reserve=2;
+                    -- Round 13 reserve=3 (data capacity 6−3 = 3).
+                    -- Control beats now need 4+ consecutive pulses to fill
+                    -- their reserve, which does not occur in the chip_run
+                    -- workload (drain_done + ififo1_done = 2 per phase max).
+                    -- A TRUE separate control FIFO with order-preservation
+                    -- (submission-timestamp tagging) was considered but
+                    -- deferred: the LUT cost + re-ordering logic outweighs
+                    -- the marginal benefit given the reserve=3 margin.
+                    -- The s_err_raw_ctrl_drop_r sticky still surfaces any
+                    -- control-beat drop that somehow gets through.
                     if v_new.tuser(7) = '1' then
                         -- Control beat: enqueue if any slot is free.
                         if v_free >= 1 then
@@ -984,9 +1013,9 @@ begin
                             end loop;
                         end if;
                     else
-                        -- Data beat: enqueue only if 3+ slots are free, so
-                        -- two remain reserved for future control beats.
-                        if v_free >= 3 then
+                        -- Data beat: enqueue only if 4+ slots are free, so
+                        -- three remain reserved for future control beats.
+                        if v_free >= 4 then
                             for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
                                 if not v_placed and v_fifo(i).valid = '0' then
                                     v_fifo(i) := v_new;
@@ -1092,6 +1121,8 @@ begin
     o_err_reg_rw_ambiguous <= s_err_reg_rw_ambiguous;
     o_err_stopdis_mid_shot <= s_err_stopdis_mid_shot_r;
     o_err_cmd_collision_vec <= s_err_cmd_collision_vec_r;
+    o_err_bus_fatal        <= s_err_bus_fatal_r;
+    o_drain_done_faulted   <= s_drain_done_faulted;
     -- raw_overflow aggregates multiple "integrity compromised" events so SW
     -- only needs to observe one flag per chip. Individual cause codes can be
     -- split into dedicated ports later if needed:

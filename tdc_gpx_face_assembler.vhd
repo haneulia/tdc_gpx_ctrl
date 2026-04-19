@@ -114,6 +114,11 @@ entity tdc_gpx_face_assembler is
 
         -- Status
         o_row_done           : out std_logic;    -- 1-clk pulse: packed row complete
+        -- Round 13 axis 1c: 1-clk pulse co-asserts with o_row_done when
+        -- the row contains synthetic/blank-fill data (i.e. some chip's
+        -- data was truncated or never arrived). SW distinguishes clean
+        -- rows from faulted rows per event without needing the sticky.
+        o_row_done_faulted   : out std_logic;
         o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         -- Round 12 #18: split chip error into partial/blank causes.
         o_chip_error_partial : out std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -260,6 +265,12 @@ architecture rtl of tdc_gpx_face_assembler is
     -- overrun boundary. Previously both folded into s_chip_error_r.
     signal s_chip_error_partial_r : std_logic_vector(3 downto 0) := (others => '0');
     signal s_chip_error_blank_r   : std_logic_vector(3 downto 0) := (others => '0');
+    -- Round 13 axis 1c: per-row "faulted" pulse, co-asserts with o_row_done
+    -- when ANY chip in the row had partial/blank error (i.e. the row
+    -- contains synthetic fill). Gives SW a 1-clk event distinct from the
+    -- persistent chip_error masks so "this frame's rows were faulted"
+    -- can be tracked without polling.
+    signal s_row_done_faulted_r   : std_logic := '0';
     signal s_shot_overrun_r  : std_logic := '0';
     signal s_face_abort_r    : std_logic := '0';
     signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
@@ -478,6 +489,7 @@ begin
                 s_pipe_tvalid_r   <= '0';
                 s_pipe_tlast_r    <= '0';
                 s_row_done_r      <= '0';
+                s_row_done_faulted_r <= '0';
                 s_chip_error_r    <= (others => '0');
                 s_chip_error_partial_r <= (others => '0');
                 s_chip_error_blank_r   <= (others => '0');
@@ -578,6 +590,9 @@ begin
                             -- becomes self-consistent without relying on
                             -- face_seq to pre-gate zero-mask shots.
                             s_row_done_r <= '1';
+                            -- Round 13 axis 1c: zero-mask is a config error
+                            -- situation — mark the row as faulted.
+                            s_row_done_faulted_r <= '1';
                             s_state_r    <= ST_IDLE;
                         else
                             s_state_r     <= ST_SCAN;
@@ -689,6 +704,10 @@ begin
                                 s_chip_done_r(to_integer(s_cur_chip_r)) <= '1';
                                 if s_is_last_chip_r = '1' then
                                     s_row_done_r     <= '1';
+                                    -- Round 13 axis 1c: this branch is the
+                                    -- blank-fill completion path, so the row
+                                    -- contains synthetic data → faulted.
+                                    s_row_done_faulted_r <= '1';
                                     v_row_completing := true;
                                     if i_shot_start = '1' then
                                         s_shot_pending_r <= '1';
@@ -732,6 +751,13 @@ begin
                                     s_chip_done_r(v_chip_idx) <= '1';
                                     if s_is_last_chip_r = '1' then
                                         s_row_done_r     <= '1';
+                                        -- Round 13 axis 1c: if any chip had
+                                        -- partial/blank error this shot, the
+                                        -- row we're completing is faulted.
+                                        if s_chip_error_partial_r /= "0000"
+                                           or s_chip_error_blank_r /= "0000" then
+                                            s_row_done_faulted_r <= '1';
+                                        end if;
                                         v_row_completing := true;
                                         if i_shot_start = '1' then
                                             s_shot_pending_r <= '1';
@@ -877,6 +903,7 @@ begin
     -- Status output assignments (registered)
     -- =========================================================================
     o_row_done         <= s_row_done_r;
+    o_row_done_faulted <= s_row_done_faulted_r;
     o_chip_error_flags <= s_chip_error_r;
     o_chip_error_partial <= s_chip_error_partial_r;
     o_chip_error_blank   <= s_chip_error_blank_r;

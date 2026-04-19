@@ -141,6 +141,11 @@ entity tdc_gpx_chip_run is
         -- finalizes with drain_cnt != expected_ififo. Distinguishes clean
         -- drain completion from premature/drifted termination.
         o_err_drain_mismatch : out std_logic;
+        -- Round 13 axis 1a: 1-clk pulse, co-asserts with o_drain_done when
+        -- the completion was a mismatch fallback. Lets supervisor SW treat
+        -- the frame as suspect without losing the downstream drain_done
+        -- signal that cell_builder / face_assembler depend on.
+        o_drain_done_faulted : out std_logic;
         -- Cause codes: "001"=raw_busy, "010"=ef1_rsp, "011"=ef2_rsp,
         --              "100"=burst_rsp, "101"=flush_rsp, "110"=overrun_flush,
         --              "111"=capture_stop_fallback (irflag missing after cmd_stop)
@@ -210,6 +215,10 @@ architecture rtl of tdc_gpx_chip_run is
     -- completion. Distinguishes "clean completion" from "forced exit
     -- with wrong count" — the latter previously passed silently.
     signal s_err_drain_mismatch_r : std_logic := '0';
+    -- Round 13 axis 1a: 1-clk pulse co-asserted with drain_done when
+    -- completion is "faulted" (mismatch seen at fallback). Distinct from
+    -- s_err_drain_mismatch_r (historical sticky) — this pulses per event.
+    signal s_drain_done_faulted_r : std_logic := '0';
 
     -- Round 9 #1: Secondary watchdog for "pending stuck" deadlock.
     -- Round 5 #1 made EF1/EF2/BURST freeze s_wait_cnt_r while i_bus_rsp_pending
@@ -295,9 +304,11 @@ begin
                 s_timeout_cause_r    <= (others => '0');
                 s_pending_stuck_cnt_r <= (others => '0');
                 s_err_drain_mismatch_r <= '0';
+                s_drain_done_faulted_r <= '0';
             else
                 s_raw_valid_r        <= '0';
                 s_drain_done_r       <= '0';
+                s_drain_done_faulted_r <= '0';  -- Round 13 axis 1a: 1-clk pulse
                 s_timeout_r          <= '0';
                 s_ififo1_done_beat_r <= '0';
                 s_done_r             <= '0';
@@ -533,6 +544,15 @@ begin
                                and (s_drain_cnt_ififo1_r /= s_expected_ififo1_r
                                     or s_drain_cnt_ififo2_r /= s_expected_ififo2_r) then
                                 s_err_drain_mismatch_r <= '1';
+                                -- Round 13 axis 1a: co-assert "faulted"
+                                -- pulse so SW can distinguish a clean
+                                -- drain_done from one that actually
+                                -- reached this fallback with mismatched
+                                -- counts. The downstream cell_builder /
+                                -- face_assembler see drain_done as
+                                -- normal but supervisor-level SW can
+                                -- flag the frame as suspect.
+                                s_drain_done_faulted_r <= '1';
                             end if;
                             -- Always emit final drain_done (normal + purge)
                             s_drain_done_r <= '1';
@@ -899,6 +919,7 @@ begin
     o_timeout           <= s_timeout_r;
     o_timeout_cause     <= s_timeout_cause_r;
     o_err_drain_mismatch <= s_err_drain_mismatch_r;
+    o_drain_done_faulted <= s_drain_done_faulted_r;
     o_armed             <= '1' when s_state_r = ST_ARMED else '0';
 
 end architecture rtl;
