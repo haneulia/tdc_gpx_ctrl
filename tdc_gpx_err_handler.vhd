@@ -151,6 +151,21 @@ architecture rtl of tdc_gpx_err_handler is
     -- =========================================================================
     constant C_WAIT_READ_TIMEOUT : natural := 16#FFFF#;
     signal s_wait_read_cnt_r  : unsigned(15 downto 0) := (others => '0');
+    -- Round 10 #4: ST_READ_REG12 entrance watchdog. The state spins waiting
+    -- for i_reg_outstanding='0'; if an in-flight reg transaction never
+    -- releases the bus, recovery FSM hangs here (the existing Round 2 #2
+    -- ST_WAIT_READ watchdog only protects POST-issuance, not PRE-issuance).
+    -- Independent 16-bit counter; on overflow we force-issue the read
+    -- anyway (i_reg_outstanding likely stuck due to reg-path bug, not a
+    -- genuine conflict), letting the ST_WAIT_READ watchdog cover the rest.
+    signal s_read_issue_cnt_r : unsigned(15 downto 0) := (others => '0');
+    -- Round 10 #5: ST_WAIT_FRAME_DONE watchdog. Recovery has finished but
+    -- the FSM sits here waiting for frame_done + next shot_start. If the
+    -- measurement loop is quiescent for a long time (SW paused, no new
+    -- shots), the FSM is effectively sealed — can't even re-observe ErrFlag
+    -- because it's not in ST_IDLE. 17-bit counter (~1.3M cycles @ 200MHz
+    -- = 6.5ms) gives long grace before a soft-escape back to IDLE.
+    signal s_frame_wait_cnt_r : unsigned(16 downto 0) := (others => '0');
     signal s_err_read_timeout_r : std_logic := '0';  -- sticky: reg read timed out
 
     -- =========================================================================
@@ -192,6 +207,8 @@ begin
                 s_frame_done_seen_r  <= '0';
                 s_wait_read_cnt_r    <= (others => '0');
                 s_err_read_timeout_r <= '0';
+                s_read_issue_cnt_r   <= (others => '0');
+                s_frame_wait_cnt_r   <= (others => '0');
             else
                 -- Default: clear command pulses every clock
                 s_cmd_soft_reset_r   <= (others => '0');
@@ -239,13 +256,29 @@ begin
                         -- Wait for any prior reg access to complete before issuing
                         -- our read. This prevents consuming a stale done_pulse from
                         -- a different reg transaction.
-                        if i_reg_outstanding = '0' then
+                        -- Round 10 #4: watchdog for the entrance wait itself.
+                        -- If i_reg_outstanding stays '1' forever (reg path stuck)
+                        -- the existing ST_WAIT_READ watchdog couldn't help since
+                        -- we never left this state. After 65K cycles, force the
+                        -- read anyway and let ST_WAIT_READ's watchdog handle the
+                        -- completion case.
+                        if i_reg_outstanding = '0'
+                           or s_read_issue_cnt_r = x"FFFF" then
                             s_err_cause_r         <= (others => '0');
                             s_cmd_reg_read_r      <= '1';
                             s_cmd_reg_addr_r      <= c_TDC_REG12;
                             s_cmd_reg_chip_addr_r <= s_err_chip_mask_r;
                             s_wait_read_cnt_r     <= (others => '0');
+                            s_read_issue_cnt_r    <= (others => '0');
+                            if s_read_issue_cnt_r = x"FFFF" then
+                                -- Forced-issue path: flag via the same sticky
+                                -- as the post-issue timeout (symptoms overlap
+                                -- and SW treats them as "reg path broken").
+                                s_err_read_timeout_r <= '1';
+                            end if;
                             s_state_r             <= ST_WAIT_READ;
+                        else
+                            s_read_issue_cnt_r <= s_read_issue_cnt_r + 1;
                         end if;
 
                     -- ---------------------------------------------------------
@@ -353,7 +386,26 @@ begin
                             s_debounce_cnt_r    <= (others => (others => '0'));
                             s_retry_cnt_r       <= (others => '0');
                             s_frame_done_seen_r <= '0';
+                            s_frame_wait_cnt_r  <= (others => '0');
                             s_state_r           <= ST_IDLE;
+                        elsif s_frame_wait_cnt_r = (s_frame_wait_cnt_r'range => '1') then
+                            -- Round 10 #5: long-wait escape. Measurement loop
+                            -- has been quiescent too long — release the FSM
+                            -- back to IDLE so it can observe future ErrFlag
+                            -- events. Clears the same state as the normal
+                            -- shot_start-gated exit would; the err_read_
+                            -- timeout sticky is a reasonable proxy flag.
+                            s_err_fill_r        <= (others => '0');
+                            s_err_chip_mask_r   <= (others => '0');
+                            s_err_cause_r       <= (others => '0');
+                            s_debounce_cnt_r    <= (others => (others => '0'));
+                            s_retry_cnt_r       <= (others => '0');
+                            s_frame_done_seen_r <= '0';
+                            s_frame_wait_cnt_r  <= (others => '0');
+                            s_err_read_timeout_r <= '1';  -- reuse sticky to flag the escape
+                            s_state_r           <= ST_IDLE;
+                        else
+                            s_frame_wait_cnt_r <= s_frame_wait_cnt_r + 1;
                         end if;
 
                 end case;

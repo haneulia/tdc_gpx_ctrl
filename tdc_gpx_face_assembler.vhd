@@ -748,8 +748,15 @@ begin
                     -- Round 5 #16 trace: wrap-counter for blank-fill invocations
                     s_shot_overrun_cnt_r <= s_shot_overrun_cnt_r + 1;
 
-                    -- Mark all chips not yet finished as error_fill carriers
-                    s_chip_error_r <= s_chip_error_r or (not s_chip_done_r);
+                    -- Round 10 #6: mark only ACTIVE chips that haven't finished.
+                    -- The previous OR with plain (not s_chip_done_r) flagged
+                    -- inactive chips (which never had data) as error too —
+                    -- making o_chip_error_flags inconsistent with the active
+                    -- mask. Masking by s_active_mask_r keeps the error bits
+                    -- aligned with the chips that were actually expected to
+                    -- produce data this shot.
+                    s_chip_error_r <= s_chip_error_r or
+                                      (s_active_mask_r and (not s_chip_done_r));
 
                     -- Force upcoming chips (after current) into blank mode via
                     -- ST_SCAN's hard safety cap.
