@@ -297,6 +297,12 @@ package tdc_gpx_pkg is
         fall_shot_flush_drop : std_logic;  -- fall face_assembler dropped non-empty FIFO on shot_start (sticky)
         rise_shot_overrun_count : unsigned(7 downto 0);  -- rise face_assembler blank-fill invocation count (wrap)
         fall_shot_overrun_count : unsigned(7 downto 0);  -- fall face_assembler blank-fill invocation count (wrap)
+        -- Round 11 C: observability surface for CSR (STAT7).
+        reg_timeout_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
+        stop_id_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip cell_builder stop_id out-of-range sticky
+        run_timeout_cause_last : std_logic_vector(2 downto 0);  -- chip_run last timeout cause (any chip, most recent)
+        rise_face_start_collapsed_count : unsigned(7 downto 0);
+        fall_face_start_collapsed_count : unsigned(7 downto 0);
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -331,7 +337,12 @@ package tdc_gpx_pkg is
         rise_shot_flush_drop => '0',
         fall_shot_flush_drop => '0',
         rise_shot_overrun_count => (others => '0'),
-        fall_shot_overrun_count => (others => '0')
+        fall_shot_overrun_count => (others => '0'),
+        reg_timeout_mask        => (others => '0'),
+        stop_id_error_mask      => (others => '0'),
+        run_timeout_cause_last  => (others => '0'),
+        rise_face_start_collapsed_count => (others => '0'),
+        fall_face_start_collapsed_count => (others => '0')
     );
 
     -- =========================================================================

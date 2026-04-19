@@ -90,21 +90,20 @@ asymmetric-looking; the gating in each direction is deliberate.
 
 ---
 
-## Category C — Observability gaps (deferred until CSR layout finalizes)
+## Category C — Observability gaps (Round 11: RESOLVED)
 
-Multiple internal stickies / counters exist in RTL but are wired `open`
-at the `config_ctrl` / top level until the final CSR STAT register
-layout is decided. These are visible at entity level and can be
-surfaced with a simple re-wiring when needed:
+Previously deferred pending CSR layout. Round 11 finalized STAT7 at
+0x5C and wired all four signals end-to-end:
 
-| Source | Signal | Purpose | Review ref |
-|---|---|---|---|
-| `cmd_arb` | `o_reg_timeout_mask` | per-chip reg timeout mask | Round 10 #18 |
-| `chip_run` | `o_timeout_cause` | detailed drain-timeout cause | Round 10 #17 |
-| `header_inserter` | `s_face_start_collapsed_cnt_r` | non-IDLE face_start collapse count | Round 10 #20 |
-| `cell_builder` | `o_hit_dropped` | currently merged cause (overflow + stop_id + cfg) | Round 10 #16 |
+| Source | Signal | Resolution |
+|---|---|---|
+| `cmd_arb.o_reg_timeout_mask` | → `s_status.reg_timeout_mask` → STAT7[3:0] |
+| `chip_run.o_timeout_cause` | → latched `run_timeout_cause_last` → STAT7[10:8] |
+| `header_inserter.s_face_start_collapsed_cnt_r` | → new `o_face_start_collapsed_count` port → STAT7[23:16] rise + [31:24] fall |
+| `cell_builder.s_stop_id_error_r` | → new `o_stop_id_error` port → sticky mask → STAT7[7:4] |
 
-No behavioral defect — just pending SW-visibility plumbing.
+See `register_map.md` for the full STAT7 bit layout. Category C is
+closed as of Round 11 follow-up.
 
 ---
 

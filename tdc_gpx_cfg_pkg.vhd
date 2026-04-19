@@ -241,6 +241,28 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT6_RUN_DRAIN_COMP_LO : natural := 28;
 
     -- =========================================================================
+    -- STAT7 (Round 11 follow-up — "known_issues Category C" surface)
+    -- csr_pipeline register at 0x5C. Extends STAT6 with:
+    --   [3:0]   reg_timeout_mask          (cmd_arb per-chip)
+    --   [7:4]   stop_id_error_mask        (cell_builder per-chip sticky)
+    --   [10:8]  run_timeout_cause_last    (3-bit code, most-recent)
+    --   [15:11] reserved
+    --   [23:16] rise_face_start_collapsed (8-bit wrap)
+    --   [31:24] fall_face_start_collapsed (8-bit wrap)
+    -- =========================================================================
+    constant c_ADDR_STATUS_EXT2        : natural := 16#5C#;  -- STAT7
+    constant c_STAT7_REG_TO_HI         : natural := 3;
+    constant c_STAT7_REG_TO_LO         : natural := 0;
+    constant c_STAT7_STOP_ID_ERR_HI    : natural := 7;
+    constant c_STAT7_STOP_ID_ERR_LO    : natural := 4;
+    constant c_STAT7_RUN_CAUSE_HI      : natural := 10;
+    constant c_STAT7_RUN_CAUSE_LO      : natural := 8;
+    constant c_STAT7_FS_COLL_RISE_HI   : natural := 23;
+    constant c_STAT7_FS_COLL_RISE_LO   : natural := 16;
+    constant c_STAT7_FS_COLL_FALL_HI   : natural := 31;
+    constant c_STAT7_FS_COLL_FALL_LO   : natural := 24;
+
+    -- =========================================================================
     -- Bus timing constraints (TDC-GPX datasheet @ 200 MHz, T_clk = 5 ns)
     --
     -- Datasheet parameters:

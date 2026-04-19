@@ -322,6 +322,15 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_flush_drop_fall    : std_logic;
     signal s_shot_overrun_count_rise : unsigned(7 downto 0);
     signal s_shot_overrun_count_fall : unsigned(7 downto 0);
+    -- Round 11 C: Category C observability surface
+    signal s_reg_timeout_mask        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_run_timeout_cause_last  : std_logic_vector(2 downto 0);
+    signal s_hdr_face_start_collapsed_rise : unsigned(7 downto 0);
+    signal s_hdr_face_start_collapsed_fall : unsigned(7 downto 0);
+    -- cell_pipe stop_id_error per-chip (rise and fall); sticky aggregation below
+    signal s_stop_id_error_rise   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_stop_id_error_fall   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_stop_id_error_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- Error handler status (from config_ctrl)
@@ -500,6 +509,9 @@ begin
             -- Round 6 B1: per-chip observability (CDC'd inside config_ctrl)
             o_err_reg_overflow   => s_err_reg_overflow,
             o_run_drain_complete => s_run_drain_complete,
+            -- Round 11 C: Category C observability surface
+            o_reg_timeout_mask   => s_reg_timeout_mask,
+            o_run_timeout_cause  => s_run_timeout_cause_last,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -575,7 +587,10 @@ begin
             o_shot_dropped          => s_shot_dropped,
             o_shot_fall_dropped     => s_shot_fall_dropped,
             o_slice_timeout         => s_slice_timeout,
-            o_slice_fall_timeout    => s_slice_fall_timeout
+            o_slice_fall_timeout    => s_slice_fall_timeout,
+            -- Round 11 C: distinct stop_id_error per-chip (separate from hit overflow)
+            o_stop_id_error         => s_stop_id_error_rise,
+            o_stop_id_fall_error    => s_stop_id_error_fall
         );
 
     -- =========================================================================
@@ -671,7 +686,10 @@ begin
             o_shot_flush_drop_rise    => s_shot_flush_drop_rise,
             o_shot_flush_drop_fall    => s_shot_flush_drop_fall,
             o_shot_overrun_count_rise => s_shot_overrun_count_rise,
-            o_shot_overrun_count_fall => s_shot_overrun_count_fall
+            o_shot_overrun_count_fall => s_shot_overrun_count_fall,
+            -- Round 11 C: per-slope header_inserter face_start collapse count
+            o_hdr_face_start_collapsed_rise => s_hdr_face_start_collapsed_rise,
+            o_hdr_face_start_collapsed_fall => s_hdr_face_start_collapsed_fall
         );
 
     -- =========================================================================
@@ -809,6 +827,27 @@ begin
     s_status.fall_shot_flush_drop    <= s_shot_flush_drop_fall;
     s_status.rise_shot_overrun_count <= s_shot_overrun_count_rise;
     s_status.fall_shot_overrun_count <= s_shot_overrun_count_fall;
+
+    -- Round 11 C: Category C observability → STAT7
+    s_status.reg_timeout_mask        <= s_reg_timeout_mask;
+    s_status.run_timeout_cause_last  <= s_run_timeout_cause_last;
+    s_status.rise_face_start_collapsed_count <= s_hdr_face_start_collapsed_rise;
+    s_status.fall_face_start_collapsed_count <= s_hdr_face_start_collapsed_fall;
+
+    -- stop_id_error_mask: per-chip sticky aggregating rise + fall pulses.
+    p_stop_id_error_sticky : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' or s_err_soft_clear = '1' then
+                s_stop_id_error_mask_r <= (others => '0');
+            else
+                s_stop_id_error_mask_r <= s_stop_id_error_mask_r
+                                          or s_stop_id_error_rise
+                                          or s_stop_id_error_fall;
+            end if;
+        end if;
+    end process p_stop_id_error_sticky;
+    s_status.stop_id_error_mask <= s_stop_id_error_mask_r;
     s_status.shot_drop_any       <= '1' when (s_shot_dropped or s_shot_fall_dropped)
                                               /= (s_shot_dropped'range => '0') else '0';
     s_status.slice_timeout_any   <= '1' when (s_slice_timeout or s_slice_fall_timeout)

@@ -165,7 +165,8 @@ begin
             o_slice_done      => cb_slice_done,
             o_hit_dropped_any => cb_hit_dropped,
             o_shot_dropped    => cb_shot_dropped,
-            o_slice_timeout   => cb_slice_timeout
+            o_slice_timeout   => cb_slice_timeout,
+            o_stop_id_error   => open
         );
 
     -- =========================================================================

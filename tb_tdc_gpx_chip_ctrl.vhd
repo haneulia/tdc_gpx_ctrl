@@ -277,6 +277,7 @@ begin
             o_err_raw_overflow  => open,
             o_err_reg_overflow  => open,
             o_run_timeout       => open,
+            o_run_timeout_cause => open,
             o_run_drain_complete => open
         );
 

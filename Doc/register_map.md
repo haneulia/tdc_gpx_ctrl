@@ -35,7 +35,7 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
 | 0x50   | MAX_HSIZE    | `MAX_ROWS × beats_per_cell × (TDATA/8) + hdr prefix`  |
 | 0x54   | **STATUS**   | See STATUS (STAT5) layout below                       |
 | 0x58   | **STATUS_EXT** | See STATUS_EXT (STAT6) layout below — Round 5/6/7   |
-| 0x5C   | reserved     | —                                                     |
+| 0x5C   | **STATUS_EXT2** | See STATUS_EXT2 (STAT7) layout below — Round 11 Cat C |
 
 ### STATUS (STAT5 @ 0x54) bit layout
 
@@ -79,6 +79,23 @@ Clear semantic notes:
 - `run_drain_complete_mask[i]`: set when chip[i]'s drain completes;
   cleared on the next `shot_start` for that chip. Read as "this shot's
   drain finished" per chip.
+
+### STATUS_EXT2 (STAT7 @ 0x5C) bit layout — Round 11 Category C
+
+| Bit(s)   | Field                           | Type   | Source |
+|:--------:|---------------------------------|--------|--------|
+| `[3:0]`  | `reg_timeout_mask`              | sticky | cmd_arb per-chip reg transaction timeout |
+| `[7:4]`  | `stop_id_error_mask`            | sticky | cell_builder per-chip stop_id out-of-range (rise OR fall) |
+| `[10:8]` | `run_timeout_cause_last`        | latched | chip_run last 3-bit cause: 001=raw_busy, 010=ef1_rsp, 011=ef2_rsp, 100=burst_rsp, 101=flush_rsp, 110=overrun_flush, 111=capture_stop_fallback |
+| `[15:11]`| reserved                        | —      | — |
+| `[23:16]`| `rise_face_start_collapsed`     | wrap   | header_inserter rise non-IDLE face_start coalesce count |
+| `[31:24]`| `fall_face_start_collapsed`     | wrap   | header_inserter fall non-IDLE face_start coalesce count |
+
+Clear semantics:
+- `reg_timeout_mask`: cleared on normal transaction completion OR on i_err_soft_clear (via cmd_arb's own reset path).
+- `stop_id_error_mask`: cleared on i_rst_n or i_err_soft_clear (top-level sticky aggregate).
+- `run_timeout_cause_last`: latches the most-recent cause on any chip's run_timeout pulse; never auto-cleared.
+- Face_start collapsed counters: wrap 8-bit; not an exact event tally.
 
 ### STATUS_EXT counter semantics (read/observe caveats)
 

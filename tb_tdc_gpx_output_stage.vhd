@@ -232,7 +232,9 @@ begin
             o_shot_flush_drop_rise    => open,
             o_shot_flush_drop_fall    => open,
             o_shot_overrun_count_rise => open,
-            o_shot_overrun_count_fall => open
+            o_shot_overrun_count_fall => open,
+            o_hdr_face_start_collapsed_rise => open,
+            o_hdr_face_start_collapsed_fall => open
         );
 
     -- =========================================================================
