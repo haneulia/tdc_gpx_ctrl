@@ -1071,11 +1071,18 @@ begin
                 end if;
 
                 if v_pulse_hold > 0 then
-                    pd_p(0) <= '1';
-                    pd_n(0) <= '0';
+                    -- Broadcast echo to channel 0 of every chip (stop_id=0,
+                    -- one hit per chip per shot). Ensures whichever chip
+                    -- chip_run decides to drain finds a hit in its IFIFO1.
+                    for i in 0 to c_N_CHIPS - 1 loop
+                        pd_p(i * C_ER_N_STOPS) <= '1';
+                        pd_n(i * C_ER_N_STOPS) <= '0';
+                    end loop;
                     v_pulse_hold := v_pulse_hold - 1;
                 else
-                    pd_p(0) <= '0';
+                    for i in 0 to c_N_CHIPS - 1 loop
+                        pd_p(i * C_ER_N_STOPS) <= '0';
+                    end loop;
                 end if;
             end if;
         end if;
