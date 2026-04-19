@@ -186,6 +186,13 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_phase_r      : t_phase := PH_INIT;
     signal s_drain_cnt_r    : unsigned(3 downto 0) := (others => '0');  -- stale response drain counter
     signal s_drain_to_init_r : std_logic := '0';  -- '1' = drain→PH_INIT (soft reset), '0' = drain→PH_IDLE (timeout)
+    -- Round 9 #6: secondary quarantine watchdog. Round 5 #9 made PH_RESP_DRAIN
+    -- stay forever when the bus is stuck, which avoided stale-response leaks
+    -- at the cost of a potential permanent hang. This counter runs while the
+    -- phase is stuck in quarantine (cnt saturated at 15 AND bus still active).
+    -- On overflow we force-exit to PH_INIT — same path as a soft_reset — so
+    -- the chip has a chance to recover via its own init sequence.
+    signal s_drain_quarantine_cnt_r : unsigned(15 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Sub-FSM signals: chip_init
@@ -516,6 +523,7 @@ begin
                 s_bus_clk_div_snap_r <= to_unsigned(2, 6);
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_err_drain_cap_r    <= '0';
+                s_drain_quarantine_cnt_r <= (others => '0');
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
             else
@@ -630,24 +638,28 @@ begin
                             end if;
                             s_drain_to_init_r <= '0';  -- always clear on drain exit
                         elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap reached. Round 5 #9:
-                            --   Original design advanced the phase anyway and
-                            --   set a sticky, which could leak a lingering bus
-                            --   response into the next phase. Now: if the bus
-                            --   is still busy or a response is still pending,
-                            --   QUARANTINE — stay in PH_RESP_DRAIN with counter
-                            --   saturated at 15, keeping tready='1' and routing
-                            --   disabled so any stale response is absorbed and
-                            --   discarded. Exit happens automatically once the
-                            --   first branch above sees (busy='0' and pending=
-                            --   '0'), or when SW issues i_cmd_soft_reset (which
-                            --   re-enters PH_RESP_DRAIN with cnt=0 and flushes
-                            --   bus_phy/skid through their soft-reset path).
-                            --   s_err_drain_cap_r sticky records that quarantine
-                            --   was entered at least once so SW can diagnose.
+                            -- Hard cap reached. Round 5 #9 + Round 9 #6:
+                            --   Round 5 #9 made this a QUARANTINE — stay in
+                            --   PH_RESP_DRAIN with cnt saturated at 15 and
+                            --   routing disabled so any stale response is
+                            --   absorbed. Round 9 #6 adds a secondary
+                            --   watchdog (s_drain_quarantine_cnt_r) so a
+                            --   permanently-stuck bus eventually triggers a
+                            --   forced re-init instead of hanging the FSM.
                             if i_bus_busy = '1' or i_bus_rsp_pending = '1' then
                                 s_err_drain_cap_r <= '1';
-                                -- No phase advance: quarantine.
+                                if s_drain_quarantine_cnt_r = x"FFFF" then
+                                    -- 65K cycles quarantined: bus likely broken.
+                                    -- Escalate to full re-init so the chip's
+                                    -- own powerup sequence can recover the bus.
+                                    s_phase_r             <= PH_INIT;
+                                    s_init_start          <= '1';
+                                    s_drain_to_init_r     <= '0';
+                                    s_drain_quarantine_cnt_r <= (others => '0');
+                                else
+                                    s_drain_quarantine_cnt_r <=
+                                        s_drain_quarantine_cnt_r + 1;
+                                end if;
                             else
                                 if s_drain_to_init_r = '1' then
                                     s_phase_r    <= PH_INIT;
@@ -656,7 +668,10 @@ begin
                                     s_phase_r <= PH_IDLE;
                                 end if;
                                 s_drain_to_init_r <= '0';
+                                s_drain_quarantine_cnt_r <= (others => '0');
                             end if;
+                        else
+                            s_drain_quarantine_cnt_r <= (others => '0');
                         end if;
 
                 end case;

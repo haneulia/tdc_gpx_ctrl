@@ -142,6 +142,15 @@ architecture rtl of tdc_gpx_cmd_arb is
     signal s_reg_rejected_r      : std_logic := '0';  -- sticky: 2nd overlap lost
     signal s_reg_zero_mask_r     : std_logic := '0';  -- sticky: zero-mask request observed (Round 5 #17)
 
+    -- Round 9 #3: dispatch-wait watchdog. The existing s_reg_timeout_cnt_r
+    -- only runs once every target chip has been dispatched (pending=0). If a
+    -- target chip stays i_chip_busy forever, the dispatch itself never
+    -- happens and no timeout is counted. This counter runs from transaction
+    -- acceptance until all target chips are dispatched; on overflow we
+    -- abort the transaction with reg_timeout and mark undispatched chips in
+    -- the timeout mask.
+    signal s_dispatch_wait_cnt_r : unsigned(15 downto 0) := (others => '0');
+
 begin
 
     s_reset <= '1' when i_rst_n = '0' or i_cmd_soft_reset = '1' or i_cmd_stop = '1'
@@ -221,6 +230,7 @@ begin
                 s_reg_queue_addr_r   <= (others => '0');
                 s_reg_rejected_r     <= '0';
                 s_reg_zero_mask_r    <= '0';
+                s_dispatch_wait_cnt_r <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
                 s_dispatch_pulse_r <= (others => '0');
@@ -253,6 +263,29 @@ begin
                     end if;
                 else
                     s_reg_timeout_cnt_r <= (others => '0');
+                end if;
+
+                -- ---- Round 9 #3: dispatch-wait watchdog ----
+                -- If one or more target chips stay busy so long that their
+                -- dispatch never happens, the response-timeout above never
+                -- starts counting. Independent watchdog runs while any chip
+                -- is still pending dispatch.
+                if s_reg_active_r = '1'
+                   and s_reg_pending_r /= (s_reg_pending_r'range => '0') then
+                    if s_dispatch_wait_cnt_r = x"FFFF" then
+                        -- Undispatched chips never became ready: abort the
+                        -- transaction. Mark pending chips as timed out and
+                        -- set them to done so s_all_done clears the FSM.
+                        s_reg_done_mask_r    <= s_reg_target_mask_r;
+                        s_reg_timeout_r      <= '1';
+                        s_reg_timeout_mask_r <= s_reg_pending_r;  -- never dispatched
+                        s_reg_pending_r      <= (others => '0');  -- stop trying to dispatch
+                        s_dispatch_wait_cnt_r <= (others => '0');
+                    else
+                        s_dispatch_wait_cnt_r <= s_dispatch_wait_cnt_r + 1;
+                    end if;
+                else
+                    s_dispatch_wait_cnt_r <= (others => '0');
                 end if;
 
                 -- ---- All-done: clear and fire IRQ ----
