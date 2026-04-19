@@ -307,6 +307,10 @@ architecture rtl of tdc_gpx_top is
     signal s_err_raw_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout          : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_reg_arb_timeout      : std_logic;
+    -- Round 5 follow-up: pipeline-wide sticky observability
+    signal s_err_read_timeout     : std_logic;
+    signal s_reg_rejected         : std_logic;
+    signal s_reg_zero_mask        : std_logic;
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- Error handler status (from config_ctrl)
@@ -478,6 +482,10 @@ begin
             o_reg_loop_resume    => open,  -- reserved: future use for gating face_seq resume
             o_run_timeout        => s_run_timeout,
             o_reg_arb_timeout    => s_reg_arb_timeout,
+            -- Round 5 follow-up: pipeline-wide observability stickies
+            o_err_read_timeout   => s_err_read_timeout,
+            o_reg_rejected       => s_reg_rejected,
+            o_reg_zero_mask      => s_reg_zero_mask,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -762,6 +770,19 @@ begin
     s_status.cfg_rejected        <= s_cfg_rejected_r;
     s_status.run_timeout_mask    <= s_run_timeout_sticky_r;
     s_status.reg_arb_timeout     <= s_reg_arb_timeout;
+    -- Round 5 follow-up: newly exposed stickies
+    s_status.err_read_timeout    <= s_err_read_timeout;
+    s_status.reg_rejected        <= s_reg_rejected;
+    s_status.reg_zero_mask       <= s_reg_zero_mask;
+    -- Per-chip and per-slope stickies: TDC-domain sources require CDC before
+    -- reaching this s_axi_aclk-adjacent status bundle. Wired to '0' until the
+    -- CDC path is added (Round 5 follow-up, second phase).
+    s_status.err_reg_overflow_mask   <= (others => '0');
+    s_status.run_drain_complete_mask <= (others => '0');
+    s_status.rise_shot_flush_drop    <= '0';
+    s_status.fall_shot_flush_drop    <= '0';
+    s_status.rise_shot_overrun_count <= (others => '0');
+    s_status.fall_shot_overrun_count <= (others => '0');
     s_status.shot_drop_any       <= '1' when (s_shot_dropped or s_shot_fall_dropped)
                                               /= (s_shot_dropped'range => '0') else '0';
     s_status.slice_timeout_any   <= '1' when (s_slice_timeout or s_slice_fall_timeout)

@@ -287,6 +287,16 @@ package tdc_gpx_pkg is
         -- the frames per-memory-address with these fields.
         rise_overrun        : std_logic;  -- rise face_assembler overrun
         fall_overrun        : std_logic;  -- fall face_assembler overrun only
+        -- Round 5 follow-up: 7 observability stickies surfaced to SW via STAT6
+        err_read_timeout    : std_logic;  -- err_handler ST_WAIT_READ watchdog fired (sticky)
+        reg_rejected        : std_logic;  -- cmd_arb queue-full rejected a reg request (sticky)
+        reg_zero_mask       : std_logic;  -- cmd_arb got a zero chip_mask request (sticky)
+        err_reg_overflow_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg 3rd-pulse overflow (per-chip sticky)
+        run_drain_complete_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_run internal drain-complete seen (per-chip sticky latched from pulse)
+        rise_shot_flush_drop : std_logic;  -- rise face_assembler dropped non-empty FIFO on shot_start (sticky)
+        fall_shot_flush_drop : std_logic;  -- fall face_assembler dropped non-empty FIFO on shot_start (sticky)
+        rise_shot_overrun_count : unsigned(7 downto 0);  -- rise face_assembler blank-fill invocation count (wrap)
+        fall_shot_overrun_count : unsigned(7 downto 0);  -- fall face_assembler blank-fill invocation count (wrap)
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -312,7 +322,16 @@ package tdc_gpx_pkg is
         shot_drop_any       => '0',
         slice_timeout_any   => '0',
         rise_overrun        => '0',
-        fall_overrun        => '0'
+        fall_overrun        => '0',
+        err_read_timeout    => '0',
+        reg_rejected        => '0',
+        reg_zero_mask       => '0',
+        err_reg_overflow_mask => (others => '0'),
+        run_drain_complete_mask => (others => '0'),
+        rise_shot_flush_drop => '0',
+        fall_shot_flush_drop => '0',
+        rise_shot_overrun_count => (others => '0'),
+        fall_shot_overrun_count => (others => '0')
     );
 
     -- =========================================================================

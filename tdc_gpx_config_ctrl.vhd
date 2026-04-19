@@ -191,6 +191,11 @@ entity tdc_gpx_config_ctrl is
         o_run_timeout        : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_reg_arb_timeout    : out std_logic;
 
+        -- Round 5 follow-up: pipeline-wide sticky observability (from sub-blocks)
+        o_err_read_timeout   : out std_logic;  -- err_handler ST_WAIT_READ watchdog fired
+        o_reg_rejected       : out std_logic;  -- cmd_arb overlap queue full (request lost)
+        o_reg_zero_mask      : out std_logic;  -- cmd_arb got zero chip_mask request
+
         -- =====================================================================
         -- Interrupt
         -- =====================================================================
@@ -639,8 +644,8 @@ begin
             o_cmd_reg_addr_out   => s_cmd_reg_addr_out,
             o_reg_timeout        => s_reg_arb_timeout,
             o_reg_timeout_mask   => open,  -- per-chip mask available but not surfaced yet
-            o_reg_rejected       => open,  -- Round 5 #10 queue-overflow sticky; not yet surfaced to CSR
-            o_reg_zero_mask      => open   -- Round 5 #17 zero-mask sticky; not yet surfaced to CSR
+            o_reg_rejected       => o_reg_rejected,  -- surfaced to top via config_ctrl port
+            o_reg_zero_mask      => o_reg_zero_mask  -- surfaced to top via config_ctrl port
         );
 
     -- =========================================================================
@@ -671,7 +676,7 @@ begin
             o_err_chip_mask      => o_err_chip_mask,
             o_err_cause          => o_err_cause,
             o_err_fatal          => o_err_fatal,
-            o_err_read_timeout   => open  -- Round 5 #13 read-timeout sticky; not yet surfaced to CSR
+            o_err_read_timeout   => o_err_read_timeout  -- surfaced to top via config_ctrl port
         );
 
     -- =========================================================================

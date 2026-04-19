@@ -212,6 +212,15 @@ architecture rtl of tdc_gpx_csr_pipeline is
     signal s_dest_req_stat : std_logic;
     signal s_stat_d1       : std_logic_vector(31 downto 0) := (others => '1');
 
+    -- STAT6 (Round 5 follow-up): pipeline-wide + per-chip/per-slope stickies.
+    -- Same CDC pattern as STAT5; separate handshake to keep payload atomic.
+    signal s_stat6_src     : std_logic_vector(31 downto 0);
+    signal s_stat6_out     : std_logic_vector(31 downto 0) := C_ZERO32;
+    signal s_src_send_stat6 : std_logic := '0';
+    signal s_src_rcv_stat6  : std_logic;
+    signal s_dest_req_stat6 : std_logic;
+    signal s_stat6_d1      : std_logic_vector(31 downto 0) := (others => '1');
+
     -- HW_CONFIG constant (compile-time)
     signal s_hw_config : std_logic_vector(31 downto 0);
 
@@ -300,7 +309,7 @@ begin
                 (c_MAX_ROWS_PER_FACE * fn_beats_per_cell(g_OUTPUT_WIDTH)
                  + fn_hdr_prefix_beats(g_OUTPUT_WIDTH)) * (g_OUTPUT_WIDTH / 8), 32)),
             stat5_in => s_stat_out,     -- STATUS (CDC'd from i_axis_aclk)
-            stat6_in => C_ZERO32,       -- reserved
+            stat6_in => s_stat6_out,    -- STATUS_EXT (Round 5 follow-up, CDC'd)
             stat7_in => C_ZERO32,       -- reserved
             intrpt_src_in => "0",
             irq           => o_irq
@@ -320,6 +329,29 @@ begin
     s_stat_src(c_STAT_SEQ_ERR_HI downto c_STAT_SEQ_ERR_LO)
         <= i_status.sequence_error_mask;
     s_stat_src(31 downto c_STAT_SEQ_ERR_HI + 1) <= (others => '0');
+
+    -- =========================================================================
+    -- [3b] STAT6 source packing (Round 5 follow-up, i_axis_aclk domain)
+    --   bit  0    err_read_timeout (pipeline)
+    --   bit  1    reg_rejected (pipeline)
+    --   bit  2    reg_zero_mask (pipeline)
+    --   bit  3    rise_shot_flush_drop
+    --   bit  4    fall_shot_flush_drop
+    --   bits[15:8]  rise_shot_overrun_count
+    --   bits[23:16] fall_shot_overrun_count
+    --   bits[27:24] err_reg_overflow_mask (per-chip)
+    --   bits[31:28] run_drain_complete_mask (per-chip, sticky from pulses)
+    -- =========================================================================
+    s_stat6_src(0)            <= i_status.err_read_timeout;
+    s_stat6_src(1)            <= i_status.reg_rejected;
+    s_stat6_src(2)            <= i_status.reg_zero_mask;
+    s_stat6_src(3)            <= i_status.rise_shot_flush_drop;
+    s_stat6_src(4)            <= i_status.fall_shot_flush_drop;
+    s_stat6_src(7 downto 5)   <= (others => '0');
+    s_stat6_src(15 downto 8)  <= std_logic_vector(i_status.rise_shot_overrun_count);
+    s_stat6_src(23 downto 16) <= std_logic_vector(i_status.fall_shot_overrun_count);
+    s_stat6_src(27 downto 24) <= i_status.err_reg_overflow_mask;
+    s_stat6_src(31 downto 28) <= i_status.run_drain_complete_mask;
 
     -- =========================================================================
     -- [4] STAT CDC: i_axis_aclk → s_axi_aclk (1 live register)
@@ -360,6 +392,44 @@ begin
             end if;
         end if;
     end process p_send_stat;
+
+    -- STAT6 CDC (Round 5 follow-up): i_axis_aclk -> s_axi_aclk
+    u_cdc_stat6 : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK   => 1,
+            DEST_SYNC_FF   => 4,
+            INIT_SYNC_FF   => 0,
+            SIM_ASSERT_CHK => 0,
+            SRC_SYNC_FF    => 4,
+            WIDTH          => 32
+        )
+        port map (
+            src_clk   => i_axis_aclk,
+            src_in    => s_stat6_src,
+            src_send  => s_src_send_stat6,
+            src_rcv   => s_src_rcv_stat6,
+            dest_clk  => s_axi_aclk,
+            dest_req  => s_dest_req_stat6,
+            dest_ack  => s_dest_req_stat6,
+            dest_out  => s_stat6_out
+        );
+
+    p_send_stat6 : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_src_send_stat6 <= '0';
+                s_stat6_d1       <= (others => '1');
+            else
+                if s_src_send_stat6 = '0' and s_stat6_src /= s_stat6_d1 then
+                    s_src_send_stat6 <= '1';
+                    s_stat6_d1       <= s_stat6_src;
+                elsif s_src_rcv_stat6 = '1' then
+                    s_src_send_stat6 <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_send_stat6;
 
     -- =========================================================================
     -- [5] CTL CDC: s_axi_aclk → i_axis_aclk (CTL0, CTL1)
