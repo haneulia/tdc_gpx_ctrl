@@ -334,12 +334,18 @@ begin
                         -- If a new request also arrived this cycle, latch
                         -- it into the now-emptied queue so the next cycle's
                         -- queue-kickoff serves it on transaction completion.
-                        if v_new_request = '1'
-                           and i_cmd_reg_chip_address /= C_ZEROS then
-                            s_reg_queue_valid_r <= '1';
-                            s_reg_queue_mask_r  <= i_cmd_reg_chip_address;
-                            s_reg_queue_rw_r    <= v_rw;
-                            s_reg_queue_addr_r  <= i_cmd_reg_addr;
+                        -- Round 11 C: mirror the zero-mask sticky so the
+                        -- same-cycle path matches the normal accept path at
+                        -- line 361-365 (observability symmetry).
+                        if v_new_request = '1' then
+                            if i_cmd_reg_chip_address = C_ZEROS then
+                                s_reg_zero_mask_r <= '1';
+                            else
+                                s_reg_queue_valid_r <= '1';
+                                s_reg_queue_mask_r  <= i_cmd_reg_chip_address;
+                                s_reg_queue_rw_r    <= v_rw;
+                                s_reg_queue_addr_r  <= i_cmd_reg_addr;
+                            end if;
                         end if;
                     elsif v_new_request = '1'
                           and i_cmd_reg_chip_address /= C_ZEROS then
@@ -352,6 +358,14 @@ begin
                         s_reg_pending_r      <= i_cmd_reg_chip_address;
                         s_reg_timeout_r      <= '0';
                         s_reg_timeout_mask_r <= (others => '0');
+                    elsif v_new_request = '1'
+                          and i_cmd_reg_chip_address = C_ZEROS then
+                        -- Round 11 C: zero-mask in the same-cycle no-queue
+                        -- path also raises the sticky — identical observability
+                        -- to the normal accept path.
+                        s_reg_zero_mask_r   <= '1';
+                        s_reg_active_r      <= '0';
+                        s_reg_target_mask_r <= (others => '0');
                     else
                         s_reg_active_r      <= '0';
                         s_reg_target_mask_r <= (others => '0');
