@@ -215,8 +215,14 @@ begin
     s_abort_fall <= i_pipeline_abort or i_pipeline_abort_fall;
 
     -- FIFO flush: each slope has its own reset driven by its own abort.
-    s_fifo_rst_n_rise <= i_rst_n and not s_abort_rise;
-    s_fifo_rst_n_fall <= i_rst_n and not s_abort_fall;
+    -- Also pulse the reset on i_shot_start_gated: xpm_fifo_axis needs at least one
+    -- reset toggle after instantiation to bring s_axis_tready up in simulation --
+    -- without it the FIFO locks at s_axis_tready='0' permanently after reset
+    -- release. shot_start gives us a periodic pulse that's harmless here because
+    -- no face data is ever in-flight at shot_start boundary (face_seq holds
+    -- packet_start until chips drain).
+    s_fifo_rst_n_rise <= i_rst_n and not (s_abort_rise or i_shot_start_gated);
+    s_fifo_rst_n_fall <= i_rst_n and not (s_abort_fall or i_shot_start_gated);
 
     -- =========================================================================
     -- Rising face assembler
@@ -318,7 +324,7 @@ begin
             TDEST_WIDTH       => 1,
             TID_WIDTH         => 1,
             TUSER_WIDTH       => 1,
-            USE_ADV_FEATURES  => "0000"
+            USE_ADV_FEATURES  => "1000"
         )
         port map (
             s_aclk          => i_clk,
@@ -341,7 +347,7 @@ begin
             m_axis_tuser    => open,
             m_axis_tid      => open,
             m_axis_tdest    => open,
-            m_aclk          => '0',
+            m_aclk          => i_clk,
             injectsbiterr_axis => '0',
             injectdbiterr_axis => '0'
         );
@@ -362,7 +368,7 @@ begin
             TDEST_WIDTH       => 1,
             TID_WIDTH         => 1,
             TUSER_WIDTH       => 1,
-            USE_ADV_FEATURES  => "0000"
+            USE_ADV_FEATURES  => "1000"
         )
         port map (
             s_aclk          => i_clk,
@@ -385,7 +391,7 @@ begin
             m_axis_tuser    => open,
             m_axis_tid      => open,
             m_axis_tdest    => open,
-            m_aclk          => '0',
+            m_aclk          => i_clk,
             injectsbiterr_axis => '0',
             injectdbiterr_axis => '0'
         );

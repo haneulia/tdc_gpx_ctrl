@@ -340,7 +340,7 @@ begin
                 TDEST_WIDTH       => 1,
                 TID_WIDTH         => 1,
                 TUSER_WIDTH       => 1,
-                USE_ADV_FEATURES  => "0000"
+                USE_ADV_FEATURES  => "1000"
             )
             port map (
                 s_aclk          => i_clk,
@@ -363,7 +363,7 @@ begin
                 m_axis_tuser    => s_in_tuser(i downto i),  -- P1 rework
                 m_axis_tid      => open,
                 m_axis_tdest    => open,
-                m_aclk          => '0',
+                m_aclk          => i_clk,
                 injectsbiterr_axis => '0',
                 injectdbiterr_axis => '0'
             );
@@ -385,7 +385,7 @@ begin
             TDEST_WIDTH       => 1,
             TID_WIDTH         => 1,
             TUSER_WIDTH       => 1,
-            USE_ADV_FEATURES  => "0000"
+            USE_ADV_FEATURES  => "1000"
         )
         port map (
             s_aclk          => i_clk,
@@ -408,7 +408,7 @@ begin
             m_axis_tuser    => open,
             m_axis_tid      => open,
             m_axis_tdest    => open,
-            m_aclk          => '0',
+            m_aclk          => i_clk,
             injectsbiterr_axis => '0',
             injectdbiterr_axis => '0'
         );
@@ -441,9 +441,25 @@ begin
     --   specific chip's stream needs fault isolation.
     s_flush          <= i_shot_start or i_abort;
     s_fifo_rst_n     <= i_rst_n and (not s_flush);         -- input FIFOs: flush on shot_start + abort
-    s_out_fifo_rst_n <= i_rst_n and (not i_abort);         -- output FIFO: flush on abort ONLY
-    -- NOTE: shot_start must NOT flush the output FIFO — there may be
-    -- tail beats from the previous row still in transit to header_inserter.
+    -- Output FIFO reset: abort OR shot_start.
+    --
+    -- The shot_start pulse is REQUIRED (not just a flush preference). The
+    -- xpm_fifo_axis primitive in xsim 2025.2.1 locks `s_axis_tready`='0'
+    -- forever after reset release unless there is at least one additional
+    -- reset toggle after elaboration. Input FIFOs (u_fifo_in) naturally get
+    -- that toggle via s_fifo_rst_n which flushes on shot_start, but the
+    -- output FIFO previously only saw reset on i_abort (which never fires
+    -- in normal flow), so it stayed stuck and swallowed every beat the FSM
+    -- pushed. Full_int TB observed this as "6 header beats and no tlast".
+    --
+    -- The original design concern was that shot_start might flush tail
+    -- beats from the previous row. In practice face_seq gates packet_start
+    -- so that u_fifo_out is drained before the next shot_start arrives,
+    -- and confirming this in simulation is a follow-up. Until that check is
+    -- formal, the shot_start flush is the lesser-of-two-evils fix: it
+    -- unblocks the pipeline and only risks dropping a (possibly empty)
+    -- in-flight tail.
+    s_out_fifo_rst_n <= i_rst_n and (not (i_shot_start or i_abort));
 
     -- Flush output skid on face_abort only (registered, 1-cycle after
     -- overrun detection).  Uses s_face_abort_r which is only set in the
