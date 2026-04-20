@@ -36,6 +36,9 @@ use work.tdc_gpx_pkg.all;
 use work.tb_tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_chip_ctrl is
+    generic (
+        g_CHIP_ID : natural := 0  -- override via -generic_top "g_CHIP_ID=0..3"
+    );
 end entity tb_tdc_gpx_chip_ctrl;
 
 architecture sim of tb_tdc_gpx_chip_ctrl is
@@ -45,7 +48,7 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     -- =========================================================================
     constant c_CLK_PERIOD       : time    := 5 ns;       -- 200 MHz
     constant c_DATA_W           : natural := c_TDC_BUS_WIDTH;  -- 28
-    constant c_CHIP_ID          : natural := 0;
+    constant c_CHIP_ID          : natural := g_CHIP_ID;
 
     -- Powerup/recovery generics (short for sim speed)
     constant c_POWERUP_CLKS     : natural := 10;
