@@ -101,6 +101,8 @@ begin
             i_abort               => '0',
             i_face_stops_per_chip => face_stops,
             i_max_hits_cfg        => max_hits,
+            -- Phase B: disabled cap (legacy x"FFFF" via fn_timeout_cap)
+            i_max_range_clks      => (others => '0'),
 
             o_cell_rise_tdata_0   => cell_rise_tdata_0,
             o_cell_rise_tdata_1   => cell_rise_tdata_1,

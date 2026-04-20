@@ -650,6 +650,11 @@ begin
             -- instead of live s_cfg, so cell_builder's beat-per-cell lookup
             -- stays aligned with the header metadata for the same face.
             i_max_hits_cfg          => s_cfg_face_r.max_hits_cfg,
+            -- Phase B: face-snapshotted max_range_clks so cell_builder's
+            -- watchdog caps stay aligned with the rest of the shot's
+            -- config set (face_seq latches s_cfg_face_r on packet_start,
+            -- same source as max_hits above).
+            i_max_range_clks        => s_cfg_face_r.max_range_clks,
             -- Rising cell output
             o_cell_rise_tdata_0     => s_cell_rise_tdata_0,
             o_cell_rise_tdata_1     => s_cell_rise_tdata_1,

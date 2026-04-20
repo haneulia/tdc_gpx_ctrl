@@ -42,6 +42,11 @@ entity tdc_gpx_cell_pipe is
         i_abort_fall            : in  std_logic := '0';
         i_face_stops_per_chip   : in  unsigned(3 downto 0);
         i_max_hits_cfg          : in  unsigned(2 downto 0);
+        -- Phase B: passthrough for the cell_builder watchdog caps.
+        -- Feeds u_cell_bld_rise/fall.i_max_range_clks without buffering --
+        -- each cell_builder takes its own per-buffer / drop / output-side
+        -- snapshots internally.
+        i_max_range_clks        : in  unsigned(15 downto 0);
 
         -- Rising cell output to Cluster 4 (AXI-Stream x4)
         o_cell_rise_tdata_0     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
@@ -292,6 +297,7 @@ begin
                 i_abort             => s_abort_rise,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
+                i_max_range_clks    => i_max_range_clks,  -- Phase B
                 o_m_axis_tdata      => s_cell_rise_tdata(i),
                 o_m_axis_tvalid     => o_cell_rise_tvalid(i),
                 o_m_axis_tlast      => o_cell_rise_tlast(i),
@@ -322,6 +328,7 @@ begin
                 i_abort             => s_abort_fall,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
+                i_max_range_clks    => i_max_range_clks,  -- Phase B
                 o_m_axis_tdata      => s_cell_fall_tdata(i),
                 o_m_axis_tvalid     => o_cell_fall_tvalid(i),
                 o_m_axis_tlast      => o_cell_fall_tlast(i),

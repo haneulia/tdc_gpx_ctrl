@@ -117,8 +117,14 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_cell_builder is
     generic (
-        g_CHIP_ID           : natural range 0 to 3 := 0;
-        g_TDATA_WIDTH       : natural := c_TDATA_WIDTH    -- 32 or 64
+        g_CHIP_ID                : natural range 0 to 3 := 0;
+        g_TDATA_WIDTH            : natural := c_TDATA_WIDTH;  -- 32 or 64
+        -- Phase B: per-watchdog margins above max_range_clks.
+        -- QUARANTINE margin covers DROP + QUARANTINE absorb windows (upstream
+        -- drain_done may arrive well after shot boundary in worst cases).
+        -- IFIFO2 margin covers stop 3->4 boundary wait in ST_O_WAIT_IFIFO2.
+        g_QUARANTINE_MARGIN_CLKS : positive := 512;
+        g_IFIFO2_MARGIN_CLKS     : positive := 256
     );
     port (
         i_clk               : in  std_logic;
@@ -147,6 +153,15 @@ entity tdc_gpx_cell_builder is
         -- Configuration (latched at packet_start)
         i_stops_per_chip    : in  unsigned(3 downto 0);
         i_max_hits_cfg      : in  unsigned(2 downto 0);   -- 1~7, runtime MAX_HITS
+
+        -- Phase B: live CSR max_range_clks. Two local snapshots are taken:
+        --   per-buffer at BUF_COLLECT allocation (protects output-side
+        --   WAIT_IFIFO2 timeout against a mid-shot CSR update that would
+        --   otherwise reach across an in-flight buffer), and drop-side
+        --   at ST_C_DROP entry (DROP is not owned by any buffer so it
+        --   needs its own capture). Zero is the "disabled" encoding and
+        --   falls back to the legacy x"FFFF" cap via fn_timeout_cap.
+        i_max_range_clks    : in  unsigned(15 downto 0);
 
         -- AXI-Stream master (chip slice output)
         o_m_axis_tdata      : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
@@ -184,12 +199,46 @@ end entity tdc_gpx_cell_builder;
 architecture rtl of tdc_gpx_cell_builder is
 
     -- =========================================================================
+    -- Phase B: per-watchdog timeout cap helper.
+    -- Same saturating-sum pattern as chip_run: returns x"FFFF" when the
+    -- input is 0 (disabled encoding) or when max_range+margin overflows
+    -- 16 bits, otherwise max_range+margin. Pure function so it can be
+    -- reused in multiple snapshot sites without a shared signal.
+    -- =========================================================================
+    function fn_timeout_cap(
+        max_range : unsigned(15 downto 0);
+        margin    : natural
+    ) return unsigned is
+        variable v_sum : unsigned(16 downto 0);
+    begin
+        if max_range = 0 then
+            return x"FFFF";
+        else
+            v_sum := resize(max_range, 17) + to_unsigned(margin, 17);
+            if v_sum(16) = '1' then
+                return x"FFFF";  -- saturate
+            else
+                return v_sum(15 downto 0);
+            end if;
+        end if;
+    end function;
+
+    -- =========================================================================
     -- Ping-pong dual cell buffer (register-based, 2 x MAX_STOPS entries)
     -- p_collect writes to buffer[wr_buf], p_output reads from buffer[rd_buf].
     -- =========================================================================
     type t_cell_array is array (0 to c_MAX_STOPS_PER_CHIP - 1) of t_cell;
     type t_dual_cell_buf is array (0 to 1) of t_cell_array;
     signal s_cell_buf_r : t_dual_cell_buf := (others => (others => c_CELL_INIT));
+
+    -- Phase B: per-buffer snapshot of i_max_range_clks, captured when the
+    -- buffer transitions to BUF_COLLECT (i.e. when a new shot is assigned
+    -- to that buffer). The output-side WAIT_IFIFO2 watchdog derives its
+    -- cap from the buffer currently being read, so collect-side snapshots
+    -- and output-side watchdog stay aligned even when the two sides are
+    -- working on different shots (the whole point of the ping-pong).
+    type t_buf_range_array is array (0 to 1) of unsigned(15 downto 0);
+    signal s_buf_max_range_r : t_buf_range_array := (others => (others => '0'));
 
     function fn_buf_idx(sel : std_logic) return natural is
     begin
@@ -230,6 +279,11 @@ architecture rtl of tdc_gpx_cell_builder is
     -- p_output -> p_collect handshake
     signal s_output_done_r    : std_logic := '0';
     signal s_out_timeout_r    : unsigned(15 downto 0) := (others => '0');  -- output watchdog
+    -- Phase B: WAIT_IFIFO2 watchdog cap. Latched once per output session
+    -- at the ST_O_IDLE -> ST_O_LOAD transition using the currently-read
+    -- buffer's max_range snapshot. After latching, the cap is immune to
+    -- further shot_starts or buffer swaps on the collect side.
+    signal s_ififo2_cap_r     : unsigned(15 downto 0) := (others => '0');
     signal s_slice_timeout_r  : std_logic := '0';  -- 1-clk pulse: IFIFO2 timeout truncation
 
     -- Round 13 follow-up (audit 4번, P1 rework): per-buffer faulted tag.
@@ -282,6 +336,15 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_stop_id_error_r : std_logic := '0';  -- Round 11 C: distinct from hit overflow
     signal s_shot_dropped_r  : std_logic := '0';  -- shot-level drop (no free buffer)
     signal s_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');  -- watchdog
+    -- Phase B: DROP/QUARANTINE watchdog cap and its source snapshot. DROP
+    -- is not owned by any specific buffer (the incoming shot is being
+    -- thrown away precisely because no buffer was free), so the
+    -- per-buffer snapshot cannot cover it -- we capture at the ST_C_DROP
+    -- entry edge using the live CSR value at that moment. QUARANTINE
+    -- then reuses the same cap (it is a continuation of the DROP state's
+    -- absorb window so it inherits the same shot's timing baseline).
+    signal s_drop_max_range_r : unsigned(15 downto 0) := (others => '0');
+    signal s_drop_cap_r       : unsigned(15 downto 0) := (others => '0');
 
     -- Round 11 item 4: QUARANTINE escalation tick counter.
     -- Counts completed 65K-cycle watchdog cycles while still in QUARANTINE.
@@ -413,6 +476,12 @@ begin
                 s_stop_id_error_r <= '0';
                 s_shot_dropped_r <= '0';
                 s_timeout_cnt_r  <= (others => '0');
+                -- Phase B: reset per-buffer snapshots and drop-side cap.
+                -- Init to 0 == "disabled" so fn_timeout_cap returns x"FFFF"
+                -- until an actual shot allocation populates a real value.
+                s_buf_max_range_r  <= (others => (others => '0'));
+                s_drop_max_range_r <= (others => '0');
+                s_drop_cap_r       <= (others => '0');
                 s_shot_pending_r <= '0';
                 s_buf_seq_r      <= (others => '0');
                 s_buf_age_r      <= (others => (others => '0'));
@@ -491,11 +560,17 @@ begin
                                     s_wr_buf_r        <= '0';
                                     s_buf_state_r(0)  <= BUF_COLLECT;
                                     s_cell_buf_r(0)   <= (others => c_CELL_INIT);
+                                    -- Phase B: per-buffer max_range snapshot on
+                                    -- BUF_FREE -> BUF_COLLECT transition. Used by
+                                    -- the output side's WAIT_IFIFO2 cap when this
+                                    -- buffer is later read.
+                                    s_buf_max_range_r(0) <= i_max_range_clks;
                                     s_cstate_r        <= ST_C_ACTIVE;
                                 elsif s_buf_state_r(1) = BUF_FREE then
                                     s_wr_buf_r        <= '1';
                                     s_buf_state_r(1)  <= BUF_COLLECT;
                                     s_cell_buf_r(1)   <= (others => c_CELL_INIT);
+                                    s_buf_max_range_r(1) <= i_max_range_clks;
                                     s_cstate_r        <= ST_C_ACTIVE;
                                 else
                                     -- No free buffer: enter DROP to actually absorb
@@ -506,6 +581,13 @@ begin
                                     s_cstate_r      <= ST_C_DROP;
                                     s_shot_dropped_r <= '1';
                                     s_timeout_cnt_r  <= (others => '0');
+                                    -- Phase B: drop-side cap snapshot. DROP is not
+                                    -- owned by any buffer, so capture at the entry
+                                    -- edge using the live CSR value.
+                                    s_drop_max_range_r <= i_max_range_clks;
+                                    s_drop_cap_r       <= fn_timeout_cap(
+                                                             i_max_range_clks,
+                                                             g_QUARANTINE_MARGIN_CLKS);
                                 end if;
                             end if;
 
@@ -621,6 +703,9 @@ begin
                                     s_wr_buf_r <= not s_wr_buf_r;
                                     s_buf_state_r(v_other) <= BUF_COLLECT;
                                     s_cell_buf_r(v_other)  <= (others => c_CELL_INIT);
+                                    -- Phase B: per-buffer max_range snapshot
+                                    -- for the OTHER buffer being newly allocated.
+                                    s_buf_max_range_r(v_other) <= i_max_range_clks;
                                 else
                                     -- No free buffer: enter drop mode to prevent shot mixing.
                                     -- All incoming data for this shot is silently discarded.
@@ -628,6 +713,11 @@ begin
                                     s_cstate_r      <= ST_C_DROP;
                                     s_shot_dropped_r <= '1';  -- distinct from hit overflow
                                     s_timeout_cnt_r  <= (others => '0');
+                                    -- Phase B: drop-side cap snapshot.
+                                    s_drop_max_range_r <= i_max_range_clks;
+                                    s_drop_cap_r       <= fn_timeout_cap(
+                                                             i_max_range_clks,
+                                                             g_QUARANTINE_MARGIN_CLKS);
                                 end if;
                             elsif i_shot_start = '1' then
                                 -- Same-cycle drain_done blocks shot_start: latch as pending
@@ -646,7 +736,7 @@ begin
                                and i_s_axis_tuser(6) = '1' then
                                 s_cstate_r     <= ST_C_IDLE;
                                 s_timeout_cnt_r <= (others => '0');
-                            elsif s_timeout_cnt_r = x"FFFF" then
+                            elsif s_timeout_cnt_r = s_drop_cap_r then
                                 -- Timeout: drain_done never came (Round 5 #6).
                                 -- Transition to ST_C_QUARANTINE so late stale
                                 -- beats keep being absorbed (tready='1') while
@@ -692,7 +782,7 @@ begin
                                 s_cstate_r          <= ST_C_IDLE;
                                 s_timeout_cnt_r     <= (others => '0');
                                 s_quarantine_tick_r <= (others => '0');
-                            elsif s_timeout_cnt_r = x"FFFF" then
+                            elsif s_timeout_cnt_r = s_drop_cap_r then
                                 s_shot_dropped_r <= '1';
                                 s_timeout_cnt_r  <= (others => '0');
                                 if s_quarantine_tick_r = c_QUARANTINE_TICK_CAP then
@@ -789,6 +879,9 @@ begin
                 s_output_done_r   <= '0';
                 s_slice_timeout_r <= '0';
                 s_out_timeout_r   <= (others => '0');
+                -- Phase B: init the output-side cap to 0 (= legacy-cap via
+                -- fn_timeout_cap when consumed before first ST_O_LOAD).
+                s_ififo2_cap_r    <= (others => '0');
                 s_rt_last_beat_r  <= to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
             else
                 s_output_done_r  <= '0';
@@ -818,6 +911,14 @@ begin
                                 s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
                                 s_stop_idx_r    <= (others => '0');
                                 s_beat_idx_r    <= (others => '0');
+                                -- Phase B: snapshot the WAIT_IFIFO2 cap from
+                                -- THIS buffer's collect-time max_range. Once
+                                -- latched here the cap is immune to any new
+                                -- shot_start or buffer swap happening on the
+                                -- collect side while the output is in flight.
+                                s_ififo2_cap_r  <= fn_timeout_cap(
+                                                      s_buf_max_range_r(v_rd),
+                                                      g_IFIFO2_MARGIN_CLKS);
                                 if i_stops_per_chip >= 2 then
                                     s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
                                 else
@@ -923,7 +1024,7 @@ begin
                                 s_cell_sel_r    <= s_cell_buf_r(v_rd)(4);
                                 s_out_timeout_r <= (others => '0');
                                 s_ostate_r      <= ST_O_LOAD;
-                            elsif s_out_timeout_r = x"FFFF" then
+                            elsif s_out_timeout_r = s_ififo2_cap_r then
                                 -- Timeout: IFIFO2 data never arrived. Emit a
                                 -- synthetic final beat with tlast so downstream
                                 -- (face_assembler) completes this chip slice.
