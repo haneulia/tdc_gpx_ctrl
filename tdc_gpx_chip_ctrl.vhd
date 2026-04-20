@@ -492,6 +492,8 @@ begin
             g_BUS_DATA_WIDTH => g_BUS_DATA_WIDTH,
             g_RECOVERY_CLKS  => g_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+            -- g_DRAIN_MARGIN_CLKS left at its default (256). Override at
+            -- this level if a future config needs a different headroom.
         )
         port map (
             i_clk               => i_clk,
@@ -509,6 +511,11 @@ begin
             i_n_drain_cap       => s_n_drain_cap_snap_r,
             i_cfg_image         => s_cfg_image_snap_r,
             i_shot_start        => i_shot_start,
+            -- Phase B: pass through the live CSR max_range_clks.
+            -- chip_run takes its own shot-bounded snapshot internally
+            -- on the ST_ARMED→ST_CAPTURE edge, so passing the live
+            -- value (rather than a coordinator-latched copy) is fine.
+            i_max_range_clks    => i_max_range_clks,
             i_expected_ififo1   => i_expected_ififo1,
             i_expected_ififo2   => i_expected_ififo2,
             o_bus_req_valid     => s_run_bus_valid,

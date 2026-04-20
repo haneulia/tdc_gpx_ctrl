@@ -62,9 +62,17 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_chip_run is
     generic (
-        g_BUS_DATA_WIDTH : natural := c_TDC_BUS_WIDTH;
-        g_RECOVERY_CLKS  : positive := 8;
-        g_ALU_PULSE_CLKS : positive := 4
+        g_BUS_DATA_WIDTH    : natural  := c_TDC_BUS_WIDTH;
+        g_RECOVERY_CLKS     : positive := 8;
+        g_ALU_PULSE_CLKS    : positive := 4;
+        -- Phase B: drain/flush watchdog headroom above max_range_clks.
+        -- The cap used by the 7 s_wait_cnt_r timeouts is computed at
+        -- shot_start as (i_max_range_clks + g_DRAIN_MARGIN_CLKS), saturating
+        -- at x"FFFF". 256 clocks @ 200 MHz ≈ 1.28 µs — covers bus
+        -- roundtrip + ALU service + downstream backpressure jitter with
+        -- generous margin while still tightening the timeout from the
+        -- legacy fixed-65535 value that hid upstream hangs for ~327 µs.
+        g_DRAIN_MARGIN_CLKS : positive := 256
     );
     port (
         i_clk               : in  std_logic;
@@ -83,6 +91,13 @@ entity tdc_gpx_chip_run is
 
         -- Shot trigger
         i_shot_start        : in  std_logic;
+
+        -- Phase B: shot-bounded watchdog cap driver.
+        -- Snapshotted on the shot_start transition (ST_ARMED → ST_CAPTURE),
+        -- NOT cmd_start, so mid-shot SW changes to the CSR do not leak
+        -- into a running shot's timeout behavior. Zero is treated as
+        -- "disabled" (fallback to the legacy x"FFFF" cap).
+        i_max_range_clks    : in  unsigned(15 downto 0);
 
         -- Expected IFIFO counts (from echo_receiver).
         -- Sampled ONCE at ST_DRAIN_LATCH (1 cycle after IrFlag-based drain
@@ -193,7 +208,32 @@ architecture rtl of tdc_gpx_chip_run is
     -- has landed on the dest side.
     constant c_EXP_LATCH_SETTLE_LAST : unsigned(15 downto 0) := to_unsigned(15, 16);
 
+    -- Phase B: shot-bounded watchdog cap.
+    -- Function: (max_range + margin), saturating at x"FFFF". max_range=0
+    -- is the "disabled" encoding and also returns x"FFFF" so pre-config
+    -- behavior matches the legacy fixed cap.
+    function fn_timeout_cap(
+        max_range : unsigned(15 downto 0);
+        margin    : natural
+    ) return unsigned is
+        variable v_sum : unsigned(16 downto 0);
+    begin
+        if max_range = 0 then
+            return x"FFFF";
+        else
+            v_sum := resize(max_range, 17) + to_unsigned(margin, 17);
+            if v_sum(16) = '1' then
+                return x"FFFF";  -- saturate
+            else
+                return v_sum(15 downto 0);
+            end if;
+        end if;
+    end function;
+
     signal s_wait_cnt_r        : unsigned(15 downto 0) := (others => '0');
+    -- Phase B: latched once per shot on the ST_ARMED→ST_CAPTURE edge.
+    -- Init = x"FFFF" so pre-first-shot behavior matches the legacy cap.
+    signal s_wait_cap_r        : unsigned(15 downto 0) := x"FFFF";
     signal s_req_valid_r       : std_logic := '0';
     signal s_req_rw_r          : std_logic := '0';
     signal s_req_addr_r        : std_logic_vector(3 downto 0) := (others => '0');
@@ -278,6 +318,7 @@ begin
             if i_rst_n = '0' then
                 s_state_r           <= ST_OFF;
                 s_wait_cnt_r        <= (others => '0');
+                s_wait_cap_r        <= x"FFFF";  -- Phase B: legacy-compat until first shot
                 s_req_valid_r       <= '0';
                 s_req_burst_r       <= '0';
                 s_oen_permanent_r   <= '0';
@@ -357,6 +398,14 @@ begin
                             -- stop events during the shot window). Do not snapshot
                             -- here — that value would be pre-stop and stale.
                             s_ififo1_done_sent_r <= '0';
+                            -- Phase B: shot-bounded watchdog cap snapshot.
+                            -- Must be shot_start (not cmd_start) so a mid-shot
+                            -- SW max_range update cannot change this shot's
+                            -- timeout horizon. The cap is used by all 7
+                            -- s_wait_cnt_r comparisons in the drain/flush path.
+                            s_wait_cap_r         <= fn_timeout_cap(
+                                                       i_max_range_clks,
+                                                       g_DRAIN_MARGIN_CLKS);
                             s_state_r            <= ST_CAPTURE;
                         end if;
 
@@ -392,7 +441,7 @@ begin
                             -- Fallback watchdog: irflag never arrived after
                             -- cmd_stop (chip malfunction). Fall back to the
                             -- original immediate-purge path so we don't hang.
-                            if s_wait_cnt_r = x"FFFF" then
+                            if s_wait_cnt_r = s_wait_cap_r then
                                 s_range_active_r     <= '0';
                                 s_raw_valid_r        <= '0';
                                 s_drain_cnt_ififo1_r <= (others => '0');
@@ -562,7 +611,7 @@ begin
                       else
                         -- raw_busy watchdog: abort drain if stalled too long
                         s_wait_cnt_r <= s_wait_cnt_r + 1;
-                        if s_wait_cnt_r = x"FFFF" then
+                        if s_wait_cnt_r = s_wait_cap_r then
                             s_oen_permanent_r <= '0';
                             s_range_active_r  <= '0';
                             s_drain_done_r    <= '1';
@@ -608,7 +657,7 @@ begin
                         else
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = x"FFFF" then
+                            if s_wait_cnt_r = s_wait_cap_r then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
                                 s_range_active_r  <= '0';
@@ -649,7 +698,7 @@ begin
                         else
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = x"FFFF" then
+                            if s_wait_cnt_r = s_wait_cap_r then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
                                 s_range_active_r  <= '0';
@@ -697,7 +746,7 @@ begin
                         else
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = x"FFFF" then
+                            if s_wait_cnt_r = s_wait_cap_r then
                                 s_req_burst_r     <= '0';
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
@@ -754,7 +803,7 @@ begin
                             s_wait_cnt_r <= (others => '0');
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r    <= ST_DRAIN_SETTLE;
-                        elsif s_wait_cnt_r = x"FFFF" then
+                        elsif s_wait_cnt_r = s_wait_cap_r then
                             -- Bus hung during flush: force completion
                             s_oen_permanent_r <= '0';
                             s_range_active_r  <= '0';
@@ -836,7 +885,7 @@ begin
                             s_state_r    <= ST_DRAIN_SETTLE;
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = x"FFFF" then
+                            if s_wait_cnt_r = s_wait_cap_r then
                                 -- Overrun flush timeout: force to drain settle
                                 s_oen_permanent_r <= '0';
                                 s_purge_mode_r    <= '1';
