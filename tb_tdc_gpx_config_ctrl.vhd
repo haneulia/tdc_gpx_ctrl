@@ -16,6 +16,12 @@ use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
 
 entity tb_tdc_gpx_config_ctrl is
+    generic (
+        -- Selects the DUT raw stream clock-domain mode for this run.
+        -- "SYNC"  : raw stream passes through directly (i_tdc_clk == i_axis_aclk).
+        -- "ASYNC" : raw stream goes through xpm_fifo_async (CDC).
+        g_DUT_STREAM_CLK_MODE : string := "SYNC"
+    );
 end entity tb_tdc_gpx_config_ctrl;
 
 architecture sim of tb_tdc_gpx_config_ctrl is
@@ -195,6 +201,9 @@ begin
     -- DUT instantiation (default generics)
     -- =========================================================================
     u_dut : entity work.tdc_gpx_config_ctrl
+        generic map (
+            g_STREAM_CLK_MODE => g_DUT_STREAM_CLK_MODE
+        )
         port map (
             -- Clock / Reset
             i_axis_aclk          => clk_axis,
@@ -308,6 +317,8 @@ begin
         -- -------------------------------------------------------------------
         -- Step 1: Assert i_cmd_start for 1 axis clock cycle
         -- -------------------------------------------------------------------
+        report "TB: g_DUT_STREAM_CLK_MODE = " & g_DUT_STREAM_CLK_MODE
+            severity note;
         report "TB: Asserting cmd_start" severity note;
         wait until rising_edge(clk_axis);
         i_cmd_start <= '1';

@@ -3,6 +3,15 @@
 #   sim_1 simset 의 top 을 순차적으로 바꿔가며 launch_simulation.
 #   각 TB 별 compile/elaborate/run 을 수행하고 sim log 를 별도 파일로 보존.
 #   pass/fail 은 이후 bash 에서 log 파싱.
+#
+#   주의 (R-C01-V002-03):
+#     본 스크립트는 tb_tdc_gpx_config_ctrl 을 default generic (SYNC) 으로만
+#     elab 한다. ASYNC raw_cdc FIFO 경로와 CSR clamp 검증을 포함한 C01 전체
+#     회귀는 다음 통합 entrypoint 를 사용한다.
+#
+#       bash HDL/scripts/run_c01_regression.sh
+#
+#     해당 스크립트는 SYNC + ASYNC + tb_tdc_gpx_csr_chip_clamp 를 모두 실행한다.
 # =============================================================================
 
 set prj_dir "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl"
@@ -10,6 +19,7 @@ open_project "$prj_dir/tdc_gpx_ctrl.xpr"
 
 set tbs {
     tb_tdc_gpx_bus_phy
+    tb_tdc_gpx_bus_phy_c01_contract
     tb_tdc_gpx_chip_ctrl
     tb_tdc_gpx_config_ctrl
     tb_tdc_gpx_decode_pipe
@@ -23,9 +33,9 @@ set tbs {
 }
 
 set runtimes {
-    200us   200us   200us   200us   200us
+    200us   20us    200us   200us   200us
     200us   200us   100us   200us   500us
-    200us
+    200us   200us
 }
 
 foreach tb $tbs runtime $runtimes {

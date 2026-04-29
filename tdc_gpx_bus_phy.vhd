@@ -17,7 +17,10 @@
 --   chip_ctrl receives this via AXI-Stream slave (through skid buffer in top).
 --
 -- Bus Timing (per deep_analysis section 12.3):
---   1 transaction = i_bus_ticks ticks (min 4, default 5)
+--   1 transaction = locally clamped i_bus_ticks ticks.
+--   C01 contract at 200 MHz: div=1 requires ticks>=5 so the burst
+--   initiation interval is not faster than the GPX 40 MHz readout limit.
+--   For div>=2 the legacy minimum ticks>=4 is retained.
 --   Phase A (1 tick):                address setup, strobe high
 --   Phase L (i_bus_ticks - 2 ticks): strobe low (RDN or WRN)
 --   Phase H (1 tick):                strobe high, transaction complete
@@ -51,13 +54,21 @@
 --     div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
 --   See tdc_gpx_cfg_pkg for legal combination table.
 --
+-- OEN mode contract:
+--   g_OEN_MODE="DYNAMIC_CONNECTED"
+--     FPGA controls GPX OEN. READ drives OEN low, WRITE drives OEN high,
+--     and drain burst may use i_oen_permanent.
+--   g_OEN_MODE="PULLUP_OR_NOT_CONNECTED"
+--     FPGA keeps o_oen high. READ relies on the datasheet OEN-high/RDN
+--     strobed output behavior, and i_oen_permanent is not a dependency.
+--
 -- Invariants (bus safety, see 01_chip_acquisition §6):
 --   INV-1: WRITE => OEN = '1' (prevent bus contention)
 --   INV-2: READ  => D-bus Hi-Z (FPGA does not drive)
---   INV-3: IDLE  => D-bus Hi-Z, OEN = '1' (oen_permanent exception)
+--   INV-3: IDLE  => D-bus Hi-Z, OEN = '1' except dynamic drain hold
 --   INV-5: WRITE->READ turnaround gap (1 tick minimum)
 --   INV-6: READ->WRITE OEN='1' leading (1 tick minimum)
---   INV-7: oen_permanent='1' => WRITE forbidden
+--   INV-7: dynamic oen_permanent='1' => WRITE forbidden
 --
 -- Standard: VHDL-93 compatible
 -- =============================================================================
@@ -70,10 +81,13 @@ library unisim;
 use unisim.vcomponents.all;
 
 use work.tdc_gpx_pkg.all;
+use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_bus_phy is
     generic (
-        g_BUS_DATA_WIDTH : natural := c_TDC_BUS_WIDTH      -- 28
+        g_BUS_DATA_WIDTH             : natural  := c_TDC_BUS_WIDTH;      -- 28
+        g_OEN_MODE                   : string   := "DYNAMIC_CONNECTED";
+        g_BUS_READ_PERIOD_MIN_CLKS   : positive := c_BUS_READ_PERIOD_MIN_CLKS
     );
     port (
         i_clk           : in  std_logic;
@@ -84,6 +98,7 @@ entity tdc_gpx_bus_phy is
 
         -- Bus timing config (latched internally at transaction entry)
         i_bus_ticks     : in  unsigned(2 downto 0);         -- 3..7
+        i_bus_clk_div   : in  unsigned(5 downto 0);         -- 1..63, used for legality checks
 
         -- Request interface (from chip_ctrl)
         i_req_valid     : in  std_logic;
@@ -145,6 +160,24 @@ end entity tdc_gpx_bus_phy;
 
 architecture rtl of tdc_gpx_bus_phy is
 
+    constant c_OEN_DYNAMIC_CONNECTED : boolean := g_OEN_MODE = "DYNAMIC_CONNECTED";
+    constant c_OEN_PULLUP_OR_NC      : boolean := g_OEN_MODE = "PULLUP_OR_NOT_CONNECTED";
+
+    function fn_min_ticks_for_div(div_value : unsigned(5 downto 0)) return unsigned is
+        variable v_min_ticks : natural := c_BUS_TICKS_MIN;
+    begin
+        if to_integer(div_value) <= 1
+           and g_BUS_READ_PERIOD_MIN_CLKS > c_BUS_TICKS_MIN then
+            v_min_ticks := g_BUS_READ_PERIOD_MIN_CLKS;
+        end if;
+
+        if v_min_ticks > 7 then
+            v_min_ticks := 7;
+        end if;
+
+        return to_unsigned(v_min_ticks, 3);
+    end function fn_min_ticks_for_div;
+
     -- =========================================================================
     -- FSM states
     -- =========================================================================
@@ -191,6 +224,7 @@ architecture rtl of tdc_gpx_bus_phy is
     signal s_rsp_valid_r     : std_logic := '0';
     signal s_rsp_rdata_r     : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_rsp_pending_r   : std_logic := '0';    -- read response deferred by 1 tick
+    signal s_rsp_pending_out_r : std_logic := '0';  -- registered module-boundary output
     signal s_busy_r          : std_logic := '0';
 
     -- AXI-Stream master: bus response mirror (32-bit tdata, 8-bit tuser)
@@ -263,8 +297,9 @@ begin
     -- =========================================================================
     -- IOB FF: read data capture
     -- Captures one i_clk after s_sample_en is asserted by FSM.
-    -- This coincides with RDN physically transitioning high (Phase H start),
-    -- which is safe because tH-DR >= 0ns when OEN is held low.
+    -- This coincides with RDN physically transitioning high (Phase H start).
+    -- Dynamic OEN mode holds OEN low during READ; pull-up/NC mode relies on
+    -- the datasheet OEN-high/RDN-strobed read behavior.
     -- =========================================================================
     p_iob_ff : process(i_clk)
     begin
@@ -307,6 +342,7 @@ begin
                 s_rsp_valid_r       <= '0';
                 s_rsp_rdata_r       <= (others => '0');
                 s_rsp_pending_r     <= '0';
+                s_rsp_pending_out_r <= '0';
                 s_busy_r            <= '0';
                 s_last_was_write_r  <= '0';
                 s_last_was_read_r   <= '0';
@@ -327,6 +363,9 @@ begin
                 -- AXI-Stream handshake: clear tvalid when tready accepted
                 if s_axis_tvalid_r = '1' and i_m_axis_tready = '1' then
                     s_axis_tvalid_r <= '0';
+                    if s_rsp_pending_r = '0' then
+                        s_rsp_pending_out_r <= '0';
+                    end if;
                 end if;
 
                 -- ==========================================================
@@ -343,6 +382,7 @@ begin
                     s_rsp_valid_r   <= '1';
                     s_rsp_rdata_r   <= s_d_in_ff_r;
                     s_rsp_pending_r <= '0';
+                    s_rsp_pending_out_r <= '1';
                     -- AXI-Stream: read response (zero-pad 28→32 bit)
                     s_axis_tvalid_r             <= '1';
                     s_axis_tdata_r(27 downto 0) <= s_d_in_ff_r;
@@ -363,8 +403,10 @@ begin
                         s_d_tri_r <= '1';               -- Hi-Z [INV-3]
                         s_busy_r  <= '0';
 
-                        -- OEN: respect oen_permanent [INV-3 exception]
-                        if i_oen_permanent = '1' then
+                        -- OEN: dynamic mode may hold OEN low during burst.
+                        -- Pull-up/NC mode keeps the FPGA OEN output high and
+                        -- relies on RDN to gate normal reads.
+                        if c_OEN_DYNAMIC_CONNECTED and i_oen_permanent = '1' then
                             s_oen_r <= '0';
                         else
                             s_oen_r <= '1';
@@ -382,16 +424,20 @@ begin
                            and s_rsp_pending_r = '0'
                            and s_axis_tvalid_r = '0' then  -- AXI-Stream response fully consumed
                             -- synthesis translate_off
-                            assert to_integer(i_bus_ticks) >= 4
-                                report "bus_phy: bus_ticks < 4 (got " &
-                                       integer'image(to_integer(i_bus_ticks)) & ")"
-                                severity error;
+                            assert c_OEN_DYNAMIC_CONNECTED or c_OEN_PULLUP_OR_NC
+                                report "bus_phy: unsupported g_OEN_MODE"
+                                severity failure;
+                            assert to_integer(i_bus_ticks) >= to_integer(fn_min_ticks_for_div(i_bus_clk_div))
+                                report "bus_phy: bus timing clamped (div=" &
+                                       integer'image(to_integer(i_bus_clk_div)) &
+                                       ", ticks=" & integer'image(to_integer(i_bus_ticks)) & ")"
+                                severity warning;
                             -- synthesis translate_on
                             s_busy_r <= '1';
 
                             if i_req_rw = '1' then
                                 -- ===== WRITE request =====
-                                if i_oen_permanent = '1' then
+                                if c_OEN_DYNAMIC_CONNECTED and i_oen_permanent = '1' then
                                     -- [INV-7] WRITE forbidden during oen_permanent
                                     -- synthesis translate_off
                                     assert false
@@ -406,10 +452,10 @@ begin
                                     s_req_wdata_r     <= i_req_wdata;
                                     s_oen_r           <= '1';
                                     s_turn_to_write_r <= '1';
-                                    if i_bus_ticks >= 4 then
+                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
                                         s_bus_ticks_r <= i_bus_ticks;
                                     else
-                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
                                     end if;
                                     s_axis_rw_r       <= '1';
                                     s_axis_addr_r     <= i_req_addr;
@@ -423,11 +469,11 @@ begin
                                     s_d_out_r     <= i_req_wdata;
                                     s_d_tri_r     <= '0';           -- drive D-bus
                                     s_wrn_r       <= '1';           -- high during Phase A
-                                    -- Local clamp: minimum 4 ticks for safe phase timing
-                                    if i_bus_ticks >= 4 then
+                                    -- Local clamp: enforce datasheet-derived legal timing.
+                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
                                         s_bus_ticks_r <= i_bus_ticks;
                                     else
-                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
                                     end if;
                                     s_axis_rw_r   <= '1';           -- WRITE
                                     s_axis_addr_r <= i_req_addr;
@@ -441,10 +487,10 @@ begin
                                     -- [INV-5] Need turnaround
                                     s_req_addr_r      <= i_req_addr;
                                     s_turn_to_write_r <= '0';
-                                    if i_bus_ticks >= 4 then
+                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
                                         s_bus_ticks_r <= i_bus_ticks;
                                     else
-                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
                                     end if;
                                     s_req_burst_r     <= i_req_burst;
                                     s_oen_perm_r      <= i_oen_permanent;
@@ -456,14 +502,18 @@ begin
                                     -- Direct entry: Phase A (tick 0)
                                     s_adr_r       <= i_req_addr;
                                     s_csn_r       <= '0';
-                                    s_oen_r       <= '0';           -- chip drives D-bus
+                                    if c_OEN_DYNAMIC_CONNECTED then
+                                        s_oen_r   <= '0';           -- chip drives D-bus
+                                    else
+                                        s_oen_r   <= '1';           -- pull-up/NC: RDN gates output
+                                    end if;
                                     s_d_tri_r     <= '1';           -- FPGA Hi-Z [INV-2]
                                     s_rdn_r       <= '1';           -- high during Phase A
-                                    -- Local clamp: minimum 4 ticks for safe phase timing
-                                    if i_bus_ticks >= 4 then
+                                    -- Local clamp: enforce datasheet-derived legal timing.
+                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
                                         s_bus_ticks_r <= i_bus_ticks;
                                     else
-                                        s_bus_ticks_r <= to_unsigned(4, 3);
+                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
                                     end if;
                                     s_req_burst_r <= i_req_burst;   -- latch burst
                                     s_oen_perm_r  <= i_oen_permanent; -- latch oen
@@ -503,7 +553,11 @@ begin
                                 -- Enter READ Phase A (tick 0)
                                 s_adr_r   <= s_req_addr_r;
                                 s_csn_r   <= '0';
-                                s_oen_r   <= '0';       -- chip drives
+                                if c_OEN_DYNAMIC_CONNECTED then
+                                    s_oen_r <= '0';     -- chip drives
+                                else
+                                    s_oen_r <= '1';     -- pull-up/NC: RDN gates output
+                                end if;
                                 s_d_tri_r <= '1';       -- Hi-Z [INV-2]
                                 s_rdn_r   <= '1';
                                 s_tick_r  <= to_unsigned(1, 3);
@@ -521,8 +575,9 @@ begin
                     -- can overlap for small BUS_TICKS (e.g., BUS_TICKS=3:
                     -- tick 1 = Phase L start AND sample simultaneously).
                     --
-                    -- D-bus = Hi-Z throughout [INV-2]
-                    -- OEN = '0' throughout (chip drives D-bus)
+                    -- D-bus = Hi-Z throughout [INV-2].
+                    -- OEN is mode-specific: low in dynamic mode, high in
+                    -- pull-up/NC mode where RDN gates the GPX output.
                     -- ---------------------------------------------------------
                     when ST_READ =>
                         if i_tick_en = '1' then
@@ -546,6 +601,7 @@ begin
                             if s_tick_r = s_bus_ticks_r - 1 then
                                 s_rdn_r            <= '1';
                                 s_rsp_pending_r    <= '1';
+                                s_rsp_pending_out_r <= '1';
                                 s_last_was_write_r <= '0';
                                 s_last_was_read_r  <= '1';
 
@@ -566,7 +622,7 @@ begin
                                 -- chip_run's mid-burst-abort capability and has
                                 -- no functional benefit. Concern raised in #23
                                 -- was module independence, not correctness.
-                                if s_oen_perm_r = '1'
+                                if ((c_OEN_DYNAMIC_CONNECTED and s_oen_perm_r = '1') or c_OEN_PULLUP_OR_NC)
                                    and i_req_burst = '1' then
                                     -- Burst mode: continue only if response was consumed
                                     if s_axis_tvalid_r = '0' or i_m_axis_tready = '1' then
@@ -584,7 +640,7 @@ begin
                                     -- This prevents chip_ctrl from seeing
                                     -- busy=0 + rsp_valid=0 (premature exit).
                                     s_csn_r   <= '1';
-                                    if s_oen_perm_r = '0' then  -- use latched, not live
+                                    if (not c_OEN_DYNAMIC_CONNECTED) or s_oen_perm_r = '0' then  -- use latched, not live
                                         s_oen_r <= '1';
                                     end if;
                                     s_tick_r  <= (others => '0');
@@ -628,6 +684,7 @@ begin
                                 s_axis_tvalid_r    <= '1';
                                 s_axis_tdata_r     <= (others => '0');
                                 s_axis_tuser_r     <= "000" & s_axis_addr_r & '1';
+                                s_rsp_pending_out_r <= '1';
                             else
                                 s_tick_r <= s_tick_r + 1;
                             end if;
@@ -652,7 +709,7 @@ begin
     o_oen       <= s_oen_r;
 
     o_busy        <= s_busy_r;
-    o_rsp_pending <= s_rsp_pending_r or s_axis_tvalid_r;
+    o_rsp_pending <= s_rsp_pending_out_r;
 
     o_m_axis_tvalid <= s_axis_tvalid_r;
     o_m_axis_tdata  <= s_axis_tdata_r;

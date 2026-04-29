@@ -109,6 +109,7 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_bus_oen_perm       : std_logic;
     signal s_bus_req_burst      : std_logic;
     signal s_bus_busy           : std_logic;
+    signal s_bus_rsp_pending    : std_logic;
     signal s_tick_en            : std_logic;
 
     -- bus_phy → chip_ctrl AXI-Stream (response)
@@ -251,13 +252,14 @@ begin
             o_bus_req_wdata     => s_bus_req_wdata,
             o_bus_oen_permanent => s_bus_oen_perm,
             o_bus_req_burst     => s_bus_req_burst,
+            o_bus_clk_div_snap  => open,
             o_bus_ticks_snap    => open,
             i_s_axis_tvalid     => s_brsp_axis_tvalid,
             i_s_axis_tdata      => s_brsp_axis_tdata,
             i_s_axis_tuser      => s_brsp_axis_tuser,
             o_s_axis_tready     => s_brsp_axis_tready,
             i_bus_busy          => s_bus_busy,
-            i_bus_rsp_pending   => '0',
+            i_bus_rsp_pending   => s_bus_rsp_pending,
             i_ef1_sync          => s_ef1_sync,
             i_ef2_sync          => s_ef2_sync,
             i_irflag_sync       => s_irflag_sync,
@@ -293,6 +295,7 @@ begin
             i_rst_n         => s_rst_n,
             i_tick_en       => s_tick_en,
             i_bus_ticks     => s_cfg.bus_ticks,
+            i_bus_clk_div   => s_cfg.bus_clk_div,
             i_req_valid     => s_bus_req_valid,
             i_req_rw        => s_bus_req_rw,
             i_req_addr      => s_bus_req_addr,
@@ -305,6 +308,7 @@ begin
             o_m_axis_tuser  => s_brsp_axis_tuser,
             i_m_axis_tready => s_brsp_axis_tready,
             o_busy          => s_bus_busy,
+            o_rsp_pending   => s_bus_rsp_pending,
             o_adr           => s_adr,
             o_csn           => s_csn,
             o_rdn           => s_rdn,

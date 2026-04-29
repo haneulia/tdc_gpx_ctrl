@@ -278,7 +278,7 @@ package tdc_gpx_cfg_pkg is
     -- bus_phy burst path:
     --   Burst restarts at tick 0 (Phase A gap included).
     --   RDN high = 2 ticks = 2 * div * T_clk (Phase H + Phase A).
-    --   Per-burst-read cost = (ticks + 1) ticks total.
+    --   Per-burst-read initiation interval = ticks * div * T_clk.
     --
     -- Combined constraint: (ticks - 3) * div >= 2
     --   div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
@@ -296,7 +296,8 @@ package tdc_gpx_cfg_pkg is
     --    2     7     45 ns     50 ns    20 ns          14 MHz    OK (slowest 3-bit)
     -- =========================================================================
     constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum
-    constant c_BUS_CLK_DIV_MIN      : natural := 2;     -- div=1 prohibited per review/datasheet
+    constant c_BUS_CLK_DIV_MIN      : natural := 1;     -- div=1 allowed when ticks>=5 at 200 MHz
+    constant c_BUS_READ_PERIOD_MIN_CLKS : natural := 5; -- 200 MHz: >=25 ns, GPX 40 MHz max
 
     -- Design clock frequency assumption.
     -- All timeout constants (x"FFFF" watchdogs, powerup/recovery clocks,

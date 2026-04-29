@@ -17,7 +17,7 @@
 --   [7] status_agg      : Status aggregation + timestamp + error counter
 --
 -- Clock domains:
---   i_axis_aclk  : TDC processing / AXI-Stream domain (~200 MHz)
+--   i_axis_aclk  : TDC processing / AXI-Stream domain (nominal 150 MHz)
 --   s_axi_aclk   : AXI4-Lite PS domain
 --
 -- Standard: VHDL-2008
@@ -37,6 +37,9 @@ entity tdc_gpx_top is
         g_POWERUP_CLKS    : positive := 48;
         g_RECOVERY_CLKS   : positive := 8;
         g_ALU_PULSE_CLKS  : positive := 4;
+        g_OEN_MODE        : string   := "DYNAMIC_CONNECTED";
+        g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
+        g_STREAM_CLK_MODE : string   := "ASYNC";
         -- Stop event AXI-Stream interface parameters
         g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;
         g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH
@@ -453,6 +456,9 @@ begin
             g_POWERUP_CLKS    => g_POWERUP_CLKS,
             g_RECOVERY_CLKS   => g_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS  => g_ALU_PULSE_CLKS,
+            g_OEN_MODE        => g_OEN_MODE,
+            g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS,
+            g_STREAM_CLK_MODE => g_STREAM_CLK_MODE,
             g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH
         )
         port map (

@@ -844,15 +844,18 @@ begin
     -- =========================================================================
 
     -- Bus timing clamping ---------------------------------------------------
-    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN (2)
+    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN.
     s_div_clamped <= unsigned(s_ctl1_out(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
                      when unsigned(s_ctl1_out(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
                           >= c_BUS_CLK_DIV_MIN
                      else to_unsigned(c_BUS_CLK_DIV_MIN, 6);
     o_bus_clk_div <= s_div_clamped;
 
-    -- bus_ticks: minimum ticks>=4 (div>=2 always, div=1 prohibited)
-    s_ticks_min   <= to_unsigned(c_BUS_TICKS_MIN, 3);
+    -- bus_ticks: absolute min is 4. At 200 MHz, div=1 also needs ticks>=5
+    -- so the burst READ II stays >=25 ns (GPX datasheet 40 MHz max).
+    s_ticks_min   <= to_unsigned(c_BUS_READ_PERIOD_MIN_CLKS, 3)
+                     when s_div_clamped = to_unsigned(1, 6)
+                     else to_unsigned(c_BUS_TICKS_MIN, 3);
     o_bus_ticks   <= unsigned(s_ctl1_out(c_BT_TICKS_HI downto c_BT_TICKS_LO))
                      when unsigned(s_ctl1_out(c_BT_TICKS_HI downto c_BT_TICKS_LO))
                           >= s_ticks_min

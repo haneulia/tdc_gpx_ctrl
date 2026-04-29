@@ -148,6 +148,7 @@ entity tdc_gpx_chip_ctrl is
         o_bus_req_wdata     : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         o_bus_oen_permanent : out std_logic;
         o_bus_req_burst     : out std_logic;          -- '1' = back-to-back burst read
+        o_bus_clk_div_snap  : out unsigned(5 downto 0);  -- bus_clk_div snapshot for bus_phy
         o_bus_ticks_snap    : out unsigned(2 downto 0);  -- bus_ticks snapshot for bus_phy
 
         -- bus_phy AXI-Stream slave (response): 32-bit tdata, 8-bit tuser
@@ -989,6 +990,7 @@ begin
     -- Output assignments
     -- =========================================================================
     o_tick_en        <= s_tick_en_r;
+    o_bus_clk_div_snap <= s_bus_clk_div_snap_r;
     o_bus_ticks_snap <= s_bus_ticks_snap_r;
     o_puresn         <= s_init_puresn;
     o_alutrigger     <= s_run_alutrigger;

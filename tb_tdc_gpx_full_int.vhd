@@ -567,11 +567,11 @@ begin
     -- =========================================================================
     u_enc : entity work.enc_top
         generic map (
-            g_CPR      => 65536,
-            g_DIR      => '0',
-            g_TICKS_LO => 10,
-            g_TICKS_HI => 10,
-            g_HI_COUNT => 0
+            g_CPR       => C_MD_CPR, 
+            g_DIR       => '0',
+            g_TICKS_LO  => C_ENC_TICKS_LO, 
+            g_TICKS_HI  => C_ENC_TICKS_HI,
+            g_HI_COUNT  => C_ENC_HI_COUNT
         )
         port map (
             i_clk           => clk,
@@ -599,7 +599,24 @@ begin
     -- =========================================================================
     u_md : entity work.motor_decoder_top
         generic map (
-            has_irq => true
+            has_irq         => true, 
+            g_CPR           => C_MD_CPR, 
+            g_DIR           => '0',
+            g_TICKS_LO      => C_MD_TICKS_LO, 
+            g_TICKS_HI      => C_MD_TICKS_HI,
+            g_HI_COUNT      => C_MD_HI_COUNT, 
+            g_N_FACES       => C_N_FACES,
+            g_TOTAL_STATES  => C_MD_TOTAL_STATES,
+            g_FACE_CENTER_0 => C_MD_FACE_CENTER_0, 
+            g_FACE_CENTER_1 => C_MD_FACE_CENTER_1,
+            g_FACE_CENTER_2 => C_MD_FACE_CENTER_2, 
+            g_FACE_CENTER_3 => C_MD_FACE_CENTER_3,
+            g_FACE_CENTER_4 => C_MD_FACE_CENTER_4,
+            g_FACE_HALF_0   => C_MD_FACE_HALF_ST, 
+            g_FACE_HALF_1   => C_MD_FACE_HALF_ST,
+            g_FACE_HALF_2   => C_MD_FACE_HALF_ST, 
+            g_FACE_HALF_3   => C_MD_FACE_HALF_ST,
+            g_FACE_HALF_4   => C_MD_FACE_HALF_ST
         )
         port map (
             s_axi_aclk      => clk,

@@ -13,7 +13,7 @@
 --     bus_phy x4     : TDC-GPX bus physical layer (IOBUF + timing FSM)
 --     sk_brsp x4     : skid buffer bus_phy -> chip_ctrl (40b)
 --     chip_ctrl x4   : chip FSM coordinator (powerup/cfg/arm/capture/drain)
---     raw_cdc x4     : xpm_fifo_async CDC chip_ctrl -> decode_pipe (40b)
+--     raw_cdc x4     : optional xpm_fifo_async chip_ctrl -> decode_pipe (40b)
 --
 --   Config merging: pipeline fields from i_cfg_pipeline, chip fields from
 --   csr_chip outputs.  Merged config drives stop_decode and chip_ctrl.
@@ -22,7 +22,8 @@
 --   i_axis_aclk  : AXI-Stream processing domain (150 MHz)
 --   i_tdc_clk    : TDC-GPX bus control domain (200 MHz)
 --                  Drives bus_phy, sk_brsp, chip_ctrl.
---                  raw_cdc (xpm_fifo_async) crosses TDC -> AXI-Stream.
+--                  raw_cdc (xpm_fifo_async) crosses TDC -> AXI-Stream when
+--                  g_STREAM_CLK_MODE="ASYNC"; "SYNC" bypasses this FIFO.
 --   s_axi_aclk   : AXI4-Lite PS domain
 --
 -- Reset-domain map (Round 6 C1):
@@ -62,6 +63,9 @@ entity tdc_gpx_config_ctrl is
         g_POWERUP_CLKS    : positive := 48;
         g_RECOVERY_CLKS   : positive := 8;
         g_ALU_PULSE_CLKS  : positive := 4;
+        g_OEN_MODE        : string   := "DYNAMIC_CONNECTED";
+        g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
+        g_STREAM_CLK_MODE : string   := "ASYNC"; -- "ASYNC" uses raw_cdc, "SYNC" bypasses it
         g_STOP_EVT_DWIDTH : natural := 32
     );
     port (
@@ -337,6 +341,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_bus_req_wdata   : t_slv28_array;
     signal s_bus_oen_perm    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_clk_div_snap : t_u6_array;
     signal s_bus_ticks_snap  : t_u3_array;
     signal s_bus_busy           : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_bus_rsp_pending_raw : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -690,6 +695,12 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_exp2_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
 
 begin
+
+    -- synthesis translate_off
+    assert g_STREAM_CLK_MODE = "ASYNC" or g_STREAM_CLK_MODE = "SYNC"
+        report "config_ctrl: unsupported g_STREAM_CLK_MODE"
+        severity failure;
+    -- synthesis translate_on
 
     -- =========================================================================
     -- TDC-domain reset synchronizer (Round 5 #8)
@@ -1444,11 +1455,16 @@ begin
 
         -- ----- bus_phy: physical bus timing FSM + IOBUF + 2-FF sync -----
         u_bus_phy : entity work.tdc_gpx_bus_phy
+            generic map (
+                g_OEN_MODE                 => g_OEN_MODE,
+                g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS
+            )
             port map (
                 i_clk           => i_tdc_clk,
                 i_rst_n         => s_tdc_aresetn,
                 i_tick_en       => s_tick_en(i),
                 i_bus_ticks     => s_bus_ticks_snap(i),
+                i_bus_clk_div   => s_bus_clk_div_snap(i),
                 i_req_valid     => s_bus_req_valid(i),
                 i_req_rw        => s_bus_req_rw(i),
                 i_req_addr      => s_bus_req_addr(i),
@@ -1754,6 +1770,7 @@ begin
                 o_bus_req_wdata     => s_bus_req_wdata(i),
                 o_bus_oen_permanent => s_bus_oen_perm(i),
                 o_bus_req_burst     => s_bus_req_burst(i),
+                o_bus_clk_div_snap  => s_bus_clk_div_snap(i),
                 o_bus_ticks_snap    => s_bus_ticks_snap(i),
                 i_s_axis_tvalid     => s_brsp_sk_tvalid(i),
                 i_s_axis_tdata      => s_brsp_sk_tdata(i),
@@ -1800,86 +1817,117 @@ begin
                 o_drain_done_faulted   => s_drain_done_faulted(i)
             );
 
-        -- ----- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk) -----
-        -- Replaces skid buffer with async FIFO for clock-domain crossing.
-        -- Write side: TDC clock (i_tdc_clk), read side: AXI-Stream (i_axis_aclk).
-        s_raw_axis_tready(i) <= not s_raw_cdc_full(i);
-        s_sk_raw_tvalid(i)   <= not s_raw_cdc_empty(i);
-
-        -- Round 6 A1: stretch 1-clk soft_reset pulses into a multi-cycle
-        -- reset so xpm_fifo_async can drop any stale beats left from the
-        -- previous shot. Without this, post-soft_reset traffic into cell_pipe
-        -- could start with previous-shot residue (the consumer FSMs cannot
-        -- distinguish a stale drain_done from a fresh one).
-        p_raw_fifo_rst : process(i_tdc_clk)
+        -- ----- chip_ctrl raw stream -> decode_pipe clock strategy -----
+        gen_raw_sync : if g_STREAM_CLK_MODE = "SYNC" generate
         begin
-            if rising_edge(i_tdc_clk) then
-                if s_tdc_aresetn = '0' then
-                    s_raw_fifo_rst_cnt_r(i) <= (others => '0');
-                elsif s_cmd_soft_reset_tdc = '1'
-                   or s_err_cmd_soft_reset_tdc(i) = '1' then
-                    s_raw_fifo_rst_cnt_r(i) <=
-                        to_unsigned(c_RAW_FIFO_RST_CLKS, s_raw_fifo_rst_cnt_r(i)'length);
-                elsif s_raw_fifo_rst_cnt_r(i) /= 0 then
-                    s_raw_fifo_rst_cnt_r(i) <= s_raw_fifo_rst_cnt_r(i) - 1;
+            -- Contract: i_tdc_clk and i_axis_aclk are the same clock or a
+            -- timing-constrained synchronous clock pair.
+            s_raw_axis_tready(i) <= i_raw_sk_tready(i);
+            s_sk_raw_tvalid(i)   <= s_raw_axis_tvalid(i);
+            s_sk_raw_tdata(i)    <= s_raw_axis_tdata(i);
+            s_sk_raw_tuser(i)    <= s_raw_axis_tuser(i);
+            s_raw_cdc_full(i)    <= '0';
+            s_raw_cdc_empty(i)   <= not s_raw_axis_tvalid(i);
+            s_raw_fifo_rst(i)    <= '0';
+        end generate gen_raw_sync;
+
+        gen_raw_async : if g_STREAM_CLK_MODE = "ASYNC" generate
+        begin
+            -- CDC FIFO: chip_ctrl (TDC clk) -> decode_pipe (AXI-S clk).
+            -- Write side: TDC clock (i_tdc_clk), read side: AXI-Stream (i_axis_aclk).
+            s_raw_axis_tready(i) <= not s_raw_cdc_full(i);
+            s_sk_raw_tvalid(i)   <= not s_raw_cdc_empty(i);
+
+            -- Round 6 A1: stretch 1-clk soft_reset pulses into a multi-cycle
+            -- reset so xpm_fifo_async can drop any stale beats left from the
+            -- previous shot. Without this, post-soft_reset traffic into cell_pipe
+            -- could start with previous-shot residue (the consumer FSMs cannot
+            -- distinguish a stale drain_done from a fresh one).
+            p_raw_fifo_rst : process(i_tdc_clk)
+            begin
+                if rising_edge(i_tdc_clk) then
+                    if s_tdc_aresetn = '0' then
+                        s_raw_fifo_rst_cnt_r(i) <= (others => '0');
+                    elsif s_cmd_soft_reset_tdc = '1'
+                       or s_err_cmd_soft_reset_tdc(i) = '1' then
+                        s_raw_fifo_rst_cnt_r(i) <=
+                            to_unsigned(c_RAW_FIFO_RST_CLKS, s_raw_fifo_rst_cnt_r(i)'length);
+                    elsif s_raw_fifo_rst_cnt_r(i) /= 0 then
+                        s_raw_fifo_rst_cnt_r(i) <= s_raw_fifo_rst_cnt_r(i) - 1;
+                    end if;
                 end if;
-            end if;
-        end process p_raw_fifo_rst;
+            end process p_raw_fifo_rst;
 
-        -- Round 7 B-2: use s_tdc_aresetn (synchronized) instead of raw
-        -- i_axis_aresetn in this combinational gate. The stretcher counter
-        -- already lives in TDC domain; mixing an AXI-domain async reset
-        -- into the same expression created an unnecessary CDC boundary.
-        s_raw_fifo_rst(i) <= '1' when s_raw_fifo_rst_cnt_r(i) /= 0
-                                   or s_tdc_aresetn = '0'
-                             else '0';
+            -- Round 7 B-2: use s_tdc_aresetn (synchronized) instead of raw
+            -- i_axis_aresetn in this combinational gate. The stretcher counter
+            -- already lives in TDC domain; mixing an AXI-domain async reset
+            -- into the same expression created an unnecessary CDC boundary.
+            s_raw_fifo_rst(i) <= '1' when s_raw_fifo_rst_cnt_r(i) /= 0
+                                       or s_tdc_aresetn = '0'
+                                 else '0';
 
-        u_raw_cdc : xpm_fifo_async
-            generic map (
-                CDC_SYNC_STAGES  => 2,
-                FIFO_MEMORY_TYPE => "distributed",
-                FIFO_READ_LATENCY => 0,
-                FIFO_WRITE_DEPTH => 16,
-                READ_DATA_WIDTH  => 40,
-                READ_MODE        => "fwft",
-                WRITE_DATA_WIDTH => 40
-            )
-            port map (
-                -- Write side (TDC clock domain)
-                wr_clk        => i_tdc_clk,
-                wr_en         => s_raw_axis_tvalid(i) and not s_raw_cdc_full(i),
-                din           => s_raw_axis_tdata(i) & s_raw_axis_tuser(i),
-                full          => s_raw_cdc_full(i),
-                -- Read side (AXI-Stream clock domain)
-                rd_clk        => i_axis_aclk,
-                rd_en         => not s_raw_cdc_empty(i) and i_raw_sk_tready(i),
-                dout(39 downto 8) => s_sk_raw_tdata(i),
-                dout(7 downto 0)  => s_sk_raw_tuser(i),
-                empty         => s_raw_cdc_empty(i),
-                -- Reset (active-high, synchronized internally by XPM)
-                -- Round 6 A1: stretched to include soft_reset pulses so
-                -- stale beats from the previous shot don't survive a reset.
-                rst           => s_raw_fifo_rst(i),
-                wr_rst_busy   => open,
-                rd_rst_busy   => open,
-                -- Unused status / ECC ports
-                almost_empty  => open,
-                almost_full   => open,
-                data_valid    => open,
-                dbiterr       => open,
-                overflow      => open,
-                prog_empty    => open,
-                prog_full     => open,
-                rd_data_count => open,
-                sbiterr       => open,
-                underflow     => open,
-                wr_ack        => open,
-                wr_data_count => open,
-                -- Unused inputs
-                sleep         => '0',
-                injectdbiterr => '0',
-                injectsbiterr => '0'
-            );
+            u_raw_cdc : xpm_fifo_async
+                generic map (
+                    CDC_SYNC_STAGES  => 2,
+                    FIFO_MEMORY_TYPE => "distributed",
+                    FIFO_READ_LATENCY => 0,
+                    FIFO_WRITE_DEPTH => 16,
+                    READ_DATA_WIDTH  => 40,
+                    READ_MODE        => "fwft",
+                    WRITE_DATA_WIDTH => 40
+                )
+                port map (
+                    -- Write side (TDC clock domain)
+                    wr_clk        => i_tdc_clk,
+                    wr_en         => s_raw_axis_tvalid(i) and not s_raw_cdc_full(i),
+                    din           => s_raw_axis_tdata(i) & s_raw_axis_tuser(i),
+                    full          => s_raw_cdc_full(i),
+                    -- Read side (AXI-Stream clock domain)
+                    rd_clk        => i_axis_aclk,
+                    rd_en         => not s_raw_cdc_empty(i) and i_raw_sk_tready(i),
+                    dout(39 downto 8) => s_sk_raw_tdata(i),
+                    dout(7 downto 0)  => s_sk_raw_tuser(i),
+                    empty         => s_raw_cdc_empty(i),
+                    -- Reset (active-high, synchronized internally by XPM)
+                    -- Round 6 A1: stretched to include soft_reset pulses so
+                    -- stale beats from the previous shot don't survive a reset.
+                    rst           => s_raw_fifo_rst(i),
+                    wr_rst_busy   => open,
+                    rd_rst_busy   => open,
+                    -- Unused status / ECC ports
+                    almost_empty  => open,
+                    almost_full   => open,
+                    data_valid    => open,
+                    dbiterr       => open,
+                    overflow      => open,
+                    prog_empty    => open,
+                    prog_full     => open,
+                    rd_data_count => open,
+                    sbiterr       => open,
+                    underflow     => open,
+                    wr_ack        => open,
+                    wr_data_count => open,
+                    -- Unused inputs
+                    sleep         => '0',
+                    injectdbiterr => '0',
+                    injectsbiterr => '0'
+                );
+
+            -- =================================================================
+            -- ASYNC FIFO generate marker (sim-only, Plan v006 / P-C01-V005-01)
+            -- chip 0 에서만 1회 emit. concurrent assertion 형태이므로 generate
+            -- body에 그대로 합법. severity note 라 simulation은 중지하지 않음.
+            -- repo 스타일 일관성을 위해 nested generate에 begin 명시.
+            -- =================================================================
+            -- synthesis translate_off
+            gen_async_marker : if i = 0 generate
+            begin
+                assert false
+                    report "ASYNC raw_cdc FIFO generate active"
+                    severity note;
+            end generate gen_async_marker;
+            -- synthesis translate_on
+        end generate gen_raw_async;
 
     end generate gen_chip;
 

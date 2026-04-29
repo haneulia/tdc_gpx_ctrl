@@ -187,6 +187,7 @@ begin
             i_rst_n         => s_rst_n,
             i_tick_en       => s_tick_en,
             i_bus_ticks     => s_bus_ticks,
+            i_bus_clk_div   => to_unsigned(s_bus_clk_div, 6),
             i_req_valid     => s_req_valid,
             i_req_rw        => s_req_rw,
             i_req_addr      => s_req_addr,

@@ -190,6 +190,8 @@ package tdc_gpx_pkg is
         of unsigned(1 downto 0);
     type t_u3_array       is array(0 to c_N_CHIPS - 1)
         of unsigned(2 downto 0);
+    type t_u6_array       is array(0 to c_N_CHIPS - 1)
+        of unsigned(5 downto 0);
     type t_shot_seq_array is array(0 to c_N_CHIPS - 1)
         of unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     type t_raw_hit_array  is array(0 to c_N_CHIPS - 1)
@@ -257,7 +259,7 @@ package tdc_gpx_pkg is
         stops_per_chip      => to_unsigned(8, 4),
         n_drain_cap         => (others => '0'),         -- unlimited
         stopdis_override    => (others => '0'),
-        bus_clk_div         => to_unsigned(2, 6),  -- min=2 per review/datasheet
+        bus_clk_div         => to_unsigned(2, 6),  -- safe default; min legal div is 1
         bus_ticks           => to_unsigned(5, 3),
         max_range_clks      => to_unsigned(267, 16),    -- ~200m @200MHz
         cols_per_face       => to_unsigned(2400, 16),
