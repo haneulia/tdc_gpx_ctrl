@@ -409,3 +409,86 @@ Plan v006 section 4 단일안 채택, 다운그레이드 조건 모두 통과:
 | 본 v005의 핵심 변경 | (i) 통합 entrypoint `INTEGRATED EXIT CODE` echo + transcript 보존, (ii) `--negative` 인자 transcript 분기 + Windows-safe TS, (iii) `C01_FORCE_NEGATIVE_STAGE1` env hook 영구 삽입, (iv) `gen_async_marker` (concurrent assertion + repo style begin) 영구 RTL marker, (v) ASYNC clean elab evidence (Primary-A), (vi) Negative test 실제 실행 + artifact 보존, (vii) closure 문구 단일안 채택 |
 | 판단 변화 | R-C01-V004-01..03, R-C01-CL-01..03, R-C01-V003-01..03 모두 닫힘. P-C01-V005-01..03은 Plan v006에 본문 반영되어 본 v005 결과로 닫힘. 다운그레이드 조건 모두 통과 → closure 단일안 채택. F-C01-V01~V07 기능 finding은 본 사이클 범위 밖이므로 변동 없음. |
 | 추적 근거 | section 11/12 표 + transcript line 직접 인용 |
+
+---
+
+## 14. Code_Verify_Review v005 닫힘 확인 (2026-04-29 19:20)
+
+본 v005 결과 보고서는 사용자 review (`C01_GPX_Bus_Read_Code_Verify_Review_20260429_v005.md`, 2026-04-29 19:18 작성)로 검토되었으며, 다음 결론으로 사이클이 완전히 닫혔다.
+
+### 14.1 Review 결론
+
+| 항목 | 사용자 판단 |
+|---|---|
+| 신규 blocking finding | **없음** |
+| v005 승인 여부 | **승인** |
+| C01 closure package | **닫힘** (기능 + evidence 추적성 양쪽) |
+| C02 진입 가능성 | **가능** |
+
+### 14.2 Review가 직접 인용한 evidence (사용자 검증)
+
+| 항목 | 기대 | 사용자 확인 위치 |
+|---|---|---|
+| Positive INTEGRATED EXIT CODE = 0 | 보존 | `tmp/c01_verify/run_c01_regression.log:66` |
+| Positive Stage 1 `RESULTS: 4 ok, 0 failed` | 보존 | 동상 line 27 |
+| Positive Stage 2 SYNC+ASYNC 2 pass | 보존 | 동상 line 54 |
+| Positive Stage 3 CSR clamp `cases=12` | 보존 | 동상 line 60 + `sim_tb_tdc_gpx_csr_chip_clamp.log:127` |
+| Negative 별도 transcript | 보존 | `tmp/c01_verify/run_c01_regression_negative_20260429T100450Z.log` |
+| Negative `RESULTS: 4 ok, 1 failed` + forced marker | 보존 | 동상 line 27-28 |
+| Negative INTEGRATED EXIT CODE = 1 | 보존 | 동상 line 67 |
+| ASYNC Primary-A (`xpm_fifo_async`) | 1 match | `elab_tb_tdc_gpx_config_ctrl_ASYNC_clean.log:69` |
+| ASYNC Primary-B (RTL marker) | ASYNC=1, SYNC=0 | `sim_tb_tdc_gpx_config_ctrl_ASYNC.log:29` |
+| `xvhdl` ERROR 0건 | 0건 | `tdc_gpx_ctrl.sim/sim_1/behav/xsim/__c01_all_xvhdl.log` |
+
+### 14.3 Review의 코드 보강 검증 결과
+
+| 파일 | 사용자 검증 |
+|---|---|
+| `scripts/run_c01_regression.sh` | `--negative` 분기 + Windows-safe TS + `INTEGRATED EXIT CODE` echo + `exit ${RC_FINAL}` 모두 PASS |
+| `tmp/c01_verify/run_regression.sh` | `C01_FORCE_NEGATIVE_STAGE1` hook이 summary 직전에 정상 작동 PASS |
+| `tdc_gpx_config_ctrl.vhd` | `gen_async_marker` 형태 + `synthesis translate_off/on` 보호 PASS, 기능 RTL/합성 영향 0 인정 |
+
+### 14.4 Review의 로그 스캔 결과
+
+- 기능 실패 markers (`ERROR:`, `severity failure`, `RUNTIME ERROR`) **0건** — review가 직접 grep 확인.
+- 의도된 warning/note (allow-list 4건)만 발견 — section 6 expected note 표와 일치.
+- `add_c01_tb.log`의 CRITICAL WARNING은 이전 사이클의 별도 산출물로 v005 통합 회귀와 무관함을 사용자가 명시.
+
+### 14.5 Finding 사이클 닫힘 표
+
+| Finding | 닫힘 인정 |
+|---|---|
+| R-C01-V004-01 / R-C01-CL-02 (EXIT CODE / negative artifact) | ✓ |
+| R-C01-V004-02 / R-C01-CL-03 (ASYNC FIFO evidence) | ✓ |
+| R-C01-V004-03 (timestamp 정정) | ✓ |
+| P-C01-V005-01 (nested generate `begin`) | ✓ |
+| P-C01-V005-02 (PowerShell wrapper cwd) | ✓ |
+| P-C01-V005-03 (expected note 표) | ✓ |
+
+신규 finding: **없음**. C01 closure evidence package + 운영 사이클 모두 닫힘.
+
+### 14.6 Closure 문구 인정
+
+사용자 review가 v005의 closure 문구를 명시적으로 인정:
+
+> C01 보완 검증은 기능 PASS, 회귀 운영 코드 보강, negative test transcript/exit code 보존, ASYNC FIFO generate evidence 보강까지 완료되었습니다. v004 / v006 / Plan v001/v002/v003/v004/v005/v006 / 주요 lineage는 연결되어 있으며, C02 진입 가능합니다.
+
+### 14.7 v006 Protocol 정상 사이클 완료
+
+본 review v005 닫힘으로 운영 프로토콜 v006 section 5 “Review 처리 사이클 규칙”의 **첫 정상 사이클**이 완전히 종료되었다:
+
+```text
+Review (Code_Verify_Review v004 + Closure_Review v001)
+  -> Plan v002 -> Plan_Review v002
+  -> Plan v003 -> Plan_Review v003
+  -> Plan v004 -> Plan_Review v004
+  -> Plan v005 -> Plan_Review v005 (옵션 B 선택)
+  -> Plan v006 (사용자 승인 "오케이 진행해줘")
+  -> Code_Verify v005 (실행 결과)
+  -> Code_Verify_Review v005 (사이클 닫힘 인정)
+  -> 본 section 14 (closure 기록)
+```
+
+### 14.8 다음 단계
+
+C01 cluster 사이클 종료. **C02 `Chip_Acquisition`** 진입 가능 상태. C02 시작 시 본 v005 보고서의 인계 항목 (F-C01-V01/V02/V03/V04, F-C01-V06 잔여)을 검증 시나리오에 명시적으로 포함한다.
