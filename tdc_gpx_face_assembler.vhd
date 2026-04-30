@@ -328,7 +328,7 @@ architecture rtl of tdc_gpx_face_assembler is
 
 begin
 
-    assert (g_TDATA_WIDTH = 32) or (g_TDATA_WIDTH = 64) or (g_TDATA_WIDTH = 128)
+    assert fn_output_width_supported(g_TDATA_WIDTH)
         report "tdc_gpx_face_assembler: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
         severity failure;
 

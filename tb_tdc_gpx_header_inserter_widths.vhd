@@ -341,6 +341,11 @@ begin
 
     p_stim : process
     begin
+        assert fn_output_width_supported(32) report "32-bit output width should be supported" severity failure;
+        assert fn_output_width_supported(64) report "64-bit output width should be supported" severity failure;
+        assert fn_output_width_supported(128) report "128-bit output width should be supported" severity failure;
+        assert not fn_output_width_supported(256) report "256-bit output width is intentionally excluded" severity failure;
+
         wait for 10 * C_CLK_PERIOD;
         rst_n <= '1';
         wait until rising_edge(clk);

@@ -59,6 +59,7 @@ package tdc_gpx_pkg is
     constant c_META_BEAT_IDX        : natural := c_HIT_DATA_BEATS;                        -- 4
 
     -- Generic-width helper functions (for modules with g_TDATA_WIDTH)
+    function fn_output_width_supported(tdata_width : natural) return boolean;
     function fn_slots_per_beat(tdata_width : natural) return natural;
     function fn_hit_data_beats(tdata_width : natural) return natural;
     function fn_meta_beat_idx(tdata_width : natural) return natural;
@@ -740,33 +741,56 @@ package body tdc_gpx_pkg is
     -- =========================================================================
     -- Generic-width helper functions (32/64/128-bit output bus support)
     -- =========================================================================
+    function fn_output_width_supported(tdata_width : natural) return boolean is
+    begin
+        return (tdata_width = 32) or (tdata_width = 64) or (tdata_width = 128);
+    end function;
+
     function fn_slots_per_beat(tdata_width : natural) return natural is
     begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
         return tdata_width / c_HIT_SLOT_DATA_WIDTH;
     end function;
 
     function fn_hit_data_beats(tdata_width : natural) return natural is
     begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
         return fn_ceil_div(c_MAX_HITS_PER_STOP, fn_slots_per_beat(tdata_width));
     end function;
 
     function fn_meta_beat_idx(tdata_width : natural) return natural is
     begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
         return fn_hit_data_beats(tdata_width);
     end function;
 
     function fn_beats_per_cell(tdata_width : natural) return natural is
     begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
         return c_CELL_SIZE_BYTES / (tdata_width / 8);
     end function;
 
     function fn_hdr_prefix_beats(tdata_width : natural) return natural is
     begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
         return c_HDR_PREFIX_BYTES / (tdata_width / 8);
     end function;
 
     function fn_axis_keep_width(tdata_width : natural) return natural is
     begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
         return tdata_width / 8;
     end function;
 
@@ -779,6 +803,9 @@ package body tdc_gpx_pkg is
     function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural is
         variable v_hit_beats : natural;
     begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
         -- hit data beats = ceil(max_hits / slots_per_beat)
         --   32-bit TDATA: 32/17 = 1 slot/beat  → beats = max_hits + 1
         --   64-bit TDATA: 64/17 = 3 slots/beat → beats = ceil(max_hits/3) + 1
