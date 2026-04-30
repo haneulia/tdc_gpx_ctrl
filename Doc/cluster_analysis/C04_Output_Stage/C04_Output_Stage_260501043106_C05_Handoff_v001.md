@@ -1,5 +1,8 @@
 # C04 Output Stage -> C05 Top Sequencer/Status Handoff v001
 
+> Lineage Note - 2026-05-01 04:40:33 +09:00  
+> 이 v001 문서의 `C04 -> C05_Top_Sequencer_Status` 표기는 초기 `cluster_analysis_communication_plan_20260429_v001.md`의 번호 체계와 맞지 않는 것으로 확인되었다. 실제 다음 Cluster는 `C06_Control_Status_Integration`이며, 정정 반영 문서는 `Doc/cluster_analysis/C04_Output_Stage/C04_Output_Stage_260501044033_C06_Handoff_v002.md`이다. 반영 위치는 `1. 정정 사유`, `6. C06으로 넘기는 계약`, `7. C06 진입 범위`이다. 이 v001 문서는 삭제하지 않고 lineage 추적용으로 보존한다.
+
 - 생성 시간: `2026-05-01 04:31:06 +09:00`
 - 최종 수정 시간: `2026-05-01 04:35:07 +09:00`
 - 기준 문서: `Doc/TDC-GPX-Datasheet.pdf`

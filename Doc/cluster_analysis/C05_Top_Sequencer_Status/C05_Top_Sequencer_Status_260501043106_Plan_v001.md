@@ -5,6 +5,9 @@
 - 기준 문서: `Doc/TDC-GPX-Datasheet.pdf`
 - 입력 인계 문서: `Doc/cluster_analysis/C04_Output_Stage/C04_Output_Stage_260501043106_C05_Handoff_v001.md`
 - Cluster: `C05_Top_Sequencer_Status`
+
+> Lineage Note - 2026-05-01 04:40:33 +09:00  
+> 이 v001 문서는 기능적으로 top-level sequencing/status 분석 계획을 담고 있으나, 초기 `cluster_analysis_communication_plan_20260429_v001.md` 기준으로는 `C06_Control_Status_Integration`에 해당한다. 정식 승계 문서는 `Doc/cluster_analysis/C06_Control_Status_Integration/C06_Control_Status_Integration_260501044033_Plan_v001.md`이다. 반영 위치는 `1. C06 목적`, `2. 분석 대상과 제외 범위`, `7. Timing / Latency / Throughput / Pipeline / II 분석 계획`, `8. 검증 계획`이다. 이 v001 문서는 삭제하지 않고 superseded 문맥 추적용으로 보존한다.
 - 대상 RTL: `tdc_gpx_top.vhd`, `tdc_gpx_face_seq.vhd`, `tdc_gpx_status_agg.vhd`, downstream AXI4-Stream system contract
 
 ---
