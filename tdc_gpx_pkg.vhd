@@ -64,6 +64,7 @@ package tdc_gpx_pkg is
     function fn_meta_beat_idx(tdata_width : natural) return natural;
     function fn_beats_per_cell(tdata_width : natural) return natural;
     function fn_hdr_prefix_beats(tdata_width : natural) return natural;
+    function fn_axis_keep_width(tdata_width : natural) return natural;
 
     -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
     function fn_cell_size_rt(max_hits : natural) return natural;
@@ -154,7 +155,7 @@ package tdc_gpx_pkg is
 
     -- Header prefix (embedded in each VDMA line, 48 bytes fixed)
     constant c_HDR_PREFIX_BYTES     : natural := 48;
-    constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_TDATA_BYTES;  -- 12@32b, 6@64b
+    constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_TDATA_BYTES;  -- 12@32b, 6@64b, 3@128b via generics
 
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
@@ -698,7 +699,7 @@ package body tdc_gpx_pkg is
     end function;
 
     -- =========================================================================
-    -- Generic-width helper functions (32/64-bit output bus support)
+    -- Generic-width helper functions (32/64/128-bit output bus support)
     -- =========================================================================
     function fn_slots_per_beat(tdata_width : natural) return natural is
     begin
@@ -723,6 +724,11 @@ package body tdc_gpx_pkg is
     function fn_hdr_prefix_beats(tdata_width : natural) return natural is
     begin
         return c_HDR_PREFIX_BYTES / (tdata_width / 8);
+    end function;
+
+    function fn_axis_keep_width(tdata_width : natural) return natural is
+    begin
+        return tdata_width / 8;
     end function;
 
     -- Runtime cell size: same algorithm as fn_cell_size_bytes but with variable max_hits

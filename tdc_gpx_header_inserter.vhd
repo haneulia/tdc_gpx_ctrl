@@ -26,15 +26,17 @@
 --   No additional frame-level footer is needed.
 --
 -- Generics:
---   g_TDATA_WIDTH : 32 or 64 (output bus width)
+--   g_TDATA_WIDTH : 32, 64, or 128 (output bus width)
 --     32-bit: 12 beats × 4B = 48B header prefix
 --     64-bit:  6 beats × 8B = 48B header prefix (2 words packed per beat)
+--    128-bit:  3 beats ×16B = 48B header prefix (4 words packed per beat)
 --
 -- Header ROM pre-building:
 --   All 12 header words are pre-computed into s_hdr_rom_r at face_start.
 --   ST_PREFIX reads from this ROM by index (1 LUT depth), eliminating the
 --   12:1 case mux from the beat-generation critical path.
---   64-bit mode: 2 consecutive 32-bit words packed per beat via for-loop.
+--   Wider modes pack consecutive 32-bit words per beat via for-loop
+--   (2 words at 64-bit, 4 words at 128-bit).
 --
 --   Per-face flow:
 --     1. face_start -> latch snapshot + pre-build header ROM -> ST_PREFIX
@@ -89,7 +91,7 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_header_inserter is
     generic (
-        g_TDATA_WIDTH : natural := c_TDATA_WIDTH   -- 32 or 64
+        g_TDATA_WIDTH : natural := c_TDATA_WIDTH   -- 32, 64, or 128
     );
     port (
         i_clk               : in  std_logic;
@@ -123,6 +125,8 @@ entity tdc_gpx_header_inserter is
 
         -- AXI-Stream master (to downstream / CDC FIFO)
         o_m_axis_tdata      : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tkeep      : out std_logic_vector(g_TDATA_WIDTH/8 - 1 downto 0);
+        o_m_axis_tstrb      : out std_logic_vector(g_TDATA_WIDTH/8 - 1 downto 0);
         o_m_axis_tvalid     : out std_logic;
         o_m_axis_tlast      : out std_logic;
         o_m_axis_tuser      : out std_logic_vector(0 downto 0);   -- (0) = SOF
@@ -162,6 +166,7 @@ architecture rtl of tdc_gpx_header_inserter is
 
     -- Generic-derived constants
     constant c_G_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(g_TDATA_WIDTH);
+    constant c_G_TKEEP_WIDTH      : natural := fn_axis_keep_width(g_TDATA_WIDTH);
 
     -- Header ROM build: deferred by 1 cycle after face_start so that
     -- s_*_r signals are valid (VHDL signal semantics: same-edge latch
@@ -282,10 +287,21 @@ architecture rtl of tdc_gpx_header_inserter is
 
 begin
 
+    assert (g_TDATA_WIDTH = 32) or (g_TDATA_WIDTH = 64) or (g_TDATA_WIDTH = 128)
+        report "tdc_gpx_header_inserter: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
+
+    assert c_G_TKEEP_WIDTH * 8 = g_TDATA_WIDTH
+        report "tdc_gpx_header_inserter: g_TDATA_WIDTH must be byte aligned"
+        severity failure;
+
     -- =========================================================================
-    -- Output assignments (all registered)
+    -- Output assignments. Payload/control are registered; keep/strb follow
+    -- the registered valid flag and are full-width on every accepted beat.
     -- =========================================================================
     o_m_axis_tdata    <= s_out_tdata_r;
+    o_m_axis_tkeep    <= (others => '1') when s_out_tvalid_r = '1' else (others => '0');
+    o_m_axis_tstrb    <= (others => '1') when s_out_tvalid_r = '1' else (others => '0');
     o_m_axis_tvalid   <= s_out_tvalid_r;
     o_m_axis_tlast    <= s_out_tlast_r;
     o_m_axis_tuser(0) <= s_out_tuser_r;
@@ -456,6 +472,7 @@ begin
                         -- Header ROM: 12 × 32-bit words (48 bytes)
                         -- 32-bit mode: 1 word/beat, 12 beats
                         -- 64-bit mode: 2 words/beat, 6 beats
+                        -- 128-bit mode: 4 words/beat, 3 beats
                         --   beat N → word[2N+1](hi) | word[2N](lo)
                         -- ==============================================
                         if s_first_line_r = '1' then

@@ -31,7 +31,7 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_output_stage is
     generic (
-        g_OUTPUT_WIDTH   : natural := 32;   -- 32 or 64
+        g_OUTPUT_WIDTH   : natural := 32;   -- 32, 64, or 128
         g_ALU_PULSE_CLKS : natural := 4
     );
     port (
@@ -95,6 +95,8 @@ entity tdc_gpx_output_stage is
 
         -- VDMA output -- Rising (AXI-Stream)
         o_m_axis_tdata       : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        o_m_axis_tkeep       : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
+        o_m_axis_tstrb       : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
         o_m_axis_tvalid      : out std_logic;
         o_m_axis_tlast       : out std_logic;
         o_m_axis_tuser       : out std_logic_vector(0 downto 0);
@@ -102,6 +104,8 @@ entity tdc_gpx_output_stage is
 
         -- VDMA output -- Falling (AXI-Stream)
         o_m_axis_fall_tdata  : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        o_m_axis_fall_tkeep  : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
+        o_m_axis_fall_tstrb  : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
         o_m_axis_fall_tvalid : out std_logic;
         o_m_axis_fall_tlast  : out std_logic;
         o_m_axis_fall_tuser  : out std_logic_vector(0 downto 0);
@@ -208,6 +212,10 @@ architecture rtl of tdc_gpx_output_stage is
     signal s_abort_fall : std_logic;
 
 begin
+
+    assert (g_OUTPUT_WIDTH = 32) or (g_OUTPUT_WIDTH = 64) or (g_OUTPUT_WIDTH = 128)
+        report "tdc_gpx_output_stage: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
 
     -- Effective per-slope abort: global always aborts both; slope-specific
     -- aborts independently once Sprint 3 wires them.
@@ -423,6 +431,8 @@ begin
             i_s_axis_tlast      => s_face_buf_tlast,
             o_s_axis_tready     => s_face_buf_tready,
             o_m_axis_tdata      => o_m_axis_tdata,
+            o_m_axis_tkeep      => o_m_axis_tkeep,
+            o_m_axis_tstrb      => o_m_axis_tstrb,
             o_m_axis_tvalid     => o_m_axis_tvalid,
             o_m_axis_tlast      => o_m_axis_tlast,
             o_m_axis_tuser      => o_m_axis_tuser,
@@ -464,6 +474,8 @@ begin
             i_s_axis_tlast      => s_face_fall_buf_tlast,
             o_s_axis_tready     => s_face_fall_buf_tready,
             o_m_axis_tdata      => o_m_axis_fall_tdata,
+            o_m_axis_tkeep      => o_m_axis_fall_tkeep,
+            o_m_axis_tstrb      => o_m_axis_fall_tstrb,
             o_m_axis_tvalid     => o_m_axis_fall_tvalid,
             o_m_axis_tlast      => o_m_axis_fall_tlast,
             o_m_axis_tuser      => o_m_axis_fall_tuser,

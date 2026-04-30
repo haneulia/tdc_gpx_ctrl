@@ -80,6 +80,8 @@ architecture sim of tb_tdc_gpx_downstream is
 
     -- output AXI-Stream
     signal out_tdata       : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+    signal out_tkeep       : std_logic_vector(c_TDATA_WIDTH/8 - 1 downto 0);
+    signal out_tstrb       : std_logic_vector(c_TDATA_WIDTH/8 - 1 downto 0);
     signal out_tvalid      : std_logic;
     signal out_tlast       : std_logic;
     signal out_tuser       : std_logic_vector(0 downto 0);
@@ -174,6 +176,8 @@ begin
             i_s_axis_tlast      => face_tlast,
             o_s_axis_tready     => face_tready,
             o_m_axis_tdata      => out_tdata,
+            o_m_axis_tkeep      => out_tkeep,
+            o_m_axis_tstrb      => out_tstrb,
             o_m_axis_tvalid     => out_tvalid,
             o_m_axis_tlast      => out_tlast,
             o_m_axis_tuser      => out_tuser,
@@ -307,6 +311,12 @@ begin
             else
                 -- Output AXI-Stream beat
                 if out_tvalid = '1' and out_tready = '1' then
+                    assert out_tkeep = (out_tkeep'range => '1')
+                        report "AXIS tkeep must be all ones on accepted output beats"
+                        severity error;
+                    assert out_tstrb = (out_tstrb'range => '1')
+                        report "AXIS tstrb must be all ones on accepted output beats"
+                        severity error;
                     mon_total_beats <= mon_total_beats + 1;
 
                     -- SOF check

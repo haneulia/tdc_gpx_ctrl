@@ -9,7 +9,7 @@
 --   with error_fill=1.
 --
 -- Generics:
---   g_TDATA_WIDTH : 32 or 64 (output bus width, affects beats/cell)
+--   g_TDATA_WIDTH : 32, 64, or 128 (output bus width, affects beats/cell)
 --
 -- Input FIFOs:
 --   4× xpm_fifo_axis (Xilinx XPM, 16-deep, distributed RAM).
@@ -78,7 +78,7 @@ use work.tdc_gpx_pkg.all;
 entity tdc_gpx_face_assembler is
     generic (
         g_ALU_PULSE_CLKS     : natural := 4;
-        g_TDATA_WIDTH        : natural := c_TDATA_WIDTH   -- 32 or 64
+        g_TDATA_WIDTH        : natural := c_TDATA_WIDTH   -- 32, 64, or 128
     );
     port (
         i_clk                : in  std_logic;
@@ -327,6 +327,10 @@ architecture rtl of tdc_gpx_face_assembler is
     end function;
 
 begin
+
+    assert (g_TDATA_WIDTH = 32) or (g_TDATA_WIDTH = 64) or (g_TDATA_WIDTH = 128)
+        report "tdc_gpx_face_assembler: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
 
     -- Map individual tdata ports to internal array
     s_in_tdata_src(0) <= i_s_axis_tdata_0;

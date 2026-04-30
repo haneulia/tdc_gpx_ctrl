@@ -18,7 +18,7 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_cell_pipe is
     generic (
-        g_OUTPUT_WIDTH : natural := 32
+        g_OUTPUT_WIDTH : natural := 32  -- 32, 64, or 128
     );
     port (
         -- Clock / Reset
@@ -140,6 +140,10 @@ architecture rtl of tdc_gpx_cell_pipe is
     signal s_can_accept_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
 begin
+
+    assert (g_OUTPUT_WIDTH = 32) or (g_OUTPUT_WIDTH = 64) or (g_OUTPUT_WIDTH = 128)
+        report "tdc_gpx_cell_pipe: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
 
     ---------------------------------------------------------------------------
     -- Slope demux (REGISTERED, with tready backpressure)

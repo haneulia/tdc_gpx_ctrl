@@ -30,7 +30,7 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_face_seq is
     generic (
-        g_OUTPUT_WIDTH : natural := 32  -- 32 or 64 (for hsize/geometry calculation)
+        g_OUTPUT_WIDTH : natural := 32  -- 32, 64, or 128 (for hsize/geometry calculation)
     );
     port (
         i_clk                : in  std_logic;
@@ -181,6 +181,10 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_shot_raw_pulse : std_logic;
 
 begin
+
+    assert (g_OUTPUT_WIDTH = 32) or (g_OUTPUT_WIDTH = 64) or (g_OUTPUT_WIDTH = 128)
+        report "tdc_gpx_face_seq: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
 
     -- =========================================================================
     -- p_face_seq: face FSM

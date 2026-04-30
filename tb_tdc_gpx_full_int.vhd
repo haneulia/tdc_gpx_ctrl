@@ -38,7 +38,7 @@
 --   - motor_decoder : SIM_EN = 1                                  (CTL0[0])
 --   - laser_ctrl    : LASER_EN + STREAM_EN + minimal sched config
 --   - echo_receiver : SIM_EN = 1, multi-hit limit default
---   - tdc_gpx_top   : 500 m / 64 bit / cols=2 / stops=2 (same as top_int)
+--   - tdc_gpx_top   : 500 m / G_TDATA_WIDTH / cols=2 / stops=2 (same as top_int)
 --
 -- Scenario
 --   [S0] Reset
@@ -74,7 +74,7 @@ entity tb_tdc_gpx_full_int is
         G_AXIS_CLK_MHZ    : real    := 200.0;   -- common clock freq (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (meters)
         G_SIM_TARGET_M    : real    := 375.0;   -- TB photodiode target (m)
-        G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64)
+        G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;        -- faces per frame
@@ -198,6 +198,7 @@ architecture sim of tb_tdc_gpx_full_int is
 
     -- Output width + stop-event width (for sub-module generic override)
     constant C_OUTPUT_W   : natural := G_TDATA_WIDTH;
+    constant C_KEEP_W     : natural := fn_axis_keep_width(C_OUTPUT_W);
     constant C_STOP_DW    : natural := c_STOP_EVT_DATA_WIDTH;  -- 32 (from tdc_gpx_pkg)
 
     -- Echo-receiver geometry matches tdc_gpx_pkg (c_N_CHIPS=4, c_MAX_STOPS=8).
@@ -416,11 +417,15 @@ architecture sim of tb_tdc_gpx_full_int is
 
     -- VDMA sinks
     signal m_rise_tdata  : std_logic_vector(C_OUTPUT_W - 1 downto 0);
+    signal m_rise_tkeep  : std_logic_vector(C_KEEP_W - 1 downto 0);
+    signal m_rise_tstrb  : std_logic_vector(C_KEEP_W - 1 downto 0);
     signal m_rise_tvalid : std_logic;
     signal m_rise_tlast  : std_logic;
     signal m_rise_tuser  : std_logic_vector(0 downto 0);
     signal m_rise_tready : std_logic := '1';
     signal m_fall_tdata  : std_logic_vector(C_OUTPUT_W - 1 downto 0);
+    signal m_fall_tkeep  : std_logic_vector(C_KEEP_W - 1 downto 0);
+    signal m_fall_tstrb  : std_logic_vector(C_KEEP_W - 1 downto 0);
     signal m_fall_tvalid : std_logic;
     signal m_fall_tlast  : std_logic;
     signal m_fall_tuser  : std_logic_vector(0 downto 0);
@@ -890,11 +895,15 @@ begin
             i_tdc_irflag      => i_tdc_irflag,
             i_tdc_errflag     => i_tdc_errflag,
             o_m_axis_tdata    => m_rise_tdata,
+            o_m_axis_tkeep    => m_rise_tkeep,
+            o_m_axis_tstrb    => m_rise_tstrb,
             o_m_axis_tvalid   => m_rise_tvalid,
             o_m_axis_tlast    => m_rise_tlast,
             o_m_axis_tuser    => m_rise_tuser,
             i_m_axis_tready   => m_rise_tready,
             o_m_axis_fall_tdata  => m_fall_tdata,
+            o_m_axis_fall_tkeep  => m_fall_tkeep,
+            o_m_axis_fall_tstrb  => m_fall_tstrb,
             o_m_axis_fall_tvalid => m_fall_tvalid,
             o_m_axis_fall_tlast  => m_fall_tlast,
             o_m_axis_fall_tuser  => m_fall_tuser,
@@ -1232,12 +1241,24 @@ begin
                     mon_er_pulse_rise_any <= mon_er_pulse_rise_any + 1;
                 end if;
                 if m_rise_tvalid = '1' and m_rise_tready = '1' then
+                    assert m_rise_tkeep = (m_rise_tkeep'range => '1')
+                        report "full_int: rising tkeep must be all ones on accepted output beats"
+                        severity error;
+                    assert m_rise_tstrb = (m_rise_tstrb'range => '1')
+                        report "full_int: rising tstrb must be all ones on accepted output beats"
+                        severity error;
                     mon_td_rise_beats <= mon_td_rise_beats + 1;
                     if m_rise_tlast = '1' then
                         mon_td_rise_frame_end <= mon_td_rise_frame_end + 1;
                     end if;
                 end if;
                 if m_fall_tvalid = '1' and m_fall_tready = '1' then
+                    assert m_fall_tkeep = (m_fall_tkeep'range => '1')
+                        report "full_int: falling tkeep must be all ones on accepted output beats"
+                        severity error;
+                    assert m_fall_tstrb = (m_fall_tstrb'range => '1')
+                        report "full_int: falling tstrb must be all ones on accepted output beats"
+                        severity error;
                     mon_td_fall_beats <= mon_td_fall_beats + 1;
                     if m_fall_tlast = '1' then
                         mon_td_fall_frame_end <= mon_td_fall_frame_end + 1;

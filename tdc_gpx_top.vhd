@@ -33,7 +33,7 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_top is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
-        g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32 or 64)
+        g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32, 64, or 128)
         g_POWERUP_CLKS    : positive := 48;
         g_RECOVERY_CLKS   : positive := 8;
         g_ALU_PULSE_CLKS  : positive := 4;
@@ -144,6 +144,8 @@ entity tdc_gpx_top is
 
         -- AXI-Stream master output: RISING pipeline (to CDC FIFO / VDMA)
         o_m_axis_tdata   : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        o_m_axis_tkeep   : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
+        o_m_axis_tstrb   : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
         o_m_axis_tvalid  : out std_logic;
         o_m_axis_tlast   : out std_logic;
         o_m_axis_tuser   : out std_logic_vector(0 downto 0);
@@ -151,6 +153,8 @@ entity tdc_gpx_top is
 
         -- AXI-Stream master output: FALLING pipeline (to CDC FIFO / VDMA)
         o_m_axis_fall_tdata  : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        o_m_axis_fall_tkeep  : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
+        o_m_axis_fall_tstrb  : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
         o_m_axis_fall_tvalid : out std_logic;
         o_m_axis_fall_tlast  : out std_logic;
         o_m_axis_fall_tuser  : out std_logic_vector(0 downto 0);
@@ -400,6 +404,10 @@ architecture rtl of tdc_gpx_top is
     signal s_err_cause     : std_logic_vector(2 downto 0);
 
 begin
+
+    assert (g_OUTPUT_WIDTH = 32) or (g_OUTPUT_WIDTH = 64) or (g_OUTPUT_WIDTH = 128)
+        report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
 
     -- =========================================================================
     -- Chip error merged (concurrent glue)
@@ -767,12 +775,16 @@ begin
             i_k_dist_fixed       => i_k_dist_fixed,
             -- VDMA output: Rising
             o_m_axis_tdata       => o_m_axis_tdata,
+            o_m_axis_tkeep       => o_m_axis_tkeep,
+            o_m_axis_tstrb       => o_m_axis_tstrb,
             o_m_axis_tvalid      => o_m_axis_tvalid,
             o_m_axis_tlast       => o_m_axis_tlast,
             o_m_axis_tuser       => o_m_axis_tuser,
             i_m_axis_tready      => i_m_axis_tready,
             -- VDMA output: Falling
             o_m_axis_fall_tdata  => o_m_axis_fall_tdata,
+            o_m_axis_fall_tkeep  => o_m_axis_fall_tkeep,
+            o_m_axis_fall_tstrb  => o_m_axis_fall_tstrb,
             o_m_axis_fall_tvalid => o_m_axis_fall_tvalid,
             o_m_axis_fall_tlast  => o_m_axis_fall_tlast,
             o_m_axis_fall_tuser  => o_m_axis_fall_tuser,

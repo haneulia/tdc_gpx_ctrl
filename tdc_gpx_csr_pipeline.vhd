@@ -62,7 +62,7 @@ use xpm.vcomponents.all;
 entity tdc_gpx_csr_pipeline is
     generic (
         g_HW_VERSION   : std_logic_vector(31 downto 0) := x"00010000";
-        g_OUTPUT_WIDTH : natural := 32    -- 32 or 64 (for HW_CONFIG TDATA width report)
+        g_OUTPUT_WIDTH : natural := 32    -- 32, 64, or 128 (for HW_CONFIG TDATA width report)
     );
     port (
         -- AXI4-Lite clock / reset
@@ -268,6 +268,10 @@ architecture rtl of tdc_gpx_csr_pipeline is
     signal s_lsr_valid_r : std_logic := '0';
 
 begin
+
+    assert (g_OUTPUT_WIDTH = 32) or (g_OUTPUT_WIDTH = 64) or (g_OUTPUT_WIDTH = 128)
+        report "tdc_gpx_csr_pipeline: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
 
     -- =========================================================================
     -- [1] HW_CONFIG constant assembly

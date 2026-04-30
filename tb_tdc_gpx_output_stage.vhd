@@ -9,7 +9,7 @@
 --   and frame_done asserts.
 --
 -- Configuration:
---   g_OUTPUT_WIDTH   = 64
+--   G_OUTPUT_WIDTH   = 64 default, run also with 32 and 128 for Phase A
 --   g_ALU_PULSE_CLKS = 4
 --   1 active chip (mask "0001"), 2 stops, 2 rows
 --
@@ -24,6 +24,9 @@ use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
 
 entity tb_tdc_gpx_output_stage is
+    generic (
+        G_OUTPUT_WIDTH : natural := 64
+    );
 end entity tb_tdc_gpx_output_stage;
 
 architecture sim of tb_tdc_gpx_output_stage is
@@ -31,12 +34,13 @@ architecture sim of tb_tdc_gpx_output_stage is
     -- =========================================================================
     -- Constants
     -- =========================================================================
-    constant C_OUTPUT_WIDTH   : natural := 64;
+    constant C_OUTPUT_WIDTH   : natural := G_OUTPUT_WIDTH;
     constant C_ALU_PULSE_CLKS : natural := 4;
     constant C_CLK_PERIOD     : time    := 5 ns;   -- 200 MHz
     constant C_WATCHDOG       : time    := 50 us;
+    constant C_KEEP_WIDTH     : natural := fn_axis_keep_width(C_OUTPUT_WIDTH);
 
-    -- Beats per cell at 64-bit width: c_CELL_SIZE_BYTES / 8 = 32/8 = 4
+    -- Beats per cell follows the selected AXI4-Stream data width.
     constant C_BEATS_PER_CELL : natural := fn_beats_per_cell(C_OUTPUT_WIDTH);
     constant C_STOPS          : natural := 2;
     constant C_TOTAL_BEATS    : natural := C_STOPS * C_BEATS_PER_CELL;  -- 2*4 = 8
@@ -98,6 +102,8 @@ architecture sim of tb_tdc_gpx_output_stage is
 
     -- VDMA rise output
     signal m_axis_tdata       : std_logic_vector(C_OUTPUT_WIDTH - 1 downto 0);
+    signal m_axis_tkeep       : std_logic_vector(C_KEEP_WIDTH - 1 downto 0);
+    signal m_axis_tstrb       : std_logic_vector(C_KEEP_WIDTH - 1 downto 0);
     signal m_axis_tvalid      : std_logic;
     signal m_axis_tlast       : std_logic;
     signal m_axis_tuser       : std_logic_vector(0 downto 0);
@@ -105,6 +111,8 @@ architecture sim of tb_tdc_gpx_output_stage is
 
     -- VDMA fall output
     signal m_axis_fall_tdata  : std_logic_vector(C_OUTPUT_WIDTH - 1 downto 0);
+    signal m_axis_fall_tkeep  : std_logic_vector(C_KEEP_WIDTH - 1 downto 0);
+    signal m_axis_fall_tstrb  : std_logic_vector(C_KEEP_WIDTH - 1 downto 0);
     signal m_axis_fall_tvalid : std_logic;
     signal m_axis_fall_tlast  : std_logic;
     signal m_axis_fall_tuser  : std_logic_vector(0 downto 0);
@@ -160,6 +168,8 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal s_row_faulted_fall_cnt : natural := 0;
     signal s_frame_faulted_rise_cnt : natural := 0;
     signal s_frame_faulted_fall_cnt : natural := 0;
+    signal s_keep_ok            : boolean := true;
+    signal s_fall_keep_ok       : boolean := true;
 
 begin
 
@@ -221,12 +231,16 @@ begin
             i_k_dist_fixed         => k_dist_fixed,
             -- VDMA rise output
             o_m_axis_tdata         => m_axis_tdata,
+            o_m_axis_tkeep         => m_axis_tkeep,
+            o_m_axis_tstrb         => m_axis_tstrb,
             o_m_axis_tvalid        => m_axis_tvalid,
             o_m_axis_tlast         => m_axis_tlast,
             o_m_axis_tuser         => m_axis_tuser,
             i_m_axis_tready        => m_axis_tready,
             -- VDMA fall output
             o_m_axis_fall_tdata    => m_axis_fall_tdata,
+            o_m_axis_fall_tkeep    => m_axis_fall_tkeep,
+            o_m_axis_fall_tstrb    => m_axis_fall_tstrb,
             o_m_axis_fall_tvalid   => m_axis_fall_tvalid,
             o_m_axis_fall_tlast    => m_axis_fall_tlast,
             o_m_axis_fall_tuser    => m_axis_fall_tuser,
@@ -291,6 +305,10 @@ begin
         if rising_edge(clk) then
             if m_axis_tvalid = '1' and m_axis_tready = '1' then
                 v_out_beat_cnt <= v_out_beat_cnt + 1;
+                if m_axis_tkeep /= (m_axis_tkeep'range => '1')
+                   or m_axis_tstrb /= (m_axis_tstrb'range => '1') then
+                    s_keep_ok <= false;
+                end if;
                 if m_axis_tuser(0) = '1' then
                     v_sof_seen <= true;
                     s_sof_count <= s_sof_count + 1;
@@ -302,6 +320,10 @@ begin
             -- Fall-side monitor (#22)
             if m_axis_fall_tvalid = '1' and m_axis_fall_tready = '1' then
                 v_out_fall_beat_cnt <= v_out_fall_beat_cnt + 1;
+                if m_axis_fall_tkeep /= (m_axis_fall_tkeep'range => '1')
+                   or m_axis_fall_tstrb /= (m_axis_fall_tstrb'range => '1') then
+                    s_fall_keep_ok <= false;
+                end if;
                 if m_axis_fall_tlast = '1' then
                     v_fall_eol_seen <= true;
                 end if;
@@ -415,6 +437,7 @@ begin
         report "  row_faulted_rise count: " & integer'image(s_row_faulted_rise_cnt) severity note;
 
         if frame_done = '1' and v_sof_seen and v_eol_seen and v_out_beat_cnt > 0
+           and s_keep_ok
            and s_sof_count = 1
            and s_row_faulted_rise_cnt = 1
            and s_row_faulted_fall_cnt = 0
@@ -548,6 +571,9 @@ begin
             severity failure;
         assert s_frame_faulted_rise_cnt = 0 and s_frame_faulted_fall_cnt = 0
             report "SCENARIO 2: frame_done_faulted should remain reserved for header drain timeout"
+            severity failure;
+        assert s_keep_ok and s_fall_keep_ok
+            report "SCENARIO 2: AXIS tkeep/tstrb must remain all-ones on accepted beats"
             severity failure;
 
         report "*** SCENARIO 2 (slope-independent abort) PASS ***" severity note;

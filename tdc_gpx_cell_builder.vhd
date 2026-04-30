@@ -64,12 +64,12 @@
 --   s_rt_last_beat_r is latched from elaboration-safe case lookup at output start.
 --   Hit overflow guard uses runtime max_hits_cfg, not compile-time constant.
 --   Enables distance-adaptive throughput:
---     max_hits | cell_size | beats @32b | beats @64b
---     ---------|-----------|-----------|----------
---        1     |    4B     |     1     |     1
---        3     |    8B     |     2     |     1
---        5     |   16B     |     4     |     2
---        7     |   32B     |     8     |     4
+--     max_hits | cell_size | beats @32b | beats @64b | beats @128b
+--     ---------|-----------|------------|------------|-------------
+--        1     |    4B     |     1      |     1      |      1
+--        3     |    8B     |     2      |     1      |      1
+--        5     |   16B     |     4      |     2      |      1
+--        7     |   32B     |     8      |     4      |      2
 --
 -- Overrun:
 --   If no BUF_FREE buffer is available on shot_start, the shot is dropped.
@@ -85,7 +85,7 @@
 --   tuser[15:11] = shot_seq[4:0]
 --
 -- AXI-Stream master output (to face_assembler):
---   tdata         = g_TDATA_WIDTH bits (32 or 64)
+--   tdata         = g_TDATA_WIDTH bits (32, 64, or 128)
 --   tlast         = last beat of chip slice
 --
 -- Beat layout (compile-time MAX=7, runtime truncated by max_hits_cfg):
@@ -118,7 +118,7 @@ use work.tdc_gpx_pkg.all;
 entity tdc_gpx_cell_builder is
     generic (
         g_CHIP_ID                : natural range 0 to 3 := 0;
-        g_TDATA_WIDTH            : natural := c_TDATA_WIDTH;  -- 32 or 64
+        g_TDATA_WIDTH            : natural := c_TDATA_WIDTH;  -- 32, 64, or 128
         -- Phase B: per-watchdog margins above max_range_clks.
         -- QUARANTINE margin covers DROP + QUARANTINE absorb windows (upstream
         -- drain_done may arrive well after shot boundary in worst cases).
@@ -385,6 +385,10 @@ architecture rtl of tdc_gpx_cell_builder is
     --   Beat 0-1: hit_slot quads (4 slots/beat)
     --   Beat 2:   metadata in lower 32b, upper 32b = 0
     --   Beat 3:   padding (zeros)
+    --
+    -- 128-bit mode (2 beats/cell):
+    --   Beat 0:   all hit slots packed in lower 112b
+    --   Beat 1:   metadata in lower 32b, upper bits = 0
     -- =========================================================================
     -- fn_cell_beat: serialize cell to beat.
     -- last_beat_idx: runtime last beat index (from max_hits_cfg).
@@ -430,6 +434,10 @@ architecture rtl of tdc_gpx_cell_builder is
     end function;
 
 begin
+
+    assert (g_TDATA_WIDTH = 32) or (g_TDATA_WIDTH = 64) or (g_TDATA_WIDTH = 128)
+        report "tdc_gpx_cell_builder: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        severity failure;
 
     -- Round 9 #8: effective max_hits_cfg (000 aliased to 7 so collect and
     -- output paths agree on the slot count).
