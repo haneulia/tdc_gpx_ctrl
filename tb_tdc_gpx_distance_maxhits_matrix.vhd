@@ -31,14 +31,18 @@ use std.env.all;
 use work.tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_distance_maxhits_matrix is
+    generic (
+        g_START_DISTANCE_M : natural := 150;
+        g_DISTANCE_STEP_M  : natural := 50
+    );
 end entity;
 
 architecture sim of tb_tdc_gpx_distance_maxhits_matrix is
 
     constant C_ACTIVE_CHIPS        : natural := 4;
     constant C_STOPS_PER_CHIP      : natural := 8;
-    constant C_START_DISTANCE_M    : natural := 150;
-    constant C_DISTANCE_STEP_M     : natural := 50;
+    constant C_START_DISTANCE_M    : natural := g_START_DISTANCE_M;
+    constant C_DISTANCE_STEP_M     : natural := g_DISTANCE_STEP_M;
     constant C_RT_PS_PER_M         : natural := 6671;
     constant C_OUTPUT_PERIOD_PS    : natural := 6667;  -- 150 MHz
     constant C_SHOT_PERIOD_NUM     : natural := 3;
