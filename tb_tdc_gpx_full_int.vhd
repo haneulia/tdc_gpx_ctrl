@@ -34,7 +34,7 @@
 --   A 4-chip behavioral TDC-GPX model (same as tb_tdc_gpx_top_int) fills the
 --   IFIFOs and drives EF / LF / IrFlag pins.
 --
--- CSR sequence (AXI-Lite writes, 200 MHz)
+-- CSR sequence (AXI-Lite writes via px_utility_pkg, 200 MHz)
 --   - motor_decoder : SIM_EN = 1                                  (CTL0[0])
 --   - laser_ctrl    : LASER_EN + STREAM_EN + minimal sched config
 --   - echo_receiver : SIM_EN = 1, multi-hit limit default
@@ -58,6 +58,7 @@ use std.textio.all;
 
 use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
+use work.px_utility_pkg.all;
 use work.laser_ctrl_cfg_pkg.all;   -- c_RES_TUSER_WIDTH = 21
 -- Proven constants from the laser_ctrl TB (C_MD_CPR, C_MD_TICKS_LO,
 -- C_MD_HI_COUNT, C_MD_FACE_CENTER_*, C_MD_CTL*_*, C_LC_CTL*_*).
@@ -1267,94 +1268,133 @@ begin
             end loop;
         end procedure;
 
-        -- AXI-Lite write helper (generic address width)
-        procedure axilw_7b(signal awaddr  : out std_logic_vector(6 downto 0);
-                           signal awvalid : out std_logic;
-                           signal awready : in  std_logic;
-                           signal wdata   : out std_logic_vector(31 downto 0);
-                           signal wvalid  : out std_logic;
-                           signal wready  : in  std_logic;
-                           signal bvalid  : in  std_logic;
-                           signal bready  : out std_logic;
-                           addr : std_logic_vector(6 downto 0);
-                           val  : std_logic_vector(31 downto 0)) is
+        -- AXI-Lite wrappers. Handshake is owned by px_utility_pkg; these
+        -- procedures only select each module's CSR port bundle.
+        procedure md_wr(addr : std_logic_vector(6 downto 0);
+                        val  : std_logic_vector(31 downto 0)) is
         begin
-            wait until rising_edge(clk);
-            awaddr <= addr; awvalid <= '1';
-            wdata <= val; wvalid <= '1';
-            bready <= '1';
-            while awready = '0' or wready = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            awvalid <= '0'; wvalid <= '0';
-            while bvalid = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            bready <= '0';
+            px_axi_lite_writer(
+                addr        => addr,
+                val         => val,
+                axi_aclk    => clk,
+                axi_awaddr  => md_awaddr,
+                axi_awprot  => md_awprot,
+                axi_awvalid => md_awvalid,
+                axi_awready => md_awready,
+                axi_wdata   => md_wdata,
+                axi_wstrb   => md_wstrb,
+                axi_wvalid  => md_wvalid,
+                axi_wready  => md_wready,
+                axi_bresp   => md_bresp,
+                axi_bvalid  => md_bvalid,
+                axi_bready  => md_bready
+            );
         end procedure;
 
-        procedure axilw_9b(signal awaddr  : out std_logic_vector(8 downto 0);
-                           signal awvalid : out std_logic;
-                           signal awready : in  std_logic;
-                           signal wdata   : out std_logic_vector(31 downto 0);
-                           signal wvalid  : out std_logic;
-                           signal wready  : in  std_logic;
-                           signal bvalid  : in  std_logic;
-                           signal bready  : out std_logic;
-                           addr : std_logic_vector(8 downto 0);
-                           val  : std_logic_vector(31 downto 0)) is
+        procedure lc_wr(addr : std_logic_vector(6 downto 0);
+                        val  : std_logic_vector(31 downto 0)) is
         begin
-            wait until rising_edge(clk);
-            awaddr <= addr; awvalid <= '1';
-            wdata <= val; wvalid <= '1';
-            bready <= '1';
-            while awready = '0' or wready = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            awvalid <= '0'; wvalid <= '0';
-            while bvalid = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            bready <= '0';
+            px_axi_lite_writer(
+                addr        => addr,
+                val         => val,
+                axi_aclk    => clk,
+                axi_awaddr  => lc_awaddr,
+                axi_awprot  => lc_awprot,
+                axi_awvalid => lc_awvalid,
+                axi_awready => lc_awready,
+                axi_wdata   => lc_wdata,
+                axi_wstrb   => lc_wstrb,
+                axi_wvalid  => lc_wvalid,
+                axi_wready  => lc_wready,
+                axi_bresp   => lc_bresp,
+                axi_bvalid  => lc_bvalid,
+                axi_bready  => lc_bready
+            );
+        end procedure;
+
+        procedure er_wr(addr : std_logic_vector(8 downto 0);
+                        val  : std_logic_vector(31 downto 0)) is
+        begin
+            px_axi_lite_writer(
+                addr        => addr,
+                val         => val,
+                axi_aclk    => clk,
+                axi_awaddr  => er_awaddr,
+                axi_awprot  => er_awprot,
+                axi_awvalid => er_awvalid,
+                axi_awready => er_awready,
+                axi_wdata   => er_wdata,
+                axi_wstrb   => er_wstrb,
+                axi_wvalid  => er_wvalid,
+                axi_wready  => er_wready,
+                axi_bresp   => er_bresp,
+                axi_bvalid  => er_bvalid,
+                axi_bready  => er_bready
+            );
+        end procedure;
+
+        procedure td_wr(addr : std_logic_vector(8 downto 0);
+                        val  : std_logic_vector(31 downto 0)) is
+        begin
+            px_axi_lite_writer(
+                addr        => addr,
+                val         => val,
+                axi_aclk    => clk,
+                axi_awaddr  => td_awaddr,
+                axi_awprot  => td_awprot,
+                axi_awvalid => td_awvalid,
+                axi_awready => td_awready,
+                axi_wdata   => td_wdata,
+                axi_wstrb   => td_wstrb,
+                axi_wvalid  => td_wvalid,
+                axi_wready  => td_wready,
+                axi_bresp   => td_bresp,
+                axi_bvalid  => td_bvalid,
+                axi_bready  => td_bready
+            );
+        end procedure;
+
+        procedure tp_wr(addr : std_logic_vector(6 downto 0);
+                        val  : std_logic_vector(31 downto 0)) is
+        begin
+            px_axi_lite_writer(
+                addr        => addr,
+                val         => val,
+                axi_aclk    => clk,
+                axi_awaddr  => tp_awaddr,
+                axi_awprot  => tp_awprot,
+                axi_awvalid => tp_awvalid,
+                axi_awready => tp_awready,
+                axi_wdata   => tp_wdata,
+                axi_wstrb   => tp_wstrb,
+                axi_wvalid  => tp_wvalid,
+                axi_wready  => tp_wready,
+                axi_bresp   => tp_bresp,
+                axi_bvalid  => tp_bvalid,
+                axi_bready  => tp_bready
+            );
         end procedure;
 
         -- AXI-Lite read: Pipeline CSR (7-bit addr) - for diagnostic readback
-        procedure pipe_rd(addr : std_logic_vector(6 downto 0);
-                          msg  : string) is
-            variable lv : line;
+        procedure tp_rd(addr : std_logic_vector(6 downto 0);
+                        msg  : string) is
         begin
-            wait until rising_edge(clk);
-            tp_araddr  <= addr;
-            tp_arvalid <= '1';
-            tp_rready  <= '1';
-            while tp_arready = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            tp_arvalid <= '0';
-            while tp_rvalid = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            write(lv, now, right, 12);
-            write(lv, string'("  pipe_rd @0x"));
-            for i in addr'length - 1 downto 0 loop
-                if addr(i) = '1' then write(lv, string'("1"));
-                else                  write(lv, string'("0")); end if;
-            end loop;
-            write(lv, string'(" ("));
-            write(lv, msg);
-            write(lv, string'(") = 0x"));
-            for i in 7 downto 0 loop
-                write(lv, integer'image(
-                    to_integer(unsigned(tp_rdata(i*4+3 downto i*4)))));
-            end loop;
-            writeline(output, lv);
-            tp_rready <= '0';
-            wait until rising_edge(clk);
+            pl("  tp_rd " & msg);
+            px_axi_lite_reader(
+                addr          => addr,
+                val           => (others => '0'),
+                comp          => '0',
+                fail_on_error => '0',
+                axi_aclk      => clk,
+                axi_araddr    => tp_araddr,
+                axi_arprot    => tp_arprot,
+                axi_arvalid   => tp_arvalid,
+                axi_arready   => tp_arready,
+                axi_rdata     => tp_rdata,
+                axi_rresp     => tp_rresp,
+                axi_rvalid    => tp_rvalid,
+                axi_rready    => tp_rready
+            );
         end procedure;
 
     begin
@@ -1387,134 +1427,88 @@ begin
         pl("[S1] motor_decoder bring-up (SIM mode + CPR + ticks + faces + APPLY)");
         -- SIM mode: motor_decoder uses its internal virtual encoder; the
         -- enc_top A/B/Z pins are then ignored. enc_run toggles are no-ops.
-        axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_SIM);
-        axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL1,
-                 std_logic_vector(to_unsigned(C_MD_CPR, 32)));
-        axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL2,
-                 std_logic_vector(to_unsigned(C_MD_TICKS_LO, 32)));
-        axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL3,
-                 std_logic_vector(to_unsigned(C_MD_HI_COUNT, 32)));
+        md_wr(C_MD_CTL0, C_MD_CTL0_SIM);
+        md_wr(C_MD_CTL1, std_logic_vector(to_unsigned(C_MD_CPR, 32)));
+        md_wr(C_MD_CTL2, std_logic_vector(to_unsigned(C_MD_TICKS_LO, 32)));
+        md_wr(C_MD_CTL3, std_logic_vector(to_unsigned(C_MD_HI_COUNT, 32)));
         wait_clk(100);
         -- sw reset pulse (CTL0 SWRST_PHYS then clear)
-        axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_SWRST_SIM);
+        md_wr(C_MD_CTL0, C_MD_CTL0_SWRST_SIM);
         wait_clk(5);
-        axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL0, C_MD_CTL0_SIM);
+        md_wr(C_MD_CTL0, C_MD_CTL0_SIM);
         wait_clk(30);
         -- per-face centers (CTL5/CTL6/CTL7 loop)
         for f in 0 to C_N_FACES - 1 loop
             case f is
                 when 0 =>
-                    axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid,
-                             md_wready, md_bvalid, md_bready, C_MD_CTL5,
-                             std_logic_vector(to_unsigned(C_MD_FACE_CENTER_0, 32)));
+                    md_wr(C_MD_CTL5,
+                          std_logic_vector(to_unsigned(C_MD_FACE_CENTER_0, 32)));
                 when 1 =>
-                    axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid,
-                             md_wready, md_bvalid, md_bready, C_MD_CTL5,
-                             std_logic_vector(to_unsigned(C_MD_FACE_CENTER_1, 32)));
+                    md_wr(C_MD_CTL5,
+                          std_logic_vector(to_unsigned(C_MD_FACE_CENTER_1, 32)));
                 when 2 =>
-                    axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid,
-                             md_wready, md_bvalid, md_bready, C_MD_CTL5,
-                             std_logic_vector(to_unsigned(C_MD_FACE_CENTER_2, 32)));
+                    md_wr(C_MD_CTL5,
+                          std_logic_vector(to_unsigned(C_MD_FACE_CENTER_2, 32)));
                 when 3 =>
-                    axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid,
-                             md_wready, md_bvalid, md_bready, C_MD_CTL5,
-                             std_logic_vector(to_unsigned(C_MD_FACE_CENTER_3, 32)));
+                    md_wr(C_MD_CTL5,
+                          std_logic_vector(to_unsigned(C_MD_FACE_CENTER_3, 32)));
                 when 4 =>
-                    axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid,
-                             md_wready, md_bvalid, md_bready, C_MD_CTL5,
-                             std_logic_vector(to_unsigned(C_MD_FACE_CENTER_4, 32)));
+                    md_wr(C_MD_CTL5,
+                          std_logic_vector(to_unsigned(C_MD_FACE_CENTER_4, 32)));
                 when others => null;
             end case;
-            axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                     md_bvalid, md_bready, C_MD_CTL6,
-                     std_logic_vector(to_unsigned(C_MD_FACE_HALF_ST, 32)));
-            axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                     md_bvalid, md_bready, C_MD_CTL7,
-                     std_logic_vector(to_unsigned(f, 32)));
+            md_wr(C_MD_CTL6, std_logic_vector(to_unsigned(C_MD_FACE_HALF_ST, 32)));
+            md_wr(C_MD_CTL7, std_logic_vector(to_unsigned(f, 32)));
         end loop;
-        axilw_7b(md_awaddr, md_awvalid, md_awready, md_wdata, md_wvalid, md_wready,
-                 md_bvalid, md_bready, C_MD_CTL7, C_MD_CTL7_APPLY);
+        md_wr(C_MD_CTL7, C_MD_CTL7_APPLY);
         wait_clk(200);
 
         pl("[S1] echo_receiver CSR: SIM mode + ch_delay(0) = C_SIM_TARGET_CLKS");
         -- CTL0: SIM_EN=1, multi_hit_limit=7 [12:8] -> 0x701
-        axilw_9b(er_awaddr, er_awvalid, er_awready, er_wdata, er_wvalid, er_wready,
-                 er_bvalid, er_bready, C_ER_CTL0, x"00000701");
+        er_wr(C_ER_CTL0, x"00000701");
         -- CTL1 = ch_delay(0): SIM mode auto-fires channel 0 this many clks
         -- after start_tdc rising edge (no pd_lvds required).
-        axilw_9b(er_awaddr, er_awvalid, er_awready, er_wdata, er_wvalid, er_wready,
-                 er_bvalid, er_bready, "0" & x"04",
-                 std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
+        er_wr("0" & x"04", std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
         wait_clk(10);
 
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL1,
-                 std_logic_vector(to_unsigned(C_FIRE_WIDTH, 32)));
+        lc_wr(C_LC_CTL1, std_logic_vector(to_unsigned(C_FIRE_WIDTH, 32)));
         -- CTL2 max_roundtrip -- derived from G_MAX_RANGE_M / G_AXIS_CLK_MHZ
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL2,
-                 std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 32)));
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL3,
-                 std_logic_vector(to_unsigned(C_CTL3_VAL_LOCAL, 32)));
+        lc_wr(C_LC_CTL2, std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 32)));
+        lc_wr(C_LC_CTL3, std_logic_vector(to_unsigned(C_CTL3_VAL_LOCAL, 32)));
         -- CTL4 sim target -- derived from G_SIM_TARGET_M / G_AXIS_CLK_MHZ
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL4,
-                 std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
+        lc_wr(C_LC_CTL4, std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
         -- CTL5 step_interval -- derived to guarantee shot_period >= 1.5 * round-trip
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL5, C_LC_CTL5_DERIVED);
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL6, C_LC_CTL6_DEFAULT);
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL7, C_LC_CTL7_DEFAULT);
+        lc_wr(C_LC_CTL5, C_LC_CTL5_DERIVED);
+        lc_wr(C_LC_CTL6, C_LC_CTL6_DEFAULT);
+        lc_wr(C_LC_CTL7, C_LC_CTL7_DEFAULT);
         -- sw_rst + enable (CTL0 SWRST then EN)
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL0, C_LC_CTL0_SWRST_EN);
+        lc_wr(C_LC_CTL0, C_LC_CTL0_SWRST_EN);
         wait_clk(5);
-        axilw_7b(lc_awaddr, lc_awvalid, lc_awready, lc_wdata, lc_wvalid, lc_wready,
-                 lc_bvalid, lc_bready, C_LC_CTL0, C_LC_CTL0_EN);
+        lc_wr(C_LC_CTL0, C_LC_CTL0_EN);
         wait_clk(100);
 
         pl("[S1] tdc_gpx chip CSR: cfg_image Reg0/Reg5/Reg6");
-        axilw_9b(td_awaddr, td_awvalid, td_awready, td_wdata, td_wvalid, td_wready,
-                 td_bvalid, td_bready, "0" & x"14", x"00001C00");  -- Reg0 TRiseEn
-        axilw_9b(td_awaddr, td_awvalid, td_awready, td_wdata, td_wvalid, td_wready,
-                 td_bvalid, td_bready, "0" & x"28", x"01800000");  -- Reg5 ALU trig
-        axilw_9b(td_awaddr, td_awvalid, td_awready, td_wdata, td_wvalid, td_wready,
-                 td_bvalid, td_bready, "0" & x"2C", x"00000004");  -- Reg6 LF threshold
+        td_wr("0" & x"14", x"00001C00");  -- Reg0 TRiseEn
+        td_wr("0" & x"28", x"01800000");  -- Reg5 ALU trig
+        td_wr("0" & x"2C", x"00000004");  -- Reg6 LF threshold
         wait_clk(20);
 
         pl("[S1] tdc_gpx pipeline CSR: RANGE_COLS / MAIN_CTRL");
-        axilw_7b(tp_awaddr, tp_awvalid, tp_awready, tp_wdata, tp_wvalid, tp_wready,
-                 tp_bvalid, tp_bready, C_PIPE_RANGE_COLS, C_RANGE_COLS_VAL);
-        axilw_7b(tp_awaddr, tp_awvalid, tp_awready, tp_wdata, tp_wvalid, tp_wready,
-                 tp_bvalid, tp_bready, C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
+        tp_wr(C_PIPE_RANGE_COLS, C_RANGE_COLS_VAL);
+        tp_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
         wait_clk(20);
 
         pl("[S2] tdc_gpx CFG_WRITE pulse");
-        axilw_7b(tp_awaddr, tp_awvalid, tp_awready, tp_wdata, tp_wvalid, tp_wready,
-                 tp_bvalid, tp_bready, C_PIPE_MAIN_CTRL,
-                 (C_MAIN_CTRL_BASE or x"80000000"));
+        tp_wr(C_PIPE_MAIN_CTRL, (C_MAIN_CTRL_BASE or x"80000000"));
         wait_clk(4);
-        axilw_7b(tp_awaddr, tp_awvalid, tp_awready, tp_wdata, tp_wvalid, tp_wready,
-                 tp_bvalid, tp_bready, C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
+        tp_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
         wait_clk(2500);
 
         pl("[S3] tdc_gpx START pulse");
-        axilw_7b(tp_awaddr, tp_awvalid, tp_awready, tp_wdata, tp_wvalid, tp_wready,
-                 tp_bvalid, tp_bready, C_PIPE_MAIN_CTRL,
-                 (C_MAIN_CTRL_BASE or x"10000000"));
+        tp_wr(C_PIPE_MAIN_CTRL, (C_MAIN_CTRL_BASE or x"10000000"));
         wait_clk(4);
-        axilw_7b(tp_awaddr, tp_awvalid, tp_awready, tp_wdata, tp_wvalid, tp_wready,
-                 tp_bvalid, tp_bready, C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
+        tp_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
         wait_clk(80);
 
         --------------------------------------------------------------
@@ -1560,10 +1554,10 @@ begin
         --                              [10:8] run_timeout_cause_last
         --   Ideal "healthy" read: STAT5=0, STAT6=0, STAT7=0.
         --------------------------------------------------------------
-        pipe_rd("1010100", "STAT5 STATUS");          -- 0x54
-        pipe_rd("1011000", "STAT6 STATUS_EXT");      -- 0x58
-        pipe_rd("1011100", "STAT7 STATUS_EXT2");     -- 0x5C
-        pipe_rd("1010000", "STAT4 MAX_HSIZE");       -- 0x50 (constant; checks read path)
+        tp_rd("1010100", "STAT5 STATUS");          -- 0x54
+        tp_rd("1011000", "STAT6 STATUS_EXT");      -- 0x58
+        tp_rd("1011100", "STAT7 STATUS_EXT2");     -- 0x5C
+        tp_rd("1010000", "STAT4 MAX_HSIZE");       -- 0x50 (constant; checks read path)
 
         --------------------------------------------------------------
         -- [S7] Summary

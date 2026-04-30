@@ -1,9 +1,9 @@
 # Cluster Analysis Operating Protocol
 
-문서 버전: `v009`
+문서 버전: `v010`
 작성일: `2026-04-30`
-최종 수정 시간: `2026-04-30 20:10:13 +09:00`
-작성 목적: `tdc_gpx_top` 및 하위 모듈 Cluster 분석을 진행할 때, 사용자와 Codex가 공유해야 하는 소통 방식, 기준 문서 우선순위, 근거 추적 방식, Git 변경 관리, 파일 이름 생성 규칙, 컨텍스트 인계 절차, 그리고 사용자 review에 대한 처리 사이클을 고정한다.
+최종 수정 시간: `2026-04-30 22:27:13 +09:00`
+작성 목적: `tdc_gpx_top` 및 하위 모듈 Cluster 분석을 진행할 때, 사용자와 Codex가 공유해야 하는 소통 방식, 기준 문서 우선순위, 근거 추적 방식, Git 변경 관리, 파일 이름 생성 규칙, 테스트벤치 공통 유틸리티 사용 원칙, 컨텍스트 인계 절차, 그리고 사용자 review에 대한 처리 사이클을 고정한다.
 
 ---
 
@@ -166,6 +166,25 @@ Postfix:
 - 위 규칙의 의미를 확장해 일관성 있게 적용한다.
 - 반복적으로 필요한 새 규칙은 이 운영 프로토콜의 다음 버전에 추가한다.
 - 기존 RTL이 규칙과 다를 경우 즉시 수정하지 않고, 해당 Cluster의 review finding 또는 naming debt로 기록한다.
+
+### Testbench AXI4-Lite BFM 재사용 규칙 (v010 신규)
+
+모든 테스트벤치에서 AXI4-Lite interface를 통해 register/CSR 데이터를 쓰거나 읽을 때는 자체 write/read BFM 또는 transaction handshake 절차를 새로 만들지 않고, `px_utility_pkg.vhd`에 정의된 공통 절차를 사용한다.
+
+기준 API:
+
+| 용도 | 공통 절차 | 근거 |
+|---|---|---|
+| AXI4-Lite write | `px_axi_lite_writer` | `px_utility_pkg.vhd:71-85`, body `px_utility_pkg.vhd:383-463` |
+| AXI4-Lite read | `px_axi_lite_reader` | `px_utility_pkg.vhd:90-104`, body `px_utility_pkg.vhd:469-532` |
+
+운용 규칙:
+
+- TB 내부에서 `axi_wr`, `axi_rd`, `axilw_*`, `axilr_*`, `pipe_wr`, `chip_wr`처럼 AXI4-Lite valid/ready/bresp/rresp handshake를 직접 구현하는 transaction helper를 새로 작성하지 않는다.
+- 여러 CSR port bundle을 선택해야 하는 통합 TB에서는 domain별 wrapper를 둘 수 있다. 단, wrapper 내부는 `px_axi_lite_writer` 또는 `px_axi_lite_reader` 호출만 수행하고, `awvalid <=`, `wvalid <=`, `arvalid <=`, `bready <=`, `rready <=`, `while awready...` 같은 handshake 구현을 직접 포함하지 않는다.
+- 기존 TB에서 자체 AXI4-Lite helper가 발견되면 즉시 `px_utility_pkg.vhd` 기반으로 전환하거나, 전환이 불가능한 이유와 영향 범위를 Cluster 문서에 남긴다.
+- AXI4-Lite readback 값 비교가 필요한 경우에는 `px_axi_lite_reader`의 `comp`/`fail_on_error` 계약을 우선 사용한다. 별도 read-data 반환이 반드시 필요하면 공통 package 확장안을 먼저 문서화하고 승인받은 뒤 `px_utility_pkg.vhd`에 추가한다.
+- 새 테스트벤치 review에는 “AXI4-Lite transaction helper가 `px_utility_pkg.vhd`를 사용하는가”를 검증 항목으로 포함한다.
 
 ---
 
@@ -584,6 +603,19 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 
 본 v008 -> v009 변경 사실은 v008 문서 끝에 forward-trace로도 기록한다.
 
+### 2026-04-30 Testbench AXI4-Lite BFM 재사용 규칙 추가 (v010)
+
+사용자는 모든 테스트벤치에서 AXI4-Lite interface로 데이터를 쓰고 읽는 library/BFM을 자체 생성하지 않고, `px_utility_pkg.vhd` 파일에 정의된 내용을 활용하도록 요청했다.
+
+본 v010 운영 프로토콜은 다음 규칙을 추가한다.
+
+- `Testbench AXI4-Lite BFM 재사용 규칙` (section 4에 추가, v010 신규)
+- AXI4-Lite write는 `px_axi_lite_writer`, read는 `px_axi_lite_reader`를 기준 API로 사용한다.
+- 통합 TB에서 여러 CSR port bundle을 선택해야 하면 얇은 wrapper는 허용하되, wrapper 내부에 valid/ready handshake를 직접 구현하지 않는다.
+- 새 테스트벤치 review에는 `px_utility_pkg.vhd` 사용 여부를 포함한다.
+
+이 규칙은 C02 이후 testbench 보완과 code review 기준에 즉시 적용한다. 이번 점검 결과는 `C02_Chip_Acquisition_260430222713_AXI4Lite_TB_Utility_Audit_v001.md`에 기록한다.
+
 ---
 
 ## 9. 다음 진행 상태
@@ -597,21 +629,4 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 - v007부터는 문서/RTL/testbench/script 수정 전후 Git 상태 확인과 변경 단위 분리를 필수로 적용한다. commit은 사용자 승인 후 현재 작업 단위 파일만 대상으로 수행한다.
 - v008부터는 C02 이후 Cluster 산출물 파일명을 `<ClusterName>_<YYMMDDHHMMSS>_<WorkName>_vNNN.<ext>` 형식으로 생성한다. C02 문서군은 이 규칙에 맞게 rename 완료 상태로 관리한다.
 - v009부터는 RTL 작성/리뷰 시 순차논리를 기본으로 하고, 조합논리는 최대 2-depth까지만 제한적으로 허용한다. 3-depth 이상 조합망은 pipeline/register/FSM stage로 분리하거나 예외 근거를 문서화한다.
-
----
-
-## v009 -> v010 반영 위치 기록
-
-반영 시점: `2026-04-30 22:27:13 +09:00`
-
-사용자 요청:
-
-- 모든 테스트벤치에서 AXI4-Lite interface로 데이터를 쓰고 읽는 library/BFM을 자체 생성하지 않고, `px_utility_pkg.vhd`에 정의된 내용을 활용하도록 운영 규칙에 반영하고 점검할 것.
-
-v010 반영 위치:
-
-| v009 기준 항목 | v010 반영 위치 | 내용 |
-|---|---|---|
-| `4. 추가 설계 분석 기준` | `Testbench AXI4-Lite BFM 재사용 규칙 (v010 신규)` | `px_axi_lite_writer`, `px_axi_lite_reader`를 모든 TB AXI4-Lite transaction 기준 API로 지정 |
-| `5. 산출물 버전 규칙` 운영 흐름 | C02 audit 문서 `C02_Chip_Acquisition_260430222713_AXI4Lite_TB_Utility_Audit_v001.md` | 기존 TB의 자체 AXI4-Lite helper 점검 결과와 보완 파일을 기록 |
-| Code review 기준 | v010 신규 규칙 하위 항목 | 새 TB review 항목에 `px_utility_pkg.vhd` 사용 여부를 포함 |
+- v010부터는 모든 테스트벤치 AXI4-Lite write/read transaction이 `px_utility_pkg.vhd`의 `px_axi_lite_writer`/`px_axi_lite_reader`를 사용해야 한다. TB 내부 wrapper는 port bundle 선택만 허용하고 handshake 직접 구현은 금지한다.

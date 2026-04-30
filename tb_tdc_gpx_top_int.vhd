@@ -36,7 +36,7 @@
 --   * Targets Xilinx xsim (VHDL-2008).
 --   * Extends tb_tdc_gpx_chip_ctrl's behavioral chip model (FIFO fill, EF/LF,
 --     IrFlag) to an array of 4 chips.
---   * AXI-Lite writes are driven by in-TB procedures (pipe_wr / chip_wr).
+--   * AXI-Lite writes are driven by px_axi_lite_writer from px_utility_pkg.
 --   * ALL comments and text output are ASCII only (xsim rejects non-graphic
 --     literals; also keeps the source encoding-agnostic for any editor).
 --
@@ -50,6 +50,7 @@ use std.textio.all;
 
 use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
+use work.px_utility_pkg.all;
 
 entity tb_tdc_gpx_top_int is
     generic (
@@ -566,52 +567,52 @@ begin
 
         ----------------------------------------------------------------
         -- AXI4-Lite write: Pipeline CSR (7-bit addr)
+        -- Handshake is owned by px_utility_pkg; this wrapper only selects ports.
         ----------------------------------------------------------------
         procedure pipe_wr(addr : std_logic_vector(6 downto 0);
                           val  : std_logic_vector(31 downto 0)) is
         begin
-            wait until rising_edge(clk);
-            sp_awaddr  <= addr;
-            sp_awvalid <= '1';
-            sp_wdata   <= val;
-            sp_wvalid  <= '1';
-            sp_bready  <= '1';
-            while sp_awready = '0' or sp_wready = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            sp_awvalid <= '0';
-            sp_wvalid  <= '0';
-            while sp_bvalid = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            sp_bready <= '0';
+            px_axi_lite_writer(
+                addr        => addr,
+                val         => val,
+                axi_aclk    => clk,
+                axi_awaddr  => sp_awaddr,
+                axi_awprot  => sp_awprot,
+                axi_awvalid => sp_awvalid,
+                axi_awready => sp_awready,
+                axi_wdata   => sp_wdata,
+                axi_wstrb   => sp_wstrb,
+                axi_wvalid  => sp_wvalid,
+                axi_wready  => sp_wready,
+                axi_bresp   => sp_bresp,
+                axi_bvalid  => sp_bvalid,
+                axi_bready  => sp_bready
+            );
         end procedure;
 
         ----------------------------------------------------------------
         -- AXI4-Lite write: Chip CSR (9-bit addr)
+        -- Handshake is owned by px_utility_pkg; this wrapper only selects ports.
         ----------------------------------------------------------------
         procedure chip_wr(addr : std_logic_vector(8 downto 0);
                           val  : std_logic_vector(31 downto 0)) is
         begin
-            wait until rising_edge(clk);
-            s_axi_awaddr  <= addr;
-            s_axi_awvalid <= '1';
-            s_axi_wdata   <= val;
-            s_axi_wvalid  <= '1';
-            s_axi_bready  <= '1';
-            while s_axi_awready = '0' or s_axi_wready = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            s_axi_awvalid <= '0';
-            s_axi_wvalid  <= '0';
-            while s_axi_bvalid = '0' loop
-                wait until rising_edge(clk);
-            end loop;
-            wait until rising_edge(clk);
-            s_axi_bready <= '0';
+            px_axi_lite_writer(
+                addr        => addr,
+                val         => val,
+                axi_aclk    => clk,
+                axi_awaddr  => s_axi_awaddr,
+                axi_awprot  => s_axi_awprot,
+                axi_awvalid => s_axi_awvalid,
+                axi_awready => s_axi_awready,
+                axi_wdata   => s_axi_wdata,
+                axi_wstrb   => s_axi_wstrb,
+                axi_wvalid  => s_axi_wvalid,
+                axi_wready  => s_axi_wready,
+                axi_bresp   => s_axi_bresp,
+                axi_bvalid  => s_axi_bvalid,
+                axi_bready  => s_axi_bready
+            );
         end procedure;
 
         ----------------------------------------------------------------
