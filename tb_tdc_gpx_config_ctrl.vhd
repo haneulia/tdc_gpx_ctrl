@@ -117,6 +117,10 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     signal i_stop_evt_tkeep  : std_logic_vector(C_STOP_EVT_DWIDTH/8 - 1 downto 0) := (others => '0');
     signal i_stop_evt_tuser  : std_logic_vector(C_STOP_EVT_DWIDTH - 1 downto 0) := (others => '0');
     signal o_stop_evt_tready : std_logic;
+    signal i_fire_count_tvalid : std_logic := '0';
+    signal i_fire_count_tdata  : std_logic_vector(31 downto 0) := (others => '0');
+    signal i_fire_count_tkeep  : std_logic_vector(3 downto 0) := (others => '0');
+    signal i_fire_count_tlast  : std_logic := '0';
     signal i_stop_tdc        : std_logic := '0';
 
     -- =========================================================================
@@ -253,6 +257,10 @@ begin
             i_stop_evt_tkeep     => i_stop_evt_tkeep,
             i_stop_evt_tuser     => i_stop_evt_tuser,
             o_stop_evt_tready    => o_stop_evt_tready,
+            i_fire_count_tvalid  => i_fire_count_tvalid,
+            i_fire_count_tdata   => i_fire_count_tdata,
+            i_fire_count_tkeep   => i_fire_count_tkeep,
+            i_fire_count_tlast   => i_fire_count_tlast,
             i_stop_tdc           => i_stop_tdc,
             -- Control inputs
             i_cmd_start          => i_cmd_start,

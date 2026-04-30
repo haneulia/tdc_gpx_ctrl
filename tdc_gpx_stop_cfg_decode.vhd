@@ -15,8 +15,10 @@
 --   - Counts MUST monotonically increase within a shot window (a running total
 --     can only grow or stay the same). Decrease is a contract violation and is
 --     flagged by the sim-only monotonicity checker below.
---   - The last beat before irflag carries the FINAL expected count for this
---     shot; o_expected_ififo1/2 retain that value (overwrite semantics).
+--   - The fire_count stream final beat (`i_fire_count_tvalid='1' and
+--     i_fire_count_tlast='1'`) marks the expected count as FINAL for the
+--     current shot. This is required so expected=0 can mean "known zero"
+--     instead of the legacy "echo count absent" fallback encoding.
 --
 -- Distance-based shot window (Round 13 follow-up, audit 5번):
 --   Orphan detection timing is derived from i_cfg.max_range_clks (physical
@@ -73,6 +75,7 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_stop_cfg_decode is
     generic (
         g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := 32;
         -- Round 13 follow-up (audit 5번): stop-event window margin.
         -- The effective window close = snapshot(i_cfg.max_range_clks) + this
         -- margin. max_range_clks is the physical distance-of-flight bound
@@ -104,12 +107,20 @@ entity tdc_gpx_stop_cfg_decode is
         i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
         o_stop_evt_tready : out std_logic;
 
+        -- Fire-count sideband/final stream from echo_receiver.
+        -- Only tvalid+tlast are consumed here. tdata is kept in the port
+        -- contract for the later shot-id/fire-count matching extension.
+        i_fire_count_tvalid : in  std_logic;
+        i_fire_count_tdata  : in  std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
+        i_fire_count_tlast  : in  std_logic;
+
         -- Shot boundary clear
         i_shot_start_gated : in  std_logic;
 
         -- Per-chip expected IFIFO counts
         o_expected_ififo1 : out t_expected_array;
         o_expected_ififo2 : out t_expected_array;
+        o_expected_final_valid : out std_logic;
 
         -- Config image override
         i_cfg             : in  t_tdc_cfg;
@@ -174,12 +185,14 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
     signal s_window_cap_r       : unsigned(c_WINDOW_CNT_WIDTH - 1 downto 0)
                                   := (others => '0');
     signal s_orphan_evt_sticky_r : std_logic := '0';
+    signal s_expected_final_r    : std_logic := '0';
 
 begin
 
     o_stop_evt_tready <= '1';
     o_monotonic_violation_mask <= s_mono_viol_r;
     o_orphan_stop_evt_sticky <= s_orphan_evt_sticky_r;
+    o_expected_final_valid <= s_expected_final_r;
 
     -- Round 11 item 10: runtime violation detector (synth-live).
     p_mono_live : process(i_clk)
@@ -198,6 +211,7 @@ begin
                 s_max_range_snap_r    <= (others => '0');
                 s_window_cap_r        <= (others => '0');
                 s_orphan_evt_sticky_r <= '0';
+                s_expected_final_r    <= '0';
             else
                 -- Round 13 follow-up (audit 5번): distance-bounded window.
                 -- Snapshot max_range_clks at shot_start so a mid-shot config
@@ -225,6 +239,7 @@ begin
                     s_prev_ififo1_r <= (others => (others => '0'));
                     s_prev_ififo2_r <= (others => (others => '0'));
                     s_track_r       <= '0';
+                    s_expected_final_r <= '0';
                     -- NOTE: sticky s_mono_viol_r is NOT cleared on shot boundary.
                     -- A violation in shot N should remain visible to SW across
                     -- subsequent shots; only full reset clears it.
@@ -251,6 +266,16 @@ begin
                         s_prev_ififo2_r(i) <= v_new2;
                     end loop;
                     s_track_r <= '1';
+                end if;
+
+                if i_shot_start_gated = '0'
+                   and i_fire_count_tvalid = '1'
+                   and i_fire_count_tlast = '1' then
+                    if s_window_active_r = '1' then
+                        s_expected_final_r <= '1';
+                    else
+                        s_orphan_evt_sticky_r <= '1';
+                    end if;
                 end if;
             end if;
         end if;

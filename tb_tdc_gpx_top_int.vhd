@@ -207,6 +207,10 @@ architecture sim of tb_tdc_gpx_top_int is
     signal stp_tkeep  : std_logic_vector(C_STOP_DW/8 - 1 downto 0) := (others => '0');
     signal stp_tuser  : std_logic_vector(C_STOP_DW - 1 downto 0) := (others => '0');
     signal stp_tready : std_logic;
+    signal fire_count_tvalid : std_logic := '0';
+    signal fire_count_tdata  : std_logic_vector(31 downto 0) := (others => '0');
+    signal fire_count_tkeep  : std_logic_vector(3 downto 0) := (others => '0');
+    signal fire_count_tlast  : std_logic := '0';
 
     -- =========================================================================
     -- VDMA AXI-Stream master (rising / falling) - sink holds tready='1'
@@ -465,6 +469,10 @@ begin
             i_stop_evt_tkeep  => stp_tkeep,
             i_stop_evt_tuser  => stp_tuser,
             o_stop_evt_tready => stp_tready,
+            i_fire_count_tvalid => fire_count_tvalid,
+            i_fire_count_tdata  => fire_count_tdata,
+            i_fire_count_tkeep  => fire_count_tkeep,
+            i_fire_count_tlast  => fire_count_tlast,
             -- TDC physical pins
             io_tdc_d         => io_tdc_d,
             o_tdc_adr        => o_tdc_adr,

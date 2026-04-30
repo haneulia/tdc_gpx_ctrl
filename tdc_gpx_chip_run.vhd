@@ -110,8 +110,11 @@ entity tdc_gpx_chip_run is
         -- because it conflicts with stop_cfg_decode's continuous update
         -- during capture. Upstream may safely change these during capture /
         -- drain phases; only the ST_DRAIN_LATCH-cycle value is used.
+        -- i_expected_final_valid qualifies zero as a known hard bound. When
+        -- it is '0', expected=0 keeps the legacy EF fallback behavior.
         i_expected_ififo1   : in  unsigned(7 downto 0);
         i_expected_ififo2   : in  unsigned(7 downto 0);
+        i_expected_final_valid : in std_logic;
 
         -- Bus request (to coordinator mux)
         o_bus_req_valid     : out std_logic;
@@ -287,6 +290,7 @@ architecture rtl of tdc_gpx_chip_run is
 
     signal s_expected_ififo1_r : unsigned(7 downto 0) := (others => '0');
     signal s_expected_ififo2_r : unsigned(7 downto 0) := (others => '0');
+    signal s_expected_valid_r  : std_logic := '0';
     signal s_drain_cnt_ififo1_r : unsigned(7 downto 0) := (others => '0');
     signal s_drain_cnt_ififo2_r : unsigned(7 downto 0) := (others => '0');
 
@@ -320,6 +324,8 @@ begin
         variable v_ififo2_done     : boolean;
         variable v_ififo1_can_read : boolean;
         variable v_ififo2_can_read : boolean;
+        variable v_ififo1_zero_conflict : boolean;
+        variable v_ififo2_zero_conflict : boolean;
         variable v_drain_mismatch  : boolean;
     begin
         if rising_edge(i_clk) then
@@ -343,6 +349,7 @@ begin
                 s_shot_seq_r        <= (others => '0');
                 s_expected_ififo1_r <= (others => '0');
                 s_expected_ififo2_r <= (others => '0');
+                s_expected_valid_r  <= '0';
                 s_drain_cnt_ififo1_r <= (others => '0');
                 s_drain_cnt_ififo2_r <= (others => '0');
                 s_range_active_r    <= '0';
@@ -406,6 +413,7 @@ begin
                             -- stop events during the shot window). Do not snapshot
                             -- here — that value would be pre-stop and stale.
                             s_ififo1_done_sent_r <= '0';
+                            s_expected_valid_r   <= '0';
                             -- Phase B: shot-bounded watchdog cap snapshot.
                             -- Must be shot_start (not cmd_start) so a mid-shot
                             -- SW max_range update cannot change this shot's
@@ -443,6 +451,7 @@ begin
                             s_drain_cnt_ififo2_r <= (others => '0');
                             s_expected_ififo1_r  <= (others => '0');
                             s_expected_ififo2_r  <= (others => '0');
+                            s_expected_valid_r   <= '0';
                             s_wait_cnt_r         <= (others => '0');  -- Round 7 A-2: settle counter
                             s_state_r <= ST_DRAIN_LATCH;
                         elsif s_stop_pending_r = '1' then
@@ -456,6 +465,7 @@ begin
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_expected_ififo1_r  <= (others => '0');
                                 s_expected_ififo2_r  <= (others => '0');
+                                s_expected_valid_r   <= '0';
                                 s_drain_done_r       <= '0';
                                 s_purge_mode_r       <= '1';
                                 s_timeout_r          <= '1';
@@ -481,6 +491,7 @@ begin
                         if s_wait_cnt_r = c_EXP_LATCH_SETTLE_LAST then
                             s_expected_ififo1_r <= i_expected_ififo1;
                             s_expected_ififo2_r <= i_expected_ififo2;
+                            s_expected_valid_r  <= i_expected_final_valid;
                             s_wait_cnt_r        <= (others => '0');
                             s_state_r           <= ST_DRAIN_CHECK;
                         else
@@ -493,13 +504,14 @@ begin
                         -- n_drain_cap × 4: each cap unit = 4 IFIFO words (burst quantum)
                         v_cap := shift_left(resize(i_n_drain_cap, 8), 2);  -- ×4
 
-                        -- C02 count-known contract: non-zero expected count is
-                        -- a hard drain bound. Zero remains the legacy/echo-
-                        -- absent encoding, so EF fallback handles it.
+                        -- C02 count-known contract: expected_final_valid makes
+                        -- the count a hard drain bound. This lets expected=0
+                        -- mean "known zero" for zero-stop shots; without the
+                        -- final marker, zero keeps the legacy EF fallback.
                         v_ififo1_count_known := s_purge_mode_r = '0'
-                            and s_expected_ififo1_r /= 0;
+                            and s_expected_valid_r = '1';
                         v_ififo2_count_known := s_purge_mode_r = '0'
-                            and s_expected_ififo2_r /= 0;
+                            and s_expected_valid_r = '1';
 
                         v_ififo1_done := (i_ef1_sync = '1')
                             or (v_ififo1_count_known
@@ -521,16 +533,23 @@ begin
                             and ((not v_ififo2_count_known)
                                  or s_drain_cnt_ififo2_r < s_expected_ififo2_r);
 
-                        -- Expected-count mismatch is meaningful on every
-                        -- non-purge completion path, not just the fallback
-                        -- branch. If EF terminates the drain before a
-                        -- non-zero expected count is reached, the data is
-                        -- safe (no empty read) but the frame is degraded.
+                        v_ififo1_zero_conflict := v_ififo1_count_known
+                            and s_expected_ififo1_r = 0
+                            and i_ef1_sync = '0';
+                        v_ififo2_zero_conflict := v_ififo2_count_known
+                            and s_expected_ififo2_r = 0
+                            and i_ef2_sync = '0';
+
+                        -- Expected-count mismatch is meaningful only after
+                        -- the upstream final marker. If EF reports data while
+                        -- final expected count is zero, do not read it, but
+                        -- flag the shot as suspect.
                         v_drain_mismatch := s_purge_mode_r = '0'
-                            and ((s_expected_ififo1_r /= 0
-                                  and s_drain_cnt_ififo1_r /= s_expected_ififo1_r)
-                                 or (s_expected_ififo2_r /= 0
-                                     and s_drain_cnt_ififo2_r /= s_expected_ififo2_r));
+                            and s_expected_valid_r = '1'
+                            and ((s_drain_cnt_ififo1_r /= s_expected_ififo1_r)
+                                 or (s_drain_cnt_ififo2_r /= s_expected_ififo2_r)
+                                 or v_ififo1_zero_conflict
+                                 or v_ififo2_zero_conflict);
 
                         -- Early IFIFO1 done beat
                         if v_ififo1_done and not v_ififo2_done
@@ -882,6 +901,7 @@ begin
                                 s_drain_cnt_ififo2_r <= (others => '0');
                                 s_expected_ififo1_r  <= (others => '0');
                                 s_expected_ififo2_r  <= (others => '0');
+                                s_expected_valid_r   <= '0';
                                 s_drain_done_r       <= '0';
                                 s_purge_mode_r       <= '1';
                                 if i_drain_mode = '1' then
@@ -917,6 +937,7 @@ begin
                             s_drain_cnt_ififo2_r <= (others => '0');
                             s_expected_ififo1_r  <= (others => '0');
                             s_expected_ififo2_r  <= (others => '0');
+                            s_expected_valid_r   <= '0';
                             if i_drain_mode = '1' then
                                 s_oen_permanent_r <= '1';
                             end if;

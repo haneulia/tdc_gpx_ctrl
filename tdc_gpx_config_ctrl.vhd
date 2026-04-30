@@ -66,7 +66,8 @@ entity tdc_gpx_config_ctrl is
         g_OEN_MODE        : string   := "DYNAMIC_CONNECTED";
         g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
         g_STREAM_CLK_MODE : string   := "ASYNC"; -- "ASYNC" uses raw_cdc, "SYNC" bypasses it
-        g_STOP_EVT_DWIDTH : natural := 32
+        g_STOP_EVT_DWIDTH : natural := 32;
+        g_FIRE_COUNT_DWIDTH : natural := 32
     );
     port (
         -- Clock / Reset: processing domain (AXI-Stream, 150 MHz)
@@ -131,6 +132,10 @@ entity tdc_gpx_config_ctrl is
         i_stop_evt_tkeep     : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
         i_stop_evt_tuser     : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
         o_stop_evt_tready    : out std_logic;
+        i_fire_count_tvalid  : in  std_logic;
+        i_fire_count_tdata   : in  std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
+        i_fire_count_tkeep   : in  std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
+        i_fire_count_tlast   : in  std_logic;
         i_stop_tdc           : in  std_logic;
 
         -- =====================================================================
@@ -331,6 +336,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     signal s_expected_ififo1 : t_expected_array;
     signal s_expected_ififo2 : t_expected_array;
+    signal s_expected_final_valid : std_logic;
 
     -- =========================================================================
     -- Per-chip: bus_phy <-> chip_ctrl
@@ -569,6 +575,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cfg_image_tdc       : t_cfg_image;
     signal s_expected_ififo1_tdc : t_expected_array;
     signal s_expected_ififo2_tdc : t_expected_array;
+    signal s_expected_final_valid_tdc : std_logic;
     signal s_cmd_reg_addr_tdc    : std_logic_vector(3 downto 0);
     signal s_cmd_reg_wdata_tdc   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
 
@@ -693,6 +700,12 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_exp2_src_rcv    : std_logic;
     signal s_exp2_dst_req    : std_logic;
     signal s_exp2_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
+    signal s_expected_final_src_packed : std_logic_vector(0 downto 0);
+    signal s_expected_final_dst_packed : std_logic_vector(0 downto 0) := (others => '0');
+    signal s_exp_final_src_send_r : std_logic := '0';
+    signal s_exp_final_src_rcv    : std_logic;
+    signal s_exp_final_dst_req    : std_logic;
+    signal s_exp_final_d1_r       : std_logic_vector(0 downto 0) := (others => '1');
 
 begin
 
@@ -1103,7 +1116,10 @@ begin
     -- [3] stop_decode: stop event decode + cfg_image override
     -- =========================================================================
     u_stop_decode : entity work.tdc_gpx_stop_cfg_decode
-        generic map (g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH)
+        generic map (
+            g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
+            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH
+        )
         port map (
             i_clk              => i_axis_aclk,
             i_rst_n            => i_axis_aresetn,
@@ -1111,9 +1127,13 @@ begin
             i_stop_evt_tdata   => i_stop_evt_tdata,
             i_stop_evt_tuser   => i_stop_evt_tuser,
             o_stop_evt_tready  => o_stop_evt_tready,
+            i_fire_count_tvalid => i_fire_count_tvalid,
+            i_fire_count_tdata  => i_fire_count_tdata,
+            i_fire_count_tlast  => i_fire_count_tlast,
             i_shot_start_gated => i_shot_start_gated,
             o_expected_ififo1  => s_expected_ififo1,
             o_expected_ififo2  => s_expected_ififo2,
+            o_expected_final_valid => s_expected_final_valid,
             i_cfg              => s_cfg_merged,
             i_cfg_image_raw    => s_cfg_image_raw,
             o_cfg_image        => o_cfg_image,
@@ -1376,6 +1396,9 @@ begin
             <= unsigned(s_expected_ififo2_dst_packed(8 * (i + 1) - 1 downto 8 * i));
     end generate gen_exp_pack;
 
+    s_expected_final_src_packed(0) <= s_expected_final_valid;
+    s_expected_final_valid_tdc <= s_expected_final_dst_packed(0);
+
     u_cdc_exp1 : xpm_cdc_handshake
         generic map (
             DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
@@ -1408,6 +1431,22 @@ begin
             dest_out => s_expected_ififo2_dst_packed
         );
 
+    u_cdc_exp_final : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
+            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 1
+        )
+        port map (
+            src_clk  => i_axis_aclk,
+            src_in   => s_expected_final_src_packed,
+            src_send => s_exp_final_src_send_r,
+            src_rcv  => s_exp_final_src_rcv,
+            dest_clk => i_tdc_clk,
+            dest_req => s_exp_final_dst_req,
+            dest_ack => s_exp_final_dst_req,
+            dest_out => s_expected_final_dst_packed
+        );
+
     p_exp_send : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
@@ -1416,6 +1455,8 @@ begin
                 s_exp1_d1_r       <= (others => '1');
                 s_exp2_src_send_r <= '0';
                 s_exp2_d1_r       <= (others => '1');
+                s_exp_final_src_send_r <= '0';
+                s_exp_final_d1_r       <= (others => '1');
             else
                 if s_exp1_src_send_r = '0' and s_expected_ififo1_src_packed /= s_exp1_d1_r then
                     s_exp1_src_send_r <= '1';
@@ -1428,6 +1469,13 @@ begin
                     s_exp2_d1_r       <= s_expected_ififo2_src_packed;
                 elsif s_exp2_src_rcv = '1' then
                     s_exp2_src_send_r <= '0';
+                end if;
+                if s_exp_final_src_send_r = '0'
+                   and s_expected_final_src_packed /= s_exp_final_d1_r then
+                    s_exp_final_src_send_r <= '1';
+                    s_exp_final_d1_r       <= s_expected_final_src_packed;
+                elsif s_exp_final_src_rcv = '1' then
+                    s_exp_final_src_send_r <= '0';
                 end if;
             end if;
         end if;
@@ -1764,6 +1812,7 @@ begin
                 i_stop_tdc          => s_stop_tdc_tdc,
                 i_expected_ififo1   => s_expected_ififo1_tdc(i),
                 i_expected_ififo2   => s_expected_ififo2_tdc(i),
+                i_expected_final_valid => s_expected_final_valid_tdc,
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),

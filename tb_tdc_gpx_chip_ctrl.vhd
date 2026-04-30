@@ -16,6 +16,8 @@
 --   [1] Powerup + cfg_write + master_reset sequence
 --   [2] Arm -> shot_start -> IrFlag -> Legacy drain (drain_mode='0')
 --   [2b] Legacy EF fallback when expected count is absent
+--   [2c] Known-zero expected final completes cleanly with empty EF
+--   [2d] Known-zero expected final blocks EF fallback reads on conflict
 --   [3] Arm -> shot_start -> IrFlag -> Burst drain (drain_mode='1')
 --   [4] n_drain_cap enforcement (per-IFIFO cap=n×4, e.g. cap=2 -> max 8/IFIFO)
 --   [5] Soft reset recovery
@@ -176,6 +178,7 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_drain_done_faulted : std_logic;
     signal s_expected_ififo1    : unsigned(7 downto 0) := (others => '0');
     signal s_expected_ififo2    : unsigned(7 downto 0) := (others => '0');
+    signal s_expected_final_valid : std_logic := '0';
 
     -- =========================================================================
     -- TDC-GPX Chip Model: FIFO state
@@ -270,6 +273,7 @@ begin
             i_stop_tdc          => s_stop_tdc,
             i_expected_ififo1   => s_expected_ififo1,
             i_expected_ififo2   => s_expected_ififo2,
+            i_expected_final_valid => s_expected_final_valid,
             o_bus_req_valid     => s_bus_req_valid,
             o_bus_req_rw        => s_bus_req_rw,
             o_bus_req_addr      => s_bus_req_addr,
@@ -621,12 +625,14 @@ begin
         begin
             s_expected_ififo1 <= (others => '0');
             s_expected_ififo2 <= (others => '0');
+            s_expected_final_valid <= '0';
         end procedure;
 
         procedure set_expected_counts(n1 : natural; n2 : natural) is
         begin
             s_expected_ififo1 <= to_unsigned(n1, s_expected_ififo1'length);
             s_expected_ififo2 <= to_unsigned(n2, s_expected_ififo2'length);
+            s_expected_final_valid <= '1';
         end procedure;
 
         -- Fill both FIFOs with test data and publish count-known expectations.
@@ -815,6 +821,100 @@ begin
             else
                 pr_fail("[2b] expected 5 fallback data words and no empty reads, got "
                         & nat_img(v_drain_words), v_fail);
+            end if;
+        end if;
+
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- =============================================================
+        -- [2c] Known-zero expected final completes cleanly with empty EF
+        --   Publish final expected=0/0 while the behavioral FIFO is empty.
+        --   The controller must trust the final bound, avoid reads, and
+        --   finish without a fault.
+        -- =============================================================
+        pr_info("[2c] Known-zero expected final completes cleanly");
+
+        s_cfg.drain_mode <= '0';
+        fill_fifos_with_expected(0, 0, 0, 0);
+        wait_clk(5);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
+        v_faulted_snap := s_raw_faulted_ctrl_cnt;
+
+        wait_drain_done(c_TIMEOUT, v_found);
+
+        if not v_found then
+            pr_fail("[2c] drain_done timeout", v_fail);
+        else
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
+            if v_drain_words = 0 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[2c] known-zero final produced no IFIFO reads");
+            else
+                pr_fail("[2c] expected zero reads/no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
+            end if;
+
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap
+               and s_err_drain_mismatch = '0' then
+                pr_pass("[2c] known-zero empty shot completed without fault");
+            else
+                pr_fail("[2c] unexpected fault indication for known-zero empty shot", v_fail);
+            end if;
+        end if;
+
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- =============================================================
+        -- [2d] Known-zero expected final blocks EF fallback reads
+        --   Publish final expected=0/0 while the behavioral FIFO is
+        --   deliberately non-empty. The controller must trust the final
+        --   expected bound, avoid reads, and mark the shot as suspect.
+        -- =============================================================
+        pr_info("[2d] Known-zero expected final blocks EF fallback reads");
+
+        s_cfg.drain_mode <= '0';
+        fill_fifos_with_expected(2, 1, 0, 0);
+        wait_clk(5);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
+        v_faulted_snap := s_raw_faulted_ctrl_cnt;
+
+        wait_drain_done(c_TIMEOUT, v_found);
+
+        if not v_found then
+            pr_fail("[2d] drain_done timeout", v_fail);
+        else
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
+            if v_drain_words = 0 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[2d] known-zero final produced no IFIFO reads");
+            else
+                pr_fail("[2d] expected zero reads/no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
+            end if;
+
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1
+               and s_err_drain_mismatch = '1' then
+                pr_pass("[2d] zero-count/EF conflict flagged via raw tuser fault and sticky");
+            else
+                pr_fail("[2d] missing fault indication for zero-count/EF conflict", v_fail);
             end if;
         end if;
 

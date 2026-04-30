@@ -42,7 +42,8 @@ entity tdc_gpx_top is
         g_STREAM_CLK_MODE : string   := "ASYNC";
         -- Stop event AXI-Stream interface parameters
         g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;
-        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH
+        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := 32
     );
     port (
         -- Processing / AXI-Stream clock and reset (150 MHz)
@@ -116,6 +117,13 @@ entity tdc_gpx_top is
         i_stop_evt_tkeep  : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
         i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
         o_stop_evt_tready : out std_logic;
+
+        -- Fire-count sideband/final stream from echo_receiver.
+        -- tlast='1' marks expected count final, including known zero-stop.
+        i_fire_count_tvalid : in  std_logic;
+        i_fire_count_tdata  : in  std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
+        i_fire_count_tkeep  : in  std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
+        i_fire_count_tlast  : in  std_logic;
 
         -- TDC-GPX physical pins (per chip, x4)
         io_tdc_d         : inout t_tdc_bus_array;
@@ -459,7 +467,8 @@ begin
             g_OEN_MODE        => g_OEN_MODE,
             g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS,
             g_STREAM_CLK_MODE => g_STREAM_CLK_MODE,
-            g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH
+            g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
+            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH
         )
         port map (
             i_axis_aclk          => i_axis_aclk,
@@ -509,6 +518,10 @@ begin
             i_stop_evt_tkeep     => i_stop_evt_tkeep,
             i_stop_evt_tuser     => i_stop_evt_tuser,
             o_stop_evt_tready    => o_stop_evt_tready,
+            i_fire_count_tvalid  => i_fire_count_tvalid,
+            i_fire_count_tdata   => i_fire_count_tdata,
+            i_fire_count_tkeep   => i_fire_count_tkeep,
+            i_fire_count_tlast   => i_fire_count_tlast,
             i_stop_tdc           => i_stop_tdc,
             -- Control inputs
             i_cmd_start          => s_cmd_start,

@@ -133,13 +133,15 @@ entity tdc_gpx_chip_ctrl is
         --   - chip_ctrl captures these at IrFlag rising edge (ST_CAPTURE).
         --     By IrFlag time, MTimer has expired so all stop pulses are final.
         --   - Max per IFIFO = 4 stops x max_hits x 2 edges (rise+fall).
-        --   - If both are 0 -> EF-based drain fallback (no count info).
+        --   - i_expected_final_valid='1' qualifies zero as a known final
+        --     count. If it is '0', both counts 0 keep EF-based fallback.
         -- Per-chip expected IFIFO drain counts (from echo_receiver via top).
         -- Each = rise_count + fall_count for that chip's IFIFO.
         -- Used for burst sizing only (NOT drain completion — that uses EF).
         -- 0 = EF-based drain fallback (no burst optimization).
         i_expected_ififo1   : in  unsigned(7 downto 0);
         i_expected_ififo2   : in  unsigned(7 downto 0);
+        i_expected_final_valid : in std_logic;
 
         -- bus_phy request interface
         o_bus_req_valid     : out std_logic;
@@ -519,6 +521,7 @@ begin
             i_max_range_clks    => i_max_range_clks,
             i_expected_ififo1   => i_expected_ififo1,
             i_expected_ififo2   => i_expected_ififo2,
+            i_expected_final_valid => i_expected_final_valid,
             o_bus_req_valid     => s_run_bus_valid,
             o_bus_req_rw        => s_run_bus_rw,
             o_bus_req_addr      => s_run_bus_addr,

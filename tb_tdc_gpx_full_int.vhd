@@ -803,7 +803,8 @@ begin
             g_RECOVERY_CLKS   => G_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS  => G_ALU_PULSE_CLKS,
             g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
-            g_STOP_EVT_DWIDTH => C_STOP_DW
+            g_STOP_EVT_DWIDTH => C_STOP_DW,
+            g_FIRE_COUNT_DWIDTH => 32
         )
         port map (
             i_axis_aclk     => clk,
@@ -866,6 +867,12 @@ begin
             i_stop_evt_tkeep  => (others => '0'),
             i_stop_evt_tuser  => (others => '0'),
             o_stop_evt_tready => er_stop_tready,
+            -- Keep fire_count final disconnected while stop_evt is tied off;
+            -- otherwise every shot would look like a known-zero stop shot.
+            i_fire_count_tvalid => '0',
+            i_fire_count_tdata  => (others => '0'),
+            i_fire_count_tkeep  => (others => '0'),
+            i_fire_count_tlast  => '0',
             io_tdc_d          => io_tdc_d,
             o_tdc_adr         => o_tdc_adr,
             o_tdc_csn         => o_tdc_csn,
