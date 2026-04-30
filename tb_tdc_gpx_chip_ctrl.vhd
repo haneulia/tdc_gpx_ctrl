@@ -66,8 +66,15 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
 
     -- IFIFO model: number of words per IFIFO
     constant c_FIFO_DEPTH       : natural := 32;
+    -- Nominal I-Mode single-shot load used by normal IFIFO1/2 tests:
+    -- each IFIFO covers 4 stop channels, with 7 echoes per stop.
+    constant c_IFIFO_STOP_CHANNELS : natural := 4;
+    constant c_ECHOES_PER_STOP     : natural := 7;
+    constant c_IFIFO_NOMINAL_WORDS : natural := c_IFIFO_STOP_CHANNELS * c_ECHOES_PER_STOP;
+    constant c_IFIFO_NOMINAL_TOTAL : natural := 2 * c_IFIFO_NOMINAL_WORDS;
     -- LF threshold: LF='1' when fill >= threshold
     constant c_LF_THRESHOLD     : natural := 4;
+    subtype t_imode_word is std_logic_vector(c_DATA_W - 1 downto 0);
 
     -- =========================================================================
     -- Simulation control
@@ -232,6 +239,28 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     function sl_chr(s : std_logic) return character is
     begin
         if s = '1' then return '1'; else return '0'; end if;
+    end function;
+
+    function fn_imode_word(rd_cnt : natural) return t_imode_word is
+        variable v_word     : t_imode_word := (others => '0');
+        variable v_cha_code : natural;
+        variable v_echo_idx : natural;
+        variable v_hit      : natural;
+    begin
+        -- I-Mode SINGLE_SHOT raw layout:
+        --   [27:26] ChaCode, [25:18] StartNum=0, [17] Slope, [16:0] Hit.
+        -- The nominal tests therefore model 4 local stop channels with
+        -- 7 echoes/channel by loading 28 words per IFIFO.
+        v_cha_code := rd_cnt mod c_IFIFO_STOP_CHANNELS;
+        v_echo_idx := rd_cnt / c_IFIFO_STOP_CHANNELS;
+        v_hit      := (v_cha_code * 16#100#) + v_echo_idx + 1;
+
+        v_word(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO) :=
+            std_logic_vector(to_unsigned(v_cha_code, c_RAW_CHACODE_HI - c_RAW_CHACODE_LO + 1));
+        v_word(c_RAW_SLOPE_BIT) := '0';
+        v_word(c_RAW_HIT_HI downto c_RAW_HIT_LO) :=
+            std_logic_vector(to_unsigned(v_hit, c_RAW_HIT_WIDTH));
+        return v_word;
     end function;
 
 begin
@@ -409,13 +438,9 @@ begin
 
                 -- Read data: encode FIFO ID + counter in data word
                 if s_adr = c_TDC_REG8_IFIFO1 then
-                    -- IFIFO1 data: 0x8_xxxxxx (address in [27:24], counter in [23:0])
-                    s_chip_d_out <= x"8" & std_logic_vector(
-                        to_unsigned(s_fifo1_rd_cnt, 24));
+                    s_chip_d_out <= fn_imode_word(s_fifo1_rd_cnt);
                 elsif s_adr = c_TDC_REG9_IFIFO2 then
-                    -- IFIFO2 data: 0x9_xxxxxx
-                    s_chip_d_out <= x"9" & std_logic_vector(
-                        to_unsigned(s_fifo2_rd_cnt, 24));
+                    s_chip_d_out <= fn_imode_word(s_fifo2_rd_cnt);
                 else
                     s_chip_d_out <= (others => '0');
                 end if;
@@ -742,12 +767,13 @@ begin
 
         -- =============================================================
         -- [2] Legacy drain (drain_mode='0')
-        --   Fill FIFO1=8, FIFO2=4 -> drain all 12 words
+        --   Nominal I-Mode single-shot: IFIFO1=28, IFIFO2=28
+        --   (4 stop channels per IFIFO x 7 echoes)
         -- =============================================================
         pr_info("[2] Legacy drain (drain_mode='0')");
 
         s_cfg.drain_mode <= '0';
-        fill_fifos(8, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);   -- let 2-FF sync settle
 
         -- ARM
@@ -776,10 +802,15 @@ begin
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[2] drain_done received, words=" & nat_img(v_drain_words));
 
-            if v_drain_words = 12 and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[2] drain count exact 12, no empty IFIFO reads");
+            if v_drain_words = c_IFIFO_NOMINAL_TOTAL
+               and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[2] drain count exact "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & ", no empty IFIFO reads");
             else
-                pr_fail("[2] expected 12 data words and no empty reads, got "
+                pr_fail("[2] expected "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " data words and no empty reads, got "
                         & nat_img(v_drain_words), v_fail);
             end if;
         end if;
@@ -792,12 +823,13 @@ begin
 
         -- =============================================================
         -- [2b] EF fallback drain when echo_receiver count is absent
-        --   Fill FIFO1=3, FIFO2=2 but publish expected=0/0.
+        --   Use the same nominal 28/28 physical FIFO load, but keep
+        --   expected_final_valid=0 so chip_run must fall back to EF.
         -- =============================================================
         pr_info("[2b] EF fallback drain (expected count absent)");
 
         s_cfg.drain_mode <= '0';
-        fill_fifos_unknown(3, 2);
+        fill_fifos_unknown(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -816,10 +848,15 @@ begin
         else
             wait_clk(1);
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
-            if v_drain_words = 5 and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[2b] EF fallback drained exact 5 data words without empty read");
+            if v_drain_words = c_IFIFO_NOMINAL_TOTAL
+               and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[2b] EF fallback drained exact "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " data words without empty read");
             else
-                pr_fail("[2b] expected 5 fallback data words and no empty reads, got "
+                pr_fail("[2b] expected "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " fallback data words and no empty reads, got "
                         & nat_img(v_drain_words), v_fail);
             end if;
         end if;
@@ -887,7 +924,7 @@ begin
         pr_info("[2d] Known-zero expected final blocks EF fallback reads");
 
         s_cfg.drain_mode <= '0';
-        fill_fifos_with_expected(2, 1, 0, 0);
+        fill_fifos_with_expected(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS, 0, 0);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -931,12 +968,13 @@ begin
 
         -- =============================================================
         -- [3] Burst drain (drain_mode='1')
-        --   Fill FIFO1=16, FIFO2=8 -> burst read all 24 words
+        --   Nominal I-Mode single-shot: IFIFO1=28, IFIFO2=28
+        --   (4 stop channels per IFIFO x 7 echoes)
         -- =============================================================
         pr_info("[3] Burst drain (drain_mode='1')");
 
         s_cfg.drain_mode <= '1';
-        fill_fifos(16, 8);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         -- Shot (already ARMED from [2])
@@ -960,10 +998,15 @@ begin
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[3] burst drain_done, words=" & nat_img(v_drain_words));
 
-            if v_drain_words = 24 and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[3] burst drain count exact 24, no empty IFIFO reads");
+            if v_drain_words = c_IFIFO_NOMINAL_TOTAL
+               and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[3] burst drain count exact "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & ", no empty IFIFO reads");
             else
-                pr_fail("[3] expected 24 data words and no empty reads, got "
+                pr_fail("[3] expected "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " data words and no empty reads, got "
                         & nat_img(v_drain_words), v_fail);
             end if;
         end if;
@@ -972,13 +1015,13 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [4] n_drain_cap enforcement (cap=2 -> max 16 reads)
-        --   Fill FIFO1=16, FIFO2=16 (32 total) but cap at 16
+        -- [4] n_drain_cap enforcement (cap=2 -> max 8/IFIFO, 16 total)
+        --   Load nominal 28/28 but cap at 8/IFIFO.
         -- =============================================================
-        pr_info("[4] n_drain_cap enforcement (cap=2, max=16 reads)");
+        pr_info("[4] n_drain_cap enforcement (cap=2, max=8/IFIFO, 16 total)");
 
         s_cfg.drain_mode  <= '1';
-        s_cfg.n_drain_cap <= to_unsigned(2, 4);  -- 2 × 8 = 16 max reads
+        s_cfg.n_drain_cap <= to_unsigned(2, 4);  -- 2 x 4 = 8 reads per IFIFO
 
         -- Re-arm with new config (snapshot taken at cmd_start)
         pulse(s_cmd_stop);
@@ -986,7 +1029,7 @@ begin
         pulse(s_cmd_start);
         wait_clk(2);
 
-        fill_fifos(16, 16);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         -- Shot
@@ -1299,7 +1342,7 @@ begin
         s_cfg.n_drain_cap <= (others => '0');
 
         -- First shot
-        fill_fifos(4, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         -- ARM fresh (stop first to go to IDLE, then start)
@@ -1327,7 +1370,7 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- Second shot (already re-armed automatically)
-        fill_fifos(4, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -1408,7 +1451,7 @@ begin
         -- =============================================================
         pr_info("[12] cmd_stop during drain -> deferred stop, FSM to IDLE");
 
-        fill_fifos(16, 8);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         -- ARM
@@ -1455,7 +1498,7 @@ begin
         end if;
 
         -- Verify we can start a new cycle (proves FSM is in IDLE, not ARMED)
-        fill_fifos(4, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
         pulse(s_cmd_start);
         wait_clk(2);
@@ -1485,7 +1528,7 @@ begin
         pr_info("[13] cmd_stop in ST_CAPTURE -> graceful drain + ALU + recovery -> IDLE");
 
         -- Fill FIFOs so there's data to drain (graceful mode preserves it)
-        fill_fifos(8, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         -- ARM
@@ -1529,7 +1572,7 @@ begin
         end if;
 
         -- Verify restart works (FSM really is in IDLE)
-        fill_fifos(4, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
         pulse(s_cmd_start);
         wait_clk(2);
@@ -1559,7 +1602,7 @@ begin
         -- =============================================================
         pr_info("[14] cmd_stop in ST_CAPTURE without irflag -> fallback watchdog");
 
-        fill_fifos(8, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         pulse(s_cmd_start);
@@ -1588,7 +1631,7 @@ begin
         end if;
 
         -- Verify restart works after fallback recovery
-        fill_fifos(4, 4);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
         pulse(s_cmd_start);
         wait_clk(2);
@@ -1661,7 +1704,7 @@ begin
         s_cfg.drain_mode  <= '1';
         s_cfg.n_drain_cap <= (others => '0');
         s_raw_axis_tready <= '1';
-        fill_fifos(12, 8);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         pulse(s_cmd_start);
@@ -1735,11 +1778,16 @@ begin
             pr_pass("[16] drain_done received under bounded raw backpressure, words="
                     & nat_img(v_drain_words));
 
-            if v_drain_words = 20 and v_meas_data_cnt = 20
+            if v_drain_words = c_IFIFO_NOMINAL_TOTAL
+               and v_meas_data_cnt = c_IFIFO_NOMINAL_TOTAL
                and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[16] data count exact 20 and no empty IFIFO reads");
+                pr_pass("[16] data count exact "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " and no empty IFIFO reads");
             else
-                pr_fail("[16] expected 20 data words/no empty reads, got "
+                pr_fail("[16] expected "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " data words/no empty reads, got "
                         & nat_img(v_drain_words)
                         & " measured=" & nat_img(v_meas_data_cnt), v_fail);
             end if;
