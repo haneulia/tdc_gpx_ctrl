@@ -310,6 +310,7 @@ architecture rtl of tdc_gpx_top is
     signal s_face_id_r              : unsigned(7 downto 0);
     signal s_frame_id_r             : unsigned(31 downto 0);
     signal s_global_shot_seq_r      : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    signal s_face_shot_count_r      : unsigned(15 downto 0);
     signal s_face_active_mask_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_face_stops_per_chip_r  : unsigned(3 downto 0);
     signal s_face_cols_per_face_r   : unsigned(15 downto 0);
@@ -533,6 +534,7 @@ begin
             i_err_soft_clear     => s_err_soft_clear,
             i_shot_start_per_chip => s_shot_start_per_chip,
             i_shot_start_gated   => s_shot_start_gated,
+            i_current_fire_count => s_face_shot_count_r,
             i_cfg_pipeline       => s_cfg_pipeline,
             -- Cluster 4 idle inputs (for cmd_arb)
             i_face_asm_idle      => s_face_asm_idle,
@@ -885,6 +887,7 @@ begin
             o_face_id              => s_face_id_r,
             o_frame_id             => s_frame_id_r,
             o_global_shot_seq      => s_global_shot_seq_r,
+            o_face_shot_count      => s_face_shot_count_r,
             o_frame_abort_cnt      => s_frame_abort_cnt_r,
             o_frame_done_both      => s_frame_done_both,
             o_face_active_mask     => s_face_active_mask_r,

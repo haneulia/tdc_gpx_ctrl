@@ -117,6 +117,7 @@ architecture sim of tb_tdc_gpx_mask_sweep is
     signal face_id             : unsigned(7 downto 0);
     signal frame_id            : unsigned(31 downto 0);
     signal global_shot_seq     : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    signal face_shot_count     : unsigned(15 downto 0);
     signal frame_abort_cnt     : unsigned(15 downto 0);
     signal frame_done_both     : std_logic;
     signal face_active_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -214,6 +215,7 @@ begin
             o_face_id            => face_id,
             o_frame_id           => frame_id,
             o_global_shot_seq    => global_shot_seq,
+            o_face_shot_count    => face_shot_count,
             o_frame_abort_cnt    => frame_abort_cnt,
             o_frame_done_both    => frame_done_both,
             o_face_active_mask   => face_active_mask,

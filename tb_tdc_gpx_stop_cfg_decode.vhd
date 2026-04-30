@@ -30,6 +30,7 @@ architecture sim of tb_tdc_gpx_stop_cfg_decode is
     signal s_fire_count_tlast  : std_logic := '0';
 
     signal s_shot_start_gated : std_logic := '0';
+    signal s_current_fire_count : unsigned(15 downto 0) := (others => '0');
     signal s_expected_ififo1  : t_expected_array;
     signal s_expected_ififo2  : t_expected_array;
     signal s_expected_final_valid : std_logic;
@@ -73,6 +74,7 @@ begin
             i_fire_count_tdata  => s_fire_count_tdata,
             i_fire_count_tlast  => s_fire_count_tlast,
             i_shot_start_gated => s_shot_start_gated,
+            i_current_fire_count => s_current_fire_count,
             o_expected_ififo1  => s_expected_ififo1,
             o_expected_ififo2  => s_expected_ififo2,
             o_expected_final_valid => s_expected_final_valid,
@@ -98,6 +100,7 @@ begin
 
         -- Zero-stop shot: no stop_evt beat, only fire_count final summary.
         pulse(s_shot_start_gated);
+        s_current_fire_count <= to_unsigned(1, 16);
         wait_clk(s_clk, 2);
 
         s_fire_count_tvalid <= '1';
@@ -117,9 +120,29 @@ begin
 
         -- Next shot clears the final marker.
         pulse(s_shot_start_gated);
+        s_current_fire_count <= to_unsigned(2, 16);
         wait_clk(s_clk, 1);
         assert s_expected_final_valid = '0'
             report "shot_start did not clear expected_final_valid"
+            severity failure;
+
+        -- Wrong fire_count value must not update the expected counts.
+        s_stop_evt_tdata <= (others => '0');
+        s_stop_evt_tuser <= (others => '0');
+        s_stop_evt_tdata(3 downto 0) <= x"4";
+        s_stop_evt_tvalid <= '1';
+        s_fire_count_tvalid <= '1';
+        s_fire_count_tlast  <= '0';
+        s_fire_count_tdata  <= x"00000001";
+        wait_clk(s_clk, 1);
+        s_stop_evt_tvalid <= '0';
+        s_fire_count_tvalid <= '0';
+        wait_clk(s_clk, 1);
+        assert s_expected_ififo1(0) = 0 and s_expected_ififo2(0) = 0
+            report "mismatched fire_count updated expected counts"
+            severity failure;
+        assert s_orphan_sticky = '1'
+            report "mismatched fire_count did not flag orphan/ownership violation"
             severity failure;
 
         -- Non-zero running total plus final marker remains count-known.
@@ -130,8 +153,12 @@ begin
         s_stop_evt_tdata(7 downto 4) <= x"1";
         s_stop_evt_tuser(7 downto 4) <= x"2";
         s_stop_evt_tvalid <= '1';
+        s_fire_count_tvalid <= '1';
+        s_fire_count_tlast  <= '0';
+        s_fire_count_tdata  <= x"00000002";
         wait_clk(s_clk, 1);
         s_stop_evt_tvalid <= '0';
+        s_fire_count_tvalid <= '0';
         wait_clk(s_clk, 1);
 
         assert s_expected_ififo1(0) = to_unsigned(3, 8)
@@ -143,6 +170,7 @@ begin
 
         s_fire_count_tvalid <= '1';
         s_fire_count_tlast  <= '1';
+        s_fire_count_tdata  <= x"00000002";
         wait_clk(s_clk, 1);
         s_fire_count_tvalid <= '0';
         s_fire_count_tlast  <= '0';

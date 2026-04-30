@@ -133,6 +133,7 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     signal i_cmd_cfg_write      : std_logic := '0';
     signal i_shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal i_shot_start_gated   : std_logic := '0';
+    signal i_current_fire_count : unsigned(15 downto 0) := (others => '0');
 
     -- Cluster 4 idle inputs
     signal i_face_asm_idle      : std_logic := '1';
@@ -270,6 +271,7 @@ begin
             i_cmd_cfg_write      => i_cmd_cfg_write,
             i_shot_start_per_chip => i_shot_start_per_chip,
             i_shot_start_gated   => i_shot_start_gated,
+            i_current_fire_count => i_current_fire_count,
             i_cfg_pipeline       => C_CFG_PIPELINE,
             -- Cluster 4 idle
             i_face_asm_idle      => i_face_asm_idle,

@@ -155,6 +155,9 @@ entity tdc_gpx_config_ctrl is
         i_err_soft_clear     : in  std_logic := '0';
         i_shot_start_per_chip : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_shot_start_gated   : in  std_logic;
+        -- Face-local 1-base shot/fire count. Used to qualify
+        -- echo_receiver fire_count_tdata[15:0] before accepting stop counts.
+        i_current_fire_count : in  unsigned(15 downto 0);
         i_cfg_pipeline       : in  t_tdc_cfg;
 
         -- =====================================================================
@@ -1131,6 +1134,7 @@ begin
             i_fire_count_tdata  => i_fire_count_tdata,
             i_fire_count_tlast  => i_fire_count_tlast,
             i_shot_start_gated => i_shot_start_gated,
+            i_current_fire_count => i_current_fire_count,
             o_expected_ififo1  => s_expected_ififo1,
             o_expected_ififo2  => s_expected_ififo2,
             o_expected_final_valid => s_expected_final_valid,

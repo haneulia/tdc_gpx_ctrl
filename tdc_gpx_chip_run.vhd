@@ -23,10 +23,9 @@
 --   - drain_mode/n_drain_cap/bus_clk_div already snapshotted by coordinator
 --   - s_range_active_r is cleared on ALL drain timeout exit paths as well as
 --     normal completion (Round 1 #1)
---   - Expected IFIFO counts are latched only at ST_DRAIN_LATCH (after
---     irflag). No assertion-based stability check between shot_start and
---     drain_latch — that would conflict with stop_cfg_decode's continuous
---     update during capture (Round 1 #7)
+--   - Expected IFIFO counts are snapshotted once at ST_DRAIN_LATCH.
+--     Upstream fire-count matching qualifies i_expected_final_valid, so
+--     chip_run does not add a fixed CDC settle delay after IrFlag.
 --
 -- ST_CAPTURE cmd_stop policy — GRACEFUL (Q&A #29, Round 4):
 --   On i_cmd_stop during ST_CAPTURE, we latch s_stop_pending_r and raise
@@ -104,14 +103,11 @@ entity tdc_gpx_chip_run is
         i_max_range_clks    : in  unsigned(15 downto 0);
 
         -- Expected IFIFO counts (from echo_receiver).
-        -- Sampled ONCE at ST_DRAIN_LATCH (1 cycle after IrFlag-based drain
-        -- entry). Stability before that moment is NOT required — the file-
-        -- header note explains the prior stability assertion was removed
-        -- because it conflicts with stop_cfg_decode's continuous update
-        -- during capture. Upstream may safely change these during capture /
-        -- drain phases; only the ST_DRAIN_LATCH-cycle value is used.
-        -- i_expected_final_valid qualifies zero as a known hard bound. When
-        -- it is '0', expected=0 keeps the legacy EF fallback behavior.
+        -- Sampled once at ST_DRAIN_LATCH. Stability before that moment is
+        -- not required because stop_cfg_decode updates running totals during
+        -- capture. i_expected_final_valid is already qualified upstream by
+        -- the fire-count/shot-count final contract; when it is '0',
+        -- expected=0 keeps the legacy EF fallback behavior.
         i_expected_ififo1   : in  unsigned(7 downto 0);
         i_expected_ififo2   : in  unsigned(7 downto 0);
         i_expected_final_valid : in std_logic;
@@ -208,14 +204,6 @@ architecture rtl of tdc_gpx_chip_run is
     constant c_ALU_PULSE_LAST : unsigned(15 downto 0) := to_unsigned(g_ALU_PULSE_CLKS - 1, 16);
     constant c_FLAG_SETTLE_LAST : unsigned(15 downto 0) :=
         to_unsigned(g_EF_SYNC_GUARD_CLKS - 1, 16);
-    -- Round 7 A-2: expected_ififo handshake (config_ctrl u_cdc_exp1/2) has up
-    -- to ~8 TDC cycles of latency. If the final stop event arrives close to
-    -- irflag, the handshake may still be in flight when ST_DRAIN_LATCH
-    -- samples — latching a stale value. Hold ST_DRAIN_LATCH for 16 cycles
-    -- past irflag before sampling so the latest completed handshake value
-    -- has landed on the dest side.
-    constant c_EXP_LATCH_SETTLE_LAST : unsigned(15 downto 0) := to_unsigned(15, 16);
-
     -- Phase B: shot-bounded watchdog cap.
     -- Function: (max_range + margin), saturating at x"FFFF". max_range=0
     -- is the "disabled" encoding and also returns x"FFFF" so pre-config
@@ -452,7 +440,7 @@ begin
                             s_expected_ififo1_r  <= (others => '0');
                             s_expected_ififo2_r  <= (others => '0');
                             s_expected_valid_r   <= '0';
-                            s_wait_cnt_r         <= (others => '0');  -- Round 7 A-2: settle counter
+                            s_wait_cnt_r         <= (others => '0');
                             s_state_r <= ST_DRAIN_LATCH;
                         elsif s_stop_pending_r = '1' then
                             -- Fallback watchdog: irflag never arrived after
@@ -483,20 +471,15 @@ begin
                         end if;
 
                     when ST_DRAIN_LATCH =>
-                        -- Round 7 A-2: settle window for the expected_ififo
-                        -- handshake (~8 TDC cycles worst case). Hold here
-                        -- until c_EXP_LATCH_SETTLE_LAST before sampling so
-                        -- the last stop event that landed close to irflag
-                        -- has propagated through the handshake.
-                        if s_wait_cnt_r = c_EXP_LATCH_SETTLE_LAST then
-                            s_expected_ififo1_r <= i_expected_ififo1;
-                            s_expected_ififo2_r <= i_expected_ififo2;
-                            s_expected_valid_r  <= i_expected_final_valid;
-                            s_wait_cnt_r        <= (others => '0');
-                            s_state_r           <= ST_DRAIN_CHECK;
-                        else
-                            s_wait_cnt_r <= s_wait_cnt_r + 1;
-                        end if;
+                        -- Fire-count matching in stop_cfg_decode is the
+                        -- ownership contract for "final". Do not add a blind
+                        -- wait here; snapshot the qualified current value and
+                        -- move directly to drain decision.
+                        s_expected_ififo1_r <= i_expected_ififo1;
+                        s_expected_ififo2_r <= i_expected_ififo2;
+                        s_expected_valid_r  <= i_expected_final_valid;
+                        s_wait_cnt_r        <= (others => '0');
+                        s_state_r           <= ST_DRAIN_CHECK;
 
                     when ST_DRAIN_CHECK =>
                       if i_raw_busy = '0' then

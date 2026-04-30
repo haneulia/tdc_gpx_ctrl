@@ -88,6 +88,9 @@ entity tdc_gpx_face_seq is
         o_face_id            : out unsigned(7 downto 0);
         o_frame_id           : out unsigned(31 downto 0);
         o_global_shot_seq    : out unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+        -- Face-local 1-base shot/fire count after o_shot_start_gated.
+        -- Matches laser_ctrl/echo_receiver fire_count_tdata[15:0].
+        o_face_shot_count    : out unsigned(15 downto 0);
         o_frame_abort_cnt    : out unsigned(15 downto 0);
         o_frame_done_both    : out std_logic;
 
@@ -433,6 +436,7 @@ begin
     o_face_id             <= s_face_id_r;
     o_frame_id            <= s_frame_id_r;
     o_global_shot_seq     <= s_global_shot_seq_r;
+    o_face_shot_count     <= s_face_shot_cnt_r;
     o_frame_abort_cnt     <= s_frame_abort_cnt_r;
     o_frame_done_both     <= s_frame_done_both;
     o_face_active_mask    <= s_face_active_mask_r;

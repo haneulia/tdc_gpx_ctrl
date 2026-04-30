@@ -15,10 +15,12 @@
 --   - Counts MUST monotonically increase within a shot window (a running total
 --     can only grow or stay the same). Decrease is a contract violation and is
 --     flagged by the sim-only monotonicity checker below.
---   - The fire_count stream final beat (`i_fire_count_tvalid='1' and
---     i_fire_count_tlast='1'`) marks the expected count as FINAL for the
---     current shot. This is required so expected=0 can mean "known zero"
---     instead of the legacy "echo count absent" fallback encoding.
+--   - Every fire_count beat carries the face-local 1-base shot/fire count in
+--     i_fire_count_tdata[15:0]. A stop_evt beat is accepted only when the
+--     same-cycle fire_count beat matches i_current_fire_count. The final beat
+--     (`i_fire_count_tlast='1'`) uses the same value match and only marks the
+--     current shot's expected count as FINAL. This is required so expected=0
+--     can mean "known zero" instead of the legacy fallback encoding.
 --
 -- Distance-based shot window (Round 13 follow-up, audit 5번):
 --   Orphan detection timing is derived from i_cfg.max_range_clks (physical
@@ -108,14 +110,17 @@ entity tdc_gpx_stop_cfg_decode is
         o_stop_evt_tready : out std_logic;
 
         -- Fire-count sideband/final stream from echo_receiver.
-        -- Only tvalid+tlast are consumed here. tdata is kept in the port
-        -- contract for the later shot-id/fire-count matching extension.
+        -- tdata[15:0] must match i_current_fire_count for both stop-event
+        -- ownership and final qualification. tlast='1' is only the final
+        -- marker; it is not the ownership key by itself.
         i_fire_count_tvalid : in  std_logic;
         i_fire_count_tdata  : in  std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
         i_fire_count_tlast  : in  std_logic;
 
         -- Shot boundary clear
         i_shot_start_gated : in  std_logic;
+        -- Face-local 1-base shot/fire count aligned to the current TDC shot.
+        i_current_fire_count : in unsigned(15 downto 0);
 
         -- Per-chip expected IFIFO counts
         o_expected_ififo1 : out t_expected_array;
@@ -189,6 +194,10 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
 
 begin
 
+    assert g_FIRE_COUNT_DWIDTH >= 16
+        report "tdc_gpx_stop_cfg_decode: g_FIRE_COUNT_DWIDTH must be >= 16"
+        severity failure;
+
     o_stop_evt_tready <= '1';
     o_monotonic_violation_mask <= s_mono_viol_r;
     o_orphan_stop_evt_sticky <= s_orphan_evt_sticky_r;
@@ -199,8 +208,19 @@ begin
         variable v_new1 : unsigned(7 downto 0);
         variable v_new2 : unsigned(7 downto 0);
         variable v_lo   : natural;
+        variable v_fire_count : unsigned(15 downto 0);
+        variable v_fire_match : boolean;
+        variable v_stop_owned : boolean;
     begin
         if rising_edge(i_clk) then
+            v_fire_count := unsigned(i_fire_count_tdata(15 downto 0));
+            v_fire_match := (i_fire_count_tvalid = '1')
+                and (v_fire_count = i_current_fire_count);
+            v_stop_owned := (i_stop_evt_tvalid = '1')
+                and (i_fire_count_tlast = '0')
+                and v_fire_match
+                and (s_window_active_r = '1');
+
             if i_rst_n = '0' then
                 s_prev_ififo1_r <= (others => (others => '0'));
                 s_prev_ififo2_r <= (others => (others => '0'));
@@ -248,32 +268,38 @@ begin
                     -- the beat arrived with no active shot window. Covers
                     -- the pre-first-shot case (window never opened) AND the
                     -- inter-shot gap case (distance window closed).
-                    if s_window_active_r = '0' then
+                    if not v_stop_owned then
                         s_orphan_evt_sticky_r <= '1';
-                    end if;
-                    for i in 0 to c_N_CHIPS - 1 loop
-                        v_lo   := i * 8;
-                        v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
-                                + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);
-                        v_new2 := resize(unsigned(i_stop_evt_tdata(v_lo + 7 downto v_lo + 4)), 8)
-                                + resize(unsigned(i_stop_evt_tuser(v_lo + 7 downto v_lo + 4)), 8);
-                        if s_track_r = '1' then
-                            if v_new1 < s_prev_ififo1_r(i) or v_new2 < s_prev_ififo2_r(i) then
-                                s_mono_viol_r(i) <= '1';
+                    else
+                        for i in 0 to c_N_CHIPS - 1 loop
+                            v_lo   := i * 8;
+                            v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
+                                    + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);
+                            v_new2 := resize(unsigned(i_stop_evt_tdata(v_lo + 7 downto v_lo + 4)), 8)
+                                    + resize(unsigned(i_stop_evt_tuser(v_lo + 7 downto v_lo + 4)), 8);
+                            if s_track_r = '1' then
+                                if v_new1 < s_prev_ififo1_r(i) or v_new2 < s_prev_ififo2_r(i) then
+                                    s_mono_viol_r(i) <= '1';
+                                end if;
                             end if;
-                        end if;
-                        s_prev_ififo1_r(i) <= v_new1;
-                        s_prev_ififo2_r(i) <= v_new2;
-                    end loop;
-                    s_track_r <= '1';
+                            s_prev_ififo1_r(i) <= v_new1;
+                            s_prev_ififo2_r(i) <= v_new2;
+                        end loop;
+                        s_track_r <= '1';
+                    end if;
                 end if;
 
                 if i_shot_start_gated = '0'
-                   and i_fire_count_tvalid = '1'
-                   and i_fire_count_tlast = '1' then
-                    if s_window_active_r = '1' then
-                        s_expected_final_r <= '1';
-                    else
+                   and i_fire_count_tvalid = '1' then
+                    if not v_fire_match then
+                        s_orphan_evt_sticky_r <= '1';
+                    elsif i_fire_count_tlast = '1' then
+                        if s_window_active_r = '1' then
+                            s_expected_final_r <= '1';
+                        else
+                            s_orphan_evt_sticky_r <= '1';
+                        end if;
+                    elsif i_stop_evt_tvalid = '0' then
                         s_orphan_evt_sticky_r <= '1';
                     end if;
                 end if;
@@ -283,8 +309,17 @@ begin
 
     p_stop_decode : process(i_clk)
         variable v_lo : natural;
+        variable v_fire_count : unsigned(15 downto 0);
+        variable v_stop_owned : boolean;
     begin
         if rising_edge(i_clk) then
+            v_fire_count := unsigned(i_fire_count_tdata(15 downto 0));
+            v_stop_owned := (i_stop_evt_tvalid = '1')
+                and (i_fire_count_tvalid = '1')
+                and (i_fire_count_tlast = '0')
+                and (v_fire_count = i_current_fire_count)
+                and (s_window_active_r = '1');
+
             if i_rst_n = '0' then
                 for i in 0 to c_N_CHIPS - 1 loop
                     o_expected_ififo1(i) <= (others => '0');
@@ -295,7 +330,7 @@ begin
                     o_expected_ififo1(i) <= (others => '0');
                     o_expected_ififo2(i) <= (others => '0');
                 end loop;
-            elsif i_stop_evt_tvalid = '1' then
+            elsif v_stop_owned then
                 for i in 0 to c_N_CHIPS - 1 loop
                     v_lo := i * 8;
                     o_expected_ififo1(i) <=
@@ -319,20 +354,28 @@ begin
     p_monotonic_check : process(i_clk)
         variable v_new1   : unsigned(7 downto 0);
         variable v_new2   : unsigned(7 downto 0);
-        variable v_lo     : natural;
-        type t_prev_arr is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
         variable v_prev1  : t_prev_arr := (others => (others => '0'));
         variable v_prev2  : t_prev_arr := (others => (others => '0'));
+        variable v_lo     : natural;
         variable v_track  : boolean := false;
+        variable v_fire_count : unsigned(15 downto 0);
+        variable v_stop_owned : boolean;
     begin
         if rising_edge(i_clk) then
+            v_fire_count := unsigned(i_fire_count_tdata(15 downto 0));
+            v_stop_owned := (i_stop_evt_tvalid = '1')
+                and (i_fire_count_tvalid = '1')
+                and (i_fire_count_tlast = '0')
+                and (v_fire_count = i_current_fire_count)
+                and (s_window_active_r = '1');
+
             if i_rst_n = '0' or i_shot_start_gated = '1' then
                 v_track := false;
                 for i in 0 to c_N_CHIPS - 1 loop
                     v_prev1(i) := (others => '0');
                     v_prev2(i) := (others => '0');
                 end loop;
-            elsif i_stop_evt_tvalid = '1' then
+            elsif v_stop_owned then
                 for i in 0 to c_N_CHIPS - 1 loop
                     v_lo   := i * 8;
                     v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)

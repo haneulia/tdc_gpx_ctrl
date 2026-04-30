@@ -331,7 +331,13 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- when downstream backpressure holds tready low across the full cluster.
     -- The 3-slot version (Round 5 #3) covered the normal case but the
     -- control/data-sharing concern remained when the raw burst is long.
-    constant c_RAW_FIFO_DEPTH : natural := 6;
+    -- C02 fire-count ownership update:
+    --   chip_run no longer waits for a blind expected-count settle guard at
+    --   ST_DRAIN_LATCH. Valid drains can therefore reach this FIFO earlier
+    --   and overlap bounded downstream stalls that the old guard delayed
+    --   past. Depth=8 preserves the 3-slot control reserve while absorbing
+    --   that earlier initial data burst without reintroducing timing slack.
+    constant c_RAW_FIFO_DEPTH : natural := 8;
 
     type t_raw_entry is record
         valid : std_logic;
