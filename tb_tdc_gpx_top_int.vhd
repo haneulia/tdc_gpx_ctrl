@@ -13,7 +13,8 @@
 --   * distance        = 500 m     -> max_range_clks = 667 (round-trip @200 MHz)
 --   * g_OUTPUT_WIDTH  = 64        -- cell / VDMA stream 64-bit wide
 --   * active chip mask = 4'hF, stops_per_chip = 2, cols_per_face = 2, n_faces = 1
---   * drain_mode      = legacy (EF-driven)
+--   * drain_mode      = count-known expected drain, with EF fallback disabled
+--                       by fire_count final ownership for this shot
 --
 -- Flow (mirrors laser_ctrl tb's start_tdc / stop_tdc pattern)
 --   [S0] reset -> pipeline/chip CSR default values settle
@@ -36,6 +37,10 @@
 --   * Targets Xilinx xsim (VHDL-2008).
 --   * Extends tb_tdc_gpx_chip_ctrl's behavioral chip model (FIFO fill, EF/LF,
 --     IrFlag) to an array of 4 chips.
+--   * Drives top-level stop_evt/fire_count ports directly with per-chip
+--     expected counts. The physical IFIFO load is intentionally one word
+--     larger than the expected count, proving chip_run stops by expected
+--     count instead of merely draining to EF fallback.
 --   * AXI-Lite writes are driven by px_axi_lite_writer from px_utility_pkg.
 --   * ALL comments and text output are ASCII only (xsim rejects non-graphic
 --     literals; also keeps the source encoding-agnostic for any editor).
@@ -201,7 +206,7 @@ architecture sim of tb_tdc_gpx_top_int is
     signal i_tdc_errflag    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- =========================================================================
-    -- Stop event AXI Stream (from echo_receiver) - unused in this TB
+    -- Stop event AXI Stream (expected-count contract driver)
     -- =========================================================================
     signal stp_tvalid : std_logic := '0';
     signal stp_tdata  : std_logic_vector(C_STOP_DW - 1 downto 0) := (others => '0');
@@ -632,28 +637,101 @@ begin
         end procedure;
 
         ----------------------------------------------------------------
+        -- Emit one per-chip expected-count update and its final qualifier.
+        -- Layout follows tdc_gpx_pkg.vhd:
+        --   tdata[chip*8+3:chip*8]   = IFIFO1 running total
+        --   tdata[chip*8+7:chip*8+4] = IFIFO2 running total
+        -- tuser is kept zero, so stop_cfg_decode observes exactly tdata.
+        ----------------------------------------------------------------
+        procedure emit_expected_counts(shot_count : natural;
+                                       ififo1_cnt : natural;
+                                       ififo2_cnt : natural) is
+            variable v_data : std_logic_vector(C_STOP_DW - 1 downto 0);
+            variable v_user : std_logic_vector(C_STOP_DW - 1 downto 0);
+            variable v_lo   : natural;
+        begin
+            assert ififo1_cnt <= 15 and ififo2_cnt <= 15
+                report "tb_tdc_gpx_top_int: expected-count field overflow"
+                severity failure;
+
+            v_data := (others => '0');
+            v_user := (others => '0');
+            for i in 0 to c_N_CHIPS - 1 loop
+                v_lo := i * 8;
+                if G_ACTIVE_CHIP_MASK(i) = '1' then
+                    v_data(v_lo + 3 downto v_lo) :=
+                        std_logic_vector(to_unsigned(ififo1_cnt, 4));
+                    v_data(v_lo + 7 downto v_lo + 4) :=
+                        std_logic_vector(to_unsigned(ififo2_cnt, 4));
+                end if;
+            end loop;
+
+            wait until rising_edge(clk);
+            stp_tdata  <= v_data;
+            stp_tuser  <= v_user;
+            stp_tkeep  <= (others => '1');
+            stp_tvalid <= '1';
+            fire_count_tdata  <= std_logic_vector(to_unsigned(shot_count, 32));
+            fire_count_tkeep  <= (others => '1');
+            fire_count_tlast  <= '0';
+            fire_count_tvalid <= '1';
+
+            wait until rising_edge(clk);
+            assert stp_tready = '1'
+                report "tb_tdc_gpx_top_int: stop_evt_tready was not asserted"
+                severity failure;
+            stp_tvalid <= '0';
+            stp_tdata  <= (others => '0');
+            stp_tuser  <= (others => '0');
+            stp_tkeep  <= (others => '0');
+            fire_count_tvalid <= '0';
+
+            wait until rising_edge(clk);
+            fire_count_tdata  <= std_logic_vector(to_unsigned(shot_count, 32));
+            fire_count_tkeep  <= (others => '1');
+            fire_count_tlast  <= '1';
+            fire_count_tvalid <= '1';
+
+            wait until rising_edge(clk);
+            fire_count_tvalid <= '0';
+            fire_count_tlast  <= '0';
+            fire_count_tkeep  <= (others => '0');
+            fire_count_tdata  <= (others => '0');
+        end procedure;
+
+        ----------------------------------------------------------------
         -- One I-Mode single-measurement shot
         --   1) i_shot_start (start_tdc) pulse
-        --   2) Preload IFIFO (hits per slope * stops_per_chip)
-        --   3) Assert IrFlag (emulates MTimer expiry)
-        --   4) Wait for drain (EF=1 & chip_busy low)
-        --   5) Deassert IrFlag
+        --   2) Preload physical IFIFO with expected+1 words
+        --   3) Emit expected counts + fire_count final for this shot
+        --   4) Assert IrFlag (emulates MTimer expiry)
+        --   5) Wait for expected-count-bounded drain
+        --   6) Deassert IrFlag and assert exact read count
         ----------------------------------------------------------------
-        procedure do_shot(n_hits : natural; tag : string) is
+        procedure do_shot(shot_count : natural; expected_hits : natural; tag : string) is
+            constant c_PHYSICAL_HITS : natural := expected_hits + 1;
         begin
-            pl("  ---- shot [" & tag & "] start, n_hits=" & integer'image(n_hits));
+            pl("  ---- shot [" & tag & "] start, expected="
+               & integer'image(expected_hits)
+               & " physical=" & integer'image(c_PHYSICAL_HITS));
 
             -- start_tdc (= i_shot_start), emulating laser_ctrl.o_start_tdc
             lc_start_tdc <= '1';
             wait_clk(1);
             lc_start_tdc <= '0';
 
-            -- Preload IFIFO (before ARMED -> CAPTURE transition)
+            -- Preload IFIFO above expected. A fallback-to-EF drain would read
+            -- the extra word and fail the exact count check below.
             wait_clk(4);
-            load_all_fifos(n_hits, n_hits);
+            load_all_fifos(c_PHYSICAL_HITS, c_PHYSICAL_HITS);
+
+            emit_expected_counts(shot_count, expected_hits, expected_hits);
+
+            -- Let the expected tuple cross config_ctrl's xpm_cdc_handshake
+            -- before IrFlag makes chip_run snapshot it at ST_DRAIN_LATCH.
+            wait_clk(80);
 
             -- Assert IrFlag after a few clk (MTimer expiry emulation)
-            wait_clk(20);
             i_tdc_irflag <= (others => '1');
 
             -- Wait for drain (max ~5 us = 1000 clks)
@@ -662,6 +740,36 @@ begin
             -- Deassert IrFlag + wait ALU recovery
             i_tdc_irflag <= (others => '0');
             wait_clk(G_ALU_PULSE_CLKS + G_RECOVERY_CLKS + 8);
+
+            for i in 0 to c_N_CHIPS - 1 loop
+                if G_ACTIVE_CHIP_MASK(i) = '1' then
+                    assert fifo1_rd_cnt(i) = expected_hits
+                        report "tb_tdc_gpx_top_int: IFIFO1 expected-count drain mismatch on chip "
+                               & integer'image(i) & ", actual="
+                               & integer'image(fifo1_rd_cnt(i)) & ", expected="
+                               & integer'image(expected_hits)
+                        severity failure;
+                    assert fifo2_rd_cnt(i) = expected_hits
+                        report "tb_tdc_gpx_top_int: IFIFO2 expected-count drain mismatch on chip "
+                               & integer'image(i) & ", actual="
+                               & integer'image(fifo2_rd_cnt(i)) & ", expected="
+                               & integer'image(expected_hits)
+                        severity failure;
+                    assert fifo1_fill(i) = c_PHYSICAL_HITS - expected_hits
+                        report "tb_tdc_gpx_top_int: IFIFO1 did not stop before EF fallback on chip "
+                               & integer'image(i)
+                        severity failure;
+                    assert fifo2_fill(i) = c_PHYSICAL_HITS - expected_hits
+                        report "tb_tdc_gpx_top_int: IFIFO2 did not stop before EF fallback on chip "
+                               & integer'image(i)
+                        severity failure;
+                end if;
+            end loop;
+            pl("  ---- shot [" & tag
+               & "] expected-count bound PASS: read="
+               & integer'image(expected_hits)
+               & ", leftover="
+               & integer'image(c_PHYSICAL_HITS - expected_hits));
             pl("  ---- shot [" & tag & "] drain done");
         end procedure;
 
@@ -725,7 +833,7 @@ begin
         ----------------------------------------------------------------
         -- [S6] Shot #1 - start_tdc / I-mode single measurement
         ----------------------------------------------------------------
-        do_shot(G_STOPS_PER_CHIP, "col0/shot1");
+        do_shot(1, G_STOPS_PER_CHIP, "col0/shot1");
 
         ----------------------------------------------------------------
         -- [S7] shot_period wait (1.5 * round-trip = 1000 clks)
@@ -736,7 +844,7 @@ begin
         ----------------------------------------------------------------
         -- [S8] Shot #2 - face complete (cols_per_face = 2)
         ----------------------------------------------------------------
-        do_shot(G_STOPS_PER_CHIP, "col1/shot2");
+        do_shot(2, G_STOPS_PER_CHIP, "col1/shot2");
 
         ----------------------------------------------------------------
         -- [S9] Wait frame emit, then stop_tdc pulse
