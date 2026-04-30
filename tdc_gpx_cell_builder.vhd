@@ -82,7 +82,7 @@
 --   tuser[6]     = ififo_id
 --   tuser[7]     = drain_done (control beat: triggers output phase)
 --   tuser[10:8]  = hit_seq_local (0..7)
---   tuser[15:11] = 0
+--   tuser[15:11] = shot_seq[4:0]
 --
 -- AXI-Stream master output (to face_assembler):
 --   tdata         = g_TDATA_WIDTH bits (32 or 64)
@@ -139,7 +139,7 @@ entity tdc_gpx_cell_builder is
         --   tuser[6]     = ififo_id
         --   tuser[7]     = drain_done (control beat: begin output phase)
         --   tuser[10:8]  = hit_seq_local (0..7)
-        --   tuser[15:11] = 0
+        --   tuser[15:11] = shot_seq[4:0]
         i_s_axis_tvalid     : in  std_logic;
         i_s_axis_tdata      : in  std_logic_vector(31 downto 0);
         i_s_axis_tuser      : in  std_logic_vector(15 downto 0);

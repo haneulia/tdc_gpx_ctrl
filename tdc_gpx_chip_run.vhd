@@ -72,7 +72,11 @@ entity tdc_gpx_chip_run is
         -- roundtrip + ALU service + downstream backpressure jitter with
         -- generous margin while still tightening the timeout from the
         -- legacy fixed-65535 value that hid upstream hangs for ~327 µs.
-        g_DRAIN_MARGIN_CLKS : positive := 256
+        g_DRAIN_MARGIN_CLKS : positive := 256;
+        -- C02: guard time after each IFIFO read before trusting synchronized
+        -- EF pins. Default 5 clocks @200 MHz covers Datasheet tS-EF
+        -- max 11.8 ns plus local 2-FF status synchronizer latency.
+        g_EF_SYNC_GUARD_CLKS : positive := 5
     );
     port (
         i_clk               : in  std_logic;
@@ -199,7 +203,8 @@ architecture rtl of tdc_gpx_chip_run is
 
     constant c_RECOVERY_LAST  : unsigned(15 downto 0) := to_unsigned(g_RECOVERY_CLKS - 1, 16);
     constant c_ALU_PULSE_LAST : unsigned(15 downto 0) := to_unsigned(g_ALU_PULSE_CLKS - 1, 16);
-    constant c_FLAG_SETTLE_LAST : unsigned(15 downto 0) := to_unsigned(2, 16);
+    constant c_FLAG_SETTLE_LAST : unsigned(15 downto 0) :=
+        to_unsigned(g_EF_SYNC_GUARD_CLKS - 1, 16);
     -- Round 7 A-2: expected_ififo handshake (config_ctrl u_cdc_exp1/2) has up
     -- to ~8 TDC cycles of latency. If the final stop event arrives close to
     -- irflag, the handshake may still be in flight when ST_DRAIN_LATCH
@@ -309,6 +314,8 @@ begin
 
     p_fsm : process(i_clk)
         variable v_cap             : unsigned(7 downto 0);
+        variable v_ififo1_count_known : boolean;
+        variable v_ififo2_count_known : boolean;
         variable v_ififo1_done     : boolean;
         variable v_ififo2_done     : boolean;
         variable v_ififo1_can_read : boolean;
@@ -485,15 +492,33 @@ begin
                         -- n_drain_cap × 4: each cap unit = 4 IFIFO words (burst quantum)
                         v_cap := shift_left(resize(i_n_drain_cap, 8), 2);  -- ×4
 
+                        -- C02 count-known contract: non-zero expected count is
+                        -- a hard drain bound. Zero remains the legacy/echo-
+                        -- absent encoding, so EF fallback handles it.
+                        v_ififo1_count_known := s_purge_mode_r = '0'
+                            and s_expected_ififo1_r /= 0;
+                        v_ififo2_count_known := s_purge_mode_r = '0'
+                            and s_expected_ififo2_r /= 0;
+
                         v_ififo1_done := (i_ef1_sync = '1')
+                            or (v_ififo1_count_known
+                                and s_drain_cnt_ififo1_r >= s_expected_ififo1_r)
                             or (s_purge_mode_r = '0' and i_n_drain_cap /= "0000"
                                 and s_drain_cnt_ififo1_r >= v_cap);
                         v_ififo2_done := (i_ef2_sync = '1')
+                            or (v_ififo2_count_known
+                                and s_drain_cnt_ififo2_r >= s_expected_ififo2_r)
                             or (s_purge_mode_r = '0' and i_n_drain_cap /= "0000"
                                 and s_drain_cnt_ififo2_r >= v_cap);
 
-                        v_ififo1_can_read := not v_ififo1_done and (i_ef1_sync = '0');
-                        v_ififo2_can_read := not v_ififo2_done and (i_ef2_sync = '0');
+                        v_ififo1_can_read := not v_ififo1_done
+                            and (i_ef1_sync = '0')
+                            and ((not v_ififo1_count_known)
+                                 or s_drain_cnt_ififo1_r < s_expected_ififo1_r);
+                        v_ififo2_can_read := not v_ififo2_done
+                            and (i_ef2_sync = '0')
+                            and ((not v_ififo2_count_known)
+                                 or s_drain_cnt_ififo2_r < s_expected_ififo2_r);
 
                         -- Early IFIFO1 done beat
                         if v_ififo1_done and not v_ififo2_done
@@ -590,8 +615,10 @@ begin
                             -- Purge-mode bypasses the check (it doesn't
                             -- track against expected counts).
                             if s_purge_mode_r = '0'
-                               and (s_drain_cnt_ififo1_r /= s_expected_ififo1_r
-                                    or s_drain_cnt_ififo2_r /= s_expected_ififo2_r) then
+                               and ((s_expected_ififo1_r /= 0
+                                     and s_drain_cnt_ififo1_r /= s_expected_ififo1_r)
+                                    or (s_expected_ififo2_r /= 0
+                                        and s_drain_cnt_ififo2_r /= s_expected_ififo2_r)) then
                                 s_err_drain_mismatch_r <= '1';
                                 -- Round 13 axis 1a: co-assert "faulted"
                                 -- pulse so SW can distinguish a clean

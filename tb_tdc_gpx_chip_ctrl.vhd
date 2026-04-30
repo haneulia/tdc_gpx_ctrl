@@ -15,6 +15,7 @@
 -- Test scenarios:
 --   [1] Powerup + cfg_write + master_reset sequence
 --   [2] Arm -> shot_start -> IrFlag -> Legacy drain (drain_mode='0')
+--   [2b] Legacy EF fallback when expected count is absent
 --   [3] Arm -> shot_start -> IrFlag -> Burst drain (drain_mode='1')
 --   [4] n_drain_cap enforcement (per-IFIFO cap=n×4, e.g. cap=2 -> max 8/IFIFO)
 --   [5] Soft reset recovery
@@ -23,6 +24,7 @@
 --   [8] AluTrigger pulse width >= 10ns
 --   [9] IFIFO edge cases (1 entry, 32 entries)
 --   [10] Consecutive 2+ shots
+--   [16] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --
 -- Standard: VHDL-93 compatible
 -- =============================================================================
@@ -162,6 +164,8 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_stop_tdc           : std_logic := '0';
     signal s_err_drain_timeout  : std_logic;
     signal s_err_sequence       : std_logic;
+    signal s_expected_ififo1    : unsigned(7 downto 0) := (others => '0');
+    signal s_expected_ififo2    : unsigned(7 downto 0) := (others => '0');
 
     -- =========================================================================
     -- TDC-GPX Chip Model: FIFO state
@@ -183,9 +187,17 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_chip_d_oe          : std_logic := '0';
 
     -- =========================================================================
-    -- Monitor: raw_word output capture
+    -- Monitor: raw AXI output capture and strict C02 contract checks
     -- =========================================================================
-    signal sv_raw_word_cnt      : natural := 0;
+    signal s_raw_word_cnt       : natural := 0;
+    signal s_raw_data_cnt       : natural := 0;
+    signal s_raw_ctrl_cnt       : natural := 0;
+    signal s_raw_ififo1_data_cnt : natural := 0;
+    signal s_raw_ififo2_data_cnt : natural := 0;
+    signal s_raw_ififo1_done_ctrl_cnt : natural := 0;
+    signal s_raw_final_done_ctrl_cnt : natural := 0;
+    signal s_raw_tuser_err_cnt  : natural := 0;
+    signal s_empty_read_cnt     : natural := 0;
 
     -- =========================================================================
     -- Chip model: write capture (for cfg_write verification)
@@ -244,8 +256,8 @@ begin
             i_shot_start        => s_shot_start,
             i_max_range_clks    => s_cfg.max_range_clks,
             i_stop_tdc          => s_stop_tdc,
-            i_expected_ififo1   => (others => '0'),  -- TB: 0 = EF-based fallback
-            i_expected_ififo2   => (others => '0'),
+            i_expected_ififo1   => s_expected_ififo1,
+            i_expected_ififo2   => s_expected_ififo2,
             o_bus_req_valid     => s_bus_req_valid,
             o_bus_req_rw        => s_bus_req_rw,
             o_bus_req_addr      => s_bus_req_addr,
@@ -385,12 +397,26 @@ begin
             -- Note: CSN may go high simultaneously with RDN at Phase H,
             -- so we only check RDN edge + address (address is stable).
             if s_rdn = '1' and v_rdn_prev = '0' then
-                if s_adr = c_TDC_REG8_IFIFO1 and s_fifo1_fill > 0 then
-                    s_fifo1_fill   <= s_fifo1_fill - 1;
-                    s_fifo1_rd_cnt <= s_fifo1_rd_cnt + 1;
-                elsif s_adr = c_TDC_REG9_IFIFO2 and s_fifo2_fill > 0 then
-                    s_fifo2_fill   <= s_fifo2_fill - 1;
-                    s_fifo2_rd_cnt <= s_fifo2_rd_cnt + 1;
+                if s_adr = c_TDC_REG8_IFIFO1 then
+                    if s_fifo1_fill > 0 then
+                        s_fifo1_fill   <= s_fifo1_fill - 1;
+                        s_fifo1_rd_cnt <= s_fifo1_rd_cnt + 1;
+                    else
+                        s_empty_read_cnt <= s_empty_read_cnt + 1;
+                        assert false
+                            report "TB chip model: EMPTY IFIFO1 read attempted"
+                            severity error;
+                    end if;
+                elsif s_adr = c_TDC_REG9_IFIFO2 then
+                    if s_fifo2_fill > 0 then
+                        s_fifo2_fill   <= s_fifo2_fill - 1;
+                        s_fifo2_rd_cnt <= s_fifo2_rd_cnt + 1;
+                    else
+                        s_empty_read_cnt <= s_empty_read_cnt + 1;
+                        assert false
+                            report "TB chip model: EMPTY IFIFO2 read attempted"
+                            severity error;
+                    end if;
                 end if;
             end if;
 
@@ -420,15 +446,57 @@ begin
     -- =========================================================================
     p_raw_monitor : process(s_clk)
         variable v_clk_cnt : natural := 0;
+        variable v_tuser_err_inc : natural := 0;
     begin
         if rising_edge(s_clk) then
             v_clk_cnt := v_clk_cnt + 1;
+            v_tuser_err_inc := 0;
 
-            if s_raw_axis_tvalid = '1' then
-                sv_raw_word_cnt <= sv_raw_word_cnt + 1;
-                pr_info("  @" & nat_img(v_clk_cnt)
-                        & " raw_word=0x" & hex_img(s_raw_axis_tdata(c_DATA_W - 1 downto 0))
-                        & " ififo=" & sl_chr(s_raw_axis_tuser(0)));
+            if s_raw_axis_tvalid = '1' and s_raw_axis_tready = '1' then
+                s_raw_word_cnt <= s_raw_word_cnt + 1;
+
+                if s_raw_axis_tuser(7) = '1' then
+                    s_raw_ctrl_cnt <= s_raw_ctrl_cnt + 1;
+                    if s_raw_axis_tuser(0) = '0' then
+                        s_raw_ififo1_done_ctrl_cnt <= s_raw_ififo1_done_ctrl_cnt + 1;
+                    else
+                        s_raw_final_done_ctrl_cnt <= s_raw_final_done_ctrl_cnt + 1;
+                    end if;
+
+                    if s_raw_axis_tuser(6) /= '0'
+                       or s_raw_axis_tuser(4 downto 1) /= "0000" then
+                        v_tuser_err_inc := v_tuser_err_inc + 1;
+                        assert false
+                            report "TB raw monitor: control tuser reserved bits violated"
+                            severity error;
+                    end if;
+
+                    pr_info("  @" & nat_img(v_clk_cnt)
+                            & " raw_ctrl ififo=" & sl_chr(s_raw_axis_tuser(0))
+                            & " faulted=" & sl_chr(s_raw_axis_tuser(5)));
+                else
+                    s_raw_data_cnt <= s_raw_data_cnt + 1;
+                    if s_raw_axis_tuser(0) = '0' then
+                        s_raw_ififo1_data_cnt <= s_raw_ififo1_data_cnt + 1;
+                    else
+                        s_raw_ififo2_data_cnt <= s_raw_ififo2_data_cnt + 1;
+                    end if;
+
+                    if s_raw_axis_tuser(6 downto 1) /= "000000" then
+                        v_tuser_err_inc := v_tuser_err_inc + 1;
+                        assert false
+                            report "TB raw monitor: data tuser reserved bits violated"
+                            severity error;
+                    end if;
+
+                    pr_info("  @" & nat_img(v_clk_cnt)
+                            & " raw_word=0x" & hex_img(s_raw_axis_tdata(c_DATA_W - 1 downto 0))
+                            & " ififo=" & sl_chr(s_raw_axis_tuser(0)));
+                end if;
+            end if;
+
+            if v_tuser_err_inc /= 0 then
+                s_raw_tuser_err_cnt <= s_raw_tuser_err_cnt + v_tuser_err_inc;
             end if;
 
             if s_drain_done = '1' then
@@ -470,6 +538,8 @@ begin
         variable v_fail         : natural := 0;
         variable v_found        : boolean;
         variable v_raw_cnt_snap : natural;
+        variable v_raw_data_snap : natural;
+        variable v_empty_read_snap : natural;
         variable v_drain_words  : natural;
 
         procedure wait_clk(n : natural) is
@@ -494,9 +564,34 @@ begin
             tb_wait_sig_value(s_clk, s_ctrl_busy, '0', timeout, found);
         end procedure;
 
-        -- Fill both FIFOs with test data (via load request to chip model)
+        procedure set_expected_unknown is
+        begin
+            s_expected_ififo1 <= (others => '0');
+            s_expected_ififo2 <= (others => '0');
+        end procedure;
+
+        procedure set_expected_counts(n1 : natural; n2 : natural) is
+        begin
+            s_expected_ififo1 <= to_unsigned(n1, s_expected_ififo1'length);
+            s_expected_ififo2 <= to_unsigned(n2, s_expected_ififo2'length);
+        end procedure;
+
+        -- Fill both FIFOs with test data and publish count-known expectations.
         procedure fill_fifos(n1 : natural; n2 : natural) is
         begin
+            set_expected_counts(n1, n2);
+            s_fifo_load_n1  <= n1;
+            s_fifo_load_n2  <= n2;
+            s_fifo_load_req <= '1';
+            wait_clk(2);
+            s_fifo_load_req <= '0';
+        end procedure;
+
+        -- Fill FIFOs while modeling an absent echo_receiver. Expected counts
+        -- remain zero, so chip_run must use the EF fallback path.
+        procedure fill_fifos_unknown(n1 : natural; n2 : natural) is
+        begin
+            set_expected_unknown;
             s_fifo_load_n1  <= n1;
             s_fifo_load_n2  <= n2;
             s_fifo_load_req <= '1';
@@ -519,6 +614,10 @@ begin
         for i in 0 to 15 loop
             s_cfg_image(i) <= std_logic_vector(to_unsigned(i * 16#1000#, 32));
         end loop;
+        -- Reg6 Fill/LF threshold drives chip_run burst length. Use 4 so
+        -- burst-mode tests exercise ST_DRAIN_BURST instead of falling back
+        -- to single EF reads.
+        s_cfg_image(6)(7 downto 0) <= std_logic_vector(to_unsigned(c_LF_THRESHOLD, 8));
 
         -- =============================================================
         -- Reset
@@ -587,8 +686,9 @@ begin
         s_irflag_pin <= '1';
         wait_clk(5);   -- 2-FF sync latency
 
-        -- Record raw_word count before drain
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        -- Record data/empty counters before drain
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
 
         -- Wait for drain_done
         wait_drain_done(c_TIMEOUT, v_found);
@@ -596,16 +696,15 @@ begin
         if not v_found then
             pr_fail("[2] drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[2] drain_done received, words=" & nat_img(v_drain_words));
 
-            -- 2-FF sync latency on EF causes 1-2 extra reads per IFIFO
-            -- after the FIFO empties (sync delay before EF='1' is visible).
-            -- Expect 12..16 words (12 actual + up to 4 sync-latency reads).
-            if v_drain_words >= 12 and v_drain_words <= 16 then
-                pr_pass("[2] drain count in range 12..16 (sync overhead ok)");
+            if v_drain_words = 12 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[2] drain count exact 12, no empty IFIFO reads");
             else
-                pr_fail("[2] expected 12..16 words, got " & nat_img(v_drain_words), v_fail);
+                pr_fail("[2] expected 12 data words and no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
             end if;
         end if;
 
@@ -613,6 +712,43 @@ begin
         s_irflag_pin <= '0';
 
         -- Wait for AluTrigger pulse and recovery -> chip_ctrl back to ARMED
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- =============================================================
+        -- [2b] EF fallback drain when echo_receiver count is absent
+        --   Fill FIFO1=3, FIFO2=2 but publish expected=0/0.
+        -- =============================================================
+        pr_info("[2b] EF fallback drain (expected count absent)");
+
+        s_cfg.drain_mode <= '0';
+        fill_fifos_unknown(3, 2);
+        wait_clk(5);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
+
+        wait_drain_done(c_TIMEOUT, v_found);
+
+        if not v_found then
+            pr_fail("[2b] drain_done timeout", v_fail);
+        else
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
+            if v_drain_words = 5 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[2b] EF fallback drained exact 5 data words without empty read");
+            else
+                pr_fail("[2b] expected 5 fallback data words and no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
+            end if;
+        end if;
+
+        s_irflag_pin <= '0';
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
@@ -633,7 +769,8 @@ begin
         s_irflag_pin <= '1';
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
 
         -- Wait for drain_done
         wait_drain_done(c_TIMEOUT, v_found);
@@ -641,15 +778,15 @@ begin
         if not v_found then
             pr_fail("[3] drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[3] burst drain_done, words=" & nat_img(v_drain_words));
 
-            -- Burst drain includes: burst reads + flush in-flight +
-            -- EF/LF sync latency overhead. Expect 24..28.
-            if v_drain_words >= 24 and v_drain_words <= 28 then
-                pr_pass("[3] burst drain count in range 24..28 (sync overhead ok)");
+            if v_drain_words = 24 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[3] burst drain count exact 24, no empty IFIFO reads");
             else
-                pr_fail("[3] expected 24..28 words, got " & nat_img(v_drain_words), v_fail);
+                pr_fail("[3] expected 24 data words and no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
             end if;
         end if;
 
@@ -682,21 +819,23 @@ begin
         s_irflag_pin <= '1';
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
 
         wait_drain_done(c_TIMEOUT, v_found);
 
         if not v_found then
             pr_fail("[4] drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[4] drain_done, words=" & nat_img(v_drain_words));
 
-            -- Cap=16 + up to 2 in-flight/flush reads = max 18
-            if v_drain_words <= 18 then
-                pr_pass("[4] drain capped correctly (<= 18, cap=16+flush)");
+            if v_drain_words = 16 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[4] drain capped exactly at 16 data words, no empty reads");
             else
-                pr_fail("[4] expected <= 18 words, got " & nat_img(v_drain_words), v_fail);
+                pr_fail("[4] expected 16 capped data words and no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
             end if;
         end if;
 
@@ -823,8 +962,8 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
-        -- Record raw count before drain
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        -- Record data count before drain
+        v_raw_data_snap := s_raw_data_cnt;
 
         -- Assert IrFlag — drain_done may fire within 3-4 clocks
         -- (both EF='1' → immediate drain complete), so go straight to wait.
@@ -836,7 +975,8 @@ begin
         if not v_found then
             pr_fail("[7] drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             if v_drain_words = 0 then
                 pr_pass("[7] No reads when both FIFOs empty (EF=1)");
             else
@@ -861,7 +1001,8 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
 
         -- Assert IrFlag
         s_irflag_pin <= '1';
@@ -908,7 +1049,8 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
 
         s_irflag_pin <= '1';
         wait_clk(5);
@@ -918,14 +1060,15 @@ begin
         if not v_found then
             pr_fail("[9a] drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[9a] drain_done, words=" & nat_img(v_drain_words));
 
-            -- 2 actual + up to 4 sync-latency reads
-            if v_drain_words >= 2 and v_drain_words <= 6 then
-                pr_pass("[9a] drain count in range 2..6");
+            if v_drain_words = 2 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[9a] drain count exact 2, no empty reads");
             else
-                pr_fail("[9a] expected 2..6 words, got " & nat_img(v_drain_words), v_fail);
+                pr_fail("[9a] expected 2 data words and no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
             end if;
         end if;
 
@@ -943,7 +1086,8 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_data_snap := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
 
         s_irflag_pin <= '1';
         wait_clk(5);
@@ -953,14 +1097,15 @@ begin
         if not v_found then
             pr_fail("[9b] drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[9b] drain_done, words=" & nat_img(v_drain_words));
 
-            -- 64 actual + up to 4 sync-latency reads
-            if v_drain_words >= 64 and v_drain_words <= 68 then
-                pr_pass("[9b] drain count in range 64..68");
+            if v_drain_words = 64 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[9b] drain count exact 64, no empty reads");
             else
-                pr_fail("[9b] expected 64..68 words, got " & nat_img(v_drain_words), v_fail);
+                pr_fail("[9b] expected 64 data words and no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
             end if;
         end if;
 
@@ -986,7 +1131,7 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_cnt_snap := s_raw_word_cnt;
 
         s_irflag_pin <= '1';
         wait_clk(5);
@@ -996,7 +1141,7 @@ begin
         if not v_found then
             pr_fail("[10] First shot drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            v_drain_words := s_raw_word_cnt - v_raw_cnt_snap;
             pr_pass("[10] Shot 1 drain_done, words=" & nat_img(v_drain_words));
         end if;
 
@@ -1010,7 +1155,7 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_cnt_snap := s_raw_word_cnt;
 
         s_irflag_pin <= '1';
         wait_clk(5);
@@ -1020,7 +1165,7 @@ begin
         if not v_found then
             pr_fail("[10] Second shot drain_done timeout", v_fail);
         else
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            v_drain_words := s_raw_word_cnt - v_raw_cnt_snap;
             pr_pass("[10] Shot 2 drain_done, words=" & nat_img(v_drain_words));
         end if;
 
@@ -1047,8 +1192,9 @@ begin
         pulse(s_cmd_stop);
         wait_clk(5);
 
-        -- First: individual reg read (addr 0x08 = read-only status reg)
-        s_cmd_reg_addr  <= x"8";
+        -- First: individual reg read (use Reg0 so the strict IFIFO-empty
+        -- monitor does not treat the command as an IFIFO read).
+        s_cmd_reg_addr  <= x"0";
         pulse(s_cmd_reg_read);
         -- Wait for rvalid
         tb_wait_sig_value(s_clk, s_cmd_reg_rvalid, '1', c_TIMEOUT, v_found);
@@ -1140,10 +1286,10 @@ begin
         s_irflag_pin <= '1';
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_cnt_snap := s_raw_word_cnt;
         wait_drain_done(c_TIMEOUT, v_found);
         if v_found then
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            v_drain_words := s_raw_word_cnt - v_raw_cnt_snap;
             pr_pass("[12] Post-stop restart: drain_done, words=" & nat_img(v_drain_words));
         else
             pr_fail("[12] Post-stop restart: drain_done timeout", v_fail);
@@ -1214,10 +1360,10 @@ begin
         s_irflag_pin <= '1';
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_cnt_snap := s_raw_word_cnt;
         wait_drain_done(c_TIMEOUT, v_found);
         if v_found then
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            v_drain_words := s_raw_word_cnt - v_raw_cnt_snap;
             pr_pass("[13] Post-capture-stop restart: drain_done, words=" & nat_img(v_drain_words));
         else
             pr_fail("[13] Post-capture-stop restart: drain_done timeout", v_fail);
@@ -1273,10 +1419,10 @@ begin
         s_irflag_pin <= '1';
         wait_clk(5);
 
-        v_raw_cnt_snap := sv_raw_word_cnt;
+        v_raw_cnt_snap := s_raw_word_cnt;
         wait_drain_done(c_TIMEOUT, v_found);
         if v_found then
-            v_drain_words := sv_raw_word_cnt - v_raw_cnt_snap;
+            v_drain_words := s_raw_word_cnt - v_raw_cnt_snap;
             pr_pass("[14] Post-fallback restart: drain_done, words="
                     & nat_img(v_drain_words));
         else
@@ -1303,7 +1449,7 @@ begin
         wait_clk(5);
 
         -- Same-cycle read + write pulses
-        s_cmd_reg_addr   <= x"8";  -- read target: status/read-only
+        s_cmd_reg_addr   <= x"0";  -- non-IFIFO read target for strict empty-read monitor
         s_cmd_reg_wdata  <= s_cfg_image(0)(c_DATA_W - 1 downto 0);
         s_cmd_reg_read   <= '1';
         s_cmd_reg_write  <= '1';
@@ -1330,12 +1476,43 @@ begin
         wait_clk(10);
 
         -- =============================================================
+        -- [16] C02 global monitors: empty read and raw tuser contract
+        -- =============================================================
+        pr_info("[16] C02 global monitor summary");
+        if s_empty_read_cnt = 0 then
+            pr_pass("[16] No IFIFO read occurred when the modeled FIFO was empty");
+        else
+            pr_fail("[16] Empty IFIFO read count="
+                    & nat_img(s_empty_read_cnt), v_fail);
+        end if;
+
+        if s_raw_tuser_err_cnt = 0 then
+            pr_pass("[16] Raw AXI tuser contract clean");
+        else
+            pr_fail("[16] Raw AXI tuser error count="
+                    & nat_img(s_raw_tuser_err_cnt), v_fail);
+        end if;
+
+        if s_raw_ififo1_done_ctrl_cnt > 0
+           and s_raw_final_done_ctrl_cnt > 0 then
+            pr_pass("[16] Raw control beat IDs observed: ififo1_done="
+                    & nat_img(s_raw_ififo1_done_ctrl_cnt)
+                    & " final_done="
+                    & nat_img(s_raw_final_done_ctrl_cnt));
+        else
+            pr_fail("[16] Missing raw control beat ID class: ififo1_done="
+                    & nat_img(s_raw_ififo1_done_ctrl_cnt)
+                    & " final_done="
+                    & nat_img(s_raw_final_done_ctrl_cnt), v_fail);
+        end if;
+
+        -- =============================================================
         -- Summary
         -- =============================================================
         pr_sep;
         if v_fail = 0 then
             pr_print("*** ALL TESTS PASSED *** (total_raw_words="
-                     & nat_img(sv_raw_word_cnt) & ")");
+                     & nat_img(s_raw_word_cnt) & ")");
         else
             pr_print("*** " & nat_img(v_fail) & " TEST(S) FAILED ***");
         end if;

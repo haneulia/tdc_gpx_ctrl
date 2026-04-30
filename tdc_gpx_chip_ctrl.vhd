@@ -1030,9 +1030,12 @@ begin
                     -- rather than treating it as a clean completion.
                     -- Only the FINAL drain_done beat carries the flag; the
                     -- intermediate IFIFO1-done beat always reports '0'.
+                    -- C02: control-beat identity is semantic, not the
+                    -- previous raw-data IFIFO id. IFIFO1-done must carry
+                    -- tuser(0)=0; final drain_done must carry tuser(0)=1.
                     v_new.tuser := '1' & '0' &
                                    (s_drain_done_faulted and s_run_drain_done) &
-                                   "0000" & s_run_ififo_id;
+                                   "0000" & s_run_drain_done;
                     v_new.drain := s_run_drain_done;
                 end if;
 

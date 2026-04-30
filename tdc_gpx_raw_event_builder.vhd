@@ -24,7 +24,7 @@
 -- AXI-Stream master (to cell_builder via skid buffer):
 --   tdata[16:0] = raw_hit
 --   tuser[0] = slope, [2:1] = chip_id, [5:3] = stop_id, [6] = ififo_id,
---   tuser[7] = drain_done, [10:8] = hit_seq_local
+--   tuser[7] = drain_done, [10:8] = hit_seq_local, [15:11] = shot_seq[4:0]
 --
 -- Standard: VHDL-2008
 -- =============================================================================
