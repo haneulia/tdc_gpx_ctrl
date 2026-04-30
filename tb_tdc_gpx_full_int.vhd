@@ -335,7 +335,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal er_rresp   : std_logic_vector(1 downto 0);
     signal er_irq     : std_logic;
 
-    -- echo_receiver PD input + stop_evt output
+    -- echo_receiver PD input + stop_evt/fire_count output
     signal pd_p, pd_n : std_logic_vector(C_PD_WIDTH - 1 downto 0) := (others => '0');
     signal er_pulse_rise, er_pulse_fall : std_logic_vector(C_PD_WIDTH - 1 downto 0);
     signal er_stop_tvalid : std_logic;
@@ -343,6 +343,10 @@ architecture sim of tb_tdc_gpx_full_int is
     signal er_stop_tkeep  : std_logic_vector(C_STOP_DW/8 - 1 downto 0);
     signal er_stop_tuser  : std_logic_vector(C_STOP_DW - 1 downto 0);
     signal er_stop_tready : std_logic;
+    signal er_fire_count_tvalid : std_logic;
+    signal er_fire_count_tdata  : std_logic_vector(31 downto 0);
+    signal er_fire_count_tkeep  : std_logic_vector(3 downto 0);
+    signal er_fire_count_tlast  : std_logic;
 
     -- =========================================================================
     -- AXI-Lite #4a: tdc_gpx_top chip CSR (9-bit)
@@ -482,6 +486,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_lc_stop_cnt  : natural := 0;
     signal mon_lc_m_beats   : natural := 0;
     signal mon_er_stop_beats : natural := 0;
+    signal mon_er_fire_count_beats : natural := 0;
     signal mon_er_pulse_rise_any : natural := 0;
     signal mon_td_rise_beats : natural := 0;
     signal mon_td_fall_beats : natural := 0;
@@ -728,14 +733,16 @@ begin
 
     -- =========================================================================
     -- echo_receiver_top
-    --   Takes start_tdc/stop_tdc + PD pulses; emits stop_evt AXI-S
+    --   Takes start_tdc/stop_tdc + laser result + PD pulses; emits stop_evt
+    --   and fire_count AXI-S.
     -- =========================================================================
     u_er : entity work.echo_receiver_top
         generic map (
             g_N_CHIPS         => C_ER_N_CHIPS,
             g_STOPS_PER_CHIP  => C_ER_N_STOPS,
             g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
-            g_STOP_EVT_DWIDTH => C_STOP_DW
+            g_STOP_EVT_DWIDTH => C_STOP_DW,
+            g_FIRE_COUNT_DWIDTH => 32
         )
         port map (
             s_axi_aclk       => clk,
@@ -763,6 +770,11 @@ begin
             s_axi_rresp      => er_rresp,
             i_start_tdc      => lc_start_tdc,
             i_stop_tdc       => lc_stop_tdc,
+            i_laser_evt_tvalid => lc_m_tvalid,
+            i_laser_evt_tdata  => lc_m_tdata,
+            i_laser_evt_tuser  => lc_m_tuser,
+            i_laser_evt_tlast  => lc_m_tlast,
+            o_laser_evt_tready => open,
             i_pd_lvds_p      => pd_p,
             i_pd_lvds_n      => pd_n,
             o_stop_pulse_rise => er_pulse_rise,
@@ -772,6 +784,11 @@ begin
             o_stop_evt_tkeep  => er_stop_tkeep,
             o_stop_evt_tuser  => er_stop_tuser,
             i_stop_evt_tready => er_stop_tready,
+            o_fire_count_tvalid => er_fire_count_tvalid,
+            o_fire_count_tdata  => er_fire_count_tdata,
+            o_fire_count_tkeep  => er_fire_count_tkeep,
+            o_fire_count_tlast  => er_fire_count_tlast,
+            i_fire_count_tready => '1',
             o_irq             => er_irq
         );
 
@@ -1122,6 +1139,7 @@ begin
                 mon_lc_stop_cnt <= 0;
                 mon_lc_m_beats <= 0;
                 mon_er_stop_beats <= 0;
+                mon_er_fire_count_beats <= 0;
                 mon_er_pulse_rise_any <= 0;
                 mon_td_rise_beats <= 0;
                 mon_td_fall_beats <= 0;
@@ -1198,6 +1216,9 @@ begin
                 end if;
                 if er_stop_tvalid = '1' and er_stop_tready = '1' then
                     mon_er_stop_beats <= mon_er_stop_beats + 1;
+                end if;
+                if er_fire_count_tvalid = '1' then
+                    mon_er_fire_count_beats <= mon_er_fire_count_beats + 1;
                 end if;
                 if er_pulse_rise /= (er_pulse_rise'range => '0') then
                     mon_er_pulse_rise_any <= mon_er_pulse_rise_any + 1;
@@ -1549,6 +1570,7 @@ begin
         pl("  lc     result beats = " & integer'image(mon_lc_m_beats));
         pl("  er     pd rise hits = " & integer'image(mon_er_pulse_rise_any));
         pl("  er     stop_evt beats = " & integer'image(mon_er_stop_beats));
+        pl("  er     fire_count beats = " & integer'image(mon_er_fire_count_beats));
         pl("  td     rise VDMA beats = " & integer'image(mon_td_rise_beats)
            & "  tlast cnt = " & integer'image(mon_td_rise_frame_end));
         pl("  td     fall VDMA beats = " & integer'image(mon_td_fall_beats)
