@@ -71,6 +71,13 @@ entity tb_tdc_gpx_top_int is
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;
+        -- CTL21.max_hits_cfg timing mode:
+        --   0: leave CTL21 unset     -> RTL alias 0 to 7
+        --   1: write range max_hits before first packet_start
+        --   2: write CTL21 max_hits=0 before first packet_start -> alias 7
+        --   3: write range max_hits after first packet_start; face0 keeps old
+        --      value, later faces can use the new value after CDC settle
+        G_MAX_HITS_WRITE_MODE : natural := 1;
         -- All 4 chips active by default (top_int has no echo_receiver, so
         -- the 16-channel STAT packing limit does not apply).
         G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
@@ -126,6 +133,60 @@ architecture sim of tb_tdc_gpx_top_int is
         v(14 downto 12) := std_logic_vector(to_unsigned(faces, 3));
         v(18 downto 15) := std_logic_vector(to_unsigned(stops, 4));
         return v;
+    end function;
+
+    function fn_pack_scan_timeout(max_hits : natural;
+                                  scan_clks : natural) return std_logic_vector is
+        variable v : std_logic_vector(31 downto 0) := (others => '0');
+    begin
+        v(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO) :=
+            std_logic_vector(to_unsigned(scan_clks, c_ST_MAX_SCAN_HI - c_ST_MAX_SCAN_LO + 1));
+        v(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO) :=
+            std_logic_vector(to_unsigned(max_hits, c_ST_MAX_HITS_HI - c_ST_MAX_HITS_LO + 1));
+        return v;
+    end function;
+
+    function fn_face_axis_beats(cols_per_face  : natural;
+                                active_chips   : natural;
+                                stops_per_chip : natural;
+                                max_hits       : natural;
+                                tdata_width    : natural) return natural is
+    begin
+        return cols_per_face *
+               (fn_hdr_prefix_beats(tdata_width) +
+                active_chips * stops_per_chip *
+                fn_beats_per_cell_rt(max_hits, tdata_width));
+    end function;
+
+    function fn_expected_axis_beats(mode             : natural;
+                                    n_faces          : natural;
+                                    target_face_beats : natural;
+                                    default_face_beats : natural) return natural is
+    begin
+        if mode = 0 or mode = 2 then
+            return n_faces * default_face_beats;
+        elsif mode = 3 then
+            if n_faces = 0 then
+                return 0;
+            elsif n_faces = 1 then
+                return default_face_beats;
+            else
+                return default_face_beats + (n_faces - 1) * target_face_beats;
+            end if;
+        else
+            return n_faces * target_face_beats;
+        end if;
+    end function;
+
+    function fn_mode_name(mode : natural) return string is
+    begin
+        case mode is
+            when 0      => return "unset";
+            when 1      => return "early";
+            when 2      => return "zero-alias";
+            when 3      => return "late-after-packet-start";
+            when others => return "invalid";
+        end case;
     end function;
 
     -- =========================================================================
@@ -290,11 +351,23 @@ architecture sim of tb_tdc_gpx_top_int is
     constant C_RANGE_COLS_VAL : std_logic_vector(31 downto 0) :=
         std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
         std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 16));
+    constant C_ACTIVE_CHIPS : natural := fn_count_ones(G_ACTIVE_CHIP_MASK);
+    constant C_TOTAL_LINES  : natural := G_N_FACES * G_COLS_PER_FACE;
+    constant C_TARGET_FACE_BEATS : natural :=
+        fn_face_axis_beats(G_COLS_PER_FACE, C_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
+                           C_MAX_HITS, C_OUTPUT_W);
+    constant C_DEFAULT_FACE_BEATS : natural :=
+        fn_face_axis_beats(G_COLS_PER_FACE, C_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
+                           c_MAX_HITS_PER_STOP, C_OUTPUT_W);
+    constant C_EXPECTED_AXIS_BEATS : natural :=
+        fn_expected_axis_beats(G_MAX_HITS_WRITE_MODE, G_N_FACES,
+                               C_TARGET_FACE_BEATS, C_DEFAULT_FACE_BEATS);
 
     -- Chip CSR addresses (9-bit)
     constant C_CHIP_CFG_REG0   : std_logic_vector(8 downto 0) := "0" & x"14";  -- CTL5
     constant C_CHIP_CFG_REG5   : std_logic_vector(8 downto 0) := "0" & x"28";  -- CTL10
     constant C_CHIP_CFG_REG6   : std_logic_vector(8 downto 0) := "0" & x"2C";
+    constant C_CHIP_SCAN_CFG   : std_logic_vector(8 downto 0) := "0" & x"54";  -- CTL21
 
 begin
 
@@ -799,9 +872,17 @@ begin
         wait until rst_n = '1';
         wait_clk(10);
 
+        assert G_MAX_HITS_WRITE_MODE <= 3
+            report "tb_tdc_gpx_top_int: G_MAX_HITS_WRITE_MODE must be 0..3"
+            severity failure;
+        assert not (G_MAX_HITS_WRITE_MODE = 3 and G_N_FACES < 2)
+            report "tb_tdc_gpx_top_int: late max_hits mode requires G_N_FACES >= 2"
+            severity failure;
+
         pl("====================================================");
         pl(" tdc_gpx_top integrated sim start (500m / "
-           & integer'image(G_TDATA_WIDTH) & "-bit / I-mode)");
+           & integer'image(G_TDATA_WIDTH) & "-bit / I-mode / max_hits_mode="
+           & fn_mode_name(G_MAX_HITS_WRITE_MODE) & ")");
         pl("====================================================");
 
         ----------------------------------------------------------------
@@ -823,6 +904,21 @@ begin
         chip_wr(C_CHIP_CFG_REG0, x"00001C00");  -- Reg0: rise edge on start+stop1..2
         chip_wr(C_CHIP_CFG_REG5, x"01800000");  -- Reg5: ALU trig bits
         chip_wr(C_CHIP_CFG_REG6, x"00000004");  -- Reg6: LF threshold
+        case G_MAX_HITS_WRITE_MODE is
+            when 0 =>
+                pl("[S2] CTL21.max_hits_cfg left unset -> expect RTL alias to 7");
+            when 1 =>
+                pl("[S2] CTL21.max_hits_cfg early write -> "
+                   & integer'image(C_MAX_HITS));
+                chip_wr(C_CHIP_SCAN_CFG, fn_pack_scan_timeout(C_MAX_HITS, 0));
+            when 2 =>
+                pl("[S2] CTL21.max_hits_cfg early write 0 -> expect alias to 7");
+                chip_wr(C_CHIP_SCAN_CFG, fn_pack_scan_timeout(0, 0));
+            when 3 =>
+                pl("[S2] CTL21.max_hits_cfg late mode: skip early write");
+            when others =>
+                null;
+        end case;
         wait_clk(20);
 
         ----------------------------------------------------------------
@@ -853,20 +949,27 @@ begin
         wait_clk(80);  -- cmd_start_accepted latency + CDC
 
         ----------------------------------------------------------------
-        -- [S6] Shot #1 - start_tdc / I-mode single measurement
+        -- [S6~S8] I-Mode single measurements across faces / columns
         ----------------------------------------------------------------
-        do_shot(1, G_STOPS_PER_CHIP, "col0/shot1");
+        for f in 0 to G_N_FACES - 1 loop
+            for c in 0 to G_COLS_PER_FACE - 1 loop
+                do_shot(c + 1,
+                        G_STOPS_PER_CHIP,
+                        "face" & integer'image(f) & "/col" & integer'image(c));
 
-        ----------------------------------------------------------------
-        -- [S7] shot_period wait (1.5 * round-trip = 1000 clks)
-        ----------------------------------------------------------------
-        pl("[S7] shot_period wait (500m -> 1000 clks)");
-        wait_clk(C_SHOT_PERIOD);
+                if G_MAX_HITS_WRITE_MODE = 3 and f = 0 and c = 0 then
+                    pl("[S_LATE] CTL21.max_hits_cfg write after first packet_start -> "
+                       & integer'image(C_MAX_HITS));
+                    chip_wr(C_CHIP_SCAN_CFG, fn_pack_scan_timeout(C_MAX_HITS, 0));
+                    wait_clk(20);
+                end if;
 
-        ----------------------------------------------------------------
-        -- [S8] Shot #2 - face complete (cols_per_face = 2)
-        ----------------------------------------------------------------
-        do_shot(2, G_STOPS_PER_CHIP, "col1/shot2");
+                if not (f = G_N_FACES - 1 and c = G_COLS_PER_FACE - 1) then
+                    pl("[S7] shot_period wait (500m -> 1000 clks)");
+                    wait_clk(C_SHOT_PERIOD);
+                end if;
+            end loop;
+        end loop;
 
         ----------------------------------------------------------------
         -- [S9] Wait frame emit, then stop_tdc pulse
@@ -885,19 +988,39 @@ begin
         ----------------------------------------------------------------
         pl("====================================================");
         pl(" integrated sim end");
+        pl("  config          : width=" & integer'image(G_TDATA_WIDTH)
+           & "  max_hits=" & integer'image(C_MAX_HITS)
+           & "  max_hits_mode=" & fn_mode_name(G_MAX_HITS_WRITE_MODE)
+           & "  active_chips=" & integer'image(C_ACTIVE_CHIPS)
+           & "  stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
+           & "  faces=" & integer'image(G_N_FACES)
+           & "  cols=" & integer'image(G_COLS_PER_FACE)
+           & "  expected_beats=" & integer'image(C_EXPECTED_AXIS_BEATS));
         pl("  rising  stream  : beats=" & integer'image(mon_rise_beats)
            & "  tlast_cnt=" & integer'image(mon_rise_frame_end));
         pl("  falling stream  : beats=" & integer'image(mon_fall_beats)
            & "  tlast_cnt=" & integer'image(mon_fall_frame_end));
         pl("====================================================");
-        if mon_rise_beats > 0 then
-            report "tb_tdc_gpx_top_int: rising stream emitted " &
-                   integer'image(mon_rise_beats) & " beats - PASS"
-                severity note;
-        else
-            report "tb_tdc_gpx_top_int: NO rising beats observed - CHECK (scenario may need longer wait)"
-                severity warning;
-        end if;
+        assert mon_rise_beats > 0
+            report "tb_tdc_gpx_top_int: no rising beats observed"
+            severity error;
+        assert mon_fall_beats > 0
+            report "tb_tdc_gpx_top_int: no falling beats observed"
+            severity error;
+        assert mon_rise_frame_end = C_TOTAL_LINES
+            report "tb_tdc_gpx_top_int: rising tlast count mismatch"
+            severity error;
+        assert mon_fall_frame_end = C_TOTAL_LINES
+            report "tb_tdc_gpx_top_int: falling tlast count mismatch"
+            severity error;
+        assert mon_rise_beats = C_EXPECTED_AXIS_BEATS
+            report "tb_tdc_gpx_top_int: rising beat count mismatch"
+            severity error;
+        assert mon_fall_beats = C_EXPECTED_AXIS_BEATS
+            report "tb_tdc_gpx_top_int: falling beat count mismatch"
+            severity error;
+        report "tb_tdc_gpx_top_int: output streams emitted beats/tlast as expected - PASS"
+            severity note;
 
         sim_done <= true;
         wait;

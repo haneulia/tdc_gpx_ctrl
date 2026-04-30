@@ -45,7 +45,9 @@ package tdc_gpx_pkg is
     constant c_N_CHIPS              : natural := 4;
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
     constant c_MAX_HITS_PER_STOP    : natural := 7;
-    constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;   -- Zynq-7000 (17 for MPSoC)
+    -- Current C02 cell format stores the lower 16 bits of each GPX raw hit.
+    -- Full 17-bit preservation requires a future cell format update.
+    constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;
     constant c_TDATA_WIDTH          : natural := 32;    -- default, overridden by g_TDATA_WIDTH
     constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
@@ -806,16 +808,13 @@ package body tdc_gpx_pkg is
         assert fn_output_width_supported(tdata_width)
             report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
             severity failure;
-        -- hit data beats = ceil(max_hits / slots_per_beat)
-        --   32-bit TDATA: 32/17 = 1 slot/beat  → beats = max_hits + 1
-        --   64-bit TDATA: 64/17 = 3 slots/beat → beats = ceil(max_hits/3) + 1
-        -- The 5-distance reference (Doc/260419/task_distance_bounded_windows_
-        -- 2026-04-19.md §1) uses max_hits = {1,2,3,6,7} for 100/250/500/750/
-        -- 1000 m respectively, yielding the beats/cell values wired into the
-        -- VDMA frame layout (see Doc/vdma_packet_structure.html §4/§5).
-        -- Note: HTML shows "runtime truncated" 64-bit cells for max_hits ≤ 5
-        -- as a packing optimization; this formula returns the conservative
-        -- upper bound used by cell_builder's buffer sizing.
+        -- hit data beats = ceil(max_hits / slots_per_beat), where each
+        -- output slot carries c_HIT_SLOT_DATA_WIDTH=16 bits:
+        --   32-bit TDATA:  2 slots/beat -> ceil(max_hits/2) + 1 meta beat
+        --   64-bit TDATA:  4 slots/beat -> ceil(max_hits/4) + 1 meta beat
+        --   128-bit TDATA: 8 slots/beat -> ceil(max_hits/8) + 1 meta beat
+        -- i_max_hits_cfg=000 is aliased to 7 by cell_builder before this
+        -- helper is selected, so callers should pass the effective 1..7 value.
         v_hit_beats := fn_ceil_div(max_hits, tdata_width / c_HIT_SLOT_DATA_WIDTH);
         -- total = hit beats + 1 metadata beat (always present)
         return v_hit_beats + 1;

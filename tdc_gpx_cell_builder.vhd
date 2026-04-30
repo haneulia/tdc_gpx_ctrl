@@ -64,12 +64,12 @@
 --   s_rt_last_beat_r is latched from elaboration-safe case lookup at output start.
 --   Hit overflow guard uses runtime max_hits_cfg, not compile-time constant.
 --   Enables distance-adaptive throughput:
---     max_hits | cell_size | beats @32b | beats @64b | beats @128b
---     ---------|-----------|------------|------------|-------------
---        1     |    4B     |     1      |     1      |      1
---        3     |    8B     |     2      |     1      |      1
---        5     |   16B     |     4      |     2      |      1
---        7     |   32B     |     8      |     4      |      2
+--     max_hits | total beats @32b | total beats @64b | total beats @128b
+--     ---------|------------------|------------------|------------------
+--        1     |        2         |        2         |        2
+--        3     |        3         |        2         |        2
+--        5     |        4         |        3         |        2
+--        7     |        5         |        3         |        2
 --
 -- Overrun:
 --   If no BUF_FREE buffer is available on shot_start, the shot is dropped.
@@ -93,7 +93,7 @@
 --   Beat META_BEAT_IDX:        metadata (hit_valid, slope_vec, hit_count, flags)
 --   Remaining beats:           padding (zeros)
 --   Runtime beats/cell: fn_beats_per_cell_rt(max_hits_cfg, g_TDATA_WIDTH)
---   Examples @64b: max_hits=7->4, max_hits=3->1, max_hits=1->1
+--   Examples @64b: max_hits=7->3, max_hits=3->2, max_hits=1->2
 --
 -- Signal ownership (no multi-driver):
 --   p_collect WRITES: s_cell_buf_r, s_buf_state_r, s_buf_full_r, s_wr_buf_r,
