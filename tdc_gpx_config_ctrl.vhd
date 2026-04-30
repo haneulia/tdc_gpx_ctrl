@@ -679,29 +679,21 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_dst_req    : std_logic;
     signal s_cmd_reg_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
 
-    -- Round 6 A3: expected_ififo1/2 now transfer via xpm_cdc_handshake.
-    -- Unlike cfg/cfg_image (quasi-static) these are running totals updated
-    -- per stop event in AXI domain, so 2-FF sync would expose torn samples
-    -- to chip_run's ST_DRAIN_LATCH. Handshake provides atomic 32-bit
-    -- delivery per bundle; any change in the source retriggers a transfer.
-    signal s_expected_ififo1_src_packed : std_logic_vector(31 downto 0);
-    signal s_expected_ififo2_src_packed : std_logic_vector(31 downto 0);
-    signal s_expected_ififo1_dst_packed : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_expected_ififo2_dst_packed : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_exp1_src_send_r : std_logic := '0';
-    signal s_exp1_src_rcv    : std_logic;
-    signal s_exp1_dst_req    : std_logic;
-    signal s_exp1_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
-    signal s_exp2_src_send_r : std_logic := '0';
-    signal s_exp2_src_rcv    : std_logic;
-    signal s_exp2_dst_req    : std_logic;
-    signal s_exp2_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
-    signal s_expected_final_src_packed : std_logic_vector(0 downto 0);
-    signal s_expected_final_dst_packed : std_logic_vector(0 downto 0) := (others => '0');
-    signal s_exp_final_src_send_r : std_logic := '0';
-    signal s_exp_final_src_rcv    : std_logic;
-    signal s_exp_final_dst_req    : std_logic;
-    signal s_exp_final_d1_r       : std_logic_vector(0 downto 0) := (others => '1');
+    -- Round 14 OP-C02-03: expected-count tuple transfer.
+    -- chip_run samples IFIFO1, IFIFO2, and final_valid together in
+    -- ST_DRAIN_LATCH. Keep the three fields in one CDC payload so a latch
+    -- cannot observe counts from one update and final_valid from another.
+    constant c_EXPECTED_IFIFO_BITS : natural := c_N_CHIPS * 8;
+    constant c_EXPECTED_IFIFO1_LO  : natural := 0;
+    constant c_EXPECTED_IFIFO2_LO  : natural := c_EXPECTED_IFIFO_BITS;
+    constant c_EXPECTED_FINAL_IDX  : natural := c_EXPECTED_IFIFO_BITS * 2;
+    constant c_EXPECTED_CDC_BITS   : natural := c_EXPECTED_FINAL_IDX + 1;
+    signal s_expected_src_packed : std_logic_vector(c_EXPECTED_CDC_BITS - 1 downto 0);
+    signal s_expected_dst_packed : std_logic_vector(c_EXPECTED_CDC_BITS - 1 downto 0) := (others => '0');
+    signal s_exp_src_send_r : std_logic := '0';
+    signal s_exp_src_rcv    : std_logic;
+    signal s_exp_dst_req    : std_logic;
+    signal s_exp_d1_r       : std_logic_vector(c_EXPECTED_CDC_BITS - 1 downto 0) := (others => '1');
 
 begin
 
@@ -1379,100 +1371,52 @@ begin
     end process p_cmd_reg_send;
 
     -- =========================================================================
-    -- Round 6 A3: expected_ififo1/2 atomic transfer via xpm_cdc_handshake
+    -- Round 14 OP-C02-03: expected IFIFO tuple atomic CDC
     -- =========================================================================
-    -- Pack 4 per-chip 8-bit counts into 32 bits for the handshake.
+    -- Pack 4 per-chip 8-bit IFIFO1 counts, 4 per-chip 8-bit IFIFO2 counts,
+    -- and the final_valid qualifier into one 65-bit handshake payload.
     gen_exp_pack : for i in 0 to c_N_CHIPS - 1 generate
-        s_expected_ififo1_src_packed(8 * (i + 1) - 1 downto 8 * i)
-            <= std_logic_vector(s_expected_ififo1(i));
-        s_expected_ififo2_src_packed(8 * (i + 1) - 1 downto 8 * i)
-            <= std_logic_vector(s_expected_ififo2(i));
-        s_expected_ififo1_tdc(i)
-            <= unsigned(s_expected_ififo1_dst_packed(8 * (i + 1) - 1 downto 8 * i));
-        s_expected_ififo2_tdc(i)
-            <= unsigned(s_expected_ififo2_dst_packed(8 * (i + 1) - 1 downto 8 * i));
+        s_expected_src_packed(c_EXPECTED_IFIFO1_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO1_LO + 8 * i) <= std_logic_vector(s_expected_ififo1(i));
+        s_expected_src_packed(c_EXPECTED_IFIFO2_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO2_LO + 8 * i) <= std_logic_vector(s_expected_ififo2(i));
+        s_expected_ififo1_tdc(i) <= unsigned(s_expected_dst_packed(c_EXPECTED_IFIFO1_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO1_LO + 8 * i));
+        s_expected_ififo2_tdc(i) <= unsigned(s_expected_dst_packed(c_EXPECTED_IFIFO2_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO2_LO + 8 * i));
     end generate gen_exp_pack;
 
-    s_expected_final_src_packed(0) <= s_expected_final_valid;
-    s_expected_final_valid_tdc <= s_expected_final_dst_packed(0);
+    s_expected_src_packed(c_EXPECTED_FINAL_IDX) <= s_expected_final_valid;
+    s_expected_final_valid_tdc <= s_expected_dst_packed(c_EXPECTED_FINAL_IDX);
 
-    u_cdc_exp1 : xpm_cdc_handshake
+    u_cdc_expected : xpm_cdc_handshake
         generic map (
-            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
-            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 32
+            DEST_EXT_HSK    => 1,
+            DEST_SYNC_FF    => 4,
+            INIT_SYNC_FF    => 0,
+            SIM_ASSERT_CHK  => 0,
+            SRC_SYNC_FF     => 4,
+            WIDTH           => c_EXPECTED_CDC_BITS
         )
         port map (
             src_clk  => i_axis_aclk,
-            src_in   => s_expected_ififo1_src_packed,
-            src_send => s_exp1_src_send_r,
-            src_rcv  => s_exp1_src_rcv,
+            src_in   => s_expected_src_packed,
+            src_send => s_exp_src_send_r,
+            src_rcv  => s_exp_src_rcv,
             dest_clk => i_tdc_clk,
-            dest_req => s_exp1_dst_req,
-            dest_ack => s_exp1_dst_req,
-            dest_out => s_expected_ififo1_dst_packed
-        );
-
-    u_cdc_exp2 : xpm_cdc_handshake
-        generic map (
-            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
-            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 32
-        )
-        port map (
-            src_clk  => i_axis_aclk,
-            src_in   => s_expected_ififo2_src_packed,
-            src_send => s_exp2_src_send_r,
-            src_rcv  => s_exp2_src_rcv,
-            dest_clk => i_tdc_clk,
-            dest_req => s_exp2_dst_req,
-            dest_ack => s_exp2_dst_req,
-            dest_out => s_expected_ififo2_dst_packed
-        );
-
-    u_cdc_exp_final : xpm_cdc_handshake
-        generic map (
-            DEST_EXT_HSK => 1, DEST_SYNC_FF => 4, INIT_SYNC_FF => 0,
-            SIM_ASSERT_CHK => 0, SRC_SYNC_FF => 4, WIDTH => 1
-        )
-        port map (
-            src_clk  => i_axis_aclk,
-            src_in   => s_expected_final_src_packed,
-            src_send => s_exp_final_src_send_r,
-            src_rcv  => s_exp_final_src_rcv,
-            dest_clk => i_tdc_clk,
-            dest_req => s_exp_final_dst_req,
-            dest_ack => s_exp_final_dst_req,
-            dest_out => s_expected_final_dst_packed
+            dest_req => s_exp_dst_req,
+            dest_ack => s_exp_dst_req,
+            dest_out => s_expected_dst_packed
         );
 
     p_exp_send : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_exp1_src_send_r <= '0';
-                s_exp1_d1_r       <= (others => '1');
-                s_exp2_src_send_r <= '0';
-                s_exp2_d1_r       <= (others => '1');
-                s_exp_final_src_send_r <= '0';
-                s_exp_final_d1_r       <= (others => '1');
+                s_exp_src_send_r <= '0';
+                s_exp_d1_r       <= (others => '1');
             else
-                if s_exp1_src_send_r = '0' and s_expected_ififo1_src_packed /= s_exp1_d1_r then
-                    s_exp1_src_send_r <= '1';
-                    s_exp1_d1_r       <= s_expected_ififo1_src_packed;
-                elsif s_exp1_src_rcv = '1' then
-                    s_exp1_src_send_r <= '0';
-                end if;
-                if s_exp2_src_send_r = '0' and s_expected_ififo2_src_packed /= s_exp2_d1_r then
-                    s_exp2_src_send_r <= '1';
-                    s_exp2_d1_r       <= s_expected_ififo2_src_packed;
-                elsif s_exp2_src_rcv = '1' then
-                    s_exp2_src_send_r <= '0';
-                end if;
-                if s_exp_final_src_send_r = '0'
-                   and s_expected_final_src_packed /= s_exp_final_d1_r then
-                    s_exp_final_src_send_r <= '1';
-                    s_exp_final_d1_r       <= s_expected_final_src_packed;
-                elsif s_exp_final_src_rcv = '1' then
-                    s_exp_final_src_send_r <= '0';
+                if s_exp_src_send_r = '0' and s_expected_src_packed /= s_exp_d1_r then
+                    s_exp_src_send_r <= '1';
+                    s_exp_d1_r       <= s_expected_src_packed;
+                elsif s_exp_src_rcv = '1' then
+                    s_exp_src_send_r <= '0';
                 end if;
             end if;
         end if;
