@@ -6,8 +6,10 @@
 -- Drives the CSR (tdc_gpx_csr_chip + bound tdc_gpx_axil_csr32_chip IP) over
 -- AXI4-Lite using px_axi_lite_writer from px_utility_pkg, then samples the
 -- i_axis_aclk-domain outputs (o_bus_clk_div / o_bus_ticks) to verify the
--- C01 timing clamp. A final case uses px_axi_lite_reader to read CTL1 back
--- and confirm the written raw value persists in the CSR register:
+-- C01 timing clamp. The matrix sweep covers raw CTL1 div/ticks values that
+-- can be encoded by the CSR field. A final case uses px_axi_lite_reader to
+-- read CTL1 back and confirm the written raw value persists in the CSR
+-- register:
 --
 --   div >= c_BUS_CLK_DIV_MIN (=1)
 --   if div = 1, ticks >= c_BUS_READ_PERIOD_MIN_CLKS (=5)
@@ -204,6 +206,9 @@ begin
     p_stim : process
         variable v_pass : natural := 0;
         variable v_fail : natural := 0;
+        variable v_exp_div       : natural := 0;
+        variable v_exp_ticks     : natural := 0;
+        variable v_exp_ticks_min : natural := 0;
 
         procedure check_clamp(constant tag         : in string;
                               constant req_div    : in natural;
@@ -293,16 +298,56 @@ begin
         check_clamp("[c09] div=3,ticks=4", 3, 4, 3, 4);  -- legal
         check_clamp("[c10] div=8,ticks=7", 8, 7, 8, 7);  -- legal, large div
 
+        -- Exhaustive illegal/legal matrix for the timing-sensitive range.
+        -- div=0..5 covers the clamp boundary and fast legal candidates.
+        -- ticks=0..7 covers every encodable 3-bit BUS_TICKS value.
+        for div_idx in 0 to 5 loop
+            for ticks_idx in 0 to 7 loop
+                if div_idx < c_BUS_CLK_DIV_MIN then
+                    v_exp_div := c_BUS_CLK_DIV_MIN;
+                else
+                    v_exp_div := div_idx;
+                end if;
+
+                if v_exp_div = 1 then
+                    v_exp_ticks_min := c_BUS_READ_PERIOD_MIN_CLKS;
+                else
+                    v_exp_ticks_min := c_BUS_TICKS_MIN;
+                end if;
+
+                if ticks_idx < v_exp_ticks_min then
+                    v_exp_ticks := v_exp_ticks_min;
+                else
+                    v_exp_ticks := ticks_idx;
+                end if;
+
+                check_clamp("[m] div=" & integer'image(div_idx)
+                            & ",ticks=" & integer'image(ticks_idx),
+                            div_idx, ticks_idx, v_exp_div, v_exp_ticks);
+            end loop;
+        end loop;
+
+        -- Large divider edge: all ticks still use the absolute ticks>=4 rule.
+        for ticks_idx in 0 to 7 loop
+            if ticks_idx < c_BUS_TICKS_MIN then
+                v_exp_ticks := c_BUS_TICKS_MIN;
+            else
+                v_exp_ticks := ticks_idx;
+            end if;
+            check_clamp("[m] div=63,ticks=" & integer'image(ticks_idx),
+                        63, ticks_idx, 63, v_exp_ticks);
+        end loop;
+
         -- ---------------------------------------------------------------------
         -- [c11] px_axi_lite_reader: confirm the last raw value written to CTL1
         --       is retained in the CSR register file. The reader observes the
         --       raw register, not the clamped output, so the expected value
-        --       is exactly fn_pack_bus_timing(8, 7).
+        --       is exactly the final matrix write fn_pack_bus_timing(63, 7).
         -- ---------------------------------------------------------------------
         report "[c11] readback CTL1 via px_axi_lite_reader" severity note;
         px_axi_lite_reader(
             addr           => c_ADDR_BUS_TIMING,
-            val            => fn_pack_bus_timing(8, 7),
+            val            => fn_pack_bus_timing(63, 7),
             comp           => '1',  -- enable comparison
             fail_on_error  => '1',  -- assert FAILURE on mismatch
             axi_aclk       => clk_axi,

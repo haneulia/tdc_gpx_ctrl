@@ -37,7 +37,7 @@ Plan v004의 C02 핵심 RTL/TB 보완 항목은 대부분 반영되었다. 다�
 | OP-C02-02 | PH_RESP_DRAIN stuck/fatal 장기 격리 검증 | 부분반영 | RTL fatal/quarantine 경로는 존재하지만, 장기 stuck/fatal/auto-recover 전용 TB transcript가 아직 부족하다. |
 | OP-C02-03 | config_ctrl/top expected-count CDC integration 검증 | 부분반영 | `tdc_gpx_config_ctrl.vhd`에 `xpm_cdc_handshake` 경로는 있으나, top/config 통합 시나리오에서 fire-count expected와 chip drain이 end-to-end로 닫혔는지 별도 검증이 필요하다. |
 | OP-C02-04 | downstream 전체 AXI-stream `tuser` boundary 검증 | 반영 | `C02_Chip_Acquisition_260430224233_Downstream_TUSER_Boundary_Fix_v001.md`에서 cell_pipe/output_stage `tuser` boundary와 row fault pulse 계약을 검증했다. |
-| OP-C02-05 | timing legality illegal combination matrix | 부분반영 | 현재 200 MHz 정상 조건은 PASS. illegal `bus_ticks/div` 조합 clamp/assertion matrix는 별도 검증 필요. |
+| OP-C02-05 | timing legality illegal combination matrix | 반영 | `C02_Chip_Acquisition_260430225644_Timing_Legality_Matrix_Fix_v001.md`에서 CSR clamp 68-case matrix와 Bus_Phy local timing clamp를 검증했다. |
 | OP-C02-06 | stale ready negative test | 부분반영 | skid/sync FIFO 구조 보완은 PASS. stale ready로 잘못 pop/drop되는 negative 전용 TB는 아직 명시적으로 닫히지 않았다. |
 
 ## 4. 의도적으로 후속 또는 제외된 항목
@@ -63,7 +63,7 @@ Plan v004의 C02 핵심 RTL/TB 보완 항목은 대부분 반영되었다. 다�
 | VB-C02-06 Response/backpressure | 부분 close. bounded raw backpressure는 PASS, PH_RESP_DRAIN stuck/fatal은 남음 |
 | VB-C02-07 AXI-stream sideband contract | close 가능. raw boundary는 기존 PASS, downstream cell/output-stage boundary는 `C02_Chip_Acquisition_260430224233_Downstream_TUSER_Boundary_Fix_v001.md`에서 PASS |
 | VB-C02-08 Negative/fail propagation | 부분 close. stale mismatch fault는 PASS, forced negative exit-code는 남음 |
-| VB-C02-09 Timing legality | 부분 close. 현재 정상 조건 PASS, illegal matrix는 남음 |
+| VB-C02-09 Timing legality | close 가능. 정상 조건과 illegal matrix 모두 PASS |
 | VB-C02-10 Evidence boundary | 부분 close. Markdown/PPT/log는 계속 누적 중이나 OP-C02-01~06 추적표가 필요 |
 
 ## 6. 우선순위 제안
@@ -73,7 +73,6 @@ Plan v004의 C02 핵심 RTL/TB 보완 항목은 대부분 반영되었다. 다�
 | P0 | forced negative exit-code evidence | 검증 체계가 실패를 놓치지 않는지 확인하는 상위 안전장치 |
 | P0 | PH_RESP_DRAIN stuck/fatal 장기 격리 TB | response/backpressure 계약의 가장 위험한 잔여 항목 |
 | P1 | config_ctrl/top expected-count CDC integration | echo_receiver fire-count 기반 expected 계약이 실제 top에서 닫히는지 확인 |
-| P2 | timing legality illegal matrix | 정상 운용은 PASS이나 CSR/clamp 방어 검증을 보강 |
 | P2 | stale ready negative TB | skid/sync FIFO 보완의 방어적 추가 검증 |
 
 ## 7. 최종 판단
@@ -84,6 +83,9 @@ Plan v004의 C02 핵심 RTL/TB 보완 항목은 대부분 반영되었다. 다�
 - 2026-04-30 22:42:33 +09:00: OP-C02-04 downstream AXI-stream `tuser` boundary 검증과 보완은 `C02_Chip_Acquisition_260430224233_Downstream_TUSER_Boundary_Fix_v001.md` 및 동일 timestamp PPT에 반영했다.
 - 반영 코드: `tdc_gpx_face_assembler.vhd:543`, `tdc_gpx_face_assembler.vhd:580..597`, `tdc_gpx_face_assembler.vhd:896`, `tb_tdc_gpx_cell_pipe.vhd:135`, `tb_tdc_gpx_cell_pipe.vhd:166`, `tb_tdc_gpx_cell_pipe.vhd:228`, `tb_tdc_gpx_cell_pipe.vhd:293`, `tb_tdc_gpx_output_stage.vhd:190`, `tb_tdc_gpx_output_stage.vhd:273..274`, `tb_tdc_gpx_output_stage.vhd:317..326`, `tb_tdc_gpx_output_stage.vhd:387`, `tb_tdc_gpx_output_stage.vhd:419..422`, `tb_tdc_gpx_output_stage.vhd:431..438`, `tb_tdc_gpx_output_stage.vhd:543..551`.
 - 반영 로그: `xsim_cell_pipe_tuser.log:28`, `xsim_output_stage_tuser.log:38..56`.
+- 2026-04-30 22:56:44 +09:00: OP-C02-05 timing legality illegal combination matrix는 `C02_Chip_Acquisition_260430225644_Timing_Legality_Matrix_Fix_v001.md` 및 동일 timestamp PPT에 반영했다.
+- 반영 코드: `tb_tdc_gpx_csr_chip_clamp.vhd:301..337`, `tb_tdc_gpx_csr_chip_clamp.vhd:348`, `tb_tdc_gpx_bus_phy_c01_contract.vhd:83..100`, `tb_tdc_gpx_bus_phy_c01_contract.vhd:225..289`.
+- 반영 로그: `xsim_csr_chip_timing_matrix.log:570..574`, `xsim_bus_phy_c01_timing_matrix.log:28..42`.
 
 - 2026-04-30 21:46:21 +09:00: OP-C02-01 forced negative monitor evidence와 OP-C02-02 PH_RESP_DRAIN stuck/fatal 장기 격리 검증은 `C02_Chip_Acquisition_260430214621_P0_Negative_PHRespDrain_Verify_v001.md` 2장부터 5장에 반영되었다.
 - 반영 코드: `tdc_gpx_chip_ctrl.vhd:839`, `tdc_gpx_chip_ctrl.vhd:882`, `tdc_gpx_chip_ctrl.vhd:905..919`, `tb_tdc_gpx_chip_ctrl.vhd:52`, `tb_tdc_gpx_chip_ctrl.vhd:233..234`, `tb_tdc_gpx_chip_ctrl.vhd:453..458`, `tb_tdc_gpx_chip_ctrl.vhd:614..619`, `tb_tdc_gpx_chip_ctrl.vhd:839..877`, `tb_tdc_gpx_chip_ctrl.vhd:2251..2308`.

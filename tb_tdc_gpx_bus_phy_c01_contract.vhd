@@ -4,8 +4,8 @@
 -- =============================================================================
 --
 -- Checks implemented from Doc/cluster_analysis/C01_GPX_Bus_Read v009:
---   1. div=1,ticks=4 is locally clamped to the legal 200 MHz READ timing
---      equivalent of ticks=5.
+--   1. Illegal div/ticks combinations are locally clamped to the legal
+--      200 MHz READ timing before the physical strobe is generated.
 --   2. div=1,ticks=5 burst READ initiation interval is 25 ns.
 --   3. PULLUP_OR_NOT_CONNECTED OEN mode keeps o_oen high and still supports
 --      normal RDN-gated reads.
@@ -34,6 +34,8 @@ architecture sim of tb_tdc_gpx_bus_phy_c01_contract is
     signal s_rst_n : std_logic := '0';
 
     -- Dynamic OEN DUT
+    signal s_dyn_tick_en     : std_logic := '0';
+    signal s_dyn_div         : natural range 0 to 63 := 1;
     signal s_dyn_ticks       : unsigned(2 downto 0) := to_unsigned(5, 3);
     signal s_dyn_req_valid   : std_logic := '0';
     signal s_dyn_req_rw      : std_logic := '0';
@@ -78,6 +80,25 @@ begin
 
     s_clk <= not s_clk after c_CLK_PERIOD / 2 when s_done = '0' else s_clk;
 
+    p_dyn_tick_gen : process(s_clk)
+        variable v_cnt : natural range 0 to 63 := 0;
+    begin
+        if rising_edge(s_clk) then
+            if s_rst_n = '0' then
+                v_cnt := 0;
+                s_dyn_tick_en <= '0';
+            else
+                if s_dyn_div <= 1 or v_cnt = s_dyn_div - 1 then
+                    v_cnt := 0;
+                    s_dyn_tick_en <= '1';
+                else
+                    v_cnt := v_cnt + 1;
+                    s_dyn_tick_en <= '0';
+                end if;
+            end if;
+        end if;
+    end process p_dyn_tick_gen;
+
     -- Dynamic mode chip model: GPX output buffer follows OEN low and RDN low.
     s_dyn_d <= std_logic_vector(to_unsigned(16#12345#, c_DATA_W))
                when s_dyn_oen = '0' and s_dyn_rdn = '0'
@@ -95,9 +116,9 @@ begin
         port map (
             i_clk           => s_clk,
             i_rst_n         => s_rst_n,
-            i_tick_en       => '1',
+            i_tick_en       => s_dyn_tick_en,
             i_bus_ticks     => s_dyn_ticks,
-            i_bus_clk_div   => to_unsigned(1, 6),
+            i_bus_clk_div   => to_unsigned(s_dyn_div, 6),
             i_req_valid     => s_dyn_req_valid,
             i_req_rw        => s_dyn_req_rw,
             i_req_addr      => s_dyn_req_addr,
@@ -201,9 +222,58 @@ begin
             assert false report msg severity failure;
         end procedure wait_level;
 
+        procedure check_dyn_read_low(
+            constant tag       : in string;
+            constant req_div   : in natural;
+            constant req_ticks : in natural;
+            constant exp_low   : in time
+        ) is
+            variable v_fall : time;
+            variable v_pw_l : time;
+        begin
+            report tag & ": div=" & integer'image(req_div)
+                & ", ticks=" & integer'image(req_ticks)
+                & ", expected RDN low=" & time'image(exp_low)
+                severity note;
+
+            s_dyn_div       <= req_div;
+            s_dyn_ticks     <= to_unsigned(req_ticks, 3);
+            s_dyn_req_valid <= '0';
+            s_dyn_req_burst <= '0';
+            s_dyn_oen_perm  <= '0';
+            wait until rising_edge(s_clk);
+            wait until rising_edge(s_clk);
+
+            s_dyn_req_valid <= '1';
+            s_dyn_req_rw    <= '0';
+            s_dyn_req_addr  <= c_TDC_REG8_IFIFO1;
+            wait until s_dyn_rdn = '0';
+            v_fall := now;
+            wait until s_dyn_rdn = '1';
+            v_pw_l := now - v_fall;
+            assert v_pw_l = exp_low
+                report tag & ": RDN low width mismatch, got "
+                    & time'image(v_pw_l) & ", expected " & time'image(exp_low)
+                severity failure;
+
+            wait_level(s_dyn_rsp_pending, '1',
+                       tag & ": registered o_rsp_pending did not assert");
+            wait_level(s_dyn_tvalid, '1',
+                       tag & ": AXI response did not assert");
+            assert s_dyn_tdata(c_DATA_W - 1 downto 0) =
+                   std_logic_vector(to_unsigned(16#12345#, c_DATA_W))
+                report tag & ": read data mismatch"
+                severity failure;
+            s_dyn_req_valid <= '0';
+            wait_level(s_dyn_busy, '0', tag & ": bus did not return idle");
+            wait until rising_edge(s_clk);
+            assert s_dyn_rsp_pending = '0'
+                report tag & ": registered o_rsp_pending did not clear"
+                severity failure;
+        end procedure check_dyn_read_low;
+
         variable v_fall_1 : time;
         variable v_fall_2 : time;
-        variable v_pw     : time;
     begin
         s_rst_n <= '0';
         wait for 10 * c_CLK_PERIOD;
@@ -211,35 +281,18 @@ begin
         s_rst_n <= '1';
         wait until rising_edge(s_clk);
 
-        -- [1] div=1,ticks=4 must be clamped to ticks=5 at 200 MHz.
-        s_dyn_ticks     <= to_unsigned(4, 3);
-        s_dyn_req_valid <= '1';
-        s_dyn_req_rw    <= '0';
-        s_dyn_req_addr  <= c_TDC_REG8_IFIFO1;
-        wait until s_dyn_rdn = '0';
-        v_fall_1 := now;
-        wait until s_dyn_rdn = '1';
-        v_pw := now - v_fall_1;
-        assert v_pw = 15 ns
-            report "div=1,ticks=4 was not clamped to legal ticks=5 timing"
-            severity failure;
-        wait_level(s_dyn_rsp_pending, '1',
-                   "dynamic registered o_rsp_pending did not assert");
-        wait_level(s_dyn_tvalid, '1',
-                   "dynamic AXI response did not assert");
-        assert s_dyn_tdata(c_DATA_W - 1 downto 0) =
-               std_logic_vector(to_unsigned(16#12345#, c_DATA_W))
-            report "dynamic read data mismatch"
-            severity failure;
-        s_dyn_req_valid <= '0';
-        wait until rising_edge(s_clk);
-        wait until rising_edge(s_clk);
-        assert s_dyn_rsp_pending = '0'
-            report "registered o_rsp_pending did not clear after response handshake"
-            severity failure;
+        -- [1] Local bus_phy clamp matrix samples. These prove the leaf
+        -- boundary still protects GPX timing even if CSR policy is bypassed.
+        check_dyn_read_low("[1a] div=0,ticks=0 local clamp", 0, 0, 15 ns);
+        check_dyn_read_low("[1b] div=1,ticks=4 local clamp", 1, 4, 15 ns);
+        check_dyn_read_low("[1c] div=2,ticks=3 local clamp", 2, 3, 20 ns);
+        check_dyn_read_low("[1d] div=3,ticks=4 legal timing", 3, 4, 30 ns);
 
         -- [2] div=1,ticks=5 burst READ II must be 25 ns at 200 MHz.
+        s_dyn_div       <= 1;
         s_dyn_ticks     <= to_unsigned(5, 3);
+        wait until rising_edge(s_clk);
+        wait until rising_edge(s_clk);
         s_dyn_req_valid <= '1';
         s_dyn_req_burst <= '1';
         s_dyn_oen_perm  <= '1';
