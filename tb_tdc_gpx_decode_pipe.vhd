@@ -25,16 +25,16 @@ architecture sim of tb_tdc_gpx_decode_pipe is
     signal rst_n : std_logic := '0';
 
     signal raw_sk_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
-    signal raw_sk_tdata  : t_slv32_array := (others => (others => '0'));
-    signal raw_sk_tuser  : t_slv8_array  := (others => (others => '0'));
+    signal raw_sk_tdata  : t_raw_axis_tdata_array := (others => (others => '0'));
+    signal raw_sk_tuser  : t_raw_axis_tuser_array := (others => (others => '0'));
     signal raw_sk_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
 
     signal chip_shot_seq      : t_shot_seq_array := (others => (others => '0'));
     signal face_stops_per_chip : unsigned(3 downto 0) := to_unsigned(8, 4);
 
     signal evt_sk_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal evt_sk_tdata  : t_slv32_array;
-    signal evt_sk_tuser  : t_slv16_array;
+    signal evt_sk_tdata  : t_evt_axis_tdata_array;
+    signal evt_sk_tuser  : t_evt_axis_tuser_array;
 
     signal stop_id_error : std_logic_vector(c_N_CHIPS-1 downto 0);
 

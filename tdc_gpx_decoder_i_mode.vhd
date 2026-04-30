@@ -50,14 +50,14 @@ entity tdc_gpx_decoder_i_mode is
 
         -- AXI-Stream slave (from chip_ctrl)
         i_s_axis_tvalid   : in  std_logic;
-        i_s_axis_tdata    : in  std_logic_vector(31 downto 0);
-        i_s_axis_tuser    : in  std_logic_vector(7 downto 0);
+        i_s_axis_tdata    : in  t_raw_axis_tdata;
+        i_s_axis_tuser    : in  t_raw_axis_tuser;
         o_s_axis_tready   : out std_logic;
 
         -- AXI-Stream master (to raw_event_builder)
         o_m_axis_tvalid   : out std_logic;
-        o_m_axis_tdata    : out std_logic_vector(31 downto 0);
-        o_m_axis_tuser    : out std_logic_vector(7 downto 0);
+        o_m_axis_tdata    : out t_raw_axis_tdata;
+        o_m_axis_tuser    : out t_raw_axis_tuser;
         i_m_axis_tready   : in  std_logic
     );
 end entity tdc_gpx_decoder_i_mode;
@@ -65,8 +65,8 @@ end entity tdc_gpx_decoder_i_mode;
 architecture rtl of tdc_gpx_decoder_i_mode is
 
     signal s_tvalid_r : std_logic := '0';
-    signal s_tdata_r  : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_tuser_r  : std_logic_vector(7 downto 0)  := (others => '0');
+    signal s_tdata_r  : t_raw_axis_tdata := (others => '0');
+    signal s_tuser_r  : t_raw_axis_tuser := (others => '0');
 
 begin
 
@@ -103,7 +103,7 @@ begin
                             v_ififo_id := i_s_axis_tuser(0);
 
                             s_tdata_r(c_RAW_HIT_WIDTH - 1 downto 0)  <= v_raw(c_RAW_HIT_HI downto c_RAW_HIT_LO);
-                            s_tdata_r(31 downto c_RAW_HIT_WIDTH)      <= (others => '0');
+                            s_tdata_r(c_RAW_AXIS_TDATA_WIDTH - 1 downto c_RAW_HIT_WIDTH) <= (others => '0');
 
                             s_tuser_r(0)          <= v_raw(c_RAW_SLOPE_BIT);
                             s_tuser_r(2 downto 1) <= v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO);

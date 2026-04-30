@@ -43,7 +43,8 @@ entity tdc_gpx_top is
         -- Stop event AXI-Stream interface parameters
         g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;
         g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := 32
+        g_STOP_EVT_TUSER_WIDTH : natural := c_STOP_EVT_TUSER_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH
     );
     port (
         -- Processing / AXI-Stream clock and reset (150 MHz)
@@ -115,7 +116,7 @@ entity tdc_gpx_top is
         i_stop_evt_tvalid : in  std_logic;
         i_stop_evt_tdata  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
         i_stop_evt_tkeep  : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
-        i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
+        i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_TUSER_WIDTH - 1 downto 0);
         o_stop_evt_tready : out std_logic;
 
         -- Fire-count sideband/final stream from echo_receiver.
@@ -218,16 +219,16 @@ architecture rtl of tdc_gpx_top is
     -- Cluster 1 -> Cluster 2 (AXI-Stream x4)
     -- =========================================================================
     signal s_raw_sk_tvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_raw_sk_tdata     : t_slv32_array;
-    signal s_raw_sk_tuser     : t_slv8_array;
+    signal s_raw_sk_tdata     : t_raw_axis_tdata_array;
+    signal s_raw_sk_tuser     : t_raw_axis_tuser_array;
     signal s_raw_sk_tready    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Cluster 2 -> Cluster 3 (AXI-Stream x4)
     -- =========================================================================
     signal s_evt_sk_tvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_evt_sk_tdata     : t_slv32_array;
-    signal s_evt_sk_tuser     : t_slv16_array;
+    signal s_evt_sk_tdata     : t_evt_axis_tdata_array;
+    signal s_evt_sk_tuser     : t_evt_axis_tuser_array;
     signal s_evt_sk_tready    : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
@@ -477,6 +478,7 @@ begin
             g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS,
             g_STREAM_CLK_MODE => g_STREAM_CLK_MODE,
             g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
+            g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
             g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH
         )
         port map (

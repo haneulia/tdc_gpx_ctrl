@@ -77,7 +77,8 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_stop_cfg_decode is
     generic (
         g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := 32;
+        g_STOP_EVT_TUSER_WIDTH : natural := c_STOP_EVT_TUSER_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH;
         -- Round 13 follow-up (audit 5번): stop-event window margin.
         -- The effective window close = snapshot(i_cfg.max_range_clks) + this
         -- margin. max_range_clks is the physical distance-of-flight bound
@@ -106,7 +107,7 @@ entity tdc_gpx_stop_cfg_decode is
         -- Stop event AXI-Stream slave
         i_stop_evt_tvalid : in  std_logic;
         i_stop_evt_tdata  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
-        i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
+        i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_TUSER_WIDTH - 1 downto 0);
         o_stop_evt_tready : out std_logic;
 
         -- Fire-count sideband/final stream from echo_receiver.
@@ -196,6 +197,12 @@ begin
 
     assert g_FIRE_COUNT_DWIDTH >= 16
         report "tdc_gpx_stop_cfg_decode: g_FIRE_COUNT_DWIDTH must be >= 16"
+        severity failure;
+    assert g_STOP_EVT_DWIDTH >= c_N_CHIPS * 8
+        report "tdc_gpx_stop_cfg_decode: g_STOP_EVT_DWIDTH must cover 8 bits per chip"
+        severity failure;
+    assert g_STOP_EVT_TUSER_WIDTH >= c_N_CHIPS * 8
+        report "tdc_gpx_stop_cfg_decode: g_STOP_EVT_TUSER_WIDTH must cover 8 bits per chip"
         severity failure;
 
     o_stop_evt_tready <= '1';

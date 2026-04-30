@@ -143,9 +143,9 @@ entity tdc_gpx_bus_phy is
         --            until tready='1'. One beat per bus transaction.
         -- ---------------------------------------------------------------
         o_m_axis_tvalid : out std_logic;
-        o_m_axis_tdata  : out std_logic_vector(31 downto 0);
-        o_m_axis_tkeep  : out std_logic_vector(3 downto 0);
-        o_m_axis_tuser  : out std_logic_vector(7 downto 0);
+        o_m_axis_tdata  : out t_bus_rsp_tdata;
+        o_m_axis_tkeep  : out std_logic_vector(c_BUS_RSP_TKEEP_WIDTH - 1 downto 0);
+        o_m_axis_tuser  : out t_bus_rsp_tuser;
         i_m_axis_tready : in  std_logic;
 
         -- Synchronized outputs (2-FF, active HIGH)
@@ -229,8 +229,8 @@ architecture rtl of tdc_gpx_bus_phy is
 
     -- AXI-Stream master: bus response mirror (32-bit tdata, 8-bit tuser)
     signal s_axis_tvalid_r   : std_logic := '0';
-    signal s_axis_tdata_r    : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_axis_tuser_r    : std_logic_vector(7 downto 0) := (others => '0');
+    signal s_axis_tdata_r    : t_bus_rsp_tdata := (others => '0');
+    signal s_axis_tuser_r    : t_bus_rsp_tuser := (others => '0');
     signal s_axis_rw_r       : std_logic := '0';    -- '0'=read, '1'=write (latched at txn entry)
     signal s_axis_addr_r     : std_logic_vector(3 downto 0) := (others => '0');  -- latched addr
 
@@ -386,7 +386,7 @@ begin
                     -- AXI-Stream: read response (zero-pad 28→32 bit)
                     s_axis_tvalid_r             <= '1';
                     s_axis_tdata_r(27 downto 0) <= s_d_in_ff_r;
-                    s_axis_tdata_r(31 downto 28)<= (others => '0');
+                    s_axis_tdata_r(c_BUS_RSP_TDATA_WIDTH - 1 downto c_TDC_BUS_WIDTH) <= (others => '0');
                     s_axis_tuser_r              <= "000" & s_axis_addr_r & '0';
                 end if;
 
@@ -713,7 +713,7 @@ begin
 
     o_m_axis_tvalid <= s_axis_tvalid_r;
     o_m_axis_tdata  <= s_axis_tdata_r;
-    o_m_axis_tkeep  <= "1111";
+    o_m_axis_tkeep  <= (others => '1');
     o_m_axis_tuser  <= s_axis_tuser_r;
 
     -- =========================================================================

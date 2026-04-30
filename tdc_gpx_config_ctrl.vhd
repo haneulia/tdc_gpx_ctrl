@@ -65,8 +65,9 @@ entity tdc_gpx_config_ctrl is
         g_OEN_MODE        : string   := "DYNAMIC_CONNECTED";
         g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
         g_STREAM_CLK_MODE : string   := "ASYNC"; -- "ASYNC" uses raw_cdc, "SYNC" bypasses it
-        g_STOP_EVT_DWIDTH : natural := 32;
-        g_FIRE_COUNT_DWIDTH : natural := 32
+        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
+        g_STOP_EVT_TUSER_WIDTH : natural := c_STOP_EVT_TUSER_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH
     );
     port (
         -- Clock / Reset: processing domain (AXI-Stream, 150 MHz)
@@ -129,7 +130,7 @@ entity tdc_gpx_config_ctrl is
         i_stop_evt_tvalid    : in  std_logic;
         i_stop_evt_tdata     : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
         i_stop_evt_tkeep     : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
-        i_stop_evt_tuser     : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
+        i_stop_evt_tuser     : in  std_logic_vector(g_STOP_EVT_TUSER_WIDTH - 1 downto 0);
         o_stop_evt_tready    : out std_logic;
         i_fire_count_tvalid  : in  std_logic;
         i_fire_count_tdata   : in  std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
@@ -180,8 +181,8 @@ entity tdc_gpx_config_ctrl is
         -- Output to Cluster 2: AXI-Stream x4 (from sk_raw)
         -- =====================================================================
         o_raw_sk_tvalid      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_raw_sk_tdata       : out t_slv32_array;
-        o_raw_sk_tuser       : out t_slv8_array;
+        o_raw_sk_tdata       : out t_raw_axis_tdata_array;
+        o_raw_sk_tuser       : out t_raw_axis_tuser_array;
         i_raw_sk_tready      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
 
         -- =====================================================================
@@ -357,9 +358,9 @@ architecture rtl of tdc_gpx_config_ctrl is
 
     -- Per-chip: bus_phy response AXI-Stream
     signal s_brsp_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_brsp_axis_tdata  : t_slv32_array;
+    signal s_brsp_axis_tdata  : t_bus_rsp_tdata_array;
     signal s_brsp_axis_tkeep  : t_slv4_array;
-    signal s_brsp_axis_tuser  : t_slv8_array;
+    signal s_brsp_axis_tuser  : t_bus_rsp_tuser_array;
     signal s_brsp_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy synchronized status
@@ -372,8 +373,8 @@ architecture rtl of tdc_gpx_config_ctrl is
 
     -- Per-chip: chip_ctrl -> downstream raw AXI-Stream
     signal s_raw_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_raw_axis_tdata  : t_slv32_array;
-    signal s_raw_axis_tuser  : t_slv8_array;
+    signal s_raw_axis_tdata  : t_raw_axis_tdata_array;
+    signal s_raw_axis_tuser  : t_raw_axis_tuser_array;
     signal s_raw_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: chip_ctrl status
@@ -435,8 +436,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- Per-chip: sk_raw output (before err_fill gating)
     -- =========================================================================
     signal s_sk_raw_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_sk_raw_tdata  : t_slv32_array;
-    signal s_sk_raw_tuser  : t_slv8_array;
+    signal s_sk_raw_tdata  : t_raw_axis_tdata_array;
+    signal s_sk_raw_tuser  : t_raw_axis_tuser_array;
 
     -- CDC FIFO: chip_ctrl (TDC clock) -> decode_pipe (AXI-Stream clock)
     signal s_raw_cdc_full  : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -966,9 +967,11 @@ begin
         -- Error-fill: replace ONLY hit[16:0] with all-ones (0x1FFFF).
         -- Preserve upper raw bits (stop_id, slope, cha_code, ififo_id)
         -- so downstream decode/cell_builder see correct stop/slope routing.
-        o_raw_sk_tdata(i)(16 downto 0)  <= s_sk_raw_tdata(i)(16 downto 0) when s_err_fill(i) = '0'
-                                           else (others => '1');
-        o_raw_sk_tdata(i)(31 downto 17) <= s_sk_raw_tdata(i)(31 downto 17);  -- always pass through
+        o_raw_sk_tdata(i)(c_RAW_HIT_WIDTH - 1 downto 0) <=
+            s_sk_raw_tdata(i)(c_RAW_HIT_WIDTH - 1 downto 0) when s_err_fill(i) = '0'
+            else (others => '1');
+        o_raw_sk_tdata(i)(c_RAW_AXIS_TDATA_WIDTH - 1 downto c_RAW_HIT_WIDTH) <=
+            s_sk_raw_tdata(i)(c_RAW_AXIS_TDATA_WIDTH - 1 downto c_RAW_HIT_WIDTH);  -- always pass through
         o_raw_sk_tvalid(i) <= s_sk_raw_tvalid(i);
         o_raw_sk_tuser(i)  <= s_sk_raw_tuser(i);
     end generate gen_err_fill;
@@ -1106,6 +1109,7 @@ begin
     u_stop_decode : entity work.tdc_gpx_stop_cfg_decode
         generic map (
             g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
+            g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
             g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH
         )
         port map (
@@ -1845,9 +1849,9 @@ begin
                     FIFO_MEMORY_TYPE => "distributed",
                     FIFO_READ_LATENCY => 0,
                     FIFO_WRITE_DEPTH => 16,
-                    READ_DATA_WIDTH  => 40,
+                    READ_DATA_WIDTH  => c_RAW_AXIS_PACK_WIDTH,
                     READ_MODE        => "fwft",
-                    WRITE_DATA_WIDTH => 40
+                    WRITE_DATA_WIDTH => c_RAW_AXIS_PACK_WIDTH
                 )
                 port map (
                     -- Write side (TDC clock domain)
@@ -1858,8 +1862,8 @@ begin
                     -- Read side (AXI-Stream clock domain)
                     rd_clk        => i_axis_aclk,
                     rd_en         => not s_raw_cdc_empty(i) and i_raw_sk_tready(i),
-                    dout(39 downto 8) => s_sk_raw_tdata(i),
-                    dout(7 downto 0)  => s_sk_raw_tuser(i),
+                    dout(c_RAW_AXIS_PACK_WIDTH - 1 downto c_RAW_AXIS_TUSER_WIDTH) => s_sk_raw_tdata(i),
+                    dout(c_RAW_AXIS_TUSER_WIDTH - 1 downto 0) => s_sk_raw_tuser(i),
                     empty         => s_raw_cdc_empty(i),
                     -- Reset (active-high, synchronized internally by XPM)
                     -- Round 6 A1: stretched to include soft_reset pulses so

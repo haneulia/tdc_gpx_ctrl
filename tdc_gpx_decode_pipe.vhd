@@ -23,8 +23,8 @@ entity tdc_gpx_decode_pipe is
 
         -- Input from Cluster 1 (AXI-Stream x4, from chip_ctrl skid outputs)
         i_raw_sk_tvalid : in  std_logic_vector(c_N_CHIPS-1 downto 0);
-        i_raw_sk_tdata  : in  t_slv32_array;
-        i_raw_sk_tuser  : in  t_slv8_array;
+        i_raw_sk_tdata  : in  t_raw_axis_tdata_array;
+        i_raw_sk_tuser  : in  t_raw_axis_tuser_array;
         o_raw_sk_tready : out std_logic_vector(c_N_CHIPS-1 downto 0);
 
         -- Context from Cluster 1 (per-chip shot sequence)
@@ -35,8 +35,8 @@ entity tdc_gpx_decode_pipe is
 
         -- Output to Cluster 3 (AXI-Stream x4, skid buffer outputs)
         o_evt_sk_tvalid : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_evt_sk_tdata  : out t_slv32_array;
-        o_evt_sk_tuser  : out t_slv16_array;
+        o_evt_sk_tdata  : out t_evt_axis_tdata_array;
+        o_evt_sk_tuser  : out t_evt_axis_tuser_array;
         i_evt_sk_tready : in  std_logic_vector(c_N_CHIPS-1 downto 0);  -- backpressure from cell_pipe
 
         -- Status
@@ -56,24 +56,24 @@ architecture rtl of tdc_gpx_decode_pipe is
     -- decoder_i_mode output -> skid_dec input
     ---------------------------------------------------------------------------
     signal s_dec_axis_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_dec_axis_tdata  : t_slv32_array;
-    signal s_dec_axis_tuser  : t_slv8_array;
+    signal s_dec_axis_tdata  : t_raw_axis_tdata_array;
+    signal s_dec_axis_tuser  : t_raw_axis_tuser_array;
     signal s_dec_axis_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
 
     ---------------------------------------------------------------------------
     -- skid_dec output -> event_bld input
     ---------------------------------------------------------------------------
     signal s_dec_sk_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_dec_sk_tdata  : t_slv32_array;
-    signal s_dec_sk_tuser  : t_slv8_array;
+    signal s_dec_sk_tdata  : t_raw_axis_tdata_array;
+    signal s_dec_sk_tuser  : t_raw_axis_tuser_array;
     signal s_dec_sk_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
 
     ---------------------------------------------------------------------------
     -- event_bld output -> skid_evt input
     ---------------------------------------------------------------------------
     signal s_evt_axis_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_evt_axis_tdata  : t_slv32_array;
-    signal s_evt_axis_tuser  : t_slv16_array;
+    signal s_evt_axis_tdata  : t_evt_axis_tdata_array;
+    signal s_evt_axis_tuser  : t_evt_axis_tuser_array;
     signal s_evt_axis_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
 
 begin
@@ -98,10 +98,10 @@ begin
                 i_m_axis_tready => s_dec_axis_tready(i)
             );
 
-        -- Stage 2: Skid buffer decode -> event_bld (40b: 32b tdata & 8b tuser)
+        -- Stage 2: Skid buffer decode -> event_bld (raw tdata + raw tuser)
         u_sk_dec : entity work.tdc_gpx_skid_buffer
             generic map (
-                g_DATA_WIDTH => 40
+                g_DATA_WIDTH => c_RAW_AXIS_PACK_WIDTH
             )
             port map (
                 i_clk                  => i_clk,
@@ -112,8 +112,8 @@ begin
                 i_s_data               => s_dec_axis_tdata(i) & s_dec_axis_tuser(i),
                 o_m_valid              => s_dec_sk_tvalid(i),
                 i_m_ready              => s_dec_sk_tready(i),
-                o_m_data(39 downto 8)  => s_dec_sk_tdata(i),
-                o_m_data(7 downto 0)   => s_dec_sk_tuser(i)
+                o_m_data(c_RAW_AXIS_PACK_WIDTH - 1 downto c_RAW_AXIS_TUSER_WIDTH) => s_dec_sk_tdata(i),
+                o_m_data(c_RAW_AXIS_TUSER_WIDTH - 1 downto 0) => s_dec_sk_tuser(i)
             );
 
         -- Stage 3: Raw event builder (hit enrichment)
@@ -136,10 +136,10 @@ begin
                 o_stop_id_error  => o_stop_id_error(i)
             );
 
-        -- Stage 4: Skid buffer event_bld -> cell_pipe (48b: 32b tdata & 16b tuser)
+        -- Stage 4: Skid buffer event_bld -> cell_pipe (event tdata + event tuser)
         u_sk_evt : entity work.tdc_gpx_skid_buffer
             generic map (
-                g_DATA_WIDTH => 48
+                g_DATA_WIDTH => c_EVT_AXIS_PACK_WIDTH
             )
             port map (
                 i_clk                   => i_clk,
@@ -150,8 +150,8 @@ begin
                 i_s_data                => s_evt_axis_tdata(i) & s_evt_axis_tuser(i),
                 o_m_valid               => o_evt_sk_tvalid(i),
                 i_m_ready               => i_evt_sk_tready(i),  -- backpressure from cell_pipe
-                o_m_data(47 downto 16)  => o_evt_sk_tdata(i),
-                o_m_data(15 downto 0)   => o_evt_sk_tuser(i)
+                o_m_data(c_EVT_AXIS_PACK_WIDTH - 1 downto c_EVT_AXIS_TUSER_WIDTH) => o_evt_sk_tdata(i),
+                o_m_data(c_EVT_AXIS_TUSER_WIDTH - 1 downto 0) => o_evt_sk_tuser(i)
             );
 
     end generate gen_chip;

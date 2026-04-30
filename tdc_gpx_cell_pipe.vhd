@@ -27,8 +27,8 @@ entity tdc_gpx_cell_pipe is
 
         -- Event input from Cluster 2 (AXI-Stream x4 chips)
         i_evt_sk_tvalid         : in  std_logic_vector(c_N_CHIPS-1 downto 0);
-        i_evt_sk_tdata          : in  t_slv32_array;
-        i_evt_sk_tuser          : in  t_slv16_array;
+        i_evt_sk_tdata          : in  t_evt_axis_tdata_array;
+        i_evt_sk_tuser          : in  t_evt_axis_tuser_array;
         o_evt_sk_tready         : out std_logic_vector(c_N_CHIPS-1 downto 0);
 
         -- Control / Config
@@ -106,10 +106,10 @@ architecture rtl of tdc_gpx_cell_pipe is
     ---------------------------------------------------------------------------
     signal s_rise_valid_r : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal s_fall_valid_r : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_rise_tdata_r : t_slv32_array;
-    signal s_fall_tdata_r : t_slv32_array;
-    signal s_rise_tuser_r : t_slv16_array;
-    signal s_fall_tuser_r : t_slv16_array;
+    signal s_rise_tdata_r : t_evt_axis_tdata_array;
+    signal s_fall_tdata_r : t_evt_axis_tdata_array;
+    signal s_rise_tuser_r : t_evt_axis_tuser_array;
+    signal s_fall_tuser_r : t_evt_axis_tuser_array;
 
     ---------------------------------------------------------------------------
     -- Cell builder output tdata arrays

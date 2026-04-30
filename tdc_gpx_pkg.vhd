@@ -70,9 +70,34 @@ package tdc_gpx_pkg is
     function fn_cell_size_rt(max_hits : natural) return natural;
     function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
 
+    -- AXI4-Stream boundary width constants.
+    -- Phase B keeps C01/C02 internal raw/event payloads at their current
+    -- compact widths, but names each contract so output-width scaling
+    -- (32/64/128) cannot accidentally be confused with bus/raw/event widths.
+    constant c_AXIS_BYTE_WIDTH      : natural := 8;
+
+    -- Bus response mirror from C01 bus_phy to chip_ctrl.
+    constant c_BUS_RSP_TDATA_WIDTH  : natural := 32;
+    constant c_BUS_RSP_TUSER_WIDTH  : natural := 8;
+    constant c_BUS_RSP_TKEEP_WIDTH  : natural := c_BUS_RSP_TDATA_WIDTH / c_AXIS_BYTE_WIDTH;
+    constant c_BUS_RSP_PACK_WIDTH   : natural := c_BUS_RSP_TDATA_WIDTH + c_BUS_RSP_TUSER_WIDTH;
+
+    -- Raw IFIFO stream from chip_ctrl to decoder_i_mode.
+    constant c_RAW_AXIS_TDATA_WIDTH : natural := 32;
+    constant c_RAW_AXIS_TUSER_WIDTH : natural := 8;
+    constant c_RAW_AXIS_PACK_WIDTH  : natural := c_RAW_AXIS_TDATA_WIDTH + c_RAW_AXIS_TUSER_WIDTH;
+
+    -- Decoded event stream from raw_event_builder to cell_pipe.
+    constant c_EVT_AXIS_TDATA_WIDTH : natural := 32;
+    constant c_EVT_AXIS_TUSER_WIDTH : natural := 16;
+    constant c_EVT_AXIS_PACK_WIDTH  : natural := c_EVT_AXIS_TDATA_WIDTH + c_EVT_AXIS_TUSER_WIDTH;
+
     -- Stop event AXI-Stream constants
-    constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- tdata/tuser width
+    constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- stop count payload width
+    constant c_STOP_EVT_TUSER_WIDTH : natural := 32;    -- sideband width, intentionally decoupled from tdata
     constant c_STOP_CNT_WIDTH       : natural := 4;     -- FIXED: p_stop_decode hardcodes 4-bit
+    constant c_FIRE_COUNT_DATA_WIDTH : natural := 32;
+    constant c_FIRE_COUNT_TKEEP_WIDTH : natural := c_FIRE_COUNT_DATA_WIDTH / c_AXIS_BYTE_WIDTH;
     -- Layout: per-chip packed [chip3(8b)|chip2(8b)|chip1(8b)|chip0(8b)]
     --   Each 8-bit chip slice: [IFIFO2(4b) | IFIFO1(4b)]
     -- tkeep: reserved (always "1111", not consumed by p_stop_decode)
@@ -164,6 +189,20 @@ package tdc_gpx_pkg is
 
     type t_axis_tdata_array is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+
+    subtype t_bus_rsp_tdata is std_logic_vector(c_BUS_RSP_TDATA_WIDTH - 1 downto 0);
+    subtype t_bus_rsp_tuser is std_logic_vector(c_BUS_RSP_TUSER_WIDTH - 1 downto 0);
+    subtype t_raw_axis_tdata is std_logic_vector(c_RAW_AXIS_TDATA_WIDTH - 1 downto 0);
+    subtype t_raw_axis_tuser is std_logic_vector(c_RAW_AXIS_TUSER_WIDTH - 1 downto 0);
+    subtype t_evt_axis_tdata is std_logic_vector(c_EVT_AXIS_TDATA_WIDTH - 1 downto 0);
+    subtype t_evt_axis_tuser is std_logic_vector(c_EVT_AXIS_TUSER_WIDTH - 1 downto 0);
+
+    type t_bus_rsp_tdata_array is array(0 to c_N_CHIPS - 1) of t_bus_rsp_tdata;
+    type t_bus_rsp_tuser_array is array(0 to c_N_CHIPS - 1) of t_bus_rsp_tuser;
+    type t_raw_axis_tdata_array is array(0 to c_N_CHIPS - 1) of t_raw_axis_tdata;
+    type t_raw_axis_tuser_array is array(0 to c_N_CHIPS - 1) of t_raw_axis_tuser;
+    type t_evt_axis_tdata_array is array(0 to c_N_CHIPS - 1) of t_evt_axis_tdata;
+    type t_evt_axis_tuser_array is array(0 to c_N_CHIPS - 1) of t_evt_axis_tuser;
 
     -- =========================================================================
     -- TDC-GPX physical bus array types (for top-level port maps)

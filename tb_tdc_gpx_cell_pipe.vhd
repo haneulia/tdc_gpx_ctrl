@@ -41,8 +41,8 @@ architecture sim of tb_tdc_gpx_cell_pipe is
     -- DUT input ports
     -- =========================================================================
     signal evt_tvalid         : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
-    signal evt_tdata          : t_slv32_array := (others => (others => '0'));
-    signal evt_tuser          : t_slv16_array := (others => (others => '0'));
+    signal evt_tdata          : t_evt_axis_tdata_array := (others => (others => '0'));
+    signal evt_tuser          : t_evt_axis_tuser_array := (others => (others => '0'));
     signal shot_start         : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
     signal face_stops         : unsigned(3 downto 0) := to_unsigned(8, 4);
     signal max_hits           : unsigned(2 downto 0) := to_unsigned(7, 3);

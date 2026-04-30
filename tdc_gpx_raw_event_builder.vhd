@@ -49,8 +49,8 @@ entity tdc_gpx_raw_event_builder is
         --   tuser[6]     = ififo_id
         --   tuser[7]     = drain_done ('1' = control beat: reset hit counters)
         i_s_axis_tvalid   : in  std_logic;
-        i_s_axis_tdata    : in  std_logic_vector(31 downto 0);
-        i_s_axis_tuser    : in  std_logic_vector(7 downto 0);
+        i_s_axis_tdata    : in  t_raw_axis_tdata;
+        i_s_axis_tuser    : in  t_raw_axis_tuser;
         o_s_axis_tready   : out std_logic;
 
         -- Context (from chip_ctrl / TOP)
@@ -72,8 +72,8 @@ entity tdc_gpx_raw_event_builder is
         --   tuser[10:8]   = hit_seq_local (0..7 per stop, shared across slopes)
         --   tuser[15:11] = shot_seq[4:0] (lower 5 bits of shot sequence counter)
         o_m_axis_tvalid   : out std_logic;
-        o_m_axis_tdata    : out std_logic_vector(31 downto 0);
-        o_m_axis_tuser    : out std_logic_vector(15 downto 0);
+        o_m_axis_tdata    : out t_evt_axis_tdata;
+        o_m_axis_tuser    : out t_evt_axis_tuser;
         i_m_axis_tready   : in  std_logic;
 
         -- Error
@@ -91,8 +91,8 @@ architecture rtl of tdc_gpx_raw_event_builder is
 
     -- AXI-Stream output registers
     signal s_tvalid_r         : std_logic := '0';
-    signal s_tdata_r          : std_logic_vector(31 downto 0) := (others => '0');
-    signal s_tuser_r          : std_logic_vector(15 downto 0) := (others => '0');
+    signal s_tdata_r          : t_evt_axis_tdata := (others => '0');
+    signal s_tuser_r          : t_evt_axis_tuser := (others => '0');
     signal s_stop_id_error_r  : std_logic := '0';
 
     -- Backpressure: accept input when output register is free or being consumed

@@ -158,8 +158,8 @@ entity tdc_gpx_chip_ctrl is
         --   tuser[0]     = '0' READ, '1' WRITE
         --   tuser[4:1]   = register address
         i_s_axis_tvalid     : in  std_logic;
-        i_s_axis_tdata      : in  std_logic_vector(31 downto 0);
-        i_s_axis_tuser      : in  std_logic_vector(7 downto 0);
+        i_s_axis_tdata      : in  t_bus_rsp_tdata;
+        i_s_axis_tuser      : in  t_bus_rsp_tuser;
         o_s_axis_tready     : out std_logic;
         i_bus_busy          : in  std_logic;
         i_bus_rsp_pending   : in  std_logic;  -- bus_phy response pending or tvalid held
@@ -192,8 +192,8 @@ entity tdc_gpx_chip_ctrl is
         --   tuser[6]     = 0 (reserved)
         --   tuser[7]     = drain_done flag ('1' = control-only beat, no data)
         o_m_raw_axis_tvalid : out std_logic;
-        o_m_raw_axis_tdata  : out std_logic_vector(31 downto 0);
-        o_m_raw_axis_tuser  : out std_logic_vector(7 downto 0);
+        o_m_raw_axis_tdata  : out t_raw_axis_tdata;
+        o_m_raw_axis_tuser  : out t_raw_axis_tuser;
         i_m_raw_axis_tready : in  std_logic;
         o_drain_done        : out std_logic;           -- 1-clk pulse when drain_done beat handshakes to downstream
         o_run_drain_complete : out std_logic;          -- 1-clk pulse when chip_run internally finishes drain (Round 5 #11)
@@ -341,8 +341,8 @@ architecture coordinator of tdc_gpx_chip_ctrl is
 
     type t_raw_entry is record
         valid : std_logic;
-        tdata : std_logic_vector(31 downto 0);
-        tuser : std_logic_vector(7 downto 0);
+        tdata : t_raw_axis_tdata;
+        tuser : t_raw_axis_tuser;
         drain : std_logic;
     end record;
     constant c_RAW_ENTRY_EMPTY : t_raw_entry := (
@@ -381,12 +381,12 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_reg_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
     signal s_bus_rsp_fire    : std_logic;  -- valid AND ready: true "accepted" pulse
     signal s_bus_rsp_pending_i : std_logic;
-    signal s_rsp_sk_sdata    : std_logic_vector(39 downto 0);
-    signal s_rsp_sk_mdata    : std_logic_vector(39 downto 0);
+    signal s_rsp_sk_sdata    : std_logic_vector(c_BUS_RSP_PACK_WIDTH - 1 downto 0);
+    signal s_rsp_sk_mdata    : std_logic_vector(c_BUS_RSP_PACK_WIDTH - 1 downto 0);
     signal s_rsp_sk_tvalid   : std_logic;
     signal s_rsp_sk_tready   : std_logic;
-    signal s_rsp_sk_tdata    : std_logic_vector(31 downto 0);
-    signal s_rsp_sk_tuser    : std_logic_vector(7 downto 0);
+    signal s_rsp_sk_tdata    : t_bus_rsp_tdata;
+    signal s_rsp_sk_tuser    : t_bus_rsp_tuser;
 
     -- =========================================================================
     -- Config snapshots (latched at cmd_start, refreshed on cfg_write/reg)
@@ -614,7 +614,7 @@ begin
     s_rsp_sk_sdata <= i_s_axis_tdata & i_s_axis_tuser;
 
     u_rsp_skid : entity work.tdc_gpx_skid_buffer
-        generic map (g_DATA_WIDTH => 40)
+        generic map (g_DATA_WIDTH => c_BUS_RSP_PACK_WIDTH)
         port map (
             i_clk     => i_clk,
             i_rst_n   => s_sub_rst_n,
@@ -627,8 +627,8 @@ begin
             o_m_data  => s_rsp_sk_mdata
         );
 
-    s_rsp_sk_tdata <= s_rsp_sk_mdata(39 downto 8);
-    s_rsp_sk_tuser <= s_rsp_sk_mdata(7 downto 0);
+    s_rsp_sk_tdata <= s_rsp_sk_mdata(c_BUS_RSP_PACK_WIDTH - 1 downto c_BUS_RSP_TUSER_WIDTH);
+    s_rsp_sk_tuser <= s_rsp_sk_mdata(c_BUS_RSP_TUSER_WIDTH - 1 downto 0);
 
     s_rsp_sk_tready <= '0' when s_phase_r = PH_RUN and s_raw_hold_busy = '1'
                   else '1' when s_phase_r = PH_RESP_DRAIN

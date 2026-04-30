@@ -141,8 +141,8 @@ entity tdc_gpx_cell_builder is
         --   tuser[10:8]  = hit_seq_local (0..7)
         --   tuser[15:11] = shot_seq[4:0]
         i_s_axis_tvalid     : in  std_logic;
-        i_s_axis_tdata      : in  std_logic_vector(31 downto 0);
-        i_s_axis_tuser      : in  std_logic_vector(15 downto 0);
+        i_s_axis_tdata      : in  t_evt_axis_tdata;
+        i_s_axis_tuser      : in  t_evt_axis_tuser;
         o_s_axis_tready     : out std_logic;
 
         -- Control (from chip_ctrl)

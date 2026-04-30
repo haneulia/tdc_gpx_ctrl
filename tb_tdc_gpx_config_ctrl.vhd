@@ -167,8 +167,8 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     -- DUT outputs
     -- =========================================================================
     signal o_raw_sk_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_raw_sk_tdata   : t_slv32_array;
-    signal o_raw_sk_tuser   : t_slv8_array;
+    signal o_raw_sk_tdata   : t_raw_axis_tdata_array;
+    signal o_raw_sk_tuser   : t_raw_axis_tuser_array;
     signal o_cfg            : t_tdc_cfg;
     signal o_cfg_image      : t_cfg_image;
     signal o_cmd_start      : std_logic;
