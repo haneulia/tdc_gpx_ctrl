@@ -80,3 +80,8 @@ Plan v004의 C02 핵심 RTL/TB 보완 항목은 대부분 반영되었다. 다�
 ## 7. 최종 판단
 
 코드 수정 계획의 핵심 기능 보완은 반영되었지만, Plan v004 기준의 전체 closure는 아직 아니다. 특히 negative evidence와 PH_RESP_DRAIN stuck/fatal 검증은 C02를 완전히 닫기 전에 먼저 처리하는 것이 맞다.
+## 8. 후속 반영 기록
+
+- 2026-04-30 21:46:21 +09:00: OP-C02-01 forced negative monitor evidence와 OP-C02-02 PH_RESP_DRAIN stuck/fatal 장기 격리 검증은 `C02_Chip_Acquisition_260430214621_P0_Negative_PHRespDrain_Verify_v001.md` 2장부터 5장에 반영되었다.
+- 반영 코드: `tdc_gpx_chip_ctrl.vhd:839`, `tdc_gpx_chip_ctrl.vhd:882`, `tdc_gpx_chip_ctrl.vhd:905..919`, `tb_tdc_gpx_chip_ctrl.vhd:52`, `tb_tdc_gpx_chip_ctrl.vhd:233..234`, `tb_tdc_gpx_chip_ctrl.vhd:453..458`, `tb_tdc_gpx_chip_ctrl.vhd:614..619`, `tb_tdc_gpx_chip_ctrl.vhd:839..877`, `tb_tdc_gpx_chip_ctrl.vhd:2251..2308`.
+- 반영 로그: `xsim_chip_ctrl.log:1005..1343`, `xsim_chip_ctrl_neg_empty.log:35..40`, `xsim_chip_ctrl_neg_tuser.log:35..40`.

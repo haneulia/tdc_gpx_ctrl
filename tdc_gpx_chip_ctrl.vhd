@@ -835,7 +835,8 @@ begin
                             s_drain_cnt_r <= s_drain_cnt_r + 1;
                         end if;
                         if i_bus_busy = '0' and i_bus_rsp_pending = '0'
-                           and s_drain_cnt_r >= to_unsigned(3, 4) then
+                           and s_drain_cnt_r >= to_unsigned(3, 4)
+                           and s_err_bus_fatal_r = '0' then
                             if s_drain_to_init_r = '1' then
                                 s_phase_r    <= PH_INIT;
                                 s_init_start <= '1';
@@ -878,7 +879,7 @@ begin
                                 -- At x"FFFF": saturate in place. No in-band
                                 -- escalation — but fatal sticky above is now
                                 -- set the first time we reach saturation.
-                            else
+                            elsif s_err_bus_fatal_r = '0' then
                                 if s_drain_to_init_r = '1' then
                                     s_phase_r    <= PH_INIT;
                                     s_init_start <= '1';

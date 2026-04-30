@@ -30,6 +30,10 @@
 --   [16b] Bounded raw AXI backpressure with T1a/T1b split timing
 --   [17] Stale expected-count mismatch -> faulted drain_done, no empty read
 --   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
+--   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
+--   Negative modes:
+--     g_NEGATIVE_MODE=1: force empty IFIFO read monitor and fail intentionally.
+--     g_NEGATIVE_MODE=2: force raw tuser monitor and fail intentionally.
 --
 -- Standard: VHDL-93 compatible
 -- =============================================================================
@@ -44,7 +48,8 @@ use work.tb_tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_chip_ctrl is
     generic (
-        g_CHIP_ID : natural := 0  -- override via -generic_top "g_CHIP_ID=0..3"
+        g_CHIP_ID       : natural := 0; -- override via -generic_top "g_CHIP_ID=0..3"
+        g_NEGATIVE_MODE : natural := 0  -- 0=positive, 1=empty-read, 2=tuser
     );
 end entity tb_tdc_gpx_chip_ctrl;
 
@@ -124,6 +129,9 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_bus_req_burst      : std_logic;
     signal s_bus_busy           : std_logic;
     signal s_bus_rsp_pending    : std_logic;
+    signal s_bus_busy_to_ctrl   : std_logic;
+    signal s_bus_rsp_pending_to_ctrl : std_logic;
+    signal s_force_resp_drain_stuck : std_logic := '0';
     signal s_tick_en            : std_logic;
 
     -- bus_phy → chip_ctrl AXI-Stream (response)
@@ -184,6 +192,7 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_err_drain_mismatch : std_logic;
     signal s_err_bus_fatal      : std_logic;
     signal s_drain_done_faulted : std_logic;
+    signal s_err_force_reinit   : std_logic;
     signal s_expected_ififo1    : unsigned(7 downto 0) := (others => '0');
     signal s_expected_ififo2    : unsigned(7 downto 0) := (others => '0');
     signal s_expected_final_valid : std_logic := '0';
@@ -221,6 +230,8 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_raw_tuser_err_cnt  : natural := 0;
     signal s_empty_read_cnt     : natural := 0;
     signal s_clk_cnt            : natural := 0;
+    signal s_force_empty_read_req : std_logic := '0';
+    signal s_force_tuser_err_req : std_logic := '0';
 
     -- =========================================================================
     -- Chip model: write capture (for cfg_write verification)
@@ -274,12 +285,16 @@ begin
     -- =========================================================================
     -- DUT: chip_ctrl
     -- =========================================================================
+    s_bus_busy_to_ctrl <= s_bus_busy or s_force_resp_drain_stuck;
+    s_bus_rsp_pending_to_ctrl <= s_bus_rsp_pending;
+
     u_chip_ctrl : entity work.tdc_gpx_chip_ctrl
         generic map (
             g_CHIP_ID        => c_CHIP_ID,
             g_POWERUP_CLKS   => c_POWERUP_CLKS,
             g_RECOVERY_CLKS  => c_RECOVERY_CLKS,
-            g_ALU_PULSE_CLKS => c_ALU_PULSE_CLKS
+            g_ALU_PULSE_CLKS => c_ALU_PULSE_CLKS,
+            g_BUS_IDLE_STABLE_CLKS => 16
         )
         port map (
             i_clk               => s_clk,
@@ -316,8 +331,8 @@ begin
             i_s_axis_tdata      => s_brsp_axis_tdata,
             i_s_axis_tuser      => s_brsp_axis_tuser,
             o_s_axis_tready     => s_brsp_axis_tready,
-            i_bus_busy          => s_bus_busy,
-            i_bus_rsp_pending   => s_bus_rsp_pending,
+            i_bus_busy          => s_bus_busy_to_ctrl,
+            i_bus_rsp_pending   => s_bus_rsp_pending_to_ctrl,
             i_ef1_sync          => s_ef1_sync,
             i_ef2_sync          => s_ef2_sync,
             i_irflag_sync       => s_irflag_sync,
@@ -345,7 +360,7 @@ begin
             o_run_timeout_cause => open,
             o_init_cfg_coalesced => open,
             o_err_cmd_collision => open,
-            o_err_force_reinit  => open,
+            o_err_force_reinit  => s_err_force_reinit,
             o_err_raw_ctrl_drop => s_err_raw_ctrl_drop,
             o_err_drain_mismatch => s_err_drain_mismatch,
             o_err_reg_rw_ambiguous => open,
@@ -419,6 +434,7 @@ begin
         variable v_rdn_prev      : std_logic := '1';
         variable v_wrn_prev      : std_logic := '1';
         variable v_load_prev     : std_logic := '0';
+        variable v_empty_read_active : boolean := false;
         variable v_wr_data_hold  : std_logic_vector(c_DATA_W - 1 downto 0) := (others => '0');
         variable v_wr_addr_hold  : std_logic_vector(3 downto 0) := (others => '0');
     begin
@@ -434,6 +450,13 @@ begin
             end if;
             v_load_prev := s_fifo_load_req;
 
+            if s_force_empty_read_req = '1' then
+                s_empty_read_cnt <= s_empty_read_cnt + 1;
+                assert false
+                    report "TB chip model: forced EMPTY IFIFO read monitor violation"
+                    severity error;
+            end if;
+
             if s_oen = '0' and s_rdn = '0' then
                 s_chip_d_oe <= '1';
 
@@ -447,6 +470,26 @@ begin
                 end if;
             end if;
 
+            -- Empty IFIFO read is an access-attempt violation as soon as
+            -- RDN falls. Count it here while the read address is still valid;
+            -- the RDN rising-edge block below only updates successful reads.
+            if s_rdn = '0' and v_rdn_prev = '1' then
+                v_empty_read_active := false;
+                if s_adr = c_TDC_REG8_IFIFO1 and s_fifo1_fill = 0 then
+                    s_empty_read_cnt <= s_empty_read_cnt + 1;
+                    v_empty_read_active := true;
+                    assert false
+                        report "TB chip model: EMPTY IFIFO1 read attempted"
+                        severity error;
+                elsif s_adr = c_TDC_REG9_IFIFO2 and s_fifo2_fill = 0 then
+                    s_empty_read_cnt <= s_empty_read_cnt + 1;
+                    v_empty_read_active := true;
+                    assert false
+                        report "TB chip model: EMPTY IFIFO2 read attempted"
+                        severity error;
+                end if;
+            end if;
+
             -- On RDN rising edge (end of read strobe): update counters & fill
             -- Note: CSN may go high simultaneously with RDN at Phase H,
             -- so we only check RDN edge + address (address is stable).
@@ -455,7 +498,7 @@ begin
                     if s_fifo1_fill > 0 then
                         s_fifo1_fill   <= s_fifo1_fill - 1;
                         s_fifo1_rd_cnt <= s_fifo1_rd_cnt + 1;
-                    else
+                    elsif not v_empty_read_active then
                         s_empty_read_cnt <= s_empty_read_cnt + 1;
                         assert false
                             report "TB chip model: EMPTY IFIFO1 read attempted"
@@ -465,13 +508,14 @@ begin
                     if s_fifo2_fill > 0 then
                         s_fifo2_fill   <= s_fifo2_fill - 1;
                         s_fifo2_rd_cnt <= s_fifo2_rd_cnt + 1;
-                    else
+                    elsif not v_empty_read_active then
                         s_empty_read_cnt <= s_empty_read_cnt + 1;
                         assert false
                             report "TB chip model: EMPTY IFIFO2 read attempted"
                             severity error;
                     end if;
                 end if;
+                v_empty_read_active := false;
             end if;
 
             v_rdn_prev := s_rdn;
@@ -565,6 +609,13 @@ begin
                             & " raw_word=0x" & hex_img(s_raw_axis_tdata(c_DATA_W - 1 downto 0))
                             & " ififo=" & sl_chr(s_raw_axis_tuser(0)));
                 end if;
+            end if;
+
+            if s_force_tuser_err_req = '1' then
+                v_tuser_err_inc := v_tuser_err_inc + 1;
+                assert false
+                    report "TB raw monitor: forced raw tuser violation"
+                    severity error;
             end if;
 
             if v_tuser_err_inc /= 0 then
@@ -784,6 +835,48 @@ begin
         end if;
 
         wait_clk(5);
+
+        if g_NEGATIVE_MODE = 1 then
+            pr_info("[N1] NEGATIVE: forced empty IFIFO read monitor");
+            set_expected_unknown;
+            fill_fifos(0, 0);
+            wait_clk(5);
+
+            pulse(s_force_empty_read_req);
+            wait_clk(2);
+
+            if s_empty_read_cnt > 0 then
+                pr_pass("[N1] empty-read monitor detected forced violation");
+            else
+                pr_fail("[N1] empty-read monitor did not detect forced violation",
+                        v_fail);
+            end if;
+
+            pr_print("*** NEGATIVE TEST INTENTIONALLY FAILED: empty-read evidence ***");
+            assert false
+                report "C02 negative evidence: forced empty IFIFO read"
+                severity failure;
+            wait;
+        elsif g_NEGATIVE_MODE = 2 then
+            pr_info("[N2] NEGATIVE: forced raw tuser monitor violation");
+            s_force_tuser_err_req <= '1';
+            wait_clk(1);
+            s_force_tuser_err_req <= '0';
+            wait_clk(2);
+
+            if s_raw_tuser_err_cnt > 0 then
+                pr_pass("[N2] raw tuser monitor detected forced violation");
+            else
+                pr_fail("[N2] raw tuser monitor did not detect forced violation",
+                        v_fail);
+            end if;
+
+            pr_print("*** NEGATIVE TEST INTENTIONALLY FAILED: raw tuser evidence ***");
+            assert false
+                report "C02 negative evidence: forced raw tuser violation"
+                severity failure;
+            wait;
+        end if;
 
         -- =============================================================
         -- [2] Legacy drain (drain_mode='0')
@@ -2155,6 +2248,70 @@ begin
         end if;
 
         -- =============================================================
+        -- [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover
+        -- =============================================================
+        pr_info("[19] PH_RESP_DRAIN stuck/fatal quarantine + auto-recover");
+
+        if s_ctrl_busy = '0' then
+            pulse(s_cmd_start);
+            wait_clk(2);
+        else
+            pr_info("[19] chip_ctrl already armed/running before stuck-response test");
+        end if;
+
+        s_cfg.drain_mode <= '0';
+        s_raw_axis_tready <= '1';
+        fill_fifos_with_expected(0, 0, 0, 0);
+        wait_clk(5);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        s_force_resp_drain_stuck <= '1';
+        s_irflag_pin <= '1';
+        wait_drain_done(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[19] drain_done timeout before PH_RESP_DRAIN stuck phase",
+                    v_fail);
+        else
+            pr_pass("[19] drain_done observed before forced PH_RESP_DRAIN stuck");
+        end if;
+        s_irflag_pin <= '0';
+        pulse(s_cmd_stop);
+
+        tb_wait_sig_value(s_clk, s_err_drain_cap, '1', 200, v_found);
+        if v_found then
+            pr_pass("[19] PH_RESP_DRAIN hard cap sticky asserted");
+        else
+            pr_fail("[19] PH_RESP_DRAIN hard cap sticky did not assert",
+                    v_fail);
+        end if;
+
+        tb_wait_sig_value(s_clk, s_err_bus_fatal, '1', 70000, v_found);
+        if v_found then
+            pr_pass("[19] PH_RESP_DRAIN quarantine escalated to bus fatal");
+        else
+            pr_fail("[19] PH_RESP_DRAIN bus fatal did not assert", v_fail);
+        end if;
+
+        s_force_resp_drain_stuck <= '0';
+        tb_wait_sig_value(s_clk, s_err_force_reinit, '1', 200, v_found);
+        if v_found then
+            pr_pass("[19] bus idle stable window triggered force-reinit sticky");
+        else
+            pr_fail("[19] force-reinit sticky did not assert after bus release",
+                    v_fail);
+        end if;
+
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if v_found then
+            pr_pass("[19] chip_ctrl returned to idle after PH_RESP_DRAIN recovery");
+        else
+            pr_fail("[19] chip_ctrl did not return to idle after recovery",
+                    v_fail);
+        end if;
+
+        -- =============================================================
         -- Summary
         -- =============================================================
         pr_sep;
@@ -2165,6 +2322,10 @@ begin
             pr_print("*** " & nat_img(v_fail) & " TEST(S) FAILED ***");
         end if;
         pr_sep;
+
+        assert v_fail = 0
+            report "tb_tdc_gpx_chip_ctrl detected test failure(s)"
+            severity failure;
 
         s_sim_done <= '1';
         wait;
