@@ -25,7 +25,8 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tb_tdc_gpx_output_stage is
     generic (
-        G_OUTPUT_WIDTH : natural := 64
+        G_OUTPUT_WIDTH        : natural := 64;
+        G_RUN_MAX_HITS_SWEEP : boolean := false
     );
 end entity tb_tdc_gpx_output_stage;
 
@@ -89,6 +90,7 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal face_active_mask    : std_logic_vector(3 downto 0) := "0001";
     signal face_stops_per_chip : unsigned(3 downto 0)         := to_unsigned(2, 4);
     signal max_hits_cfg        : unsigned(2 downto 0)         := to_unsigned(7, 3);
+    signal cfg_max_hits_cfg    : unsigned(2 downto 0)         := to_unsigned(7, 3);
     signal max_scan_clks       : unsigned(15 downto 0)        := to_unsigned(1000, 16);
     signal rows_per_face       : unsigned(15 downto 0)        := to_unsigned(2, 16);
 
@@ -175,6 +177,18 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal s_fall_keep_ok       : boolean := true;
     signal s_metadata_sanitize_ok : boolean := true;
     signal s_metadata_seen_count  : natural := 0;
+    signal s_fall_metadata_sanitize_ok : boolean := true;
+    signal s_fall_metadata_seen_count  : natural := 0;
+
+    function fn_effective_max_hits_cfg(
+        cfg : unsigned(2 downto 0)
+    ) return natural is
+    begin
+        if cfg = "000" then
+            return 7;
+        end if;
+        return to_integer(cfg);
+    end function;
 
 begin
 
@@ -299,7 +313,7 @@ begin
     cfg_face.active_chip_mask <= "0001";
     cfg_face.stops_per_chip   <= to_unsigned(2, 4);
     cfg_face.max_scan_clks    <= to_unsigned(1000, 16);
-    cfg_face.max_hits_cfg     <= to_unsigned(7, 3);
+    cfg_face.max_hits_cfg     <= cfg_max_hits_cfg;
     cfg_face.cols_per_face    <= to_unsigned(1, 16);  -- 1 col = 1 shot per frame
 
     -- =========================================================================
@@ -309,9 +323,18 @@ begin
         variable v_out_idx  : natural;
         variable v_data_idx : natural;
         variable v_rise_line_beat_cnt : natural := 0;
+        variable v_mon_beats_per_cell : natural;
+        variable v_fall_out_idx  : natural;
+        variable v_fall_data_idx : natural;
+        variable v_fall_line_beat_cnt : natural := 0;
+        variable v_fall_beats_per_cell : natural;
     begin
         if rising_edge(clk) then
             if m_axis_tvalid = '1' and m_axis_tready = '1' then
+                v_mon_beats_per_cell := fn_beats_per_cell_rt(
+                    fn_effective_max_hits_cfg(max_hits_cfg),
+                    C_OUTPUT_WIDTH
+                );
                 if m_axis_tuser(0) = '1' then
                     v_rise_line_beat_cnt := 0;
                 end if;
@@ -323,7 +346,7 @@ begin
                 end if;
                 if v_out_idx >= C_HDR_PREFIX_BEATS then
                     v_data_idx := v_out_idx - C_HDR_PREFIX_BEATS;
-                    if (v_data_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
+                    if (v_data_idx mod v_mon_beats_per_cell) = (v_mon_beats_per_cell - 1) then
                         s_metadata_seen_count <= s_metadata_seen_count + 1;
                         if m_axis_tdata(6 downto 0) /= "0000000" then
                             s_metadata_sanitize_ok <= false;
@@ -343,13 +366,33 @@ begin
             end if;
             -- Fall-side monitor (#22)
             if m_axis_fall_tvalid = '1' and m_axis_fall_tready = '1' then
+                v_fall_beats_per_cell := fn_beats_per_cell_rt(
+                    fn_effective_max_hits_cfg(max_hits_cfg),
+                    C_OUTPUT_WIDTH
+                );
+                if m_axis_fall_tuser(0) = '1' then
+                    v_fall_line_beat_cnt := 0;
+                end if;
+                v_fall_out_idx := v_fall_line_beat_cnt;
                 v_out_fall_beat_cnt <= v_out_fall_beat_cnt + 1;
                 if m_axis_fall_tkeep /= (m_axis_fall_tkeep'range => '1')
                    or m_axis_fall_tstrb /= (m_axis_fall_tstrb'range => '1') then
                     s_fall_keep_ok <= false;
                 end if;
+                if v_fall_out_idx >= C_HDR_PREFIX_BEATS then
+                    v_fall_data_idx := v_fall_out_idx - C_HDR_PREFIX_BEATS;
+                    if (v_fall_data_idx mod v_fall_beats_per_cell) = (v_fall_beats_per_cell - 1) then
+                        s_fall_metadata_seen_count <= s_fall_metadata_seen_count + 1;
+                        if m_axis_fall_tdata(6 downto 0) /= "0000000" then
+                            s_fall_metadata_sanitize_ok <= false;
+                        end if;
+                    end if;
+                end if;
                 if m_axis_fall_tlast = '1' then
                     v_fall_eol_seen <= true;
+                    v_fall_line_beat_cnt := 0;
+                else
+                    v_fall_line_beat_cnt := v_fall_line_beat_cnt + 1;
                 end if;
             end if;
             -- frame_done pulse counters (1-cycle pulses, need to count)
@@ -379,6 +422,16 @@ begin
     -- =========================================================================
     p_stim : process
         variable v_beat_data : unsigned(C_OUTPUT_WIDTH - 1 downto 0);
+        variable v_sweep_base_out : natural;
+        variable v_sweep_base_meta : natural;
+        variable v_sweep_base_meta_fall : natural;
+        variable v_sweep_base_sof : natural;
+        variable v_sweep_base_frame : natural;
+        variable v_sweep_base_frame_fall : natural;
+        variable v_sweep_effective_max_hits : natural;
+        variable v_sweep_beats_per_cell : natural;
+        variable v_sweep_total_beats : natural;
+        variable v_sweep_expected_out : natural;
     begin
         -- =====================================================================
         -- 1. Reset
@@ -389,6 +442,144 @@ begin
         rst_n <= '1';
         wait until rising_edge(clk);
         wait until rising_edge(clk);
+
+        if G_RUN_MAX_HITS_SWEEP then
+            report "===== SCENARIO 3: max_hits_cfg sweep 0..7 =====" severity note;
+
+            for cfg_idx in 0 to 7 loop
+                v_sweep_effective_max_hits := cfg_idx;
+                if cfg_idx = 0 then
+                    v_sweep_effective_max_hits := 7;
+                end if;
+                v_sweep_beats_per_cell := fn_beats_per_cell_rt(
+                    v_sweep_effective_max_hits,
+                    C_OUTPUT_WIDTH
+                );
+                v_sweep_total_beats := C_STOPS * v_sweep_beats_per_cell;
+                v_sweep_expected_out := C_HDR_PREFIX_BEATS + v_sweep_total_beats;
+
+                v_sweep_base_out  := v_out_beat_cnt;
+                v_sweep_base_meta := s_metadata_seen_count;
+                v_sweep_base_meta_fall := s_fall_metadata_seen_count;
+                v_sweep_base_sof  := s_sof_count;
+                v_sweep_base_frame := v_frame_done_cnt;
+                v_sweep_base_frame_fall := v_frame_fall_done_cnt;
+
+                max_hits_cfg     <= to_unsigned(cfg_idx, 3);
+                cfg_max_hits_cfg <= to_unsigned(cfg_idx, 3);
+                wait for 4 * C_CLK_PERIOD;
+                wait until rising_edge(clk);
+
+                face_start_gated <= '1';
+                wait until rising_edge(clk);
+                face_start_gated <= '0';
+                wait for 3 * C_CLK_PERIOD;
+                wait until rising_edge(clk);
+
+                shot_start_gated <= '1';
+                wait until rising_edge(clk);
+                shot_start_gated <= '0';
+                wait for 5 * C_CLK_PERIOD;
+                wait until rising_edge(clk);
+
+                for beat_idx in 0 to v_sweep_total_beats - 1 loop
+                    while cell_rise_tready(0) = '0' or cell_fall_tready(0) = '0' loop
+                        wait until rising_edge(clk);
+                    end loop;
+
+                    v_beat_data := to_unsigned((cfg_idx + 1) * 16 + beat_idx + 1, C_OUTPUT_WIDTH);
+                    if (beat_idx mod v_sweep_beats_per_cell) = (v_sweep_beats_per_cell - 1) then
+                        v_beat_data(6 downto 0) := to_unsigned(85, 7);
+                    end if;
+                    cell_rise_tdata_0 <= std_logic_vector(v_beat_data);
+                    cell_fall_tdata_0 <= std_logic_vector(v_beat_data);
+                    cell_rise_tvalid  <= "0001";
+                    cell_fall_tvalid  <= "0001";
+
+                    if beat_idx = v_sweep_total_beats - 1 then
+                        cell_rise_tlast <= "0001";
+                        cell_fall_tlast <= "0001";
+                    else
+                        cell_rise_tlast <= "0000";
+                        cell_fall_tlast <= "0000";
+                    end if;
+                    cell_rise_tuser <= "0000";
+                    cell_fall_tuser <= "0000";
+
+                    wait until rising_edge(clk);
+                end loop;
+
+                cell_rise_tvalid <= "0000";
+                cell_fall_tvalid <= "0000";
+                cell_rise_tlast  <= "0000";
+                cell_fall_tlast  <= "0000";
+                cell_rise_tuser  <= "0000";
+                cell_fall_tuser  <= "0000";
+
+                wait until (v_frame_done_cnt > v_sweep_base_frame)
+                           and (v_frame_fall_done_cnt > v_sweep_base_frame_fall)
+                           for C_WATCHDOG;
+                wait for 4 * C_CLK_PERIOD;
+
+                assert (v_frame_done_cnt - v_sweep_base_frame) = 1
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": frame_done delta="
+                           & integer'image(v_frame_done_cnt - v_sweep_base_frame)
+                           & " expected=1"
+                    severity failure;
+                assert (v_frame_fall_done_cnt - v_sweep_base_frame_fall) = 1
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": fall frame_done delta="
+                           & integer'image(v_frame_fall_done_cnt - v_sweep_base_frame_fall)
+                           & " expected=1"
+                    severity failure;
+                assert (v_out_beat_cnt - v_sweep_base_out) = v_sweep_expected_out
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": output beats delta="
+                           & integer'image(v_out_beat_cnt - v_sweep_base_out)
+                           & " expected=" & integer'image(v_sweep_expected_out)
+                    severity failure;
+                assert (s_metadata_seen_count - v_sweep_base_meta) = C_STOPS
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": metadata seen delta="
+                           & integer'image(s_metadata_seen_count - v_sweep_base_meta)
+                           & " expected=" & integer'image(C_STOPS)
+                    severity failure;
+                assert (s_fall_metadata_seen_count - v_sweep_base_meta_fall) = C_STOPS
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": fall metadata seen delta="
+                           & integer'image(s_fall_metadata_seen_count - v_sweep_base_meta_fall)
+                           & " expected=" & integer'image(C_STOPS)
+                    severity failure;
+                assert (s_sof_count - v_sweep_base_sof) = 1
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": SOF delta="
+                           & integer'image(s_sof_count - v_sweep_base_sof)
+                           & " expected=1"
+                    severity failure;
+                assert s_metadata_sanitize_ok
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": metadata[6:0] sanitize failed"
+                    severity failure;
+                assert s_fall_metadata_sanitize_ok
+                    report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                           & ": fall metadata[6:0] sanitize failed"
+                    severity failure;
+
+                report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
+                       & " effective_hits=" & integer'image(v_sweep_effective_max_hits)
+                       & " beats_per_cell=" & integer'image(v_sweep_beats_per_cell)
+                       & " output_delta=" & integer'image(v_out_beat_cnt - v_sweep_base_out)
+                       & " PASS" severity note;
+
+                wait for 8 * C_CLK_PERIOD;
+            end loop;
+
+            report "*** SCENARIO 3 (max_hits_cfg sweep 0..7) PASS ***" severity note;
+
+            wait for 10 * C_CLK_PERIOD;
+            std.env.finish;
+        end if;
 
         -- =====================================================================
         -- 2. Assert face_start_gated for 1 clock
@@ -414,7 +605,7 @@ begin
 
         -- =====================================================================
         -- 4. Feed cell data on chip 0 rising input
-        --    2 stops x 4 beats = 8 beats total (incrementing pattern)
+        --    2 stops x runtime beats_per_cell (incrementing pattern)
         -- =====================================================================
         for beat_idx in 0 to C_TOTAL_BEATS - 1 loop
             -- Wait for tready before driving
