@@ -45,8 +45,10 @@ package tdc_gpx_pkg is
     constant c_N_CHIPS              : natural := 4;
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
     constant c_MAX_HITS_PER_STOP    : natural := 7;
-    -- Current C02 cell format stores the lower 16 bits of each GPX raw hit.
-    -- Full 17-bit preservation requires a future cell format update.
+    -- Cell hit slots carry the lower 16 bits of each GPX raw hit. The 17th
+    -- raw hit bit is preserved separately in the cell metadata beat as
+    -- hit_msb_vec[6:0], so output beat count still scales only by
+    -- g_TDATA_WIDTH and max_hits_cfg.
     constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;
     constant c_TDATA_WIDTH          : natural := 32;    -- default, overridden by g_TDATA_WIDTH
     constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;
@@ -604,13 +606,17 @@ package tdc_gpx_pkg is
 
     -- =========================================================================
     -- t_cell : Dense hit storage for one stop channel, one shot
-    -- Cell byte layout: hit_slot[0..MAX-1] + hit_valid + slope_vec + meta
+    -- Cell byte layout: hit_slot[0..MAX-1] + metadata vectors.
+    -- Datasheet I-Mode raw Hit[16:0] is serialized as:
+    --   hit_slot[n]   = Hit[15:0]
+    --   hit_msb_vec[n]= Hit[16] in the metadata beat
     -- =========================================================================
     type t_hit_slot_array is array (0 to c_MAX_HITS_PER_STOP - 1)
         of unsigned(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
 
     type t_cell is record
         hit_slot            : t_hit_slot_array;
+        hit_msb_vec         : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
         hit_valid           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
         slope_vec           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
         hit_count_actual    : unsigned(3 downto 0);         -- 0..c_MAX_HITS_PER_STOP
@@ -620,6 +626,7 @@ package tdc_gpx_pkg is
 
     constant c_CELL_INIT : t_cell := (
         hit_slot            => (others => (others => '0')),
+        hit_msb_vec         => (others => '0'),
         hit_valid           => (others => '0'),
         slope_vec           => (others => '0'),
         hit_count_actual    => (others => '0'),
@@ -659,7 +666,9 @@ package body tdc_gpx_pkg is
     constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);
 
     -- Cell payload bits (Format 0, Zynq-7000)
-    -- hit_slot[MAX] + hit_valid + slope_vec + hit_count(4) + dropped(1) + error_fill(1)
+    -- hit_slot[MAX] + metadata beat fields.
+    -- hit_msb_vec is packed into reserved metadata bits and therefore does
+    -- not add a serialized beat.
     function fn_cell_payload_bits(
         hit_slot_width : natural;
         max_hits       : natural

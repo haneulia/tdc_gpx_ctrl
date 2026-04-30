@@ -75,7 +75,8 @@
 --   If no BUF_FREE buffer is available on shot_start, the shot is dropped.
 --
 -- AXI-Stream slave input (from raw_event_builder / slope demux):
---   tdata[16:0]  = raw_hit (17-bit, lower 16 stored as HIT_SLOT_DATA_WIDTH)
+--   tdata[16:0]  = raw_hit (17-bit)
+--                  Hit[15:0] -> hit_slot, Hit[16] -> metadata hit_msb_vec
 --   tuser[0]     = slope
 --   tuser[2:1]   = chip_id
 --   tuser[5:3]   = stop_id_local (0..7)
@@ -90,7 +91,8 @@
 --
 -- Beat layout (compile-time MAX=7, runtime truncated by max_hits_cfg):
 --   Beats 0..HIT_DATA_BEATS-1: hit_slot pairs (SLOTS_PER_BEAT per beat)
---   Beat META_BEAT_IDX:        metadata (hit_valid, slope_vec, hit_count, flags)
+--   Beat META_BEAT_IDX:        metadata (hit_valid, slope_vec, hit_count,
+--                               flags, hit_msb_vec)
 --   Remaining beats:           padding (zeros)
 --   Runtime beats/cell: fn_beats_per_cell_rt(max_hits_cfg, g_TDATA_WIDTH)
 --   Examples @64b: max_hits=7->3, max_hits=3->2, max_hits=1->2
@@ -394,6 +396,11 @@ architecture rtl of tdc_gpx_cell_builder is
     -- last_beat_idx: runtime last beat index (from max_hits_cfg).
     -- Metadata is placed at last_beat_idx (not fixed compile-time position).
     -- Hit-data beats fill indices 0..last_beat_idx-1.
+    -- Metadata bits:
+    --   [31:25] hit_valid[6:0], [24:18] slope_vec[6:0],
+    --   [17:16] reserved, [15:12] hit_count_actual, [11] hit_dropped,
+    --   [10] error_fill, [9:8] chip_id, [7] reserved,
+    --   [6:0] hit_msb_vec[6:0] = Datasheet Hit[16] per slot.
     function fn_cell_beat(
         cell          : t_cell;
         beat_idx      : unsigned(2 downto 0);
@@ -417,7 +424,8 @@ architecture rtl of tdc_gpx_cell_builder is
             v_result(11)           := cell.hit_dropped;
             v_result(10)           := cell.error_fill;
             v_result(9 downto 8)   := std_logic_vector(to_unsigned(g_CHIP_ID, 2));
-            v_result(7 downto 0)   := (others => '0');
+            v_result(7)            := '0';
+            v_result(6 downto 0)   := cell.hit_msb_vec;
         else
             -- Hit-data beat: pack SLOTS_PER_BEAT slots
             for sl in 0 to c_G_SLOTS_PER_BEAT - 1 loop
@@ -641,9 +649,10 @@ begin
                                 elsif s_cell_buf_r(v_wr)(v_stop).hit_count_actual <
                                       s_max_hits_eff_u then
                                     v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
-                                    s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)  <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
-                                    s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq) <= '1';
-                                    s_cell_buf_r(v_wr)(v_stop).slope_vec(v_seq) <= i_s_axis_tuser(0);
+                                    s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)    <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+                                    s_cell_buf_r(v_wr)(v_stop).hit_msb_vec(v_seq) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH);
+                                    s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq)   <= '1';
+                                    s_cell_buf_r(v_wr)(v_stop).slope_vec(v_seq)   <= i_s_axis_tuser(0);
                                     s_cell_buf_r(v_wr)(v_stop).hit_count_actual <= s_cell_buf_r(v_wr)(v_stop).hit_count_actual + 1;
                                 else
                                     s_cell_buf_r(v_wr)(v_stop).hit_dropped <= '1';

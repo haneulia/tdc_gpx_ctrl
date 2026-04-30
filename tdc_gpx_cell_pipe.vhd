@@ -102,6 +102,14 @@ architecture rtl of tdc_gpx_cell_pipe is
         of std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
 
     ---------------------------------------------------------------------------
+    -- Input skid output (Cluster 2 -> Cluster 3 boundary)
+    ---------------------------------------------------------------------------
+    signal s_evt_skid_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_evt_skid_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_evt_skid_tdata  : t_evt_axis_tdata_array;
+    signal s_evt_skid_tuser  : t_evt_axis_tuser_array;
+
+    ---------------------------------------------------------------------------
     -- Slope-demux registered outputs
     ---------------------------------------------------------------------------
     signal s_rise_valid_r : std_logic_vector(c_N_CHIPS-1 downto 0);
@@ -135,10 +143,6 @@ architecture rtl of tdc_gpx_cell_pipe is
     signal s_abort_rise  : std_logic;
     signal s_abort_fall  : std_logic;
 
-    -- Registered tready for 200MHz timing closure.
-    -- Upstream skid buffer (u_sk_evt in decode_pipe) absorbs 1-cycle latency.
-    signal s_can_accept_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-
 begin
 
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
@@ -162,39 +166,44 @@ begin
     -- Per-chip: can this chip's demux accept new input?
     -- drain_done goes to both → need both ready
     -- hit goes to one → need that one ready
-    gen_tready : for i in 0 to c_N_CHIPS - 1 generate
-        signal s_rise_free      : std_logic;
-        signal s_fall_free      : std_logic;
-        signal s_can_accept_comb : std_logic;
+    gen_input_skid : for i in 0 to c_N_CHIPS - 1 generate
     begin
-        s_rise_free <= '1' when s_rise_valid_r(i) = '0' or s_rise_tready(i) = '1' else '0';
-        s_fall_free <= '1' when s_fall_valid_r(i) = '0' or s_fall_tready(i) = '1' else '0';
+        u_evt_in_skid : entity work.tdc_gpx_skid_buffer
+            generic map (
+                g_DATA_WIDTH => c_EVT_AXIS_PACK_WIDTH
+            )
+            port map (
+                i_clk                   => i_clk,
+                i_rst_n                 => i_rst_n,
+                i_flush                 => i_abort,
+                i_s_valid               => i_evt_sk_tvalid(i),
+                o_s_ready               => o_evt_sk_tready(i),
+                i_s_data                => i_evt_sk_tdata(i) & i_evt_sk_tuser(i),
+                o_m_valid               => s_evt_skid_tvalid(i),
+                i_m_ready               => s_evt_skid_tready(i),
+                o_m_data(c_EVT_AXIS_PACK_WIDTH - 1 downto c_EVT_AXIS_TUSER_WIDTH) => s_evt_skid_tdata(i),
+                o_m_data(c_EVT_AXIS_TUSER_WIDTH - 1 downto 0) => s_evt_skid_tuser(i)
+            );
+    end generate gen_input_skid;
 
-        s_can_accept_comb <= '1' when s_rise_free = '1' and s_fall_free = '1'
-                              and (i_evt_sk_tvalid(i) = '0' or i_evt_sk_tuser(i)(7) = '1')
-                   else s_rise_free when i_evt_sk_tvalid(i) = '1' and i_evt_sk_tuser(i)(7) = '0'
-                                         and i_evt_sk_tuser(i)(0) = '1'
-                   else s_fall_free when i_evt_sk_tvalid(i) = '1' and i_evt_sk_tuser(i)(7) = '0'
-                                         and i_evt_sk_tuser(i)(0) = '0'
-                   else s_rise_free and s_fall_free;
+    gen_demux_ready : for i in 0 to c_N_CHIPS - 1 generate
+        signal s_rise_free : std_logic;
+        signal s_fall_free : std_logic;
+    begin
+        s_rise_free <= '1' when s_abort_rise = '1'
+                              or s_rise_valid_r(i) = '0'
+                              or s_rise_tready(i) = '1' else '0';
+        s_fall_free <= '1' when s_abort_fall = '1'
+                              or s_fall_valid_r(i) = '0'
+                              or s_fall_tready(i) = '1' else '0';
 
-        -- Register tready for timing (breaks combinational chain to upstream)
-        p_tready_reg : process(i_clk)
-        begin
-            if rising_edge(i_clk) then
-                if i_rst_n = '0' or i_abort = '1' then
-                    s_can_accept_r(i) <= '0';
-                else
-                    s_can_accept_r(i) <= s_can_accept_comb;
-                end if;
-            end if;
-        end process;
-
-        o_evt_sk_tready(i) <= s_can_accept_r(i);
-    end generate gen_tready;
+        s_evt_skid_tready(i) <= '1' when s_evt_skid_tvalid(i) = '0'
+                       else s_rise_free and s_fall_free when s_evt_skid_tuser(i)(7) = '1'
+                       else s_rise_free when s_evt_skid_tuser(i)(0) = '1'
+                       else s_fall_free;
+    end generate gen_demux_ready;
 
     p_slope_demux : process(i_clk)
-        variable v_can_load : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or i_abort = '1' then
@@ -202,34 +211,45 @@ begin
                 s_fall_valid_r <= (others => '0');
             else
                 for i in 0 to c_N_CHIPS - 1 loop
-                    -- Clear valid on downstream handshake
-                    if s_rise_valid_r(i) = '1' and s_rise_tready(i) = '1' then
+                    -- Clear valid on downstream handshake or matching slope abort.
+                    if s_abort_rise = '1' then
+                        s_rise_valid_r(i) <= '0';
+                    elsif s_rise_valid_r(i) = '1' and s_rise_tready(i) = '1' then
                         s_rise_valid_r(i) <= '0';
                     end if;
-                    if s_fall_valid_r(i) = '1' and s_fall_tready(i) = '1' then
+                    if s_abort_fall = '1' then
+                        s_fall_valid_r(i) <= '0';
+                    elsif s_fall_valid_r(i) = '1' and s_fall_tready(i) = '1' then
                         s_fall_valid_r(i) <= '0';
                     end if;
 
-                    -- Load new data: beat-type-aware backpressure
-                    if i_evt_sk_tuser(i)(7) = '1' then
-                        -- drain_done: goes to both slopes, need both free
-                        v_can_load := (s_rise_valid_r(i) = '0' or s_rise_tready(i) = '1')
-                                  and (s_fall_valid_r(i) = '0' or s_fall_tready(i) = '1');
-                    elsif i_evt_sk_tuser(i)(0) = '1' then
-                        -- rising hit: only need rise slot free
-                        v_can_load := (s_rise_valid_r(i) = '0' or s_rise_tready(i) = '1');
-                    else
-                        -- falling hit: only need fall slot free
-                        v_can_load := (s_fall_valid_r(i) = '0' or s_fall_tready(i) = '1');
-                    end if;
-
-                    if v_can_load and i_evt_sk_tvalid(i) = '1' then
-                        s_rise_valid_r(i) <= i_evt_sk_tuser(i)(0) or i_evt_sk_tuser(i)(7);
-                        s_fall_valid_r(i) <= (not i_evt_sk_tuser(i)(0)) or i_evt_sk_tuser(i)(7);
-                        s_rise_tdata_r(i) <= i_evt_sk_tdata(i);
-                        s_fall_tdata_r(i) <= i_evt_sk_tdata(i);
-                        s_rise_tuser_r(i) <= i_evt_sk_tuser(i);
-                        s_fall_tuser_r(i) <= i_evt_sk_tuser(i);
+                    -- Load only beats popped from the input skid. Aborted-slope
+                    -- beats are consumed but intentionally not re-issued.
+                    if s_evt_skid_tvalid(i) = '1' and s_evt_skid_tready(i) = '1' then
+                        if s_evt_skid_tuser(i)(7) = '1' then
+                            if s_abort_rise = '0' then
+                                s_rise_valid_r(i) <= '1';
+                                s_rise_tdata_r(i) <= s_evt_skid_tdata(i);
+                                s_rise_tuser_r(i) <= s_evt_skid_tuser(i);
+                            end if;
+                            if s_abort_fall = '0' then
+                                s_fall_valid_r(i) <= '1';
+                                s_fall_tdata_r(i) <= s_evt_skid_tdata(i);
+                                s_fall_tuser_r(i) <= s_evt_skid_tuser(i);
+                            end if;
+                        elsif s_evt_skid_tuser(i)(0) = '1' then
+                            if s_abort_rise = '0' then
+                                s_rise_valid_r(i) <= '1';
+                                s_rise_tdata_r(i) <= s_evt_skid_tdata(i);
+                                s_rise_tuser_r(i) <= s_evt_skid_tuser(i);
+                            end if;
+                        else
+                            if s_abort_fall = '0' then
+                                s_fall_valid_r(i) <= '1';
+                                s_fall_tdata_r(i) <= s_evt_skid_tdata(i);
+                                s_fall_tuser_r(i) <= s_evt_skid_tuser(i);
+                            end if;
+                        end if;
                     end if;
                 end loop;
             end if;
@@ -245,18 +265,13 @@ begin
     --
     --   cell_builder.o_s_axis_tready → s_rise_tready / s_fall_tready
     --     → s_rise_free / s_fall_free (= slot-empty OR downstream-ready)
-    --     → s_can_accept_comb (gated by incoming-valid + beat-type)
-    --     → s_can_accept_r  (1-cycle registered for timing closure)
+    --     → s_evt_skid_tready (gated by skid-valid + beat-type)
+    --     → gen_input_skid registered o_evt_sk_tready boundary
     --     → o_evt_sk_tready (actual upstream backpressure)
     --
-    -- The 1-cycle register is tolerated by the 1-slot holding register
-    -- (s_rise_valid_r / s_fall_valid_r) inside p_slope_demux, which acts
-    -- as the first-beat absorb skid recommended by the review:
-    --   - If cell_builder is in ST_C_IDLE and a beat arrives before
-    --     shot_start, it is latched here and held until cell_builder
-    --     enters ST_C_ACTIVE. No data loss.
-    --   - Upstream is throttled via o_evt_sk_tready while the slot is
-    --     full, so subsequent beats cannot overwrite the held one.
+    -- gen_input_skid absorbs the registered-ready latency at the module
+    -- boundary. The slope holding registers then provide the final
+    -- registered handoff to each cell_builder.
     --
     -- The warning assert below is retained as a DIAGNOSTIC: it fires
     -- whenever a beat waits for cell_builder (e.g. arrived before
@@ -269,7 +284,7 @@ begin
         -- in the cell_pipe skid waiting for cell_builder readiness. This
         -- is the intended behavior of the first-beat absorb register and
         -- not a data-loss condition (upstream backpressure kicks in via
-        -- s_can_accept_r, so the slot cannot be overrun).
+        -- the input skid, so the slot cannot be overrun).
         -- synthesis translate_off
         p_drop_assert : process(i_clk)
         begin
