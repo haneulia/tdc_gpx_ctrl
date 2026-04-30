@@ -174,6 +174,12 @@ T6/T7 final control + o_drain_done at 428clk
 | `xsim_chip_ctrl.log:926` | control/gap segmented result |
 | `xsim_chip_ctrl.log:940` | `ALL TESTS PASSED`, `total_raw_words=737` |
 
+## 8-1. 후속 반영 추적
+
+- 수정/반영 시간: 2026-04-30 21:23:06 +09:00
+- 후속 문서: `C02_Chip_Acquisition_260430212306_T0_T1_Split_Timing_v001.md`
+- 반영 내용: 본 문서의 `T1 = 첫 raw data handshake` 정의는 downstream accepted 시점만 표현해서 내부 첫 데이터 준비 시점과 구분이 부족했다. 후속 문서에서 `T1a = first raw valid`, `T1b = first raw accepted`로 분리했고, 기존 `T0 -> T1 = 40clk`는 T1b 기준 값으로 재해석했다.
+
 ## 9. 결론
 
 단일 `latency/II measured` 값만으로는 운용 판단이 부족하다. 앞으로 C02 timing 결과는 최소한 다음 5개 그룹으로 보고한다.

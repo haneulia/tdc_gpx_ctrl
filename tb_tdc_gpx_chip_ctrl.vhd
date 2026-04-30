@@ -26,7 +26,8 @@
 --   [8] AluTrigger pulse width >= 10ns
 --   [9] IFIFO edge cases (1 entry, 32 entries)
 --   [10] Consecutive 2+ shots
---   [16] Bounded raw AXI backpressure with latency/II measurement
+--   [16a] No-backpressure first-data latency measurement
+--   [16b] Bounded raw AXI backpressure with T1a/T1b split timing
 --   [17] Stale expected-count mismatch -> faulted drain_done, no empty read
 --   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --
@@ -617,6 +618,9 @@ begin
         variable v_last_data_cycle : natural;
         variable v_run_complete_cycle : natural;
         variable v_drain_done_cycle : natural;
+        variable v_first_valid_cycle : natural;
+        variable v_ready_low_start_cycle : natural;
+        variable v_ready_release_cycle : natural;
         variable v_prev_data_total : natural;
         variable v_prev_ififo1_data_total : natural;
         variable v_prev_ififo2_data_total : natural;
@@ -1713,9 +1717,9 @@ begin
         wait_clk(10);
 
         -- =============================================================
-        -- [16] Bounded raw AXI backpressure + latency/II measurement
+        -- [16a] No-backpressure first-data latency measurement
         -- =============================================================
-        pr_info("[16] Bounded raw AXI backpressure + latency/II measurement");
+        pr_info("[16a] No raw backpressure first-data latency measurement");
 
         s_cfg.drain_mode  <= '1';
         s_cfg.n_drain_cap <= (others => '0');
@@ -1731,10 +1735,116 @@ begin
         v_raw_data_snap      := s_raw_data_cnt;
         v_empty_read_snap    := s_empty_read_cnt;
         v_t0_cycle           := s_clk_cnt;
+        v_first_valid_cycle  := 0;
+        v_first_data_cycle   := 0;
+        v_run_complete_cycle := 0;
+        v_drain_done_cycle   := 0;
+        v_prev_data_total    := s_raw_data_cnt;
+        v_found              := false;
+
+        s_irflag_pin <= '1';
+
+        for i in 0 to c_TIMEOUT loop
+            wait_clk(1);
+            wait for 0 ns;
+
+            if v_first_valid_cycle = 0
+               and s_raw_axis_tvalid = '1'
+               and s_raw_axis_tuser(7) = '0' then
+                v_first_valid_cycle := s_clk_cnt;
+            end if;
+
+            if s_raw_data_cnt > v_prev_data_total then
+                if v_first_valid_cycle = 0 then
+                    v_first_valid_cycle := s_clk_cnt;
+                end if;
+                if v_first_data_cycle = 0 then
+                    v_first_data_cycle := s_clk_cnt;
+                end if;
+                v_prev_data_total := s_raw_data_cnt;
+            end if;
+
+            if v_run_complete_cycle = 0 and s_run_drain_complete = '1' then
+                v_run_complete_cycle := s_clk_cnt;
+            end if;
+
+            if s_drain_done = '1' then
+                v_found := true;
+                v_drain_done_cycle := s_clk_cnt;
+                exit;
+            end if;
+        end loop;
+
+        if not v_found then
+            pr_fail("[16a] drain_done timeout without raw backpressure", v_fail);
+        else
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
+            if v_drain_words = c_IFIFO_NOMINAL_TOTAL
+               and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[16a] data count exact "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " and no empty IFIFO reads");
+            else
+                pr_fail("[16a] expected "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " data words/no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
+            end if;
+
+            if v_first_valid_cycle /= 0 and v_first_data_cycle /= 0
+               and v_run_complete_cycle /= 0 and v_drain_done_cycle /= 0 then
+                pr_pass("[16a] no-backpressure timing: first_valid="
+                        & nat_img(v_first_valid_cycle - v_t0_cycle)
+                        & "clk, first_accept="
+                        & nat_img(v_first_data_cycle - v_t0_cycle)
+                        & "clk, valid_to_accept="
+                        & nat_img(v_first_data_cycle - v_first_valid_cycle)
+                        & "clk, run_complete="
+                        & nat_img(v_run_complete_cycle - v_t0_cycle)
+                        & "clk, output_done="
+                        & nat_img(v_drain_done_cycle - v_t0_cycle)
+                        & "clk");
+            else
+                pr_fail("[16a] first-data timing measurement incomplete", v_fail);
+            end if;
+        end if;
+
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        pulse(s_cmd_stop);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[16a] stop-to-idle timeout before bounded test", v_fail);
+        end if;
+        wait_clk(10);
+
+        -- =============================================================
+        -- [16b] Bounded raw AXI backpressure + latency/II measurement
+        -- =============================================================
+        pr_info("[16b] Bounded raw AXI backpressure + latency/II measurement");
+
+        s_cfg.drain_mode  <= '1';
+        s_cfg.n_drain_cap <= (others => '0');
+        s_raw_axis_tready <= '1';
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
+        wait_clk(5);
+
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        v_raw_data_snap      := s_raw_data_cnt;
+        v_empty_read_snap    := s_empty_read_cnt;
+        v_t0_cycle           := s_clk_cnt;
+        v_first_valid_cycle  := 0;
         v_first_data_cycle   := 0;
         v_last_data_cycle    := 0;
         v_run_complete_cycle := 0;
         v_drain_done_cycle   := 0;
+        v_ready_low_start_cycle := 0;
+        v_ready_release_cycle := 0;
         v_prev_data_total    := s_raw_data_cnt;
         v_prev_ififo1_data_total := s_raw_ififo1_data_cnt;
         v_prev_ififo2_data_total := s_raw_ififo2_data_cnt;
@@ -1771,6 +1881,18 @@ begin
 
             wait_clk(1);
             wait for 0 ns;
+
+            if i = 8 and v_ready_low_start_cycle = 0 then
+                v_ready_low_start_cycle := s_clk_cnt;
+            elsif i = 38 and v_ready_release_cycle = 0 then
+                v_ready_release_cycle := s_clk_cnt;
+            end if;
+
+            if v_first_valid_cycle = 0
+               and s_raw_axis_tvalid = '1'
+               and s_raw_axis_tuser(7) = '0' then
+                v_first_valid_cycle := s_clk_cnt;
+            end if;
 
             if s_raw_data_cnt > v_prev_data_total then
                 v_meas_data_cnt := v_meas_data_cnt + 1;
@@ -1856,20 +1978,20 @@ begin
         s_raw_axis_tready <= '1';
 
         if not v_found then
-            pr_fail("[16] drain_done timeout under bounded raw backpressure", v_fail);
+            pr_fail("[16b] drain_done timeout under bounded raw backpressure", v_fail);
         else
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
-            pr_pass("[16] drain_done received under bounded raw backpressure, words="
+            pr_pass("[16b] drain_done received under bounded raw backpressure, words="
                     & nat_img(v_drain_words));
 
             if v_drain_words = c_IFIFO_NOMINAL_TOTAL
                and v_meas_data_cnt = c_IFIFO_NOMINAL_TOTAL
                and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[16] data count exact "
+                pr_pass("[16b] data count exact "
                         & nat_img(c_IFIFO_NOMINAL_TOTAL)
                         & " and no empty IFIFO reads");
             else
-                pr_fail("[16] expected "
+                pr_fail("[16b] expected "
                         & nat_img(c_IFIFO_NOMINAL_TOTAL)
                         & " data words/no empty reads, got "
                         & nat_img(v_drain_words)
@@ -1878,14 +2000,14 @@ begin
 
             if s_err_raw_drop = '0' and s_err_raw_ctrl_drop = '0'
                and s_err_raw_overflow = '0' then
-                pr_pass("[16] raw FIFO absorbed bounded backpressure without drop");
+                pr_pass("[16b] raw FIFO absorbed bounded backpressure without drop");
             else
-                pr_fail("[16] raw drop/overflow set during bounded backpressure", v_fail);
+                pr_fail("[16b] raw drop/overflow set during bounded backpressure", v_fail);
             end if;
 
             if v_first_data_cycle /= 0 and v_run_complete_cycle /= 0
                and v_drain_done_cycle /= 0 and v_meas_data_cnt > 1 then
-                pr_pass("[16] latency/II measured: first_data="
+                pr_pass("[16b] latency/II measured: first_accept="
                         & nat_img(v_first_data_cycle - v_t0_cycle)
                         & "clk, run_complete="
                         & nat_img(v_run_complete_cycle - v_t0_cycle)
@@ -1895,21 +2017,41 @@ begin
                         & nat_img(v_drain_done_cycle - v_run_complete_cycle)
                         & "clk, II_min=" & nat_img(v_min_ii)
                         & "clk, II_max=" & nat_img(v_max_ii) & "clk");
-                pr_pass("[16] segmented IFIFO1: words="
+                if v_first_valid_cycle /= 0 and v_ready_low_start_cycle /= 0
+                   and v_ready_release_cycle /= 0 then
+                    pr_pass("[16b] first-data split: first_valid="
+                            & nat_img(v_first_valid_cycle - v_t0_cycle)
+                            & "clk, first_accept="
+                            & nat_img(v_first_data_cycle - v_t0_cycle)
+                            & "clk, valid_to_accept="
+                            & nat_img(v_first_data_cycle - v_first_valid_cycle)
+                            & "clk, ready_low_start="
+                            & nat_img(v_ready_low_start_cycle - v_t0_cycle)
+                            & "clk, ready_release="
+                            & nat_img(v_ready_release_cycle - v_t0_cycle)
+                            & "clk, release_to_accept="
+                            & nat_img(v_first_data_cycle - v_ready_release_cycle)
+                            & "clk");
+                else
+                    pr_fail("[16b] first-valid/backpressure timing incomplete",
+                            v_fail);
+                end if;
+
+                pr_pass("[16b] segmented IFIFO1: words="
                         & nat_img(v_meas_ififo1_data_cnt)
                         & ", first=" & nat_img(v_ififo1_first_cycle - v_t0_cycle)
                         & "clk, last=" & nat_img(v_ififo1_last_cycle - v_t0_cycle)
                         & "clk, done_ctrl=" & nat_img(v_ififo1_done_cycle - v_t0_cycle)
                         & "clk, II_min=" & nat_img(v_ififo1_min_ii)
                         & "clk, II_max=" & nat_img(v_ififo1_max_ii) & "clk");
-                pr_pass("[16] segmented IFIFO2: words="
+                pr_pass("[16b] segmented IFIFO2: words="
                         & nat_img(v_meas_ififo2_data_cnt)
                         & ", first=" & nat_img(v_ififo2_first_cycle - v_t0_cycle)
                         & "clk, last=" & nat_img(v_ififo2_last_cycle - v_t0_cycle)
                         & "clk, final_ctrl=" & nat_img(v_final_ctrl_cycle - v_t0_cycle)
                         & "clk, II_min=" & nat_img(v_ififo2_min_ii)
                         & "clk, II_max=" & nat_img(v_ififo2_max_ii) & "clk");
-                pr_pass("[16] segmented gaps: ififo1_last_to_done="
+                pr_pass("[16b] segmented gaps: ififo1_last_to_done="
                         & nat_img(v_ififo1_done_cycle - v_ififo1_last_cycle)
                         & "clk, ififo1_done_to_ififo2_first="
                         & nat_img(v_ififo2_first_cycle - v_ififo1_done_cycle)
@@ -1919,7 +2061,7 @@ begin
                         & nat_img(v_drain_done_cycle - v_final_ctrl_cycle)
                         & "clk");
             else
-                pr_fail("[16] latency/II measurement incomplete", v_fail);
+                pr_fail("[16b] latency/II measurement incomplete", v_fail);
             end if;
         end if;
 
