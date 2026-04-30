@@ -339,3 +339,16 @@ C01 v009의 32개 계약은 모두 C02 입력 계약으로 수락한다. 다만 
 | 본 계획 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md` |
 | 다음 산출물 | 사용자 승인 후 RTL/TB 보완, `C02_Chip_Acquisition_Code_Verify_20260430_v001.md`, `C02_Chip_Acquisition_20260430_v002.md`, PPT v002 |
 | 판단 변화 | C01 계약 32건 전체 수락을 C02 수정 우선순위와 검증 항목으로 확장 |
+
+---
+
+## Plan v001 -> Plan v002 반영 위치 기록
+
+| 항목 | 기록 내용 |
+|---|---|
+| 변경 원인 | 사용자가 Plan v001을 위에서부터 검토하며 R-C02-P001-01~08 수정 방향을 공유했고, "다 끝났어"로 Plan v002 반영을 지시함 |
+| 반영된 다음 버전 파일 | `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md` |
+| 다음 버전 반영 위치 | section 2 Review 반영 요약, section 4 수정 목표, section 6 기능 검증 경계 Matrix, section 7 Latency/Throughput/Pipeline/II 분석 계획, section 8 범위 제외/후속 항목, section 9 Risk-Control Plan, section 10 사용자 승인 요청 Matrix |
+| 판단 변화 | v001의 10개 검증 항목/6개 승인 항목 구조를 v002에서 10개 검증 경계, 9개 risk, 12개 approval matrix 구조로 변경 |
+| 추적 근거 | `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v001.md`, 사용자 입력 "다 끝났어" |
+| 기존 문서 수정 시간 | `2026-04-30 13:38:32 +09:00` |
