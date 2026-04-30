@@ -3,7 +3,7 @@
 문서 버전: `v001`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 15:37:00 +09:00`  
-작성 목적: 사용자 질문 “Plan v004의 기능 검증 경계 Matrix가 다 검증된 것인가?”에 대해, `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md`의 `VB-C02-01~10` 경계를 현재 검증 결과와 매핑해 closure 상태를 명확히 기록한다.
+작성 목적: 사용자 질문 “Plan v004의 기능 검증 경계 Matrix가 다 검증된 것인가?”에 대해, `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md`의 `VB-C02-01~10` 경계를 현재 검증 결과와 매핑해 closure 상태를 명확히 기록한다.
 
 ---
 
@@ -70,7 +70,7 @@
 
 ## 4. 다음 검증 권장 순서
 
-1. `C02_Chip_Acquisition_Code_Verify_20260430_v001.md`를 새로 작성해 VB-C02-01~10 closure matrix를 공식화한다.
+1. `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md`를 새로 작성해 VB-C02-01~10 closure matrix를 공식화한다.
 2. Negative TB 또는 generic hook을 추가해 forced empty read / forced `tuser` violation이 xsim exit code fail로 전파되는지 확인한다.
 3. `s_raw_axis_tready` backpressure scenario를 추가해 raw FIFO reserve, PH_RESP_DRAIN, pending hold, control beat preservation을 확인한다.
 4. `tdc_gpx_config_ctrl`/top integration에서 expected_ififo CDC, stop event input `tuser`, downstream `tuser` 변환을 확인한다.
@@ -82,9 +82,9 @@
 
 | 기준 문서 | 본 문서 반영 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` section 6 | `VB-C02-01~10` 상태 재판정 |
-| `C02_Chip_Acquisition_Code_Fix_Result_20260430_v001.md` | 이번 xsim PASS로 닫힌 항목 근거 |
-| `C02_Chip_Acquisition_Code_Fix_Result_20260430_v002.md` | PPT 한글 수정본은 기술 검증 범위에 변화 없음 |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` section 6 | `VB-C02-01~10` 상태 재판정 |
+| `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md` | 이번 xsim PASS로 닫힌 항목 근거 |
+| `C02_Chip_Acquisition_260430152318_Code_Fix_Result_v002.md` | PPT 한글 수정본은 기술 검증 범위에 변화 없음 |
 
 ---
 
@@ -96,5 +96,5 @@
 
 | 반영 대상 | 반영 내용 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` | raw backpressure, stale expected-count fault propagation, latency/II 실측 검증 수행 |
-| `C02_Chip_Acquisition_VB_Closure_Check_20260430_v002.md` | `VB-C02-03/05/06/08/10` 상태 갱신 및 남은 보류 항목 재분류 |
+| `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` | raw backpressure, stale expected-count fault propagation, latency/II 실측 검증 수행 |
+| `C02_Chip_Acquisition_260430155825_VB_Closure_Check_v002.md` | `VB-C02-03/05/06/08/10` 상태 갱신 및 남은 보류 항목 재분류 |

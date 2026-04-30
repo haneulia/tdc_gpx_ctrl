@@ -3,7 +3,7 @@
 문서 버전: `v002`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 15:58:25 +09:00`  
-작성 목적: `C02_Chip_Acquisition_Code_Verify_20260430_v001.md`의 추가 검증 결과를 Plan v004 기능 검증 경계 Matrix에 반영한다.
+작성 목적: `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md`의 추가 검증 결과를 Plan v004 기능 검증 경계 Matrix에 반영한다.
 
 ---
 
@@ -42,7 +42,7 @@ Plan v004의 기능 검증 경계 Matrix는 아직 전체 close가 아니다. �
 | VB-C02-07 AXI-stream sideband contract | 부분 close | 강화됨 | raw data/control/faulted control beat 모니터 추가. downstream 전체는 보류 |
 | VB-C02-08 Negative/fail propagation | 미검증 | 부분 close | stale count mismatch fault propagation PASS. forced negative exit-code는 보류 |
 | VB-C02-09 Timing legality | 부분 검증 | 변경 없음 | 200 MHz 현재 조건 PASS. illegal matrix는 보류 |
-| VB-C02-10 Evidence boundary | 부분 close | 강화됨 | `Code_Verify_20260430_v001.md`, xsim PASS 로그 추가 |
+| VB-C02-10 Evidence boundary | 부분 close | 강화됨 | `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md`, xsim PASS 로그 추가 |
 
 ---
 
@@ -79,6 +79,6 @@ Plan v004의 기능 검증 경계 Matrix는 아직 전체 close가 아니다. �
 
 | 이전 문서 | v002 반영 위치 |
 |---|---|
-| `C02_Chip_Acquisition_VB_Closure_Check_20260430_v001.md` | 본 문서 전체. v001의 미검증/부분검증 분류를 추가 검증 결과로 갱신 |
-| `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` | section 2~6의 RTL/TB 변경, xsim 결과, latency/II 값을 closure matrix에 반영 |
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` | 기능 검증 경계 Matrix의 현 상태를 최신화 |
+| `C02_Chip_Acquisition_260430153700_VB_Closure_Check_v001.md` | 본 문서 전체. v001의 미검증/부분검증 분류를 추가 검증 결과로 갱신 |
+| `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` | section 2~6의 RTL/TB 변경, xsim 결과, latency/II 값을 closure matrix에 반영 |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` | 기능 검증 경계 Matrix의 현 상태를 최신화 |

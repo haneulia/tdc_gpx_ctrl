@@ -70,9 +70,9 @@ C01에서 C02로 인계된 핵심:
 
 산출물:
 
-- `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_Plan_20260429_v001.md`
-- `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_20260429_v001.md`
-- `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_20260429_v001.pptx`
+- `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260429203421_Plan_v001.md`
+- `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260429203421_Analysis_v001.md`
+- `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260429203421_Analysis_v001.pptx`
 
 C02 v001 핵심 판단:
 
@@ -113,10 +113,10 @@ C02 v001 핵심 판단:
 
 사용자 피드백을 받은 뒤 다음 중 하나로 진행한다.
 
-1. C02 분석 v001에 대한 사용자 review를 `C02_Chip_Acquisition_Review_20260430_v001.md`로 기록한다.
-2. 사용자가 F-C02-01/F-C02-04 보완에 동의하면 `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md`를 먼저 생성한다.
+1. C02 분석 v001에 대한 사용자 review는 v008 이후 `<ClusterName>_<YYMMDDHHMMSS>_<ArtifactName>_Review_vNNN.md` 형식으로 기록한다.
+2. 사용자가 F-C02-01/F-C02-04 보완에 동의하면 `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md`를 먼저 생성한다.
 3. Plan 승인 후 TB assertion, data/control monitor 분리, 필요 RTL guard 보완을 진행한다.
-4. xsim 회귀 결과를 `C02_Chip_Acquisition_Code_Verify_20260430_v001.md`로 기록한다.
+4. xsim 회귀 결과를 `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md`로 기록한다.
 
 ---
 
@@ -125,7 +125,7 @@ C02 v001 핵심 판단:
 새 대화 또는 다음 세션에서 이어갈 때는 다음 순서로 복원한다.
 
 1. `cluster_analysis_operating_protocol_20260429_v006.md` 확인
-2. `C02_Chip_Acquisition_20260429_v001.md` section 7~9 확인
+2. `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 7~9 확인
 3. 사용자에게 Q-C02-01~Q-C02-03에 대한 판단을 받아 code-fix plan 작성
 
 본 handoff 기준으로 현재 상태는 “C02 분석 v001 완료, 사용자 검토 및 보완 방향 승인 대기”이다.

@@ -1,7 +1,7 @@
 # C02 Chip Acquisition - echo_receiver Fire Count Stream 보완 반영 v002
 
 - 작성/수정 시간: 2026-04-30 18:43:56 +09:00
-- 이전 문서: `C02_Chip_Acquisition_Echo_Fire_Count_Stream_Review_20260430_v001.md`
+- 이전 문서: `C02_Chip_Acquisition_260430182724_Echo_Fire_Count_Stream_Review_v001.md`
 - 목적: v001의 Review finding 2건을 echo_receiver RTL/TB에 반영한 결과와 C02 후속 계약을 기록한다.
 - 절대 기준: `Doc/TDC-GPX-Datasheet.pdf`
 - 대상 모듈: `C:/Projects/my_sp/lib/IP/echo_receiver/HDL`

@@ -4,9 +4,9 @@
 - 작성 목적: echo_receiver에 추가된 fire(shot) count AXI-Stream 출력이 C02의 expected count 확정, wait guard 제거, stop-event 기반 drain pipeline 보완에 충분한지 검토한다.
 - 절대 기준: `Doc/TDC-GPX-Datasheet.pdf`
 - 검토 기준 문서:
-  - `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_ShotSeq_Match_Expected_Review_20260430_v001.md`
-  - `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_Expected_CDC_Latency_20260430_v001.md`
-  - `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_IrFlag_Definition_20260430_v001.md`
+  - `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260430172831_ShotSeq_Match_Expected_Review_v001.md`
+  - `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260430172050_Expected_CDC_Latency_v001.md`
+  - `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260430171236_IrFlag_Definition_v001.md`
 - echo_receiver 기준 커밋: `e254938 feat: add fire count AXIS output`
 - tdc_gpx_ctrl 즉시 반영 파일: `tb_tdc_gpx_full_int.vhd`
 

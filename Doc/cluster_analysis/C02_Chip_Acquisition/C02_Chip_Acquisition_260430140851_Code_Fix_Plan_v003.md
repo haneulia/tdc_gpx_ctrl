@@ -3,7 +3,7 @@
 문서 버전: `v003`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 14:08:51 +09:00`  
-작성 목적: `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v001.md`의 사용자 검토 의견 8건과 `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v002.md`의 사용자 검토 의견 2건을 반영하여, C02 RTL/TB/문서 보완 계획을 기능 검증 경계, drain pipeline 구조 비교, `tS-EF` timing 기준점, pipeline/II 분석, risk-control, 승인 matrix 중심으로 재작성한다.
+작성 목적: `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_Review_v001.md`의 사용자 검토 의견 8건과 `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_Review_v002.md`의 사용자 검토 의견 2건을 반영하여, C02 RTL/TB/문서 보완 계획을 기능 검증 경계, drain pipeline 구조 비교, `tS-EF` timing 기준점, pipeline/II 분석, risk-control, 승인 matrix 중심으로 재작성한다.
 
 ---
 
@@ -15,9 +15,9 @@
 |---|---|
 | `Doc/TDC-GPX-Datasheet.pdf` | 최상위 절대 기준. 특히 empty Interface FIFO read 금지, EF/LF active HIGH, GPX data bus 40 MHz readout 제한을 따른다. |
 | `C01_GPX_Bus_Read_20260429_v009.md:1023-1058` | C01에서 C02로 넘긴 32개 계약 원본. C02는 32개 계약 번호를 삭제하지 않고 추적한다. |
-| `C02_Chip_Acquisition_C01_Handoff_20260430_v002.md` | C01 계약 32건 전체 수락 matrix. |
-| `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v001.md` | Plan v002에 반영되었고 본 Plan v003에서도 유지하는 사용자 검토 의견 R-C02-P001-01~08. |
-| `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v002.md` | 본 Plan v003에 반영할 사용자 검토 의견 R-C02-P002-01~02. |
+| `C02_Chip_Acquisition_260430114442_C01_Handoff_v002.md` | C01 계약 32건 전체 수락 matrix. |
+| `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_Review_v001.md` | Plan v002에 반영되었고 본 Plan v003에서도 유지하는 사용자 검토 의견 R-C02-P001-01~08. |
+| `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_Review_v002.md` | 본 Plan v003에 반영할 사용자 검토 의견 R-C02-P002-01~02. |
 | 현재 RTL/TB | `tdc_gpx_chip_run.vhd`, `tdc_gpx_chip_ctrl.vhd`, `tdc_gpx_bus_phy.vhd`, `tb_tdc_gpx_chip_ctrl.vhd`, 필요 시 `tdc_gpx_config_ctrl.vhd`. |
 
 ## 2. Review 반영 요약
@@ -223,9 +223,9 @@ Plan v003에서 승인받을 내용:
 
 | 산출물 | 계획 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` | xsim positive/negative 결과, VB/RK/AP closure 표, latency/II 측정 결과 기록 |
-| `C02_Chip_Acquisition_20260430_v002.md` | C02 분석 v002. I-Mode single, pipeline/II, finding closure 반영 |
-| `C02_Chip_Acquisition_20260430_v002.pptx` | I-Mode single timing diagram, drain pipeline/II block, risk/approval 요약 포함 |
+| `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` | xsim positive/negative 결과, VB/RK/AP closure 표, latency/II 측정 결과 기록 |
+| `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md` | C02 분석 v002 성격의 코드 보완 결과. I-Mode single, pipeline/II, finding closure 반영 |
+| `C02_Chip_Acquisition_260430152318_Code_Fix_Result_v002.pptx` | I-Mode single timing diagram, drain pipeline/II block, risk/approval 요약 포함 |
 
 ---
 
@@ -378,8 +378,8 @@ Plan v003에서 승인받을 내용:
 
 | 항목 | 내용 |
 |---|---|
-| 이전 계획 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md` |
-| 사용자 Review | `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v001.md`, `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v002.md` |
-| 본 계획 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` |
+| 이전 계획 | `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md` |
+| 사용자 Review | `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_Review_v001.md`, `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_Review_v002.md` |
+| 본 계획 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` |
 | 다음 단계 | 사용자 승인 후 RTL/TB/script/doc 보완 진행 |
 | 판단 변화 | v002의 10개 검증 경계, 9개 risk, 12개 approval matrix를 유지하면서, 목표 B에는 현재/개선 drain pipeline 구조 비교와 `ST_DRAIN_BURST` raw FIFO 합류 정정을 추가했고, 목표 C에는 `tS-EF` 기준점을 `RDN falling edge`와 capture/response 기준점으로 분리했다. |

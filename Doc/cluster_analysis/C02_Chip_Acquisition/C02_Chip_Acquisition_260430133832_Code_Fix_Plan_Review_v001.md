@@ -3,7 +3,7 @@
 문서 버전: `v001`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 13:38:32 +09:00`  
-작성 목적: `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md`를 사용자가 위에서부터 검토하면서 공유하는 수정 방향을 시간순으로 기록한다. 사용자가 "다 끝났어" 또는 "이제 반영해줘"라고 말하기 전까지 본 문서는 반영 대기 메모이며, 이후 `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md`에 반영한다.
+작성 목적: `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md`를 사용자가 위에서부터 검토하면서 공유하는 수정 방향을 시간순으로 기록한다. 사용자가 "다 끝났어" 또는 "이제 반영해줘"라고 말하기 전까지 본 문서는 반영 대기 메모이며, 이후 `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md`에 반영한다.
 
 ---
 
@@ -11,7 +11,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 검토 대상 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md` |
+| 검토 대상 | `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md` |
 | 검토 방식 | 사용자가 위에서부터 생각나는 수정 방향을 공유하고, Codex는 판단과 근거를 짧게 답하며 이 문서에 기록한다. |
 | 반영 조건 | 사용자가 "다 끝났어" 또는 "이제 반영해줘"라고 명시하면 Plan v002에 반영한다. |
 | 현재 상태 | Plan v002 반영 완료 |
@@ -58,7 +58,7 @@
 | Codex 1차 판단 | 타당하다. Plan v001의 목표 B는 `ST_DRAIN_SETTLE` 5 clocks, `expected_ififo` hard bound 같은 결론형 조치가 먼저 나와 있고, 현재 pipeline/II 상태와 보완 후보의 선택 근거가 충분히 분리되어 있지 않다. |
 | 반영 필요 방향 | Plan v002에서 목표 B를 "현재 상태 분석"과 "보완 방법론"으로 재구성한다. 특히 `ST_DRAIN_CHECK -> ST_DRAIN_EF1/EF2/BURST/FLUSH -> ST_DRAIN_SETTLE -> ST_DRAIN_CHECK` loop의 cycle 단위 pipeline, best-case II, backpressure II, EF-only fallback II, count-known burst II를 먼저 표와 Mermaid timing/block diagram으로 보여준다. |
 | 연결 계약 | C01-C5, C01-C6, C01-C7, C01-C11, C01-C21, C01-C22, C01-C28, C01-C29, C01-C31, C01-C32 |
-| 추적 근거 | `tdc_gpx_chip_run.vhd:482-623`, `:625-682`, `:713-805`, `:817-822`; `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md:67-94`, `:262-276` |
+| 추적 근거 | `tdc_gpx_chip_run.vhd:482-623`, `:625-682`, `:713-805`, `:817-822`; `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md:67-94`, `:262-276` |
 | 반영 상태 | Plan v002 반영 완료 |
 
 #### Plan v002에 추가해야 할 검토 프레임
@@ -118,7 +118,7 @@ Plan v001의 "5 clocks 권장" 문구는 Plan v002에서 바로 결론으로 두
 | Codex 1차 판단 | 확정 운용 조건으로 받아야 한다. Plan v001의 목표 D는 "Quiet/M-mode를 이번 범위에서 제외하고 필요 시 후속 계획"이라는 표현이었지만, Plan v002에서는 더 명확히 "C02 지원 운용은 I-Mode single measurement only"로 써야 한다. |
 | 반영 필요 방향 | F-C02-02는 Quiet/M-mode sequence mismatch 문제가 아니라 "프로젝트 운용 범위 밖"으로 정리한다. 대신 RTL/TB/문서에서 I-Mode single 측정 조건, non-quiet 설정, single-shot acquisition/drain sequence만 검증 대상으로 제한한다. |
 | 연결 계약 | C01-C8, C01-C11, C01-C18, C01-C28, C01-C31, C01-C32 |
-| 추적 근거 | `C02_Chip_Acquisition_20260429_v001.md` F-C02-02, `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md:117-136`, 사용자 운용 확정 |
+| 추적 근거 | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` F-C02-02, `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md:117-136`, 사용자 운용 확정 |
 | 반영 상태 | Plan v002 반영 완료 |
 
 #### Plan v002 수정 방향
@@ -150,7 +150,7 @@ Plan v002에서 추가해야 할 검증 관점:
 | Codex 1차 판단 | 타당하다. Plan v001의 검증 항목 V-C02-01~10은 필요한 항목을 나열했지만, 기능 경계가 충분히 분리되어 있지 않다. 특히 I-Mode single 전용 운용, echo/count-known 여부, EF-only non-burst fallback, pipeline/II, response/backpressure, negative 검증의 경계가 한 표 안에 섞여 있다. |
 | 반영 필요 방향 | Plan v002의 검증 항목은 flat list가 아니라 "검증 경계 matrix"로 재구성한다. 각 경계마다 목적, 포함 범위, 제외 범위, pass/fail 기준, 관련 C01 계약, 관련 finding, 필요한 TB/RTL 계측을 분리한다. |
 | 연결 계약 | C01-C1~C01-C32 전체. 특히 C01-C11, C01-C14, C01-C21, C01-C22, C01-C28, C01-C29, C01-C31, C01-C32 |
-| 추적 근거 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md:245-258`, R-C02-P001-01~03 |
+| 추적 근거 | `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md:245-258`, R-C02-P001-01~03 |
 | 반영 상태 | Plan v002 반영 완료 |
 
 #### Plan v002 검증 경계 재구성안
@@ -221,7 +221,7 @@ Plan v002에서는 "검증 항목"이라는 제목을 유지하더라도 내용�
 | Codex 1차 판단 | 타당하다. Plan v001의 `EF fallback settle = ST_DRAIN_SETTLE 3 clocks -> 5 clocks` 설명은 raw GPX pin 변화, bus_phy 2-FF sync 출력, chip_ctrl 전달, chip_run 제어 판단 시점을 한 덩어리로 묶고 있다. Plan v002에서는 각 기준점을 분리해야 한다. |
 | 반영 필요 방향 | Plan v002의 section 6에 `EF fallback signal path / latency basis` 표를 추가한다. raw `EF pin`, `bus_phy` meta/sync FF, `chip_ctrl` input pass-through, `chip_run i_ef*_sync`, `ST_DRAIN_CHECK` decision, `ST_DRAIN_SETTLE` guard를 별도 stage로 나눈다. |
 | 연결 계약 | C01-C8, C01-C11, C01-C21, C01-C22, C01-C28, C01-C31, C01-C32 |
-| 추적 근거 | `tdc_gpx_bus_phy.vhd:740-748`, `:757-758`; `tdc_gpx_chip_ctrl.vhd:166-167`, `:532-533`; `tdc_gpx_chip_run.vhd:135-136`, `:202`, `:482-496`, `:817-822`; `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md:262-270` |
+| 추적 근거 | `tdc_gpx_bus_phy.vhd:740-748`, `:757-758`; `tdc_gpx_chip_ctrl.vhd:166-167`, `:532-533`; `tdc_gpx_chip_run.vhd:135-136`, `:202`, `:482-496`, `:817-822`; `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md:262-270` |
 | 반영 상태 | Plan v002 반영 완료 |
 
 #### Plan v002에 필요한 EF fallback 기준점 분리
@@ -279,7 +279,7 @@ Plan v001의 "3 clocks -> 5 clocks" 표현은 Plan v002에서 다음처럼 바�
 | Codex 1차 판단 | 타당하다. Plan v001은 일부 항목을 "후속 후보"로 열어두었지만, 사용자 운용 기준이 확정된 항목은 더 강하게 닫아야 한다. 반대로 output stream CDC와 OEN 두 조건은 후속 검토 항목으로 명확히 살아 있어야 한다. |
 | 반영 필요 방향 | Plan v002에서 section 7을 `완전 제외`, `후속 검토`, `조건부 후속`으로 재분류한다. Quiet/M-mode와 250 MHz retiming은 완전 제외, output stream CDC와 OEN board mode는 후속 검토, 16-bit는 28-bit closure 이후 조건부 후속으로 둔다. |
 | 연결 계약 | C01-C12, C01-C15, C01-C16, C01-C20, C01-C23, C01-C24, C01-C30 |
-| 추적 근거 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md:280-288`, 사용자 운용 확정 |
+| 추적 근거 | `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md:280-288`, 사용자 운용 확정 |
 | 반영 상태 | Plan v002 반영 완료 |
 
 #### Plan v002 범위 재분류안
@@ -326,7 +326,7 @@ Plan v002에서는 "범위 제외 / 후속 항목"이 단순 parking lot이 아�
 | Codex 1차 판단 | 타당하다. Plan v001의 위험과 완화 표는 위험/영향/완화만 간단히 적고 있어, 어떤 위험을 어떤 검증 경계에서 조기 검출하고, 어떤 완화안을 선택해야 하는지 판단하기 어렵다. |
 | 반영 필요 방향 | Plan v002의 section 8은 risk register 형태로 재작성한다. 각 위험에 대해 원인, 영향, 조기 검출 방법, 완화 옵션, 선택 기준, 잔여 위험, 승인 판단점을 둔다. |
 | 연결 계약 | C01-C11, C01-C14, C01-C17, C01-C20, C01-C21, C01-C22, C01-C28~C01-C32 |
-| 추적 근거 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md:292-300`, R-C02-P001-01~06 |
+| 추적 근거 | `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md:292-300`, R-C02-P001-01~06 |
 | 반영 상태 | Plan v002 반영 완료 |
 
 #### Plan v002 risk register 재구성안
@@ -385,7 +385,7 @@ Plan v002에서는 section 8을 단순한 "위험과 완화" 표가 아니라 �
 | Codex 1차 판단 | 맞다. Plan v001은 검증 항목 10개와 승인 요청 6개 사이의 매핑을 제공하지 않아, 어떤 검증은 정책 승인 대상이고 어떤 검증은 실행 항목인지 구분할 수 없다. |
 | 반영 필요 방향 | Plan v002에서는 사용자 승인 요청 항목을 검증 경계 `VB-C02-xx`와 risk `RK-C02-xx`에 매핑한다. 승인 항목은 단순 실행 목록이 아니라 사용자가 결정해야 하는 정책/범위/위험 수용 항목으로 재정의한다. |
 | 연결 계약 | C01-C32, 운영 프로토콜 Review 처리 사이클 규칙 |
-| 추적 근거 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md:245-258`, `:318-329`, R-C02-P001-04, R-C02-P001-07 |
+| 추적 근거 | `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md:245-258`, `:318-329`, R-C02-P001-04, R-C02-P001-07 |
 | 반영 상태 | Plan v002 반영 완료 |
 
 #### Plan v002 승인 항목 재구성 원칙
@@ -449,6 +449,6 @@ Plan v002의 승인 요청은 "6개 실행 동의"가 아니라 "검증 경계�
 | 항목 | 기록 내용 |
 |---|---|
 | 사용자 완료 입력 | "다 끝났어" |
-| 반영된 계획 파일 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md` |
+| 반영된 계획 파일 | `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md` |
 | 판단 변화 | Review v001의 반영 대기 메모를 Plan v002 공식 수정계획으로 전환 |
 | 반영 시각 | `2026-04-30 13:38:32 +09:00` |

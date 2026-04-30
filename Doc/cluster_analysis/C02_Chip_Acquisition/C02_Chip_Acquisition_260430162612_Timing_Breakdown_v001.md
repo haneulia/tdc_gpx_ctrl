@@ -3,7 +3,7 @@
 문서 버전: `v001`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 16:26:12 +09:00`  
-작성 목적: `C02_Chip_Acquisition_Code_Verify_20260430_v001.md`의 `[16]` 실측값 `T1=40clk`, `T2=167clk`가 어떤 RTL 단계에서 소비되는지 분해한다.
+작성 목적: `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md`의 `[16]` 실측값 `T1=40clk`, `T2=167clk`가 어떤 RTL 단계에서 소비되는지 분해한다.
 
 ---
 
@@ -140,7 +140,7 @@ flowchart LR
 
 | 기준 문서/코드 | 본 문서 반영 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` | `[16]` latency/II 실측값의 원인 분해 |
+| `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` | `[16]` latency/II 실측값의 원인 분해 |
 | `tb_tdc_gpx_chip_ctrl.vhd:1549-1665` | T0/T1/T2 계측 방식 확인 |
 | `tdc_gpx_bus_phy.vhd` | C01 read transaction timing 기준 확인 |
 | `tdc_gpx_chip_run.vhd` | `ST_DRAIN_LATCH`, `ST_DRAIN_CHECK`, `ST_DRAIN_BURST`, `ST_DRAIN_FLUSH`, `ST_DRAIN_SETTLE` 구간 확인 |

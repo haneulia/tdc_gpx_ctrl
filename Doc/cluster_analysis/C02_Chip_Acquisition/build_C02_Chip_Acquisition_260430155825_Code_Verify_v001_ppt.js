@@ -228,7 +228,7 @@ function pill(slide, x, y, w, text, fill, color = C.ink) {
 }
 
 async function main() {
-  const out = path.join(__dirname, "C02_Chip_Acquisition_Code_Verify_20260430_v001.pptx");
+  const out = path.join(__dirname, "C02_Chip_Acquisition_260430155825_Code_Verify_v001.pptx");
   await pptx.writeFile({ fileName: out });
   console.log(out);
 }

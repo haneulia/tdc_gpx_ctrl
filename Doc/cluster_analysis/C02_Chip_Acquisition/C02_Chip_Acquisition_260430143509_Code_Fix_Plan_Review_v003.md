@@ -3,7 +3,7 @@
 문서 버전: `v003`
 작성일: `2026-04-30`
 최종 수정 시간: `2026-04-30 14:35:09 +09:00`
-작성 목적: `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md`를 사용자가 위에서부터 검토하면서 공유한 의문점과 수정 방향을 시간순으로 기록한다. 사용자의 "다 됐어" 확인 후 본 문서의 피드백은 `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md`에 반영되었다.
+작성 목적: `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md`를 사용자가 위에서부터 검토하면서 공유한 의문점과 수정 방향을 시간순으로 기록한다. 사용자의 "다 됐어" 확인 후 본 문서의 피드백은 `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md`에 반영되었다.
 
 ---
 
@@ -11,7 +11,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 검토 대상 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` |
+| 검토 대상 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` |
 | 검토 방식 | 사용자가 의문점과 수정 방향을 전달하면 Codex는 판단과 근거를 기록한다. |
 | 반영 조건 | 사용자가 "다 됐어", "다 검토 했어" 또는 "반영해줘"라고 명시하면 Plan v004에 반영한다. |
 | 현재 상태 | Plan v004 반영 완료 |
@@ -25,7 +25,7 @@
 | 항목 | 내용 |
 |---|---|
 | 입력 시각 | 2026-04-30 14:27:52 +09:00 |
-| 관련 Plan 위치 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` section 6 `기능 검증 경계 Matrix`, `VB-C02-01 I-Mode single` |
+| 관련 Plan 위치 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` section 6 `기능 검증 경계 Matrix`, `VB-C02-01 I-Mode single` |
 | 사용자 피드백 | I-Mode 중에서도 오로지 Single 측정만 해당되며, Datasheet 2.11.2 `Continous Measurement`는 해당사항이 아니다. |
 | Codex 1차 판단 | 사용자 지적이 맞다. Plan v003의 `I-Mode single` 문구만으로는 I-Mode 내부의 continuous/start-retrigger 운용까지 배제되는지 불명확하다. C02 범위는 Datasheet 2.11.1 `Single measurement` flow로 고정하고, 2.11.2 `Continous Measurement` flow는 명시적으로 제외해야 한다. |
 | 반영 필요 방향 | Plan v004의 VB-C02-01 포함 범위에 `Datasheet 2.11.1 Single measurement only`를 명시한다. 제외 범위에는 `Datasheet 2.11.2 Continous Measurement`, internal start retrigger, Start# handling, Start01 read/remap, continuous EF polling을 추가한다. |
@@ -46,7 +46,7 @@
 | 항목 | 내용 |
 |---|---|
 | 입력 시각 | 2026-04-30 14:27:52 +09:00 |
-| 관련 Plan 위치 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` section 6 `기능 검증 경계 Matrix`, `VB-C02-02 Datasheet 금지 조건` |
+| 관련 Plan 위치 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` section 6 `기능 검증 경계 Matrix`, `VB-C02-02 Datasheet 금지 조건` |
 | 사용자 피드백 | `fill=0`일 때 read가 1회라도 있으면 Fail이라는 뜻인지 확인이 필요하다. 그런데 `fill=0`의 의미가 부족해서 맞는지 판단하기 어렵다. |
 | Codex 1차 판단 | 사용자 지적이 맞다. Plan v003의 `fill=0 monitor` 표현은 부정확하다. Datasheet의 `Fill`은 Register 6의 LF load-level threshold이며 empty 여부 자체가 아니다. VB-C02-02에서 말한 의도는 TB/GPX model이 추적하는 해당 Interface FIFO의 실제 occupancy가 0인 상태에서 Reg8 또는 Reg9 read가 발생하면 FAIL이라는 뜻이다. |
 | 반영 필요 방향 | Plan v004에서는 `fill=0`이라는 표현을 제거하거나 `model_ififo_occupancy_before_read = 0`으로 바꾼다. 또한 `Reg6 Fill threshold`와 `IFIFO empty/occupancy`를 분리해 설명한다. |
@@ -73,7 +73,7 @@
 | 항목 | 내용 |
 |---|---|
 | 입력 시각 | 2026-04-30 14:29:39 +09:00 |
-| 관련 Plan 위치 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` section 6 `VB-C02-07 Data/control boundary`, section 7 `Latency / Throughput / Pipeline / II 분석 계획` |
+| 관련 Plan 위치 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` section 6 `VB-C02-07 Data/control boundary`, section 7 `Latency / Throughput / Pipeline / II 분석 계획` |
 | 사용자 피드백 | `VB-C02-07 Data/control boundary`처럼 AXI-stream 데이터의 `tuser` 영역에 대한 bit 구간별 의미 설명이 부족하다. 따라서 입/출력되는 모든 모듈의 AXI-stream에서 사용되는 `tuser` 정보가 필요하다. |
 | Codex 1차 판단 | 사용자 지적이 맞다. v003의 `VB-C02-07`은 `tuser(7)` control beat만 언급하므로 data/control boundary를 닫기에는 부족하다. 현재 RTL에는 bus response 8-bit `tuser`, raw IFIFO 8-bit `tuser`, decoded event 8-bit `tuser`, enriched event 16-bit `tuser`, per-chip cell 1-bit `tuser`, final VDMA 1-bit `tuser`, 그리고 external stop event `tuser`가 서로 다른 의미로 존재한다. 이들은 같은 이름을 쓰지만 bit 의미가 다르므로 모듈별 contract matrix로 관리해야 한다. |
 | 반영 필요 방향 | Plan v004의 VB-C02-07을 `AXI-stream sideband contract boundary`로 확장한다. 모든 AXI-stream 입출력 모듈에 대해 `module`, `port direction`, `tuser width`, `bit range`, `meaning`, `data/control beat별 유효성`, `source`, `consumer`, `verification monitor`를 표로 작성하도록 한다. |
@@ -124,11 +124,11 @@
 
 | Review ID | Plan v004 반영 위치 |
 |---|---|
-| R-C02-P003-01 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` section 3.1 `C02 운용 범위`, section 6 `VB-C02-01`, section 9 `RK-C02-06`, section 10 `AP-C02-01` |
-| R-C02-P003-02 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` section 6 `VB-C02-02`, section 6 `VB-C02-02 occupancy와 Datasheet Fill 구분`, section 9 `RK-C02-01` |
-| R-C02-P003-03 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` section 6 `VB-C02-07`, section 6 `AXI-stream tuser contract matrix`, section 7.1 `AXI sideband integrity`, section 9 `RK-C02-10`, section 10 `AP-C02-13` |
+| R-C02-P003-01 | `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` section 3.1 `C02 운용 범위`, section 6 `VB-C02-01`, section 9 `RK-C02-06`, section 10 `AP-C02-01` |
+| R-C02-P003-02 | `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` section 6 `VB-C02-02`, section 6 `VB-C02-02 occupancy와 Datasheet Fill 구분`, section 9 `RK-C02-01` |
+| R-C02-P003-03 | `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` section 6 `VB-C02-07`, section 6 `AXI-stream tuser contract matrix`, section 7.1 `AXI sideband integrity`, section 9 `RK-C02-10`, section 10 `AP-C02-13` |
 
 | 항목 | 내용 |
 |---|---|
-| 반영된 계획 파일 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` |
+| 반영된 계획 파일 | `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` |
 | 반영 시각 | `2026-04-30 14:35:09 +09:00` |

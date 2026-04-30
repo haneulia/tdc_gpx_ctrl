@@ -3,17 +3,17 @@
 문서 버전: `v002`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 15:23:18 +09:00`  
-작성 목적: `C02_Chip_Acquisition_Code_Fix_Result_20260430_v001.pptx`에서 한글이 `??`로 보이는 문제를 반영해, PPT를 UTF-8 안전 생성 경로로 재생성하고 추적 근거를 남긴다.
+작성 목적: `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.pptx`에서 한글이 `??`로 보이는 문제를 반영해, PPT를 UTF-8 안전 생성 경로로 재생성하고 추적 근거를 남긴다.
 
 ---
 
 ## 1. 수정 사유
 
-사용자 검토에서 `C02_Chip_Acquisition_Code_Fix_Result_20260430_v001.pptx`의 한글 글자가 `??`로 표시되는 문제가 확인되었다.
+사용자 검토에서 `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.pptx`의 한글 글자가 `??`로 표시되는 문제가 확인되었다.
 
 판단:
 
-- Markdown `C02_Chip_Acquisition_Code_Fix_Result_20260430_v001.md`는 UTF-8 한글이 정상이다.
+- Markdown `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md`는 UTF-8 한글이 정상이다.
 - PPT v001은 PowerShell inline script 경로를 통해 생성되었고, 이 과정에서 한글 문자열이 안전하게 보존되지 않았을 가능성이 높다.
 - 따라서 동일한 기술 결과를 유지하되, PPT 생성 스크립트를 UTF-8 파일로 저장한 뒤 Node.js에서 직접 실행하는 방식으로 `v002` PPT를 새로 생성했다.
 
@@ -23,8 +23,8 @@
 
 | 산출물 | 내용 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Fix_Result_20260430_v002.md` | 본 추적 문서 |
-| `C02_Chip_Acquisition_Code_Fix_Result_20260430_v002.pptx` | 한글 UTF-8 재생성 PPT |
+| `C02_Chip_Acquisition_260430152318_Code_Fix_Result_v002.md` | 본 추적 문서 |
+| `C02_Chip_Acquisition_260430152318_Code_Fix_Result_v002.pptx` | 한글 UTF-8 재생성 PPT |
 
 ---
 
@@ -62,6 +62,6 @@ C02 보완 결과 v002
 
 | 이전 문서 | 본 문서 반영 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Fix_Result_20260430_v001.md` | 기술 내용 유지 |
-| `C02_Chip_Acquisition_Code_Fix_Result_20260430_v001.pptx` | 한글 깨짐 문제로 PPT만 `v002` 재생성 |
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` | 계획/검증 근거 유지 |
+| `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md` | 기술 내용 유지 |
+| `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.pptx` | 한글 깨짐 문제로 PPT만 `v002` 재생성 |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` | 계획/검증 근거 유지 |

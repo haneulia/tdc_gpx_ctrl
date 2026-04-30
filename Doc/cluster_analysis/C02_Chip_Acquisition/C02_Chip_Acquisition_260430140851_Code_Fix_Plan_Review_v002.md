@@ -3,7 +3,7 @@
 문서 버전: `v002`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 14:08:51 +09:00`  
-작성 목적: `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md`를 사용자가 검토하면서 공유한 의문점과 수정 방향을 시간순으로 기록한다. 사용자의 "다 검토 했어" 확인 후 본 문서의 피드백은 `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md`에 반영되었다.
+작성 목적: `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md`를 사용자가 검토하면서 공유한 의문점과 수정 방향을 시간순으로 기록한다. 사용자의 "다 검토 했어" 확인 후 본 문서의 피드백은 `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md`에 반영되었다.
 
 ---
 
@@ -11,7 +11,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 검토 대상 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md` |
+| 검토 대상 | `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md` |
 | 검토 방식 | 사용자가 의문점과 수정 방향을 전달하면 Codex는 판단과 근거를 기록한다. |
 | 반영 조건 | 사용자가 "다 됐어", "다 검토 했어" 또는 "반영해줘"라고 명시하면 Plan v003에 반영한다. |
 | 현재 상태 | Plan v003 반영 완료 |
@@ -25,7 +25,7 @@
 | 항목 | 내용 |
 |---|---|
 | 입력 시각 | 2026-04-30 13:58:43 +09:00 |
-| 관련 Plan 위치 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md` section 4.2.1 `현재 drain pipeline` |
+| 관련 Plan 위치 | `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md` section 4.2.1 `현재 drain pipeline` |
 | 사용자 피드백 | 목표 B에서 현재 drain pipeline뿐 아니라 개선 방향의 drain pipeline 표현도 추가해 구조적으로 비교 분석할 수 있어야 검토와 결정이 쉬워진다. 또한 현재 drain pipeline 구조에서 `ST_DRAIN_EF1/EF2`는 raw FIFO로 값이 전달되는 것처럼 보이지만, `ST_DRAIN_BURST`는 raw FIFO로 저장되지 않는 것처럼 그려져 있어 맞는지 검토가 필요하다. |
 | Codex 1차 판단 | 사용자 지적이 맞다. RTL상 `ST_DRAIN_BURST`도 raw beat를 생성한다. 다만 `ST_DRAIN_BURST`가 raw FIFO에 직접 write하는 것이 아니라, `tdc_gpx_chip_run`이 `s_raw_word_r/s_raw_valid_r`를 세우고, `tdc_gpx_chip_ctrl`의 `p_raw_fifo`가 `s_run_raw_valid`를 받아 저장한다. Plan v002 그림은 이 공통 raw output/fifo sink를 명확히 표현하지 못해 오해 소지가 있다. |
 | 반영 필요 방향 | Plan v003의 목표 B에는 `현재 drain pipeline`과 `개선 drain pipeline 후보`를 나란히 둔다. 현재 구조에서는 `ST_DRAIN_EF1/EF2`, `ST_DRAIN_BURST`, `ST_DRAIN_FLUSH`가 모두 raw output 공통 sink를 통해 `chip_ctrl raw FIFO`로 들어간다는 점을 도식화한다. 개선 구조에서는 count-known burst path와 count-unknown EF-only path를 분리하고, 둘 다 common raw FIFO boundary로 합류하도록 표현한다. |
@@ -90,7 +90,7 @@ flowchart LR
 | 항목 | 내용 |
 |---|---|
 | 입력 시각 | 2026-04-30 14:05:45 +09:00 |
-| 관련 Plan 위치 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md` section 4 `목표 C`, section 7.1 `raw EF guard` |
+| 관련 Plan 위치 | `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md` section 4 `목표 C`, section 7.1 `raw EF guard` |
 | 사용자 피드백 | 목표 C에서 T0가 `last data read completes`로만 되어 있다. Datasheet 기준으로는 마지막 data의 `RDN`이 Low로 떨어진 직후부터 `tS-EF max 11.8 ns`가 걸리는 것으로 보이며, 그러면 `tPW-RL min 6 ns` 구간이 `tS-EF` window와 교집합으로 포함되는 것이 아닌지 검토가 필요하다. |
 | Codex 1차 판단 | 사용자 지적이 타당하다. Plan v002의 T0 표현은 너무 늦은 기준점이다. Datasheet p.7 Figure 2의 Read Operations는 `EF tS-EF Last data`를 마지막 read strobe와 함께 표시하며, `RDN` low pulse width인 `tPW-RL`과 `tS-EF`가 별도 직렬 지연으로 더해지는 구조로 보면 안 된다. 즉 `last data read completes` 이후에 다시 11.8 ns를 전부 기다린다고 해석하면 보수적이지만 latency/II 분석은 왜곡된다. |
 | 반영 필요 방향 | Plan v003에서는 T0를 두 개로 나눈다. `T0a = 마지막 data read의 RDN falling edge`, `T0b = read capture / RDN rising / response consumed`. raw EF guard는 `T0a -> raw EF HIGH <= 11.8 ns`로 계산하고, `T0b` 이후 남은 raw EF residual은 `max(0, 11.8 ns - (T0b - T0a))`로 계산한다. 그 다음 별도로 2-FF sync 관측 지연과 `ST_DRAIN_CHECK` decision alignment를 더한다. |
@@ -137,10 +137,10 @@ Plan v002의 `T0 : last data read completes / FIFO becomes empty`는 다음처�
 
 | Review ID | Plan v003 반영 위치 |
 |---|---|
-| R-C02-P002-01 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` section 4.2.1 `현재 drain pipeline`, section 4.2.2 `개선 drain pipeline 후보`, section 4.2.3 `II 산출 프레임` |
-| R-C02-P002-02 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` section `목표 C`, section 7.1 `산출 대상`, section 12 `Version Lineage` |
+| R-C02-P002-01 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` section 4.2.1 `현재 drain pipeline`, section 4.2.2 `개선 drain pipeline 후보`, section 4.2.3 `II 산출 프레임` |
+| R-C02-P002-02 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` section `목표 C`, section 7.1 `산출 대상`, section 12 `Version Lineage` |
 
 | 항목 | 내용 |
 |---|---|
-| 반영된 계획 파일 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v003.md` |
+| 반영된 계획 파일 | `C02_Chip_Acquisition_260430140851_Code_Fix_Plan_v003.md` |
 | 반영 시각 | `2026-04-30 14:08:51 +09:00` |

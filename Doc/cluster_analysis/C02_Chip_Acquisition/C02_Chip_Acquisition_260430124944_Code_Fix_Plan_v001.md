@@ -3,7 +3,7 @@
 문서 버전: `v001`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 12:49:44 +09:00`  
-작성 목적: `C02_Chip_Acquisition_C01_Handoff_20260430_v002.md`의 C01 v009 계약 32건 전체 수락 matrix를 기준으로 C02 RTL/TB/문서 보완 계획을 정의한다.
+작성 목적: `C02_Chip_Acquisition_260430114442_C01_Handoff_v002.md`의 C01 v009 계약 32건 전체 수락 matrix를 기준으로 C02 RTL/TB/문서 보완 계획을 정의한다.
 
 ---
 
@@ -15,8 +15,8 @@
 |---|---|
 | `Doc/TDC-GPX-Datasheet.pdf` | 최상위 절대 기준. 특히 p.8/p.49 empty Interface FIFO read 금지, EF/LF active HIGH, p.27/p.49 40 MHz readout 제한을 따른다. |
 | `C01_GPX_Bus_Read_20260429_v009.md:1023-1058` | C01에서 C02로 넘긴 32개 계약 원본. |
-| `C02_Chip_Acquisition_C01_Handoff_20260430_v002.md` | 32개 계약을 C02 입력 계약으로 전부 수락한 최신 Handoff 문서. |
-| `C02_Chip_Acquisition_20260429_v001.md` | C02 분석 v001. F-C02-01~05 finding과 보완 방향 후보. |
+| `C02_Chip_Acquisition_260430114442_C01_Handoff_v002.md` | 32개 계약을 C02 입력 계약으로 전부 수락한 최신 Handoff 문서. |
+| `C02_Chip_Acquisition_260429203421_Analysis_v001.md` | C02 분석 v001. F-C02-01~05 finding과 보완 방향 후보. |
 | 현재 RTL/TB | `tdc_gpx_chip_run.vhd`, `tdc_gpx_chip_ctrl.vhd`, `tb_tdc_gpx_chip_ctrl.vhd`, 필요 시 `tdc_gpx_config_ctrl.vhd`. |
 
 이번 계획은 코드 변경을 바로 수행하는 문서가 아니다. 사용자 승인 후 이 계획을 기준으로 RTL/TB 보완과 xsim 검증을 진행한다.
@@ -127,7 +127,7 @@ C01 v009의 32개 계약은 모두 C02 입력 계약으로 수락한다. 다만 
 
 | 파일 | 계획 |
 |---|---|
-| `C02_Chip_Acquisition_20260430_v002.md` 예정 | nominal 운용을 `non-quiet + MasterAluTrig cleanup`으로 제한하는 계약을 명시한다. |
+| `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md` 예정 | nominal 운용을 `non-quiet + MasterAluTrig cleanup`으로 제한하는 계약을 명시한다. |
 | RTL | Quiet/M-mode를 실제 지원해야 한다는 사용자 결정이 나오기 전까지 FSM 순서 변경은 하지 않는다. |
 
 완료 기준:
@@ -146,9 +146,9 @@ C01 v009의 32개 계약은 모두 C02 입력 계약으로 수락한다. 다만 
 
 | 파일 | 계획 |
 |---|---|
-| `C02_Chip_Acquisition_20260430_v002.md` | C01 32개 계약 full matrix를 C02 입구 조건으로 반영하고, 코드 보완 결과와 finding closure를 기록한다. |
-| `C02_Chip_Acquisition_20260430_v002.pptx` | 32개 계약은 그룹화해 보여주되, slide note 또는 하단 근거에 C01 원본 ID 범위를 남긴다. |
-| `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` 예정 | xsim 검증 방법, 로그, positive/negative 결과, latency/II 측정 결과를 기록한다. |
+| `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md` | C01 32개 계약 full matrix를 C02 입구 조건으로 반영하고, 코드 보완 결과와 finding closure를 기록한다. |
+| `C02_Chip_Acquisition_260430152318_Code_Fix_Result_v002.pptx` | 32개 계약은 그룹화해 보여주되, slide note 또는 하단 근거에 C01 원본 ID 범위를 남긴다. |
+| `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` 예정 | xsim 검증 방법, 로그, positive/negative 결과, latency/II 측정 결과를 기록한다. |
 
 완료 기준:
 
@@ -234,9 +234,9 @@ C01 v009의 32개 계약은 모두 C02 입력 계약으로 수락한다. 다만 
 
 작업:
 
-1. `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` 생성.
-2. `C02_Chip_Acquisition_20260430_v002.md` 생성.
-3. `C02_Chip_Acquisition_20260430_v002.pptx` 생성.
+1. `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` 생성.
+2. `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md` 생성.
+3. `C02_Chip_Acquisition_260430152318_Code_Fix_Result_v002.pptx` 생성.
 4. 이전 문서에는 forward trace를 추가한다.
 5. Git commit은 검증 결과 단위로 분리한다.
 
@@ -334,10 +334,10 @@ C01 v009의 32개 계약은 모두 C02 입력 계약으로 수락한다. 다만 
 
 | 항목 | 내용 |
 |---|---|
-| 입력 Handoff | `C02_Chip_Acquisition_C01_Handoff_20260430_v002.md` |
-| 입력 분석 | `C02_Chip_Acquisition_20260429_v001.md` |
-| 본 계획 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md` |
-| 다음 산출물 | 사용자 승인 후 RTL/TB 보완, `C02_Chip_Acquisition_Code_Verify_20260430_v001.md`, `C02_Chip_Acquisition_20260430_v002.md`, PPT v002 |
+| 입력 Handoff | `C02_Chip_Acquisition_260430114442_C01_Handoff_v002.md` |
+| 입력 분석 | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` |
+| 본 계획 | `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md` |
+| 다음 산출물 | 사용자 승인 후 RTL/TB 보완, `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md`, `C02_Chip_Acquisition_260430151152_Code_Fix_Result_v001.md`, PPT v002 |
 | 판단 변화 | C01 계약 32건 전체 수락을 C02 수정 우선순위와 검증 항목으로 확장 |
 
 ---
@@ -347,8 +347,8 @@ C01 v009의 32개 계약은 모두 C02 입력 계약으로 수락한다. 다만 
 | 항목 | 기록 내용 |
 |---|---|
 | 변경 원인 | 사용자가 Plan v001을 위에서부터 검토하며 R-C02-P001-01~08 수정 방향을 공유했고, "다 끝났어"로 Plan v002 반영을 지시함 |
-| 반영된 다음 버전 파일 | `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_Code_Fix_Plan_20260430_v002.md` |
+| 반영된 다음 버전 파일 | `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260430133832_Code_Fix_Plan_v002.md` |
 | 다음 버전 반영 위치 | section 2 Review 반영 요약, section 4 수정 목표, section 6 기능 검증 경계 Matrix, section 7 Latency/Throughput/Pipeline/II 분석 계획, section 8 범위 제외/후속 항목, section 9 Risk-Control Plan, section 10 사용자 승인 요청 Matrix |
 | 판단 변화 | v001의 10개 검증 항목/6개 승인 항목 구조를 v002에서 10개 검증 경계, 9개 risk, 12개 approval matrix 구조로 변경 |
-| 추적 근거 | `C02_Chip_Acquisition_Code_Fix_Plan_Review_20260430_v001.md`, 사용자 입력 "다 끝났어" |
+| 추적 근거 | `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_Review_v001.md`, 사용자 입력 "다 끝났어" |
 | 기존 문서 수정 시간 | `2026-04-30 13:38:32 +09:00` |

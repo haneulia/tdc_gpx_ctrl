@@ -434,7 +434,7 @@ single EF drain_time ~= total_data_words * (C01 read latency + 3*T settle + deci
 - RTL 수정은 하지 않았다.
 - empty-read waveform 계측은 아직 수행하지 않았다.
 
-본 Markdown을 기준으로 발표용 핵심 도식 PPT `C02_Chip_Acquisition_20260429_v001.pptx`를 생성했다. PPT는 7 slides로 구성했고, timing block, topology, latency/throughput/II, finding 요약을 포함한다.
+본 Markdown을 기준으로 발표용 핵심 도식 PPT `C02_Chip_Acquisition_260429203421_Analysis_v001.pptx`를 생성했다. PPT는 7 slides로 구성했고, timing block, topology, latency/throughput/II, finding 요약을 포함한다.
 
 ---
 
@@ -442,9 +442,9 @@ single EF drain_time ~= total_data_words * (C01 read latency + 3*T settle + deci
 
 | 항목 | 내용 |
 |---|---|
-| 직전 문서 | `C02_Chip_Acquisition_Plan_20260429_v001.md` |
-| 본 문서 | `C02_Chip_Acquisition_20260429_v001.md` |
-| 동반 PPT | `C02_Chip_Acquisition_20260429_v001.pptx` |
-| 다음 문서 후보 | 사용자 검토 후 `C02_Chip_Acquisition_Review_20260429_v001.md` 또는 code-fix plan |
+| 직전 문서 | `C02_Chip_Acquisition_260429203421_Plan_v001.md` |
+| 본 문서 | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` |
+| 동반 PPT | `C02_Chip_Acquisition_260429203421_Analysis_v001.pptx` |
+| 다음 문서 후보 | 사용자 검토 후 v008 파일명 규칙의 review 문서 또는 `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md` |
 | 판단 변화 | C02 정상 운용을 "repeated PH_RUN shot loop"로 명확화. `PH_RESP_DRAIN`은 shot마다가 아니라 run 종료/flush phase로 분리했다. |
 | 추적 근거 | 데이터시트 p.8/p.13/p.19/p.20~22/p.42/p.45/p.48~51, RTL line mapping section 3 |

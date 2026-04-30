@@ -30,10 +30,10 @@
 
 | 산출물 | 내용 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` | 본 상세 검증 기록 |
-| `C02_Chip_Acquisition_Code_Verify_20260430_v001.pptx` | 핵심 흐름/판단 공유용 PPT |
-| `build_C02_Chip_Acquisition_Code_Verify_20260430_v001_ppt.js` | UTF-8 PPT 재생성 스크립트 |
-| `C02_Chip_Acquisition_VB_Closure_Check_20260430_v002.md` | Plan v004 VB matrix 최신 상태 |
+| `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` | 본 상세 검증 기록 |
+| `C02_Chip_Acquisition_260430155825_Code_Verify_v001.pptx` | 핵심 흐름/판단 공유용 PPT |
+| `build_C02_Chip_Acquisition_260430155825_Code_Verify_v001_ppt.js` | UTF-8 PPT 재생성 스크립트 |
+| `C02_Chip_Acquisition_260430155825_VB_Closure_Check_v002.md` | Plan v004 VB matrix 최신 상태 |
 
 PPT 한글 검증:
 
@@ -194,8 +194,8 @@ Output accepted-data II range              = 1..14 clk
 
 | 기준 문서/결과 | 본 문서 반영 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` | 목표 B, 기능 검증 경계 Matrix, latency/throughput/pipeline/II 요구를 추가 검증으로 반영 |
-| `C02_Chip_Acquisition_VB_Closure_Check_20260430_v001.md` | 미검증/부분검증 항목 중 VB-C02-03/05/06/08/10을 보강 |
-| `C02_Chip_Acquisition_Code_Fix_Result_20260430_v002.md` | 기존 PASS 범위에 추가 verification 결과를 누적 |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` | 목표 B, 기능 검증 경계 Matrix, latency/throughput/pipeline/II 요구를 추가 검증으로 반영 |
+| `C02_Chip_Acquisition_260430153700_VB_Closure_Check_v001.md` | 미검증/부분검증 항목 중 VB-C02-03/05/06/08/10을 보강 |
+| `C02_Chip_Acquisition_260430152318_Code_Fix_Result_v002.md` | 기존 PASS 범위에 추가 verification 결과를 누적 |
 | `tdc_gpx_chip_run.vhd` | stale expected-count fault propagation 결함 보완 |
 | `tb_tdc_gpx_chip_ctrl.vhd` | 추가 시나리오 `[16]`, `[17]`, `[18]`로 검증 |

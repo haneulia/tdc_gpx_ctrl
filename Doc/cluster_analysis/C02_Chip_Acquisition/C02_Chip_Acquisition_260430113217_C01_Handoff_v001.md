@@ -32,7 +32,7 @@ C02는 단순히 "C01 bus primitive가 검증되었다"는 전제를 가져오�
 | C01 검증 결과 | PASS/FAIL, transcript, exit code, 남은 잔여 항목 | 필수 |
 | 다음 Cluster 계약 | `C01_GPX_Bus_Read_20260429_v009.md` section 15의 C02 인계 계약 | 필수 |
 
-기존 `C02_Chip_Acquisition_Plan_20260429_v001.md`에는 section 3으로 C01 인계 계약 일부가 이미 들어 있다. 그러나 현재 사용자 피드백 기준으로는 그 정도로 충분하지 않다. C02 v002부터는 "C01 인계 패키지"를 C02의 입구 조건으로 두고, 분석 본문보다 앞에서 이 인계 내용을 먼저 닫아야 한다.
+기존 `C02_Chip_Acquisition_260429203421_Plan_v001.md`에는 section 3으로 C01 인계 계약 일부가 이미 들어 있다. 그러나 현재 사용자 피드백 기준으로는 그 정도로 충분하지 않다. C02 v002부터는 "C01 인계 패키지"를 C02의 입구 조건으로 두고, 분석 본문보다 앞에서 이 인계 내용을 먼저 닫아야 한다.
 
 ## 3. C01 설계 범위 인계
 
@@ -157,7 +157,7 @@ C01은 C02 진입 가능 상태로 닫혔다. 다만 "C02 진입 가능"은 C02�
 
 ## 9. 다음 조치
 
-다음 C02 작업은 바로 RTL 보완으로 들어가기보다, 먼저 `C02_Chip_Acquisition_Plan_20260430_v002.md` 또는 `C02_Chip_Acquisition_20260430_v002.md`에 이 인계 패키지를 반영한 뒤 진행하는 것이 맞다.
+다음 C02 작업은 바로 RTL 보완으로 들어가기보다, 먼저 `C02_Chip_Acquisition_260430114442_C01_Handoff_v002.md`와 `C02_Chip_Acquisition_260430124944_Code_Fix_Plan_v001.md`에 이 인계 패키지를 반영한 뒤 진행하는 것이 맞다.
 
 권장 순서:
 
@@ -180,8 +180,8 @@ C02 진입 조건은 "C01이 PASS였다"가 아니라 "C01의 설계 범위, 구
 | 항목 | 기록 내용 |
 |---|---|
 | 변경 원인 | 사용자가 C01 v009 section 15에는 다음 Cluster 계약이 32건인데, C02 인계 문서 v001에는 13건만 보이는 이유를 질문함 |
-| 반영된 다음 버전 파일 | `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_C01_Handoff_20260430_v002.md` |
+| 반영된 다음 버전 파일 | `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260430114442_C01_Handoff_v002.md` |
 | 다음 버전 반영 위치 | section 2 `판단 결론`, section 3 `C01 v009 32건 계약 전체 수락 Matrix`, section 4 `v001의 13개 항목이 실제로 덮고 있던 범위` |
 | 판단 변화 | v001의 13개 항목은 핵심 주제 요약으로만 인정하고, C02 공식 계약 수락 기준은 C01 v009 32건 전체로 수정 |
-| 추적 근거 | `C01_GPX_Bus_Read_20260429_v009.md:1023-1058`, `C02_Chip_Acquisition_C01_Handoff_20260430_v001.md:124-142`, 사용자 피드백 |
+| 추적 근거 | `C01_GPX_Bus_Read_20260429_v009.md:1023-1058`, `C02_Chip_Acquisition_260430113217_C01_Handoff_v001.md:124-142`, 사용자 피드백 |
 | 기존 문서 수정 시간 | `2026-04-30 11:44:42 +09:00` |

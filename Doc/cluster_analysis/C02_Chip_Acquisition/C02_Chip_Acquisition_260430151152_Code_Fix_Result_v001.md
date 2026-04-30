@@ -3,7 +3,7 @@
 문서 버전: `v001`  
 작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 15:11:52 +09:00`  
-작성 목적: `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md`를 기준으로 실제 RTL/TB 보완 내용, Datasheet 기준 판단, xsim 검증 결과, 남은 계약/주의점을 기록한다.
+작성 목적: `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md`를 기준으로 실제 RTL/TB 보완 내용, Datasheet 기준 판단, xsim 검증 결과, 남은 계약/주의점을 기록한다.
 
 ---
 
@@ -12,8 +12,8 @@
 | 구분 | 내용 |
 |---|---|
 | 절대 기준 | `Doc/TDC-GPX-Datasheet.pdf`: Interface FIFO empty 상태에서 read 금지, EF/LF status pin 의미, GPX readout 40 MHz 이하 운용 |
-| C01 인계 기준 | `C01_GPX_Bus_Read_20260429_v009.md`, `C02_Chip_Acquisition_C01_Handoff_20260430_v002.md` |
-| C02 수정 기준 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` |
+| C01 인계 기준 | `C01_GPX_Bus_Read_20260429_v009.md`, `C02_Chip_Acquisition_260430114442_C01_Handoff_v002.md` |
+| C02 수정 기준 | `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` |
 | RTL 결과 | count-known drain hard bound, count-unknown EF fallback guard, raw `tuser` 주석 정합화 반영 |
 | TB 결과 | 빈 IFIFO read 즉시 FAIL monitor, raw data/control beat 분리, raw `tuser` bit contract monitor 추가 |
 | xsim 결과 | `tb_tdc_gpx_chip_ctrl` compile/elab/run PASS, `*** ALL TESTS PASSED *** (total_raw_words=231)` |
@@ -174,8 +174,8 @@ PASS: [16] Raw control beat IDs observed: ififo1_done=14 final_done=16
 
 | 이전 문서/계획 | 본 결과 반영 위치 |
 |---|---|
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` 목표 A | 본 문서 2.1, 3.1 `[2]`, `[2b]`, `[3]` |
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` 목표 B | 본 문서 4, 4.1 |
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` 목표 C | 본 문서 2.2 |
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` VB-C02-02 | 본 문서 3 C02-TB-02, 3.1 `[16]` |
-| `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` VB-C02-07 | 본 문서 3 C02-TB-03, 5 xsim 결과 |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` 목표 A | 본 문서 2.1, 3.1 `[2]`, `[2b]`, `[3]` |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` 목표 B | 본 문서 4, 4.1 |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` 목표 C | 본 문서 2.2 |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` VB-C02-02 | 본 문서 3 C02-TB-02, 3.1 `[16]` |
+| `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` VB-C02-07 | 본 문서 3 C02-TB-03, 5 xsim 결과 |

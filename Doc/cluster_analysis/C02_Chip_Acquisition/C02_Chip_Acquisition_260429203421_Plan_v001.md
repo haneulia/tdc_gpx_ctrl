@@ -159,7 +159,7 @@
 |---|---|
 | 직전 Cluster | `C01_GPX_Bus_Read` closure v005 승인 |
 | 본 문서 | C02 시작 계획 v001 |
-| 다음 산출물 | `C02_Chip_Acquisition_20260429_v001.md`, `C02_Chip_Acquisition_20260429_v001.pptx` |
+| 다음 산출물 | `C02_Chip_Acquisition_260429203421_Analysis_v001.md`, `C02_Chip_Acquisition_260429203421_Analysis_v001.pptx` |
 | 판단 변화 | C01 bus primitive에서 C02 chip acquisition FSM / drain policy로 분석 범위 확장 |
 | 추적 근거 | `C01_GPX_Bus_Read_Code_Verify_20260429_v005.md` section 11 / 14, `C01_GPX_Bus_Read_20260429_v009.md` section 15 |
 
@@ -167,10 +167,10 @@
 
 | 반영 대상 | 반영 위치 |
 |---|---|
-| 데이터시트 기준 우선 분석 | `C02_Chip_Acquisition_20260429_v001.md` section 2 |
-| RTL topology / FSM mapping | `C02_Chip_Acquisition_20260429_v001.md` section 3 |
-| 정상 acquisition sequence | `C02_Chip_Acquisition_20260429_v001.md` section 4 |
-| Timing block diagram | `C02_Chip_Acquisition_20260429_v001.md` section 5, `C02_Chip_Acquisition_20260429_v001.pptx` slide 4 |
-| Latency / Throughput / Pipeline / II | `C02_Chip_Acquisition_20260429_v001.md` section 6, PPT slide 5 |
-| Code review finding | `C02_Chip_Acquisition_20260429_v001.md` section 7, PPT slide 6 |
-| 사용자 확인 필요 | `C02_Chip_Acquisition_20260429_v001.md` section 9, PPT slide 7 |
+| 데이터시트 기준 우선 분석 | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 2 |
+| RTL topology / FSM mapping | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 3 |
+| 정상 acquisition sequence | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 4 |
+| Timing block diagram | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 5, `C02_Chip_Acquisition_260429203421_Analysis_v001.pptx` slide 4 |
+| Latency / Throughput / Pipeline / II | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 6, PPT slide 5 |
+| Code review finding | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 7, PPT slide 6 |
+| 사용자 확인 필요 | `C02_Chip_Acquisition_260429203421_Analysis_v001.md` section 9, PPT slide 7 |

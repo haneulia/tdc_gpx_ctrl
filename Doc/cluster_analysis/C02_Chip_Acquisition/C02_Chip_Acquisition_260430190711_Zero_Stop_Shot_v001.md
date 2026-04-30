@@ -5,9 +5,9 @@
 - 목적: echo_receiver가 stop pulse가 없는 shot에서도 final summary를 내보낼 때, C02가 `expected=0`을 "정보 없음"이 아니라 "확정된 zero-stop"으로 처리하도록 RTL과 검증을 보완한다.
 - 절대 기준: `Doc/TDC-GPX-Datasheet.pdf`
 - 관련 선행 문서:
-  - `C02_Chip_Acquisition_Echo_Fire_Count_Stream_Review_20260430_v002.md`
-  - `C02_Chip_Acquisition_ShotSeq_Match_Expected_Review_20260430_v001.md`
-  - `C02_Chip_Acquisition_Expected_Latch_Guard_Review_20260430_v001.md`
+  - `C02_Chip_Acquisition_260430184356_Echo_Fire_Count_Stream_Review_v002.md`
+  - `C02_Chip_Acquisition_260430172831_ShotSeq_Match_Expected_Review_v001.md`
+  - `C02_Chip_Acquisition_260430170547_Expected_Latch_Guard_Review_v001.md`
 
 ---
 

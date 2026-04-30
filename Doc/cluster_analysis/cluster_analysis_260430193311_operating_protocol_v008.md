@@ -1,9 +1,9 @@
 # Cluster Analysis Operating Protocol
 
-문서 버전: `v007`  
-작성일: `2026-04-30`  
-최종 수정 시간: `2026-04-30 11:32:17 +09:00`  
-작성 목적: `tdc_gpx_top` 및 하위 모듈 Cluster 분석을 진행할 때, 사용자와 Codex가 공유해야 하는 소통 방식, 기준 문서 우선순위, 근거 추적 방식, Git 변경 관리, 컨텍스트 인계 절차, 그리고 사용자 review에 대한 처리 사이클을 고정한다.
+문서 버전: `v008`
+작성일: `2026-04-30`
+최종 수정 시간: `2026-04-30 19:33:11 +09:00`
+작성 목적: `tdc_gpx_top` 및 하위 모듈 Cluster 분석을 진행할 때, 사용자와 Codex가 공유해야 하는 소통 방식, 기준 문서 우선순위, 근거 추적 방식, Git 변경 관리, 파일 이름 생성 규칙, 컨텍스트 인계 절차, 그리고 사용자 review에 대한 처리 사이클을 고정한다.
 
 ---
 
@@ -145,12 +145,13 @@ Postfix:
 ```text
 Doc/cluster_analysis/
   cluster_analysis_communication_plan_20260429_v001.md
-  cluster_analysis_operating_protocol_20260429_v001.md
+  cluster_analysis_260430193311_operating_protocol_v008.md
   C01_GPX_Bus_Read/
     C01_GPX_Bus_Read_20260429_v001.md
     C01_GPX_Bus_Read_20260429_v001.pptx
-    C01_GPX_Bus_Read_20260429_v002.md
-    C01_GPX_Bus_Read_20260429_v002.pptx
+  C02_Chip_Acquisition/
+    C02_Chip_Acquisition_260430192448_Timing_Breakdown_v002.md
+    C02_Chip_Acquisition_260430155825_Code_Verify_v001.pptx
 ```
 
 규칙:
@@ -159,6 +160,34 @@ Doc/cluster_analysis/
 - 사용자 피드백이 반영되면 같은 Cluster 내에서 `v002`, `v003`처럼 새 파일을 만든다.
 - 다음 Cluster는 별도 폴더를 만든다.
 - PPT는 Markdown보다 더 추상적이고 핵심 도식 중심으로 만든다.
+
+### 파일 이름 생성 규칙 (v008 신규)
+
+Cluster 산출물 파일명은 사용자가 시간순으로 문서를 추적할 수 있도록 `Cluster명` 바로 뒤에 작성/수정 일시 token을 둔다.
+
+기본 패턴:
+
+```text
+<ClusterName>_<YYMMDDHHMMSS>_<WorkName>_vNNN.<ext>
+```
+
+적용 규칙:
+
+- `YYMMDDHHMMSS`는 문서 header의 `작성/수정 시간` 또는 `최종 수정 시간`에서 가져온 한국 시간 기준 12자리 날짜+시간값이다.
+- header 시간이 없는 PPT, 생성 script, 보조 산출물은 같은 논리 결과물의 Markdown 시간값을 우선 공유한다.
+- 같은 논리 결과물의 Markdown/PPT 쌍은 동일한 `YYMMDDHHMMSS`, `WorkName`, `vNNN`을 사용하고 확장자만 다르게 둔다.
+- 파일명 token은 사용자가 요청한 예시 기준에 따라 `260430192448`처럼 날짜+시간값을 사용한다.
+- `WorkName`은 `Timing_Breakdown`, `Code_Fix_Plan`, `C01_Handoff`, `Zero_Stop_Shot`처럼 문서 목적이 드러나는 이름으로 쓴다.
+- 파일명 변경 시 문서 본문, lineage, 관련 script의 출력 파일명도 함께 갱신한다.
+- 기존 historical 산출물은 사용자가 명시적으로 요청한 범위에서만 rename한다. rename 시 원본 내용을 삭제하지 않고 Git rename으로 추적한다.
+
+예:
+
+| 산출물 | v008 이후 패턴 |
+|---|---|
+| C02 timing breakdown v002 | `C02_Chip_Acquisition_260430192448_Timing_Breakdown_v002.md` |
+| C02 code verify v001 PPT | `C02_Chip_Acquisition_260430155825_Code_Verify_v001.pptx` |
+| operating protocol v008 | `cluster_analysis_260430193311_operating_protocol_v008.md` |
 
 ### Version lineage 기록 규칙
 
@@ -273,15 +302,15 @@ Timing, handshake, CDC, bus transaction, FIFO drain처럼 시간 순서가 동�
 
 | 단계 | 파일명 패턴 |
 |---|---|
-| 사용자 review | `<base>_Review_YYYYMMDD_vNNN.md` |
-| Codex plan | `<base>_Plan_YYYYMMDD_vNNN.md` |
-| Codex result | `<base>_YYYYMMDD_vNNN.md` (기존 결과 버전 패턴 그대로) |
+| 사용자 review | `<ClusterName>_<YYMMDDHHMMSS>_<ArtifactName>_Review_vNNN.md` |
+| Codex plan | `<ClusterName>_<YYMMDDHHMMSS>_<ArtifactName>_Plan_vNNN.md` |
+| Codex result | `<ClusterName>_<YYMMDDHHMMSS>_<ArtifactName>_vNNN.md` |
 
-`<base>`는 산출물 종류에 따라 다르다. 예시:
+`<ArtifactName>`은 산출물 종류에 따라 다르다. 예시:
 
-- `C01_GPX_Bus_Read_Code_Verify_Review_20260429_v003.md` (사용자 v003 review)
-- `C01_GPX_Bus_Read_Code_Verify_Plan_20260429_v001.md` (Codex가 v003 review에 대응한 plan)
-- `C01_GPX_Bus_Read_Code_Verify_20260429_v004.md` (Codex 결과 보고서)
+- `C02_Chip_Acquisition_260430133832_Code_Fix_Plan_Review_v001.md` (사용자 review 기록)
+- `C02_Chip_Acquisition_260430143509_Code_Fix_Plan_v004.md` (Codex plan)
+- `C02_Chip_Acquisition_260430155825_Code_Verify_v001.md` (Codex 결과 보고서)
 
 Plan 문서 필수 항목:
 
@@ -492,15 +521,19 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 
 본 v006 -> v007 변경 사실은 v006 문서 끝에 forward-trace로도 기록한다.
 
-### v007 -> v008 반영 위치 기록
+### 2026-04-30 파일 이름 생성 규칙 추가 (v008)
 
-| 항목 | 기록 내용 |
-|---|---|
-| 변경 원인 | 사용자가 C02 산출물 파일명에서 `C02_Chip_Acquisition` 뒤에 작업명보다 작성/수정 일시 `YYMMDDHHMMSS`가 먼저 오도록 규칙 추가를 요청 |
-| 반영된 다음 버전 파일 | `cluster_analysis_260430193311_operating_protocol_v008.md` |
-| 다음 버전 반영 위치 | section 5 `파일 이름 생성 규칙 (v008 신규)`, section 8 `2026-04-30 파일 이름 생성 규칙 추가 (v008)`, section 9 다음 진행 상태 |
-| 판단 변화 | 기존 `<Cluster>_<WorkName>_<YYYYMMDD>_vNNN` 패턴을 C02 이후 `<Cluster>_<YYMMDDHHMMSS>_<WorkName>_vNNN` 패턴으로 변경 |
-| 추적 근거 | 사용자 피드백: "C02_Chip_Acquisition_260430192448_Timing_Breakdown_v002으로 바뀌길 원했던거야" |
+사용자는 C02 산출물에서 `C02_Chip_Acquisition` 뒤에 바로 작업명이 오던 파일명을 수정해, `C02_Chip_Acquisition_260430192448_Timing_Breakdown_v002`처럼 Cluster명 뒤에 작성/수정 일시 `YYMMDDHHMMSS`를 두는 규칙을 요청했다.
+
+본 v008 운영 프로토콜은 다음 규칙을 추가한다.
+
+- `파일 이름 생성 규칙` (section 5에 추가, v008 신규)
+- C02 산출물의 기존 파일명을 `C02_Chip_Acquisition_<YYMMDDHHMMSS>_<WorkName>_vNNN` 패턴으로 rename
+- 문서 본문과 PPT 생성 script의 이전 파일명 참조를 새 파일명으로 동시 갱신
+
+이 규칙은 C02 이후 새 산출물부터 즉시 적용한다. C01 historical 산출물은 기존 lineage 보존을 위해 사용자가 별도 요청하기 전까지 rename하지 않는다.
+
+본 v007 -> v008 변경 사실은 v007 문서 끝에 forward-trace로도 기록한다.
 
 ---
 
@@ -513,3 +546,4 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 - C01 cluster는 **closure 완료** 상태이며, 다음 분석 후보는 `C02_Chip_Acquisition`이다.
 - C02는 데이터시트 기준으로 `EF1/EF2 active HIGH`, empty FIFO read 금지, IFIFO drain, capture/run FSM, force_reinit/bus_fatal 운용을 검증하는 방향으로 시작한다. C01에서 인계되는 finding (F-C01-V01/V02/V03/V04, F-C01-V06 잔여)을 C02 검증 시나리오에 명시적으로 포함한다.
 - v007부터는 문서/RTL/testbench/script 수정 전후 Git 상태 확인과 변경 단위 분리를 필수로 적용한다. commit은 사용자 승인 후 현재 작업 단위 파일만 대상으로 수행한다.
+- v008부터는 C02 이후 Cluster 산출물 파일명을 `<ClusterName>_<YYMMDDHHMMSS>_<WorkName>_vNNN.<ext>` 형식으로 생성한다. C02 문서군은 이 규칙에 맞게 rename 완료 상태로 관리한다.

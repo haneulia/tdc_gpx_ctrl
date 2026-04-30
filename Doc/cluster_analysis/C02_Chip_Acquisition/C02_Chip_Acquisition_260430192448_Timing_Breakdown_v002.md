@@ -2,7 +2,7 @@
 
 - 문서 버전: `v002`
 - 작성/수정 시간: 2026-04-30 19:24:48 +09:00
-- 이전 문서: `C02_Chip_Acquisition_Timing_Breakdown_20260430_v001.md`
+- 이전 문서: `C02_Chip_Acquisition_260430162612_Timing_Breakdown_v001.md`
 - 목적: zero-stop shot 보완 이후 C02 drain timing, latency, throughput, pipeline, II를 다시 검사한다.
 - 절대 기준: `Doc/TDC-GPX-Datasheet.pdf`
 - 기준 clock: `i_tdc_clk = 200 MHz`, `1 clk = 5 ns`
@@ -213,7 +213,7 @@ zero-stop에서는 IFIFO data read가 없다. 따라서 C01 bus READ service tim
 
 | 이전 항목 | v002 반영 |
 |---|---|
-| `C02_Chip_Acquisition_Timing_Breakdown_20260430_v001.md` | 정상 burst timing 해석을 유지하되, 깨진 한글과 zero-stop 미반영을 보완 |
-| `C02_Chip_Acquisition_Zero_Stop_Shot_20260430_v001.md` | zero-stop path를 timing breakdown에 통합 |
+| `C02_Chip_Acquisition_260430162612_Timing_Breakdown_v001.md` | 정상 burst timing 해석을 유지하되, 깨진 한글과 zero-stop 미반영을 보완 |
+| `C02_Chip_Acquisition_260430190711_Zero_Stop_Shot_v001.md` | zero-stop path를 timing breakdown에 통합 |
 | `fa234b1 fix: handle C02 zero stop shots` | `expected_final_valid` 기반 zero-stop RTL/TB 보완 결과 반영 |
 | `xsim_chip_ctrl.log` 최신 실행 | `[2c]`, `[2d]`, `[16]` 측정값 반영 |
