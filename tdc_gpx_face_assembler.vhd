@@ -540,6 +540,7 @@ begin
         variable v_done_after     : std_logic_vector(3 downto 0);
         variable v_chip_idx       : natural range 0 to 3;
         variable v_row_completing : boolean;  -- row finishes on this edge
+        variable v_faulted_this_cycle : std_logic_vector(c_N_CHIPS - 1 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -576,8 +577,10 @@ begin
             else
                 -- Default: clear single-cycle pulses
                 s_row_done_r     <= '0';
+                s_row_done_faulted_r <= '0';
                 s_shot_overrun_r <= '0';
                 s_face_abort_r   <= '0';
+                v_faulted_this_cycle := (others => '0');
 
                 -- Round 13 follow-up P1 rework (audit 4번): latch per-chip
                 -- faulted only when the matching chip's tlast is consumed
@@ -591,6 +594,7 @@ begin
                        and s_in_tlast(i) = '1'
                        and s_in_tuser(i) = '1' then
                         s_chip_faulted_pending_r(i) <= '1';
+                        v_faulted_this_cycle(i) := '1';
                     end if;
                 end loop;
 
@@ -889,7 +893,7 @@ begin
                 -- makes the whole row degraded — a safer downstream default
                 -- than the pre-existing "row looks clean" behaviour.
                 if v_row_completing
-                   and s_chip_faulted_pending_r /= (c_N_CHIPS - 1 downto 0 => '0') then
+                   and (s_chip_faulted_pending_r or v_faulted_this_cycle) /= (c_N_CHIPS - 1 downto 0 => '0') then
                     s_row_done_faulted_r <= '1';
                 end if;
                 if v_row_completing then

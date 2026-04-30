@@ -56,6 +56,7 @@ architecture sim of tb_tdc_gpx_cell_pipe is
     signal cell_rise_tdata_3  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
     signal cell_rise_tvalid   : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal cell_rise_tlast    : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal cell_rise_tuser    : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal cell_rise_tready   : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
 
     -- =========================================================================
@@ -67,6 +68,7 @@ architecture sim of tb_tdc_gpx_cell_pipe is
     signal cell_fall_tdata_3  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
     signal cell_fall_tvalid   : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal cell_fall_tlast    : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal cell_fall_tuser    : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal cell_fall_tready   : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
 
     -- =========================================================================
@@ -127,7 +129,11 @@ begin
             o_slice_timeout       => open,
             o_slice_fall_timeout  => open,
             o_stop_id_error       => open,
-            o_stop_id_fall_error  => open
+            o_stop_id_fall_error  => open,
+            o_quarantine_escape_rise => open,
+            o_quarantine_escape_fall => open,
+            o_cell_rise_tuser     => cell_rise_tuser,
+            o_cell_fall_tuser     => cell_fall_tuser
         );
 
     -- =========================================================================
@@ -157,12 +163,13 @@ begin
         end function;
 
         -- Helper: build tuser for a drain_done control beat
-        function fn_tuser_drain(ififo_id : natural)
+        function fn_tuser_drain(ififo_id : natural; faulted : std_logic)
             return std_logic_vector is
             variable v : std_logic_vector(15 downto 0) := (others => '0');
         begin
             v(7) := '1';  -- drain_done
             v(6) := std_logic(to_unsigned(ififo_id, 1)(0));
+            v(5) := faulted;
             return v;
         end function;
 
@@ -208,7 +215,7 @@ begin
         -- This triggers output of stops 0~3
         -- -----------------------------------------------------------------
         evt_tdata(0)  <= (others => '0');
-        evt_tuser(0)  <= fn_tuser_drain(ififo_id => 0);
+        evt_tuser(0)  <= fn_tuser_drain(ififo_id => 0, faulted => '0');
         evt_tvalid(0) <= '1';
         wait until rising_edge(clk);
         evt_tvalid(0) <= '0';
@@ -218,10 +225,11 @@ begin
         -- Step 4: Send drain_done -- final done (tuser[7]=1, tuser[6]=1)
         -- This triggers output of stops 4~7 and buffer swap
         -- -----------------------------------------------------------------
-        evt_tuser(0)  <= fn_tuser_drain(ififo_id => 1);
+        evt_tuser(0)  <= fn_tuser_drain(ififo_id => 1, faulted => '1');
         evt_tvalid(0) <= '1';
         wait until rising_edge(clk);
         evt_tvalid(0) <= '0';
+        evt_tuser(0)  <= (others => '0');
 
         -- -----------------------------------------------------------------
         -- Wait for cell output to appear (generous margin)
@@ -240,6 +248,8 @@ begin
         variable v_saw_tvalid : boolean := false;
         variable v_saw_tlast  : boolean := false;
         variable v_tdata_ok   : boolean := false;
+        variable v_faulted_tlast_ok : boolean := false;
+        variable v_non_tlast_tuser_clean : boolean := true;
     begin
         -- Wait until reset is released
         wait until rst_n = '1';
@@ -251,6 +261,10 @@ begin
             if cell_rise_tvalid(0) = '1' then
                 v_saw_tvalid := true;
 
+                if cell_rise_tlast(0) = '0' and cell_rise_tuser(0) /= '0' then
+                    v_non_tlast_tuser_clean := false;
+                end if;
+
                 -- Check that tdata is non-zero (contains cell data)
                 if cell_rise_tdata_0 /= (cell_rise_tdata_0'range => '0') then
                     v_tdata_ok := true;
@@ -258,6 +272,9 @@ begin
 
                 if cell_rise_tlast(0) = '1' then
                     v_saw_tlast := true;
+                    if cell_rise_tuser(0) = '1' then
+                        v_faulted_tlast_ok := true;
+                    end if;
                     exit lp_monitor;
                 end if;
             end if;
@@ -271,8 +288,9 @@ begin
         -- -----------------------------------------------------------------
         -- Report results
         -- -----------------------------------------------------------------
-        if v_saw_tvalid and v_saw_tlast and v_tdata_ok then
-            report "PASS: Rising cell output appeared with valid tdata and tlast."
+        if v_saw_tvalid and v_saw_tlast and v_tdata_ok
+           and v_faulted_tlast_ok and v_non_tlast_tuser_clean then
+            report "PASS: Rising cell output appeared with valid tdata, tlast, and faulted tuser."
                 severity note;
         else
             if not v_saw_tvalid then
@@ -285,6 +303,14 @@ begin
             end if;
             if not v_saw_tlast then
                 report "FAIL: o_cell_rise_tlast(0) never fired."
+                    severity error;
+            end if;
+            if not v_faulted_tlast_ok then
+                report "FAIL: o_cell_rise_tuser(0) was not asserted with tlast."
+                    severity error;
+            end if;
+            if not v_non_tlast_tuser_clean then
+                report "FAIL: o_cell_rise_tuser(0) asserted before tlast."
                     severity error;
             end if;
         end if;

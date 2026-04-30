@@ -54,6 +54,7 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal cell_rise_tdata_3 : std_logic_vector(C_OUTPUT_WIDTH - 1 downto 0) := (others => '0');
     signal cell_rise_tvalid  : std_logic_vector(3 downto 0) := (others => '0');
     signal cell_rise_tlast   : std_logic_vector(3 downto 0) := (others => '0');
+    signal cell_rise_tuser   : std_logic_vector(3 downto 0) := (others => '0');
     signal cell_rise_tready  : std_logic_vector(3 downto 0);
 
     -- Cell fall inputs (all tied low)
@@ -63,6 +64,7 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal cell_fall_tdata_3 : std_logic_vector(C_OUTPUT_WIDTH - 1 downto 0) := (others => '0');
     signal cell_fall_tvalid  : std_logic_vector(3 downto 0) := (others => '0');
     signal cell_fall_tlast   : std_logic_vector(3 downto 0) := (others => '0');
+    signal cell_fall_tuser   : std_logic_vector(3 downto 0) := (others => '0');
     signal cell_fall_tready  : std_logic_vector(3 downto 0);
 
     -- Control
@@ -113,6 +115,10 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal row_fall_done        : std_logic;
     signal chip_error_flags     : std_logic_vector(3 downto 0);
     signal chip_fall_error      : std_logic_vector(3 downto 0);
+    signal chip_error_partial_rise : std_logic_vector(3 downto 0);
+    signal chip_error_blank_rise   : std_logic_vector(3 downto 0);
+    signal chip_error_partial_fall : std_logic_vector(3 downto 0);
+    signal chip_error_blank_fall   : std_logic_vector(3 downto 0);
     signal shot_overrun         : std_logic;
     signal shot_fall_overrun    : std_logic;
     signal face_abort           : std_logic;
@@ -129,6 +135,16 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal face_fall_tvalid     : std_logic;
     signal face_buf_tvalid      : std_logic;
     signal face_fall_buf_tvalid : std_logic;
+    signal shot_flush_drop_mask_rise : std_logic_vector(3 downto 0);
+    signal shot_flush_drop_mask_fall : std_logic_vector(3 downto 0);
+    signal hdr_drain_timeout_rise    : std_logic;
+    signal hdr_drain_timeout_fall    : std_logic;
+    signal hdr_abort_truncated_rise  : std_logic;
+    signal hdr_abort_truncated_fall  : std_logic;
+    signal frame_done_faulted_rise   : std_logic;
+    signal frame_done_faulted_fall   : std_logic;
+    signal row_done_faulted_rise     : std_logic;
+    signal row_done_faulted_fall     : std_logic;
 
     -- Monitor counters
     signal v_out_beat_cnt : natural := 0;
@@ -139,6 +155,11 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal v_fall_eol_seen     : boolean := false;
     signal v_frame_done_cnt    : natural := 0;
     signal v_frame_fall_done_cnt : natural := 0;
+    signal s_sof_count          : natural := 0;
+    signal s_row_faulted_rise_cnt : natural := 0;
+    signal s_row_faulted_fall_cnt : natural := 0;
+    signal s_frame_faulted_rise_cnt : natural := 0;
+    signal s_frame_faulted_fall_cnt : natural := 0;
 
 begin
 
@@ -166,6 +187,7 @@ begin
             i_cell_rise_tvalid     => cell_rise_tvalid,
             i_cell_rise_tlast      => cell_rise_tlast,
             o_cell_rise_tready     => cell_rise_tready,
+            i_cell_rise_tuser      => cell_rise_tuser,
             -- Fall cell inputs
             i_cell_fall_tdata_0    => cell_fall_tdata_0,
             i_cell_fall_tdata_1    => cell_fall_tdata_1,
@@ -174,6 +196,7 @@ begin
             i_cell_fall_tvalid     => cell_fall_tvalid,
             i_cell_fall_tlast      => cell_fall_tlast,
             o_cell_fall_tready     => cell_fall_tready,
+            i_cell_fall_tuser      => cell_fall_tuser,
             -- Control
             i_shot_start_gated     => shot_start_gated,
             i_pipeline_abort       => pipeline_abort,
@@ -213,6 +236,10 @@ begin
             o_row_fall_done        => row_fall_done,
             o_chip_error_flags     => chip_error_flags,
             o_chip_fall_error      => chip_fall_error,
+            o_chip_error_partial_rise => chip_error_partial_rise,
+            o_chip_error_blank_rise   => chip_error_blank_rise,
+            o_chip_error_partial_fall => chip_error_partial_fall,
+            o_chip_error_blank_fall   => chip_error_blank_fall,
             o_shot_overrun         => shot_overrun,
             o_shot_fall_overrun    => shot_fall_overrun,
             o_face_abort           => face_abort,
@@ -231,10 +258,20 @@ begin
             o_face_fall_buf_tvalid => face_fall_buf_tvalid,
             o_shot_flush_drop_rise    => open,
             o_shot_flush_drop_fall    => open,
+            o_shot_flush_drop_mask_rise => shot_flush_drop_mask_rise,
+            o_shot_flush_drop_mask_fall => shot_flush_drop_mask_fall,
             o_shot_overrun_count_rise => open,
             o_shot_overrun_count_fall => open,
             o_hdr_face_start_collapsed_rise => open,
-            o_hdr_face_start_collapsed_fall => open
+            o_hdr_face_start_collapsed_fall => open,
+            o_hdr_drain_timeout_rise        => hdr_drain_timeout_rise,
+            o_hdr_drain_timeout_fall        => hdr_drain_timeout_fall,
+            o_hdr_abort_truncated_rise      => hdr_abort_truncated_rise,
+            o_hdr_abort_truncated_fall      => hdr_abort_truncated_fall,
+            o_frame_done_faulted_rise       => frame_done_faulted_rise,
+            o_frame_done_faulted_fall       => frame_done_faulted_fall,
+            o_row_done_faulted_rise         => row_done_faulted_rise,
+            o_row_done_faulted_fall         => row_done_faulted_fall
         );
 
     -- =========================================================================
@@ -256,6 +293,7 @@ begin
                 v_out_beat_cnt <= v_out_beat_cnt + 1;
                 if m_axis_tuser(0) = '1' then
                     v_sof_seen <= true;
+                    s_sof_count <= s_sof_count + 1;
                 end if;
                 if m_axis_tlast = '1' then
                     v_eol_seen <= true;
@@ -274,6 +312,18 @@ begin
             end if;
             if frame_fall_done = '1' then
                 v_frame_fall_done_cnt <= v_frame_fall_done_cnt + 1;
+            end if;
+            if row_done_faulted_rise = '1' then
+                s_row_faulted_rise_cnt <= s_row_faulted_rise_cnt + 1;
+            end if;
+            if row_done_faulted_fall = '1' then
+                s_row_faulted_fall_cnt <= s_row_faulted_fall_cnt + 1;
+            end if;
+            if frame_done_faulted_rise = '1' then
+                s_frame_faulted_rise_cnt <= s_frame_faulted_rise_cnt + 1;
+            end if;
+            if frame_done_faulted_fall = '1' then
+                s_frame_faulted_fall_cnt <= s_frame_faulted_fall_cnt + 1;
             end if;
         end if;
     end process p_monitor;
@@ -334,8 +384,10 @@ begin
             -- (face_assembler expects tlast at chip slice boundary, not per-cell)
             if beat_idx = C_TOTAL_BEATS - 1 then
                 cell_rise_tlast <= "0001";
+                cell_rise_tuser <= "0001";
             else
                 cell_rise_tlast <= "0000";
+                cell_rise_tuser <= "0000";
             end if;
 
             wait until rising_edge(clk);
@@ -344,6 +396,7 @@ begin
         -- De-assert after last beat
         cell_rise_tvalid <= "0000";
         cell_rise_tlast  <= "0000";
+        cell_rise_tuser  <= "0000";
 
         -- =====================================================================
         -- 5. Wait for frame_done or watchdog
@@ -358,12 +411,31 @@ begin
         report "  SOF seen:     " & boolean'image(v_sof_seen)     severity note;
         report "  EOL seen:     " & boolean'image(v_eol_seen)     severity note;
         report "  frame_done:   " & std_logic'image(frame_done)   severity note;
+        report "  SOF count:    " & integer'image(s_sof_count)    severity note;
+        report "  row_faulted_rise count: " & integer'image(s_row_faulted_rise_cnt) severity note;
 
-        if frame_done = '1' and v_sof_seen and v_eol_seen and v_out_beat_cnt > 0 then
+        if frame_done = '1' and v_sof_seen and v_eol_seen and v_out_beat_cnt > 0
+           and s_sof_count = 1
+           and s_row_faulted_rise_cnt = 1
+           and s_row_faulted_fall_cnt = 0
+           and s_frame_faulted_rise_cnt = 0
+           and s_frame_faulted_fall_cnt = 0 then
             report "*** SCENARIO 1 (rise-only smoke) PASS ***" severity note;
         else
             report "*** SCENARIO 1 FAIL ***" severity failure;
         end if;
+
+        -- Isolate scenario 2 from the rise-only smoke setup. shot_start is
+        -- common to both slopes, so the fall assembler would otherwise keep
+        -- waiting for scenario-1 fall data and reinterpret the next shot_start
+        -- as an overrun/blank-fill row.
+        pipeline_abort_fall <= '1';
+        wait until rising_edge(clk);
+        pipeline_abort_fall <= '0';
+        wait until face_asm_fall_idle = '1' and hdr_fall_idle = '1' for C_WATCHDOG;
+        assert face_asm_fall_idle = '1' and hdr_fall_idle = '1'
+            report "SCENARIO 1 cleanup: fall pipeline did not return idle after abort"
+            severity failure;
 
         -- =====================================================================
         -- SCENARIO 2: slope-independent abort (#22)
@@ -410,9 +482,13 @@ begin
             if beat_idx = C_TOTAL_BEATS - 1 then
                 cell_rise_tlast <= "0001";
                 cell_fall_tlast <= "0001";
+                cell_rise_tuser <= "0000";
+                cell_fall_tuser <= "0000";
             else
                 cell_rise_tlast <= "0000";
                 cell_fall_tlast <= "0000";
+                cell_rise_tuser <= "0000";
+                cell_fall_tuser <= "0000";
             end if;
 
             -- Mid-flight fall abort (after a few real beats, before tlast)
@@ -429,6 +505,8 @@ begin
         cell_fall_tvalid <= "0000";
         cell_rise_tlast  <= "0000";
         cell_fall_tlast  <= "0000";
+        cell_rise_tuser  <= "0000";
+        cell_fall_tuser  <= "0000";
         pipeline_abort_fall <= '0';
 
         -- Allow rise pipeline to reach its frame_done
@@ -442,6 +520,7 @@ begin
         report "  Rise beats: " & integer'image(v_out_beat_cnt)      severity note;
         report "  Fall beats: " & integer'image(v_out_fall_beat_cnt) severity note;
         report "  frame_done: " & std_logic'image(frame_done)        severity note;
+        report "  SOF count:  " & integer'image(s_sof_count)         severity note;
 
         assert v_out_fall_beat_cnt < v_out_beat_cnt
             report "SCENARIO 2: fall beat count should be lower than rise (fall abort not effective)"
@@ -456,6 +535,19 @@ begin
             report "SCENARIO 2: fall frame_done count = "
                    & integer'image(v_frame_fall_done_cnt)
                    & " (fall should not complete after abort)"
+            severity failure;
+        assert s_sof_count = 2
+            report "SCENARIO 2: SOF count = "
+                   & integer'image(s_sof_count) & " (expected 2)"
+            severity failure;
+        assert s_row_faulted_rise_cnt = 1
+            report "SCENARIO 2: clean second rise row should not add row_done_faulted"
+            severity failure;
+        assert s_row_faulted_fall_cnt = 0
+            report "SCENARIO 2: fall abort should not report row_done_faulted"
+            severity failure;
+        assert s_frame_faulted_rise_cnt = 0 and s_frame_faulted_fall_cnt = 0
+            report "SCENARIO 2: frame_done_faulted should remain reserved for header drain timeout"
             severity failure;
 
         report "*** SCENARIO 2 (slope-independent abort) PASS ***" severity note;
