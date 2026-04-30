@@ -618,9 +618,25 @@ begin
         variable v_run_complete_cycle : natural;
         variable v_drain_done_cycle : natural;
         variable v_prev_data_total : natural;
+        variable v_prev_ififo1_data_total : natural;
+        variable v_prev_ififo2_data_total : natural;
+        variable v_prev_ififo1_done_total : natural;
+        variable v_prev_final_done_total : natural;
         variable v_meas_data_cnt : natural;
+        variable v_meas_ififo1_data_cnt : natural;
+        variable v_meas_ififo2_data_cnt : natural;
         variable v_min_ii       : natural;
         variable v_max_ii       : natural;
+        variable v_ififo1_first_cycle : natural;
+        variable v_ififo1_last_cycle  : natural;
+        variable v_ififo2_first_cycle : natural;
+        variable v_ififo2_last_cycle  : natural;
+        variable v_ififo1_done_cycle  : natural;
+        variable v_final_ctrl_cycle   : natural;
+        variable v_ififo1_min_ii : natural;
+        variable v_ififo1_max_ii : natural;
+        variable v_ififo2_min_ii : natural;
+        variable v_ififo2_max_ii : natural;
         variable v_faulted_snap : natural;
         variable v_gap          : natural;
 
@@ -1720,9 +1736,25 @@ begin
         v_run_complete_cycle := 0;
         v_drain_done_cycle   := 0;
         v_prev_data_total    := s_raw_data_cnt;
+        v_prev_ififo1_data_total := s_raw_ififo1_data_cnt;
+        v_prev_ififo2_data_total := s_raw_ififo2_data_cnt;
+        v_prev_ififo1_done_total := s_raw_ififo1_done_ctrl_cnt;
+        v_prev_final_done_total  := s_raw_final_done_ctrl_cnt;
         v_meas_data_cnt      := 0;
+        v_meas_ififo1_data_cnt := 0;
+        v_meas_ififo2_data_cnt := 0;
         v_min_ii             := 999999;
         v_max_ii             := 0;
+        v_ififo1_first_cycle := 0;
+        v_ififo1_last_cycle  := 0;
+        v_ififo2_first_cycle := 0;
+        v_ififo2_last_cycle  := 0;
+        v_ififo1_done_cycle  := 0;
+        v_final_ctrl_cycle   := 0;
+        v_ififo1_min_ii      := 999999;
+        v_ififo1_max_ii      := 0;
+        v_ififo2_min_ii      := 999999;
+        v_ififo2_max_ii      := 0;
         v_found              := false;
 
         s_irflag_pin <= '1';
@@ -1756,6 +1788,58 @@ begin
                 end if;
                 v_last_data_cycle := s_clk_cnt;
                 v_prev_data_total := s_raw_data_cnt;
+            end if;
+
+            if s_raw_ififo1_data_cnt > v_prev_ififo1_data_total then
+                v_meas_ififo1_data_cnt := v_meas_ififo1_data_cnt
+                    + (s_raw_ififo1_data_cnt - v_prev_ififo1_data_total);
+                if v_ififo1_first_cycle = 0 then
+                    v_ififo1_first_cycle := s_clk_cnt;
+                end if;
+                if v_ififo1_last_cycle /= 0 then
+                    v_gap := s_clk_cnt - v_ififo1_last_cycle;
+                    if v_gap < v_ififo1_min_ii then
+                        v_ififo1_min_ii := v_gap;
+                    end if;
+                    if v_gap > v_ififo1_max_ii then
+                        v_ififo1_max_ii := v_gap;
+                    end if;
+                end if;
+                v_ififo1_last_cycle := s_clk_cnt;
+                v_prev_ififo1_data_total := s_raw_ififo1_data_cnt;
+            end if;
+
+            if s_raw_ififo2_data_cnt > v_prev_ififo2_data_total then
+                v_meas_ififo2_data_cnt := v_meas_ififo2_data_cnt
+                    + (s_raw_ififo2_data_cnt - v_prev_ififo2_data_total);
+                if v_ififo2_first_cycle = 0 then
+                    v_ififo2_first_cycle := s_clk_cnt;
+                end if;
+                if v_ififo2_last_cycle /= 0 then
+                    v_gap := s_clk_cnt - v_ififo2_last_cycle;
+                    if v_gap < v_ififo2_min_ii then
+                        v_ififo2_min_ii := v_gap;
+                    end if;
+                    if v_gap > v_ififo2_max_ii then
+                        v_ififo2_max_ii := v_gap;
+                    end if;
+                end if;
+                v_ififo2_last_cycle := s_clk_cnt;
+                v_prev_ififo2_data_total := s_raw_ififo2_data_cnt;
+            end if;
+
+            if s_raw_ififo1_done_ctrl_cnt > v_prev_ififo1_done_total then
+                if v_ififo1_done_cycle = 0 then
+                    v_ififo1_done_cycle := s_clk_cnt;
+                end if;
+                v_prev_ififo1_done_total := s_raw_ififo1_done_ctrl_cnt;
+            end if;
+
+            if s_raw_final_done_ctrl_cnt > v_prev_final_done_total then
+                if v_final_ctrl_cycle = 0 then
+                    v_final_ctrl_cycle := s_clk_cnt;
+                end if;
+                v_prev_final_done_total := s_raw_final_done_ctrl_cnt;
             end if;
 
             if v_run_complete_cycle = 0 and s_run_drain_complete = '1' then
@@ -1811,6 +1895,29 @@ begin
                         & nat_img(v_drain_done_cycle - v_run_complete_cycle)
                         & "clk, II_min=" & nat_img(v_min_ii)
                         & "clk, II_max=" & nat_img(v_max_ii) & "clk");
+                pr_pass("[16] segmented IFIFO1: words="
+                        & nat_img(v_meas_ififo1_data_cnt)
+                        & ", first=" & nat_img(v_ififo1_first_cycle - v_t0_cycle)
+                        & "clk, last=" & nat_img(v_ififo1_last_cycle - v_t0_cycle)
+                        & "clk, done_ctrl=" & nat_img(v_ififo1_done_cycle - v_t0_cycle)
+                        & "clk, II_min=" & nat_img(v_ififo1_min_ii)
+                        & "clk, II_max=" & nat_img(v_ififo1_max_ii) & "clk");
+                pr_pass("[16] segmented IFIFO2: words="
+                        & nat_img(v_meas_ififo2_data_cnt)
+                        & ", first=" & nat_img(v_ififo2_first_cycle - v_t0_cycle)
+                        & "clk, last=" & nat_img(v_ififo2_last_cycle - v_t0_cycle)
+                        & "clk, final_ctrl=" & nat_img(v_final_ctrl_cycle - v_t0_cycle)
+                        & "clk, II_min=" & nat_img(v_ififo2_min_ii)
+                        & "clk, II_max=" & nat_img(v_ififo2_max_ii) & "clk");
+                pr_pass("[16] segmented gaps: ififo1_last_to_done="
+                        & nat_img(v_ififo1_done_cycle - v_ififo1_last_cycle)
+                        & "clk, ififo1_done_to_ififo2_first="
+                        & nat_img(v_ififo2_first_cycle - v_ififo1_done_cycle)
+                        & "clk, ififo2_last_to_final="
+                        & nat_img(v_final_ctrl_cycle - v_ififo2_last_cycle)
+                        & "clk, final_to_output_done="
+                        & nat_img(v_drain_done_cycle - v_final_ctrl_cycle)
+                        & "clk");
             else
                 pr_fail("[16] latency/II measurement incomplete", v_fail);
             end if;

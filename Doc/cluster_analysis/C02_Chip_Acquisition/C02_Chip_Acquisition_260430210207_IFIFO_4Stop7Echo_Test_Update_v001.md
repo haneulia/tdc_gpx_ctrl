@@ -102,3 +102,9 @@ flowchart LR
 ## 6. 결론
 
 정상 IFIFO1/IFIFO2 검증은 이제 각 IFIFO마다 `4 stop channel x 7 echo = 28 word`, 총 56 data word 조건으로 수행된다. 기존 empty-read 금지, raw tuser contract, bounded backpressure, latency/II 측정은 모두 PASS로 유지됐다.
+
+## 7. 후속 반영 추적
+
+| 후속 문서 | 반영 내용 |
+|---|---|
+| `C02_Chip_Acquisition_260430210752_Timing_Metric_Detail_v001.md` | 본 문서 section 4의 Timing / Latency / Throughput / Pipeline / II를 IFIFO1/IFIFO2 data 구간, control beat 구간, gap, output II, throughput으로 세분화했다. |
