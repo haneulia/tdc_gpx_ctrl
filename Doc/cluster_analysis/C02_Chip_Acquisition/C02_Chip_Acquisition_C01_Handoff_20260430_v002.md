@@ -117,3 +117,14 @@ C02의 공식 판단은 다음과 같이 수정한다.
 | 다음 버전 반영 위치 | section 3 `C01 v009 32건 계약 전체 수락 Matrix` |
 | 판단 변화 | 13개 요약은 C02 핵심 주제 요약으로만 인정하고, 공식 계약 수락 기준은 32개 full matrix로 수정 |
 | 추적 근거 | `C01_GPX_Bus_Read_20260429_v009.md:1023-1058`, 사용자 피드백 |
+
+## 8. Handoff v002 -> Code Fix Plan v001 반영 위치 기록
+
+| 항목 | 기록 내용 |
+| --- | --- |
+| 변경 원인 | 사용자가 Handoff 문서를 기반으로 C02 수정계획 수립을 요청 |
+| 반영된 다음 계획 파일 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v001.md` |
+| 다음 계획 반영 위치 | section 2 `Handoff 계약 우선순위화`, section 3 `수정 목표`, section 5 `검증 항목`, section 10 `사용자 승인 요청 항목` |
+| 판단 변화 | C01 v009 32건 전체 수락 matrix를 C02 code-fix 우선순위, RTL/TB 수정 목표, xsim 검증 항목으로 확장 |
+| 추적 근거 | 본 문서 section 3, `C02_Chip_Acquisition_20260429_v001.md` F-C02-01~05 |
+| 기존 문서 수정 시간 | `2026-04-30 12:49:44 +09:00` |
