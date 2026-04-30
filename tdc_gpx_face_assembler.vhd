@@ -261,6 +261,9 @@ architecture rtl of tdc_gpx_face_assembler is
     -- Can FSM produce a new beat?
     --   True when: pipe empty OR pipe handshake occurring.
     --   s_pipe_tready is REGISTERED (from output skid buffer).
+    --   v009 rule: input FIFO ready below uses the same local expression
+    --   directly so the handshake path is not chained through an additional
+    --   intermediate combinational process.
     -- =========================================================================
     signal s_can_produce     : std_logic;
 
@@ -468,24 +471,25 @@ begin
     -- assembler and header absorbs any 1-cycle delay window.
     -- (output FIFO flush handled by s_aresetn in xpm_fifo_axis)
 
-    -- Pipe capacity: can FSM produce? (all inputs registered → ~0.5ns)
+    -- Pipe capacity: can FSM produce?
     s_can_produce <= '1' when (s_pipe_tvalid_r = '0')
                               or (s_pipe_tvalid_r = '1' and s_pipe_tready = '1')
                      else '0';
 
     -- =========================================================================
     -- Input skid buffer m_ready control
-    --   Assert for current chip when FSM is forwarding real data and pipe
-    --   has space. All inputs registered → ~1.5ns combinational.
+    --   Assert for current chip when FSM is forwarding real data and the
+    --   output pipe has space. v009: keep this as a single local qualify
+    --   from registered state/pipe flags to stay within the 2-depth rule.
     -- =========================================================================
-    p_in_tready : process(s_state_r, s_cur_chip_r, s_is_blank_r, s_can_produce)
-    begin
-        s_in_tready <= (others => '0');
-        if s_state_r = ST_FORWARD and s_is_blank_r = '0'
-           and s_can_produce = '1' then
-            s_in_tready(to_integer(s_cur_chip_r)) <= '1';
-        end if;
-    end process p_in_tready;
+    gen_in_tready : for i in 0 to c_N_CHIPS - 1 generate
+        s_in_tready(i) <= '1' when s_state_r = ST_FORWARD
+                                   and s_is_blank_r = '0'
+                                   and s_cur_chip_r = to_unsigned(i, 2)
+                                   and ((s_pipe_tvalid_r = '0')
+                                        or (s_pipe_tready = '1'))
+                          else '0';
+    end generate;
 
     -- =========================================================================
     -- Main FSM process

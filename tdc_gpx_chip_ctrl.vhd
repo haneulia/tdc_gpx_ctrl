@@ -601,6 +601,14 @@ begin
 
     -- Bus response tready: deassert during RUN drain when raw hold is full.
     -- PH_RESP_DRAIN always accepts (to drain stale responses).
+    --
+    -- v009 sequential-logic audit note:
+    --   A naive 1-stage register on ready/fire/rdata was tried and rejected
+    --   because chip_run's READ pacing consumes IFIFO EF/expected feedback in
+    --   this same accepted-response cycle. Delaying s_run_rsp_valid by one
+    --   cycle caused one extra IFIFO read at the drain boundary. Therefore
+    --   this remains a documented handshake exception until a dedicated bus
+    --   response skid/credit refactor updates chip_run pacing together.
     o_s_axis_tready  <= '0' when s_phase_r = PH_RUN and s_raw_hold_busy = '1'
                    else '1' when s_phase_r = PH_RESP_DRAIN
                    else '1' when s_init_busy = '1' or s_run_busy = '1' or s_reg_busy = '1'

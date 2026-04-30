@@ -134,7 +134,7 @@ architecture rtl of tdc_gpx_face_seq is
 
     signal s_frame_rise_done_r : std_logic := '0';
     signal s_frame_fall_done_r : std_logic := '0';
-    signal s_frame_done_both   : std_logic;
+    signal s_frame_done_both_r : std_logic := '0';
 
     -- Shot deferral / face_start delay (absorbed from top p_face_start_delay)
     signal s_face_start_r      : std_logic := '0';
@@ -160,8 +160,8 @@ architecture rtl of tdc_gpx_face_seq is
     -- every cycle in ST_IDLE. Cleared on cmd_stop or abort (SW must re-arm
     -- after abort). Prevents silent loss of 1-cycle cmd_start pulses.
     signal s_cmd_start_pending_r : std_logic := '0';
-    signal s_all_shots_fired   : std_logic;
-    signal s_face_closing      : std_logic;
+    signal s_all_shots_fired_r : std_logic := '0';
+    signal s_face_closing_r    : std_logic := '0';
 
     -- #30 (Round 5): packet_start is now registered.
     -- s_packet_start_comb = combinational evaluation of all gating conditions.
@@ -273,7 +273,7 @@ begin
                     when ST_IN_FACE =>
                         if i_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
-                        elsif s_frame_done_both = '1' then
+                        elsif s_frame_done_both_r = '1' then
                             s_frame_id_r <= s_frame_id_r + 1;
                             if s_face_n_faces_r = 0 or s_face_id_r >= resize(s_face_n_faces_r, 8) - 1 then
                                 s_face_id_r <= (others => '0');
@@ -321,7 +321,7 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or s_packet_start_r = '1'
-               or s_frame_done_both = '1' then
+               or s_frame_done_both_r = '1' then
                 s_face_shot_cnt_r <= (others => '0');
             elsif o_shot_start_gated = '1' then
                 s_face_shot_cnt_r <= s_face_shot_cnt_r + 1;
@@ -394,37 +394,75 @@ begin
     -- will release only the fall side, letting rise complete normally.
     -- =========================================================================
     p_frame_done_both : process(i_clk)
+        variable v_rise_done : std_logic;
+        variable v_fall_done : std_logic;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or s_packet_start_r = '1' then
                 s_frame_rise_done_r <= '0';
                 s_frame_fall_done_r <= '0';
+                s_frame_done_both_r <= '0';
             else
+                v_rise_done := s_frame_rise_done_r or i_frame_done
+                               or s_pipeline_abort_rise;
+                v_fall_done := s_frame_fall_done_r or i_frame_fall_done
+                               or s_pipeline_abort_fall;
+
                 if i_frame_done = '1' or s_pipeline_abort_rise = '1' then
                     s_frame_rise_done_r <= '1';
                 end if;
                 if i_frame_fall_done = '1' or s_pipeline_abort_fall = '1' then
                     s_frame_fall_done_r <= '1';
                 end if;
+                s_frame_done_both_r <= v_rise_done and v_fall_done;
             end if;
         end if;
     end process;
 
-    s_frame_done_both <= '1' when (s_frame_rise_done_r = '1' or i_frame_done = '1' or s_pipeline_abort_rise = '1')
-                                  and (s_frame_fall_done_r = '1' or i_frame_fall_done = '1' or s_pipeline_abort_fall = '1')
-                         else '0';
+    -- v009 sequential-logic rule: close the multi-source face-closing
+    -- decision in registers. The accepted last shot is detected with
+    -- s_shot_start_gated and the pre-increment shot counter, so the close
+    -- flag asserts immediately after the last accepted gated shot without a
+    -- long output-boundary combinational chain.
+    p_face_closing : process(i_clk)
+        variable v_next_shot_cnt : unsigned(15 downto 0);
+        variable v_all_fired     : std_logic;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_cmd_soft_reset = '1'
+               or s_packet_start_r = '1' then
+                s_all_shots_fired_r <= '0';
+                s_face_closing_r    <= '0';
+            elsif i_cmd_stop = '1' then
+                s_all_shots_fired_r <= '0';
+                s_face_closing_r    <= '0';
+            else
+                v_next_shot_cnt := s_face_shot_cnt_r;
+                if s_shot_start_gated = '1' then
+                    v_next_shot_cnt := s_face_shot_cnt_r + 1;
+                end if;
 
-    s_all_shots_fired <= '1' when s_face_shot_cnt_r >= s_face_cols_per_face_r
-                                  and s_face_cols_per_face_r /= 0
-                         else '0';
+                if s_face_cols_per_face_r /= 0
+                   and v_next_shot_cnt >= s_face_cols_per_face_r then
+                    v_all_fired := '1';
+                else
+                    v_all_fired := '0';
+                end if;
 
-    s_face_closing <= '1' when s_all_shots_fired = '1'
-                               or s_pipeline_abort = '1'
-                               or (s_frame_rise_done_r = '1' or i_frame_done = '1'
-                                   or i_hdr_draining = '1')
-                               or (s_frame_fall_done_r = '1' or i_frame_fall_done = '1'
-                                   or i_hdr_fall_draining = '1')
-                     else '0';
+                if v_all_fired = '1' then
+                    s_all_shots_fired_r <= '1';
+                end if;
+
+                if v_all_fired = '1'
+                   or s_pipeline_abort = '1'
+                   or s_frame_done_both_r = '1'
+                   or i_hdr_draining = '1'
+                   or i_hdr_fall_draining = '1' then
+                    s_face_closing_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process;
 
     -- =========================================================================
     -- Output assignments
@@ -432,13 +470,13 @@ begin
     o_cmd_start_accepted  <= s_cmd_start_accepted_r;
     o_face_state_idle     <= '1' when s_face_state_r = ST_IDLE else '0';
     o_packet_start        <= s_packet_start_r;
-    o_face_closing        <= s_face_closing;
+    o_face_closing        <= s_face_closing_r;
     o_face_id             <= s_face_id_r;
     o_frame_id            <= s_frame_id_r;
     o_global_shot_seq     <= s_global_shot_seq_r;
     o_face_shot_count     <= s_face_shot_cnt_r;
     o_frame_abort_cnt     <= s_frame_abort_cnt_r;
-    o_frame_done_both     <= s_frame_done_both;
+    o_frame_done_both     <= s_frame_done_both_r;
     o_face_active_mask    <= s_face_active_mask_r;
     o_face_stops_per_chip <= s_face_stops_per_chip_r;
     o_face_cols_per_face  <= s_face_cols_per_face_r;
@@ -561,7 +599,7 @@ begin
 
                 if s_packet_start_r = '1' then
                     s_face_active_r <= '1';
-                elsif s_frame_done_both = '1' then
+                elsif s_frame_done_both_r = '1' then
                     s_face_active_r <= '0';
                 end if;
 
@@ -578,7 +616,7 @@ begin
                         s_shot_deferred_r <= '0';
                     end if;
                 elsif s_shot_raw_pulse = '1' and s_shot_deferred_r = '0' then
-                    if (s_face_state_r = ST_IN_FACE and s_face_closing = '1')
+                    if (s_face_state_r = ST_IN_FACE and s_face_closing_r = '1')
                        or (s_face_state_r = ST_WAIT_SHOT
                            and s_packet_start_r = '0'
                            and s_packet_start_comb = '0') then
@@ -610,8 +648,8 @@ begin
                 if s_packet_start_r = '1' then
                     s_shot_pending_r <= '1';
                 elsif s_face_active_r = '1'
-                      and s_frame_done_both = '0'
-                      and s_face_closing = '0'
+                      and s_frame_done_both_r = '0'
+                      and s_face_closing_r = '0'
                       and i_cmd_stop = '0'
                       and s_shot_raw_pulse = '1' then
                     s_shot_pending_r <= '1';
@@ -630,7 +668,7 @@ begin
     -- still waits on fall completion, but that is downstream completion
     -- accounting — separate from start gating.
     s_shot_start_gated <= s_shot_pending_r
-                          when s_face_closing = '0'
+                          when s_face_closing_r = '0'
                                and i_cmd_stop = '0'
                                and i_cmd_soft_reset = '0'
                                and s_pipeline_abort_rise = '0'

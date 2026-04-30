@@ -1,6 +1,6 @@
 # Cluster Analysis Operating Protocol
 
-문서 버전: `v008`
+문서 버전: `v009`
 작성일: `2026-04-30`
 최종 수정 시간: `2026-04-30 20:10:13 +09:00`
 작성 목적: `tdc_gpx_top` 및 하위 모듈 Cluster 분석을 진행할 때, 사용자와 Codex가 공유해야 하는 소통 방식, 기준 문서 우선순위, 근거 추적 방식, Git 변경 관리, 파일 이름 생성 규칙, 컨텍스트 인계 절차, 그리고 사용자 review에 대한 처리 사이클을 고정한다.
@@ -97,6 +97,39 @@ Cluster 분석은 다음 순서로 진행한다.
 - 불가피한 조합 출력은 문서에 명시하고, timing risk 또는 설계 의도로 분류한다.
 - async 입력은 synchronizer 또는 명시적 CDC primitive를 거친 뒤 내부 로직에 사용한다.
 - bidirectional I/O, IOBUF, constant assignment처럼 불가피한 비등록 경계는 예외로 인정하되 근거를 남긴다.
+
+### 조합논리 제한 및 순차논리 기본 규칙 (v009 신규)
+
+VHDL RTL 작성 시 기본 구현 방식은 순차논리(FF/register 기반)로 한다. 조합논리는 timing 분석을 어렵게 만들고 Cluster 경계 계약을 불명확하게 만들 수 있으므로, 다음 조건을 만족하는 경우에만 제한적으로 허용한다.
+
+기본 원칙:
+
+- 제어 경로, 상태 전이, handshake, FIFO push/pop 판단, CDC 이후 fan-out, module boundary 출력은 기본적으로 register를 통과시킨다.
+- 조합논리는 source register와 destination register 사이에서 최대 2-depth까지만 허용한다.
+- 2-depth를 초과하는 decode, priority, mux chain, compare chain, nested if/case decision tree는 pipeline register 또는 순차 FSM stage로 분리한다.
+- next-state 조합 process를 사용할 수는 있으나, 그 결과는 동일 module 내부 register에 의해 닫혀야 하며 module 밖으로 직접 길게 전파하지 않는다.
+- `_next` signal은 단순 next value 표현에만 사용하고, 복잡한 datapath 또는 장거리 handshake 판단을 `_next` 조합망으로 확장하지 않는다.
+- timing-critical path로 의심되는 조합망은 코드 리뷰에서 finding으로 기록하고, latency/throughput/pipeline/II 분석에 pipeline stage 추가 여부를 포함한다.
+
+2-depth 판정 기준:
+
+| 구분 | 허용 여부 | 예시 |
+|---|---|---|
+| 1-depth | 허용 | register 출력의 단순 AND/OR, 단일 compare, 단일 mux |
+| 2-depth | 조건부 허용 | compare 결과를 enable로 사용하는 단일 mux, valid와 ready의 단순 qualify |
+| 3-depth 이상 | 금지 원칙 | compare -> priority select -> mask -> mux, nested if/case 다단 decode |
+
+예외로 인정 가능한 항목:
+
+- constant assignment, type conversion, resize, record/array field pack/unpack처럼 논리 depth가 실질적으로 증가하지 않는 연결성 표현
+- IOBUF, tri-state bus enable, bidirectional pad와 같이 물리적 I/O 구조상 필요한 경계 논리
+- Datasheet timing을 만족하기 위해 의도적으로 남긴 단순 combinational qualify. 단, 근거와 RTL line을 문서에 남겨야 한다.
+
+문서화 규칙:
+
+- 조합논리 예외를 유지하면 Markdown 분석 문서에 `조합논리 예외 근거` 항목으로 기록한다.
+- 예외 기록에는 Datasheet 근거, RTL file/line, 예상 depth, timing 영향, 순차화하지 않은 이유를 포함한다.
+- 새 Cluster 분석과 코드 보완 결과에는 조합논리 사용 여부를 review 기준에 포함한다.
 
 ### VHDL naming rule
 
@@ -535,6 +568,22 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 
 본 v007 -> v008 변경 사실은 v007 문서 끝에 forward-trace로도 기록한다.
 
+### 2026-04-30 조합논리 제한 및 순차논리 기본 규칙 추가 (v009)
+
+사용자는 VHDL 코드 작성 규칙에 조합논리를 기본적으로 사용하지 않도록 하고, 사용할 경우 최대 2-depth까지만 허용하며, 순차논리를 기본 구현 방식으로 삼는 규칙을 추가해 달라고 요청했다.
+
+본 v009 운영 프로토콜은 다음 규칙을 추가한다.
+
+- `조합논리 제한 및 순차논리 기본 규칙` (section 4에 추가, v009 신규)
+- 기본 구현 방식은 FF/register 기반 순차논리로 한다.
+- 조합논리는 source register와 destination register 사이 최대 2-depth까지만 제한적으로 허용한다.
+- 3-depth 이상의 decode, priority, mux chain, nested if/case decision tree는 pipeline register 또는 순차 FSM stage로 분리한다.
+- 예외를 유지할 경우 Markdown 분석 문서에 Datasheet 근거, RTL file/line, 예상 depth, timing 영향, 순차화하지 않은 이유를 기록한다.
+
+이 규칙은 C02 이후 RTL 보완과 code review 기준에 즉시 적용한다. 특히 latency/throughput/pipeline/II 분석 시 pipeline stage 추가 여부와 조합논리 예외 여부를 함께 검토한다.
+
+본 v008 -> v009 변경 사실은 v008 문서 끝에 forward-trace로도 기록한다.
+
 ---
 
 ## 9. 다음 진행 상태
@@ -547,16 +596,4 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 - C02는 데이터시트 기준으로 `EF1/EF2 active HIGH`, empty FIFO read 금지, IFIFO drain, capture/run FSM, force_reinit/bus_fatal 운용을 검증하는 방향으로 시작한다. C01에서 인계되는 finding (F-C01-V01/V02/V03/V04, F-C01-V06 잔여)을 C02 검증 시나리오에 명시적으로 포함한다.
 - v007부터는 문서/RTL/testbench/script 수정 전후 Git 상태 확인과 변경 단위 분리를 필수로 적용한다. commit은 사용자 승인 후 현재 작업 단위 파일만 대상으로 수행한다.
 - v008부터는 C02 이후 Cluster 산출물 파일명을 `<ClusterName>_<YYMMDDHHMMSS>_<WorkName>_vNNN.<ext>` 형식으로 생성한다. C02 문서군은 이 규칙에 맞게 rename 완료 상태로 관리한다.
-
----
-
-## v008 -> v009 반영 위치 기록
-
-- 변경 원인: 사용자가 VHDL 코드 작성 규칙에 “조합논리는 기본적으로 사용하지 않고, 사용할 경우 최대 2-depth까지만 허용하며, 순차논리를 기본으로 사용”하는 규칙 추가를 요청했다.
-- 반영된 다음 버전 파일: `Doc/cluster_analysis/cluster_analysis_260430201013_operating_protocol_v009.md`
-- 다음 버전 반영 위치:
-  - section 4 `조합논리 제한 및 순차논리 기본 규칙 (v009 신규)`
-  - section 8 `2026-04-30 조합논리 제한 및 순차논리 기본 규칙 추가 (v009)`
-  - section 9 다음 진행 상태의 v009 적용 bullet
-- 판단 변화: 기존 Module boundary 기준은 “경계를 FF/register로 닫는다”는 원칙이었고, v009에서는 이를 RTL 작성 규칙으로 확장해 “순차논리 기본, 조합논리 최대 2-depth 제한”을 명시했다.
-- 수정 시간: `2026-04-30 20:10:13 +09:00`
+- v009부터는 RTL 작성/리뷰 시 순차논리를 기본으로 하고, 조합논리는 최대 2-depth까지만 제한적으로 허용한다. 3-depth 이상 조합망은 pipeline/register/FSM stage로 분리하거나 예외 근거를 문서화한다.
