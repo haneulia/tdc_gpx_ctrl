@@ -85,3 +85,16 @@
 | `C02_Chip_Acquisition_Code_Fix_Plan_20260430_v004.md` section 6 | `VB-C02-01~10` 상태 재판정 |
 | `C02_Chip_Acquisition_Code_Fix_Result_20260430_v001.md` | 이번 xsim PASS로 닫힌 항목 근거 |
 | `C02_Chip_Acquisition_Code_Fix_Result_20260430_v002.md` | PPT 한글 수정본은 기술 검증 범위에 변화 없음 |
+
+---
+
+## 6. 다음 버전 반영 기록
+
+최종 수정 시간: `2026-04-30 15:58:25 +09:00`
+
+본 문서의 미검증/부분검증 분류는 다음 문서에 반영되었다.
+
+| 반영 대상 | 반영 내용 |
+|---|---|
+| `C02_Chip_Acquisition_Code_Verify_20260430_v001.md` | raw backpressure, stale expected-count fault propagation, latency/II 실측 검증 수행 |
+| `C02_Chip_Acquisition_VB_Closure_Check_20260430_v002.md` | `VB-C02-03/05/06/08/10` 상태 갱신 및 남은 보류 항목 재분류 |

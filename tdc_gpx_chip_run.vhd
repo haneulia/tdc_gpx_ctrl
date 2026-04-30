@@ -320,6 +320,7 @@ begin
         variable v_ififo2_done     : boolean;
         variable v_ififo1_can_read : boolean;
         variable v_ififo2_can_read : boolean;
+        variable v_drain_mismatch  : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -520,6 +521,17 @@ begin
                             and ((not v_ififo2_count_known)
                                  or s_drain_cnt_ififo2_r < s_expected_ififo2_r);
 
+                        -- Expected-count mismatch is meaningful on every
+                        -- non-purge completion path, not just the fallback
+                        -- branch. If EF terminates the drain before a
+                        -- non-zero expected count is reached, the data is
+                        -- safe (no empty read) but the frame is degraded.
+                        v_drain_mismatch := s_purge_mode_r = '0'
+                            and ((s_expected_ififo1_r /= 0
+                                  and s_drain_cnt_ififo1_r /= s_expected_ififo1_r)
+                                 or (s_expected_ififo2_r /= 0
+                                     and s_drain_cnt_ififo2_r /= s_expected_ififo2_r));
+
                         -- Early IFIFO1 done beat
                         if v_ififo1_done and not v_ififo2_done
                            and s_ififo1_done_sent_r = '0'
@@ -536,6 +548,10 @@ begin
                             s_wait_cnt_r      <= (others => '0');
                             if s_purge_mode_r = '1' then
                                 s_purge_mode_r <= '0';
+                            end if;
+                            if v_drain_mismatch then
+                                s_err_drain_mismatch_r <= '1';
+                                s_drain_done_faulted_r <= '1';
                             end if;
                             -- Always emit final drain_done (normal + purge)
                             s_drain_done_r <= '1';
@@ -614,11 +630,7 @@ begin
                             -- something went wrong upstream — flag it.
                             -- Purge-mode bypasses the check (it doesn't
                             -- track against expected counts).
-                            if s_purge_mode_r = '0'
-                               and ((s_expected_ififo1_r /= 0
-                                     and s_drain_cnt_ififo1_r /= s_expected_ififo1_r)
-                                    or (s_expected_ififo2_r /= 0
-                                        and s_drain_cnt_ififo2_r /= s_expected_ififo2_r)) then
+                            if v_drain_mismatch then
                                 s_err_drain_mismatch_r <= '1';
                                 -- Round 13 axis 1a: co-assert "faulted"
                                 -- pulse so SW can distinguish a clean

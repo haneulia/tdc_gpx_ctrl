@@ -24,7 +24,9 @@
 --   [8] AluTrigger pulse width >= 10ns
 --   [9] IFIFO edge cases (1 entry, 32 entries)
 --   [10] Consecutive 2+ shots
---   [16] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
+--   [16] Bounded raw AXI backpressure with latency/II measurement
+--   [17] Stale expected-count mismatch -> faulted drain_done, no empty read
+--   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --
 -- Standard: VHDL-93 compatible
 -- =============================================================================
@@ -164,6 +166,14 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_stop_tdc           : std_logic := '0';
     signal s_err_drain_timeout  : std_logic;
     signal s_err_sequence       : std_logic;
+    signal s_run_drain_complete : std_logic;
+    signal s_err_raw_overflow   : std_logic;
+    signal s_err_raw_drop       : std_logic;
+    signal s_err_raw_ctrl_drop  : std_logic;
+    signal s_err_drain_cap      : std_logic;
+    signal s_err_drain_mismatch : std_logic;
+    signal s_err_bus_fatal      : std_logic;
+    signal s_drain_done_faulted : std_logic;
     signal s_expected_ififo1    : unsigned(7 downto 0) := (others => '0');
     signal s_expected_ififo2    : unsigned(7 downto 0) := (others => '0');
 
@@ -196,8 +206,10 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_raw_ififo2_data_cnt : natural := 0;
     signal s_raw_ififo1_done_ctrl_cnt : natural := 0;
     signal s_raw_final_done_ctrl_cnt : natural := 0;
+    signal s_raw_faulted_ctrl_cnt : natural := 0;
     signal s_raw_tuser_err_cnt  : natural := 0;
     signal s_empty_read_cnt     : natural := 0;
+    signal s_clk_cnt            : natural := 0;
 
     -- =========================================================================
     -- Chip model: write capture (for cfg_write verification)
@@ -291,11 +303,23 @@ begin
             o_err_drain_timeout => s_err_drain_timeout,
             o_err_sequence      => s_err_sequence,
             o_err_rsp_mismatch  => open,
-            o_err_raw_overflow  => open,
+            o_err_raw_overflow  => s_err_raw_overflow,
+            o_err_raw_drop      => s_err_raw_drop,
+            o_err_drain_cap     => s_err_drain_cap,
             o_err_reg_overflow  => open,
             o_run_timeout       => open,
             o_run_timeout_cause => open,
-            o_run_drain_complete => open
+            o_init_cfg_coalesced => open,
+            o_err_cmd_collision => open,
+            o_err_force_reinit  => open,
+            o_err_raw_ctrl_drop => s_err_raw_ctrl_drop,
+            o_err_drain_mismatch => s_err_drain_mismatch,
+            o_err_reg_rw_ambiguous => open,
+            o_err_stopdis_mid_shot => open,
+            o_err_cmd_collision_vec => open,
+            o_err_bus_fatal => s_err_bus_fatal,
+            o_drain_done_faulted => s_drain_done_faulted,
+            o_run_drain_complete => s_run_drain_complete
         );
 
     -- =========================================================================
@@ -442,6 +466,20 @@ begin
     s_io_d <= s_chip_d_out when s_chip_d_oe = '1' else (others => 'Z');
 
     -- =========================================================================
+    -- Global cycle counter used by latency / II measurements
+    -- =========================================================================
+    p_cycle_counter : process(s_clk)
+    begin
+        if rising_edge(s_clk) then
+            if s_rst_n = '0' then
+                s_clk_cnt <= 0;
+            else
+                s_clk_cnt <= s_clk_cnt + 1;
+            end if;
+        end if;
+    end process p_cycle_counter;
+
+    -- =========================================================================
     -- Raw word monitor + debug trace
     -- =========================================================================
     p_raw_monitor : process(s_clk)
@@ -461,6 +499,10 @@ begin
                         s_raw_ififo1_done_ctrl_cnt <= s_raw_ififo1_done_ctrl_cnt + 1;
                     else
                         s_raw_final_done_ctrl_cnt <= s_raw_final_done_ctrl_cnt + 1;
+                    end if;
+
+                    if s_raw_axis_tuser(5) = '1' then
+                        s_raw_faulted_ctrl_cnt <= s_raw_faulted_ctrl_cnt + 1;
                     end if;
 
                     if s_raw_axis_tuser(6) /= '0'
@@ -541,6 +583,17 @@ begin
         variable v_raw_data_snap : natural;
         variable v_empty_read_snap : natural;
         variable v_drain_words  : natural;
+        variable v_t0_cycle     : natural;
+        variable v_first_data_cycle : natural;
+        variable v_last_data_cycle : natural;
+        variable v_run_complete_cycle : natural;
+        variable v_drain_done_cycle : natural;
+        variable v_prev_data_total : natural;
+        variable v_meas_data_cnt : natural;
+        variable v_min_ii       : natural;
+        variable v_max_ii       : natural;
+        variable v_faulted_snap : natural;
+        variable v_gap          : natural;
 
         procedure wait_clk(n : natural) is
         begin
@@ -594,6 +647,23 @@ begin
             set_expected_unknown;
             s_fifo_load_n1  <= n1;
             s_fifo_load_n2  <= n2;
+            s_fifo_load_req <= '1';
+            wait_clk(2);
+            s_fifo_load_req <= '0';
+        end procedure;
+
+        -- Load actual IFIFO fill while publishing a deliberately different
+        -- expected count. Used to verify stale-count fault propagation.
+        procedure fill_fifos_with_expected(
+            actual1 : natural;
+            actual2 : natural;
+            expected1 : natural;
+            expected2 : natural
+        ) is
+        begin
+            set_expected_counts(expected1, expected2);
+            s_fifo_load_n1  <= actual1;
+            s_fifo_load_n2  <= actual2;
             s_fifo_load_req <= '1';
             wait_clk(2);
             s_fifo_load_req <= '0';
@@ -1476,34 +1546,207 @@ begin
         wait_clk(10);
 
         -- =============================================================
-        -- [16] C02 global monitors: empty read and raw tuser contract
+        -- [16] Bounded raw AXI backpressure + latency/II measurement
         -- =============================================================
-        pr_info("[16] C02 global monitor summary");
-        if s_empty_read_cnt = 0 then
-            pr_pass("[16] No IFIFO read occurred when the modeled FIFO was empty");
+        pr_info("[16] Bounded raw AXI backpressure + latency/II measurement");
+
+        s_cfg.drain_mode  <= '1';
+        s_cfg.n_drain_cap <= (others => '0');
+        s_raw_axis_tready <= '1';
+        fill_fifos(12, 8);
+        wait_clk(5);
+
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        v_raw_data_snap      := s_raw_data_cnt;
+        v_empty_read_snap    := s_empty_read_cnt;
+        v_t0_cycle           := s_clk_cnt;
+        v_first_data_cycle   := 0;
+        v_last_data_cycle    := 0;
+        v_run_complete_cycle := 0;
+        v_drain_done_cycle   := 0;
+        v_prev_data_total    := s_raw_data_cnt;
+        v_meas_data_cnt      := 0;
+        v_min_ii             := 999999;
+        v_max_ii             := 0;
+        v_found              := false;
+
+        s_irflag_pin <= '1';
+
+        for i in 0 to c_TIMEOUT loop
+            -- Hold downstream ready low long enough to prove the raw FIFO
+            -- absorbs bounded stalls, but below the intentional data-drop
+            -- threshold used to reserve slots for control beats.
+            if i >= 8 and i < 38 then
+                s_raw_axis_tready <= '0';
+            else
+                s_raw_axis_tready <= '1';
+            end if;
+
+            wait_clk(1);
+            wait for 0 ns;
+
+            if s_raw_data_cnt > v_prev_data_total then
+                v_meas_data_cnt := v_meas_data_cnt + 1;
+                if v_first_data_cycle = 0 then
+                    v_first_data_cycle := s_clk_cnt;
+                end if;
+                if v_last_data_cycle /= 0 then
+                    v_gap := s_clk_cnt - v_last_data_cycle;
+                    if v_gap < v_min_ii then
+                        v_min_ii := v_gap;
+                    end if;
+                    if v_gap > v_max_ii then
+                        v_max_ii := v_gap;
+                    end if;
+                end if;
+                v_last_data_cycle := s_clk_cnt;
+                v_prev_data_total := s_raw_data_cnt;
+            end if;
+
+            if v_run_complete_cycle = 0 and s_run_drain_complete = '1' then
+                v_run_complete_cycle := s_clk_cnt;
+            end if;
+
+            if s_drain_done = '1' then
+                v_found := true;
+                v_drain_done_cycle := s_clk_cnt;
+                exit;
+            end if;
+        end loop;
+
+        s_raw_axis_tready <= '1';
+
+        if not v_found then
+            pr_fail("[16] drain_done timeout under bounded raw backpressure", v_fail);
         else
-            pr_fail("[16] Empty IFIFO read count="
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
+            pr_pass("[16] drain_done received under bounded raw backpressure, words="
+                    & nat_img(v_drain_words));
+
+            if v_drain_words = 20 and v_meas_data_cnt = 20
+               and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[16] data count exact 20 and no empty IFIFO reads");
+            else
+                pr_fail("[16] expected 20 data words/no empty reads, got "
+                        & nat_img(v_drain_words)
+                        & " measured=" & nat_img(v_meas_data_cnt), v_fail);
+            end if;
+
+            if s_err_raw_drop = '0' and s_err_raw_ctrl_drop = '0'
+               and s_err_raw_overflow = '0' then
+                pr_pass("[16] raw FIFO absorbed bounded backpressure without drop");
+            else
+                pr_fail("[16] raw drop/overflow set during bounded backpressure", v_fail);
+            end if;
+
+            if v_first_data_cycle /= 0 and v_run_complete_cycle /= 0
+               and v_drain_done_cycle /= 0 and v_meas_data_cnt > 1 then
+                pr_pass("[16] latency/II measured: first_data="
+                        & nat_img(v_first_data_cycle - v_t0_cycle)
+                        & "clk, run_complete="
+                        & nat_img(v_run_complete_cycle - v_t0_cycle)
+                        & "clk, output_done="
+                        & nat_img(v_drain_done_cycle - v_t0_cycle)
+                        & "clk, output_hold="
+                        & nat_img(v_drain_done_cycle - v_run_complete_cycle)
+                        & "clk, II_min=" & nat_img(v_min_ii)
+                        & "clk, II_max=" & nat_img(v_max_ii) & "clk");
+            else
+                pr_fail("[16] latency/II measurement incomplete", v_fail);
+            end if;
+        end if;
+
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- =============================================================
+        -- [17] Stale expected-count mismatch fault propagation
+        -- =============================================================
+        pr_info("[17] Stale expected-count mismatch -> faulted drain_done");
+
+        s_cfg.drain_mode  <= '0';
+        s_cfg.n_drain_cap <= (others => '0');
+        s_raw_axis_tready <= '1';
+        fill_fifos_with_expected(2, 0, 4, 1);
+        wait_clk(5);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        v_raw_data_snap   := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
+        v_faulted_snap    := s_raw_faulted_ctrl_cnt;
+
+        s_irflag_pin <= '1';
+        wait_drain_done(c_TIMEOUT, v_found);
+
+        if not v_found then
+            pr_fail("[17] drain_done timeout for stale expected-count case", v_fail);
+        else
+            wait_clk(1);
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
+            if v_drain_words = 2 and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[17] stale expected count stopped at EF without empty read");
+            else
+                pr_fail("[17] expected 2 actual words and no empty read, got "
+                        & nat_img(v_drain_words), v_fail);
+            end if;
+
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1
+               and s_err_drain_mismatch = '1'
+               and s_drain_done_faulted = '1' then
+                pr_pass("[17] mismatch propagated via faulted drain_done");
+            elsif s_raw_faulted_ctrl_cnt = v_faulted_snap + 1
+                  and s_err_drain_mismatch = '1' then
+                pr_pass("[17] mismatch propagated via raw tuser fault flag and sticky");
+            else
+                pr_fail("[17] missing expected drain mismatch/faulted indication", v_fail);
+            end if;
+        end if;
+
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- =============================================================
+        -- [18] C02 global monitors: empty read and raw tuser contract
+        -- =============================================================
+        pr_info("[18] C02 global monitor summary");
+        if s_empty_read_cnt = 0 then
+            pr_pass("[18] No IFIFO read occurred when the modeled FIFO was empty");
+        else
+            pr_fail("[18] Empty IFIFO read count="
                     & nat_img(s_empty_read_cnt), v_fail);
         end if;
 
         if s_raw_tuser_err_cnt = 0 then
-            pr_pass("[16] Raw AXI tuser contract clean");
+            pr_pass("[18] Raw AXI tuser contract clean");
         else
-            pr_fail("[16] Raw AXI tuser error count="
+            pr_fail("[18] Raw AXI tuser error count="
                     & nat_img(s_raw_tuser_err_cnt), v_fail);
         end if;
 
         if s_raw_ififo1_done_ctrl_cnt > 0
            and s_raw_final_done_ctrl_cnt > 0 then
-            pr_pass("[16] Raw control beat IDs observed: ififo1_done="
+            pr_pass("[18] Raw control beat IDs observed: ififo1_done="
                     & nat_img(s_raw_ififo1_done_ctrl_cnt)
                     & " final_done="
                     & nat_img(s_raw_final_done_ctrl_cnt));
         else
-            pr_fail("[16] Missing raw control beat ID class: ififo1_done="
+            pr_fail("[18] Missing raw control beat ID class: ififo1_done="
                     & nat_img(s_raw_ififo1_done_ctrl_cnt)
                     & " final_done="
                     & nat_img(s_raw_final_done_ctrl_cnt), v_fail);
+        end if;
+
+        if s_err_raw_drop = '0' and s_err_raw_ctrl_drop = '0'
+           and s_err_drain_cap = '0' and s_err_bus_fatal = '0' then
+            pr_pass("[18] Raw/drop and PH_RESP_DRAIN fatal indicators clean");
+        else
+            pr_fail("[18] Unexpected raw/drop or bus fatal indicator set", v_fail);
         end if;
 
         -- =============================================================
