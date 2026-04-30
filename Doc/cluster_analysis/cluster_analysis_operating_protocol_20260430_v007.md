@@ -1,9 +1,9 @@
 # Cluster Analysis Operating Protocol
 
-문서 버전: `v006`  
-작성일: `2026-04-29`  
+문서 버전: `v007`  
+작성일: `2026-04-30`  
 최종 수정 시간: `2026-04-30 11:32:17 +09:00`  
-작성 목적: `tdc_gpx_top` 및 하위 모듈 Cluster 분석을 진행할 때, 사용자와 Codex가 공유해야 하는 소통 방식, 기준 문서 우선순위, 근거 추적 방식, 컨텍스트 인계 절차, 그리고 사용자 review에 대한 처리 사이클을 고정한다.
+작성 목적: `tdc_gpx_top` 및 하위 모듈 Cluster 분석을 진행할 때, 사용자와 Codex가 공유해야 하는 소통 방식, 기준 문서 우선순위, 근거 추적 방식, Git 변경 관리, 컨텍스트 인계 절차, 그리고 사용자 review에 대한 처리 사이클을 고정한다.
 
 ---
 
@@ -231,6 +231,33 @@ Timing, handshake, CDC, bus transaction, FIFO drain처럼 시간 순서가 동�
 - 기존 버전을 forward trace 목적으로 수정할 때도 해당 문서의 변경 이력 절에 변경 시각을 기록한다.
 - 파일 시스템 timestamp만 믿지 않고, 문서 본문에서 사람이 읽을 수 있는 수정 시간을 남긴다.
 
+### Git 변경 관리 규칙 (v007 신규)
+
+사용자가 "수정 및 보완될 때마다 Git으로 관리"하기를 요청했으므로, 문서/RTL/testbench/script 변경은 모두 Git 추적 단위로 관리한다.
+
+기본 원칙:
+
+- 변경 전 `git status --short`로 작업트리 상태를 확인한다.
+- 변경 대상이 사용자 기존 변경과 섞여 있으면, Codex가 만든 변경과 사용자 기존 변경을 분리해서 보고한다.
+- 승인된 Plan 또는 사용자가 요청한 단위별로 변경 묶음을 만든다. 예: `C02 handoff 문서`, `C02 RTL 보완`, `C02 TB 보완`, `C02 regression 결과`.
+- 변경 후 `git status --short`와 필요 시 `git diff --stat`로 변경 파일을 확인한다.
+- 관련 검증이 있으면 commit 후보에 넣기 전에 검증 결과를 문서와 최종 응답에 남긴다.
+- stage/commit은 현재 작업 단위 파일만 대상으로 하며, unrelated untracked 또는 사용자 변경은 포함하지 않는다.
+- commit은 사용자 승인 후 수행한다. 사용자가 명시적으로 "커밋해줘" 또는 "이번 변경을 git에 반영해줘"라고 하면 해당 변경 묶음만 stage/commit한다.
+- commit message는 Cluster와 목적이 드러나게 작성한다. 예: `C02: add C01 handoff contract record`, `C02: enforce empty FIFO read guard`.
+- 최종 보고에는 branch, 변경 파일, 검증 결과, commit hash 또는 "commit 미수행" 사유를 남긴다.
+
+권장 운영 패턴:
+
+1. 수정 전: `git status --short` 확인.
+2. 계획: 변경 파일과 commit 후보 단위를 Plan 문서에 명시.
+3. 수정: 승인된 파일만 변경.
+4. 검증: xsim/regression 또는 문서 생성 검증 수행.
+5. 결과: Result 문서와 채팅에 변경/검증/잔여 위험 기록.
+6. Git 반영: 사용자 승인 후 해당 변경 묶음만 stage/commit.
+
+현재 원칙상 Codex는 사용자의 명시 승인 없이 임의로 전체 작업트리를 stage하거나 commit하지 않는다. 특히 현재처럼 기존 untracked 문서가 많은 상태에서는 현재 요청으로 생성/수정한 파일만 Git 후보로 분리한다.
+
 ### Review 처리 사이클 규칙 (v006 신규)
 
 사용자의 review 문서가 도착하면 다음 4단계 사이클을 반드시 지킨다. 이 사이클은 `..._Review_*.md`(사용자 입력) → 조치 계획(Codex 작성) → 사용자 승인 → 진행/회귀 → 결과 보고서(Codex 작성)로 이어진다.
@@ -453,6 +480,18 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 
 본 timeline 추가 시점에서 C01 cluster는 closure 완료 상태이며 다음 단계는 C02 `Chip_Acquisition` 진입이다.
 
+### 2026-04-30 Git 변경 관리 규칙 추가 (v007)
+
+사용자는 앞으로 수정 및 보완될 때마다 Git으로 관리되기를 요청했다.
+
+본 v007 운영 프로토콜은 다음 규칙을 추가한다.
+
+- `Git 변경 관리 규칙` (section 5에 추가, v007 신규)
+
+이 규칙은 즉시 효력을 가진다. 앞으로 Codex는 변경 전후 `git status --short`를 확인하고, 변경 파일을 승인된 작업 단위로 묶어 관리한다. 다만 기존 사용자 변경과 unrelated untracked 파일을 보호하기 위해, stage/commit은 사용자 승인 후 현재 작업 단위 파일만 대상으로 수행한다.
+
+본 v006 -> v007 변경 사실은 v006 문서 끝에 forward-trace로도 기록한다.
+
 ---
 
 ## 9. 다음 진행 상태
@@ -463,16 +502,4 @@ Doc/cluster_analysis/context_handoff_YYYYMMDD_vNNN.md
 - C01 v001에는 `v001 -> v002` 반영 위치 기록을, C01 v002에는 `v002 -> v003` 반영 위치 기록을 추가했다.
 - C01 cluster는 **closure 완료** 상태이며, 다음 분석 후보는 `C02_Chip_Acquisition`이다.
 - C02는 데이터시트 기준으로 `EF1/EF2 active HIGH`, empty FIFO read 금지, IFIFO drain, capture/run FSM, force_reinit/bus_fatal 운용을 검증하는 방향으로 시작한다. C01에서 인계되는 finding (F-C01-V01/V02/V03/V04, F-C01-V06 잔여)을 C02 검증 시나리오에 명시적으로 포함한다.
-
----
-
-## v006 -> v007 반영 위치 기록
-
-| 항목 | 기록 내용 |
-|---|---|
-| 변경 원인 | 사용자가 “수정 및 보완될 때마다 Git으로 관리”되기를 요청함 |
-| 반영된 다음 버전 파일 | `Doc/cluster_analysis/cluster_analysis_operating_protocol_20260430_v007.md` |
-| 다음 버전 반영 위치 | section 5 `Git 변경 관리 규칙 (v007 신규)`, section 8 `2026-04-30 Git 변경 관리 규칙 추가 (v007)`, section 9 다음 진행 상태 |
-| 판단 변화 | 기존 문서/검증 운영 규칙에 Git 변경 전후 상태 확인, 작업 단위 분리, 사용자 승인 후 stage/commit 원칙을 추가 |
-| 추적 근거 | 사용자 피드백: “그리고 수정 및 보완 될 때마다 git으로 관리 됐음 좋겠어” |
-| 기존 문서 수정 시간 | `2026-04-30 11:32:17 +09:00` |
+- v007부터는 문서/RTL/testbench/script 수정 전후 Git 상태 확인과 변경 단위 분리를 필수로 적용한다. commit은 사용자 승인 후 현재 작업 단위 파일만 대상으로 수행한다.
