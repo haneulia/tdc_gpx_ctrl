@@ -1,5 +1,15 @@
 # C02 Chip Acquisition - Sequential Logic Rule Fix Result v001
 
+## 후속 반영 추적
+
+- 후속 반영 문서: `Doc/cluster_analysis/C02_Chip_Acquisition/C02_Chip_Acquisition_260430205146_Skid_Sync_FIFO_Fix_Result_v001.md`
+- 후속 반영 시간: `2026-04-30 20:51:46 +09:00`
+- 반영 내용:
+  - `chip_ctrl` bus response skid를 모듈 내부로 이동
+  - `chip_run` request pacing을 skid pending 기준으로 보정
+  - `face_assembler` 입력 XPM FIFO 뒤에 `tdc_gpx_sync_fifo` elastic boundary 추가
+  - `tdc_gpx_skid_buffer`를 2-entry registered-ready elastic buffer로 보정
+
 - 문서 버전: `v001`
 - 작성 시간: `2026-04-30 20:27:46 +09:00`
 - 최종 수정 시간: `2026-04-30 20:27:46 +09:00`
@@ -98,4 +108,3 @@ flowchart LR
 | F-C02-SEQ-FU-01 | `tdc_gpx_chip_ctrl` bus response skid/credit refactor | 단순 register 삽입은 IFIFO extra read를 만들므로, `chip_run` pacing 계약과 함께 변경해야 함 |
 | F-C02-SEQ-FU-02 | `tdc_gpx_face_assembler` input skid buffer 검토 | input FIFO `m_axis_tready`를 완전 register boundary로 만들려면 stale ready를 흡수할 local buffer가 필요함 |
 | F-C02-SEQ-FU-03 | stale ready negative test 추가 | strict sequential boundary 설계가 들어갈 때 데이터 pop/drop 여부를 직접 검증해야 함 |
-

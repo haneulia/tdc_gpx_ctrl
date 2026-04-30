@@ -380,6 +380,13 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_reg_rsp_valid   : std_logic;
     signal s_reg_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
     signal s_bus_rsp_fire    : std_logic;  -- valid AND ready: true "accepted" pulse
+    signal s_bus_rsp_pending_i : std_logic;
+    signal s_rsp_sk_sdata    : std_logic_vector(39 downto 0);
+    signal s_rsp_sk_mdata    : std_logic_vector(39 downto 0);
+    signal s_rsp_sk_tvalid   : std_logic;
+    signal s_rsp_sk_tready   : std_logic;
+    signal s_rsp_sk_tdata    : std_logic_vector(31 downto 0);
+    signal s_rsp_sk_tuser    : std_logic_vector(7 downto 0);
 
     -- =========================================================================
     -- Config snapshots (latched at cmd_start, refreshed on cfg_write/reg)
@@ -599,25 +606,40 @@ begin
     o_bus_oen_permanent <= s_run_bus_oen when s_phase_r = PH_RUN else '0';
     o_bus_req_burst     <= s_run_bus_burst when s_phase_r = PH_RUN else '0';
 
-    -- Bus response tready: deassert during RUN drain when raw hold is full.
-    -- PH_RESP_DRAIN always accepts (to drain stale responses).
-    --
-    -- v009 sequential-logic audit note:
-    --   A naive 1-stage register on ready/fire/rdata was tried and rejected
-    --   because chip_run's READ pacing consumes IFIFO EF/expected feedback in
-    --   this same accepted-response cycle. Delaying s_run_rsp_valid by one
-    --   cycle caused one extra IFIFO read at the drain boundary. Therefore
-    --   this remains a documented handshake exception until a dedicated bus
-    --   response skid/credit refactor updates chip_run pacing together.
-    o_s_axis_tready  <= '0' when s_phase_r = PH_RUN and s_raw_hold_busy = '1'
-                   else '1' when s_phase_r = PH_RESP_DRAIN
-                   else '1' when s_init_busy = '1' or s_run_busy = '1' or s_reg_busy = '1'
-                   else '0';
+    -- Bus response input boundary.
+    -- v010 sequential-logic rule: chip_ctrl owns the bus response skid, so
+    -- the module boundary o_s_axis_tready is registered by tdc_gpx_skid_buffer.
+    -- The sub-FSMs consume from the skid output; PH_RESP_DRAIN still drains
+    -- stale responses without routing them.
+    s_rsp_sk_sdata <= i_s_axis_tdata & i_s_axis_tuser;
+
+    u_rsp_skid : entity work.tdc_gpx_skid_buffer
+        generic map (g_DATA_WIDTH => 40)
+        port map (
+            i_clk     => i_clk,
+            i_rst_n   => s_sub_rst_n,
+            i_flush   => '0',
+            i_s_valid => i_s_axis_tvalid,
+            o_s_ready => o_s_axis_tready,
+            i_s_data  => s_rsp_sk_sdata,
+            o_m_valid => s_rsp_sk_tvalid,
+            i_m_ready => s_rsp_sk_tready,
+            o_m_data  => s_rsp_sk_mdata
+        );
+
+    s_rsp_sk_tdata <= s_rsp_sk_mdata(39 downto 8);
+    s_rsp_sk_tuser <= s_rsp_sk_mdata(7 downto 0);
+
+    s_rsp_sk_tready <= '0' when s_phase_r = PH_RUN and s_raw_hold_busy = '1'
+                  else '1' when s_phase_r = PH_RESP_DRAIN
+                  else '1' when s_init_busy = '1' or s_run_busy = '1' or s_reg_busy = '1'
+                  else '0';
 
     -- Bus response FIRE pulse: valid AND ready. Sub-FSMs must use this,
     -- not raw tvalid, to avoid consuming the same beat multiple times
     -- when tready is deasserted (e.g., raw hold full during PH_RUN).
-    s_bus_rsp_fire   <= i_s_axis_tvalid and o_s_axis_tready;
+    s_bus_rsp_fire   <= s_rsp_sk_tvalid and s_rsp_sk_tready;
+    s_bus_rsp_pending_i <= i_bus_rsp_pending or i_s_axis_tvalid or s_rsp_sk_tvalid;
 
     -- Bus response routing (PH_RESP_DRAIN: all routing disabled)
     s_init_rsp_valid <= s_bus_rsp_fire when (s_phase_r = PH_INIT or s_phase_r = PH_CFG_WRITE) else '0';
@@ -628,11 +650,11 @@ begin
     -- chip_run uses this to:
     --   - freeze EF1/EF2/BURST wait watchdogs on downstream backpressure
     --   - decide DRAIN_FLUSH / OVERRUN_FLUSH completion (Round 5 #1/#2)
-    s_run_rsp_pending <= (i_bus_rsp_pending or i_s_axis_tvalid)
+    s_run_rsp_pending <= s_bus_rsp_pending_i
                          when s_phase_r = PH_RUN else '0';
-    s_run_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
+    s_run_rsp_rdata  <= s_rsp_sk_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
     s_reg_rsp_valid  <= s_bus_rsp_fire when s_phase_r = PH_REG else '0';
-    s_reg_rsp_rdata  <= i_s_axis_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
+    s_reg_rsp_rdata  <= s_rsp_sk_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- Tick enable generation (from bus_clk_div snapshot)
@@ -1298,8 +1320,8 @@ begin
                         null;
                 end case;
                 if v_check then
-                    if i_s_axis_tuser(0) /= v_exp_rw
-                       or i_s_axis_tuser(4 downto 1) /= v_exp_addr then
+                    if s_rsp_sk_tuser(0) /= v_exp_rw
+                       or s_rsp_sk_tuser(4 downto 1) /= v_exp_addr then
                         s_err_rsp_mismatch_r <= '1';
                     end if;
                 end if;

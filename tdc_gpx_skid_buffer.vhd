@@ -9,10 +9,11 @@
 --   Throughput: 1 beat/cycle (no throughput loss).
 --   Latency: +1 cycle.
 --
---   States:
---     ST_PIPE: data pipes through when downstream ready.
---              On stall, input stored to temp buffer (skid).
---     ST_SKID: wait for downstream ready, then promote temp to output.
+--   Implementation note:
+--     This is a two-slot elastic buffer. The slave ready output is a
+--     registered "space available next cycle" indication, so stale-ready
+--     deassertion is absorbed by the second slot. Input data is accepted
+--     only when the registered ready was high in that same handshake cycle.
 --
 --   Reference: matbi_skid_buffer.v (Matbi/Austin, 2022)
 --              iammituraj/skid_buffer (GitHub)
@@ -46,68 +47,64 @@ end entity tdc_gpx_skid_buffer;
 
 architecture rtl of tdc_gpx_skid_buffer is
 
-    type t_state is (ST_PIPE, ST_SKID);
-    signal s_state_r        : t_state := ST_PIPE;
-
-    -- Output data register
-    signal s_m_data_r       : std_logic_vector(g_DATA_WIDTH - 1 downto 0) := (others => '0');
-    signal s_m_valid_r      : std_logic := '0';
-
-    -- Temp (skid) buffer
-    signal s_m_data_temp_r  : std_logic_vector(g_DATA_WIDTH - 1 downto 0) := (others => '0');
-    signal s_m_valid_temp_r : std_logic := '0';
-
-    -- Registered ready
-    signal s_s_ready_r      : std_logic := '0';
-
-    -- Pipeline ready: downstream can accept or output is empty
-    signal s_ready          : std_logic;
+    signal s_data0_r   : std_logic_vector(g_DATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_data1_r   : std_logic_vector(g_DATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_count_r   : natural range 0 to 2 := 0;
+    signal s_s_ready_r : std_logic := '1';
 
 begin
 
-    s_ready   <= i_m_ready or (not s_m_valid_r);
     o_s_ready <= s_s_ready_r;
-    o_m_data  <= s_m_data_r;
-    o_m_valid <= s_m_valid_r;
+    o_m_data  <= s_data0_r;
+    o_m_valid <= '1' when s_count_r /= 0 else '0';
 
     p_main : process(i_clk)
+        variable v_data0 : std_logic_vector(g_DATA_WIDTH - 1 downto 0);
+        variable v_data1 : std_logic_vector(g_DATA_WIDTH - 1 downto 0);
+        variable v_count : natural range 0 to 2;
+        variable v_push  : boolean;
+        variable v_pop   : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or i_flush = '1' then
-                s_state_r        <= ST_PIPE;
-                s_m_data_r       <= (others => '0');
-                s_m_data_temp_r  <= (others => '0');
-                s_m_valid_r      <= '0';
-                s_m_valid_temp_r <= '0';
-                s_s_ready_r      <= '0';
+                s_data0_r   <= (others => '0');
+                s_data1_r   <= (others => '0');
+                s_count_r   <= 0;
+                s_s_ready_r <= '1';
             else
-                case s_state_r is
+                v_data0 := s_data0_r;
+                v_data1 := s_data1_r;
+                v_count := s_count_r;
+                v_push  := (i_s_valid = '1' and s_s_ready_r = '1');
+                v_pop   := (s_count_r /= 0 and i_m_ready = '1');
 
-                    when ST_PIPE =>
-                        if s_ready = '1' then
-                            -- Pipe data through to output
-                            s_m_data_r  <= i_s_data;
-                            s_m_valid_r <= i_s_valid;
-                            s_s_ready_r <= '1';
-                            s_state_r   <= ST_PIPE;
-                        else
-                            -- Pipeline stall: store input to temp buffer (skid)
-                            s_m_data_temp_r  <= i_s_data;
-                            s_m_valid_temp_r <= i_s_valid;
-                            s_s_ready_r      <= '0';
-                            s_state_r        <= ST_SKID;
-                        end if;
+                if v_pop then
+                    if v_count = 2 then
+                        v_data0 := s_data1_r;
+                    else
+                        v_data0 := (others => '0');
+                    end if;
+                    v_data1 := (others => '0');
+                    v_count := v_count - 1;
+                end if;
 
-                    when ST_SKID =>
-                        if s_ready = '1' then
-                            -- Promote temp to output, resume pipeline
-                            s_m_data_r  <= s_m_data_temp_r;
-                            s_m_valid_r <= s_m_valid_temp_r;
-                            s_s_ready_r <= '1';
-                            s_state_r   <= ST_PIPE;
-                        end if;
+                if v_push then
+                    if v_count = 0 then
+                        v_data0 := i_s_data;
+                    else
+                        v_data1 := i_s_data;
+                    end if;
+                    v_count := v_count + 1;
+                end if;
 
-                end case;
+                s_data0_r <= v_data0;
+                s_data1_r <= v_data1;
+                s_count_r <= v_count;
+                if v_count = 2 then
+                    s_s_ready_r <= '0';
+                else
+                    s_s_ready_r <= '1';
+                end if;
             end if;
         end if;
     end process p_main;

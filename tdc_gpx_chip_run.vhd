@@ -675,6 +675,12 @@ begin
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
                         elsif i_bus_rsp_pending = '1' then
+                            -- v010: bus response may already be accepted into
+                            -- chip_ctrl's skid while i_bus_rsp_valid is still
+                            -- one cycle away. Drop the single-read request as
+                            -- soon as pending is observed so bus_phy cannot
+                            -- re-accept the same IFIFO read.
+                            s_req_valid_r <= '0';
                             -- Response already at bus_phy/skid but tready held
                             -- low by raw hold backpressure. Hold bus-hang
                             -- watchdog (s_wait_cnt_r) but advance pending-stuck
@@ -722,6 +728,9 @@ begin
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
                         elsif i_bus_rsp_pending = '1' then
+                            -- v010: see ST_DRAIN_EF1. Pending means the
+                            -- single read has reached the response path.
+                            s_req_valid_r <= '0';
                             -- Round 9 #1 secondary watchdog (see ST_DRAIN_EF1)
                             if s_pending_stuck_cnt_r = x"FFFF" then
                                 s_req_valid_r     <= '0';
@@ -769,6 +778,15 @@ begin
                                 s_state_r     <= ST_DRAIN_FLUSH;
                             end if;
                         elsif i_bus_rsp_pending = '1' then
+                            -- v010: pre-close the burst request when the
+                            -- response currently pending in the skid is the
+                            -- final planned burst beat. This prevents bus_phy
+                            -- from launching one extra IFIFO read while the
+                            -- final response waits one cycle in the skid.
+                            if (s_burst_cnt_r + 1) >= s_burst_limit_r then
+                                s_req_burst_r <= '0';
+                                s_req_valid_r <= '0';
+                            end if;
                             -- Round 9 #1 secondary watchdog
                             if s_pending_stuck_cnt_r = x"FFFF" then
                                 s_req_burst_r     <= '0';

@@ -11,8 +11,8 @@
 --     err_handler    : automatic ErrFlag detection, Reg11 read, recovery FSM
 --     stop_decode    : stop event decode + cfg_image override
 --     bus_phy x4     : TDC-GPX bus physical layer (IOBUF + timing FSM)
---     sk_brsp x4     : skid buffer bus_phy -> chip_ctrl (40b)
 --     chip_ctrl x4   : chip FSM coordinator (powerup/cfg/arm/capture/drain)
+--                      with internal bus-response skid
 --     raw_cdc x4     : optional xpm_fifo_async chip_ctrl -> decode_pipe (40b)
 --
 --   Config merging: pipeline fields from i_cfg_pipeline, chip fields from
@@ -35,8 +35,7 @@
 --   TDC clock (i_tdc_clk) uses s_tdc_aresetn (xpm_cdc_async_rst of
 --   i_axis_aresetn, Round 5 #8):
 --     - u_bus_phy         (bus_phy)
---     - u_sk_brsp         (skid buffer)
---     - u_chip_ctrl       (chip_ctrl sub-FSM coordinator)
+--     - u_chip_ctrl       (chip_ctrl sub-FSM coordinator with response skid)
 --     - p_raw_fifo_rst / s_run_drain_complete_sticky_r (TDC stickies)
 --   Async, no dedicated reset sync:
 --     - u_raw_cdc         (xpm_fifo_async — rst combines i_axis_aresetn
@@ -362,12 +361,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_brsp_axis_tkeep  : t_slv4_array;
     signal s_brsp_axis_tuser  : t_slv8_array;
     signal s_brsp_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-    -- Per-chip: skid buffer bus_phy -> chip_ctrl
-    signal s_brsp_sk_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_brsp_sk_tdata   : t_slv32_array;
-    signal s_brsp_sk_tuser   : t_slv8_array;
-    signal s_brsp_sk_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy synchronized status
     signal s_ef1_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -1550,25 +1543,8 @@ begin
                 o_rsp_pending   => s_bus_rsp_pending_raw(i)
             );
 
-        -- ----- skid buffer: bus_phy -> chip_ctrl (32b tdata + 8b tuser = 40b) -----
-        u_sk_brsp : entity work.tdc_gpx_skid_buffer
-            generic map (g_DATA_WIDTH => 40)
-            port map (
-                i_clk     => i_tdc_clk,
-                i_rst_n   => s_tdc_aresetn,
-                -- Flush on any soft reset (CDC'd to TDC domain)
-                i_flush   => s_cmd_soft_reset_tdc or s_err_cmd_soft_reset_tdc(i),
-                i_s_valid => s_brsp_axis_tvalid(i),
-                o_s_ready => s_brsp_axis_tready(i),
-                i_s_data  => s_brsp_axis_tdata(i) & s_brsp_axis_tuser(i),
-                o_m_valid => s_brsp_sk_tvalid(i),
-                i_m_ready => s_brsp_sk_tready(i),
-                o_m_data(39 downto 8) => s_brsp_sk_tdata(i),
-                o_m_data(7 downto 0)  => s_brsp_sk_tuser(i)
-            );
-
-        -- Combined pending: bus_phy internal + brsp skid output
-        s_bus_rsp_pending(i) <= s_bus_rsp_pending_raw(i) or s_brsp_sk_tvalid(i);
+        -- chip_ctrl now owns the bus response skid/register boundary.
+        s_bus_rsp_pending(i) <= s_bus_rsp_pending_raw(i);
 
         -- =================================================================
         -- Per-chip CDC Stage 1: Command pulses AXI-Stream -> TDC
@@ -1825,10 +1801,10 @@ begin
                 o_bus_req_burst     => s_bus_req_burst(i),
                 o_bus_clk_div_snap  => s_bus_clk_div_snap(i),
                 o_bus_ticks_snap    => s_bus_ticks_snap(i),
-                i_s_axis_tvalid     => s_brsp_sk_tvalid(i),
-                i_s_axis_tdata      => s_brsp_sk_tdata(i),
-                i_s_axis_tuser      => s_brsp_sk_tuser(i),
-                o_s_axis_tready     => s_brsp_sk_tready(i),
+                i_s_axis_tvalid     => s_brsp_axis_tvalid(i),
+                i_s_axis_tdata      => s_brsp_axis_tdata(i),
+                i_s_axis_tuser      => s_brsp_axis_tuser(i),
+                o_s_axis_tready     => s_brsp_axis_tready(i),
                 i_bus_busy          => s_bus_busy(i),
                 i_bus_rsp_pending   => s_bus_rsp_pending(i),
                 i_ef1_sync          => s_ef1_sync(i),

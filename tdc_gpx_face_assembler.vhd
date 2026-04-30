@@ -168,18 +168,28 @@ architecture rtl of tdc_gpx_face_assembler is
         of std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
     -- Input port mapping (before FIFO)
     signal s_in_tdata_src : t_tdata_arr;
-    -- FIFO output (after FIFO, to FSM)
+    -- FIFO output (after FIFO elasticity, to FSM)
     signal s_in_tdata     : t_tdata_arr;
 
     -- =========================================================================
     -- Derived constants
     -- =========================================================================
     constant c_G_BEATS_PER_CELL : natural := fn_beats_per_cell(g_TDATA_WIDTH);
+    constant c_IN_ELASTIC_WIDTH : natural := g_TDATA_WIDTH + 2;  -- tuser + tlast + tdata
+    type t_in_elastic_arr is array(0 to c_N_CHIPS - 1)
+        of std_logic_vector(c_IN_ELASTIC_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- Input FIFO output signals (xpm_fifo_axis → FSM)
     -- =========================================================================
     -- s_in_tdata: defined above as t_tdata_arr (g_TDATA_WIDTH per chip)
+    signal s_fifo_tdata    : t_tdata_arr;
+    signal s_fifo_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_fifo_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_fifo_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_fifo_tuser    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_fifo_pack_in  : t_in_elastic_arr;
+    signal s_fifo_pack_out : t_in_elastic_arr;
     signal s_in_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_in_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -260,10 +270,9 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Can FSM produce a new beat?
     --   True when: pipe empty OR pipe handshake occurring.
-    --   s_pipe_tready is REGISTERED (from output skid buffer).
-    --   v009 rule: input FIFO ready below uses the same local expression
-    --   directly so the handshake path is not chained through an additional
-    --   intermediate combinational process.
+    --   s_pipe_tready is REGISTERED (from output FIFO/skid).
+    --   v010 rule: the XPM input FIFO m_axis_tready is driven by the
+    --   registered-ready elastic FIFO, not by this local pipe expression.
     -- =========================================================================
     signal s_can_produce     : std_logic;
 
@@ -357,19 +366,47 @@ begin
                 s_axis_tuser    => i_s_axis_tuser(i downto i),  -- P1 rework
                 s_axis_tid      => "0",
                 s_axis_tdest    => "0",
-                m_axis_tdata    => s_in_tdata(i),
-                m_axis_tvalid   => s_in_tvalid(i),
-                m_axis_tready   => s_in_tready(i),
-                m_axis_tlast    => s_in_tlast(i),
+                m_axis_tdata    => s_fifo_tdata(i),
+                m_axis_tvalid   => s_fifo_tvalid(i),
+                m_axis_tready   => s_fifo_tready(i),
+                m_axis_tlast    => s_fifo_tlast(i),
                 m_axis_tkeep    => open,
                 m_axis_tstrb    => open,
-                m_axis_tuser    => s_in_tuser(i downto i),  -- P1 rework
+                m_axis_tuser    => s_fifo_tuser(i downto i),  -- P1 rework
                 m_axis_tid      => open,
                 m_axis_tdest    => open,
                 m_aclk          => i_clk,
                 injectsbiterr_axis => '0',
                 injectdbiterr_axis => '0'
             );
+
+        s_fifo_pack_in(i) <= s_fifo_tuser(i)
+                             & s_fifo_tlast(i)
+                             & s_fifo_tdata(i);
+
+        u_in_elastic : entity work.tdc_gpx_sync_fifo
+            generic map (
+                g_DATA_WIDTH => c_IN_ELASTIC_WIDTH,
+                g_DEPTH      => 2,
+                g_LOG2_DEPTH => 1,
+                g_IN_REG     => true,
+                g_OUT_REG    => true
+            )
+            port map (
+                i_clk     => i_clk,
+                i_rst_n   => i_rst_n,
+                i_flush   => s_flush,
+                i_s_valid => s_fifo_tvalid(i),
+                o_s_ready => s_fifo_tready(i),
+                i_s_data  => s_fifo_pack_in(i),
+                o_m_valid => s_in_tvalid(i),
+                i_m_ready => s_in_tready(i),
+                o_m_data  => s_fifo_pack_out(i)
+            );
+
+        s_in_tuser(i) <= s_fifo_pack_out(i)(g_TDATA_WIDTH + 1);
+        s_in_tlast(i) <= s_fifo_pack_out(i)(g_TDATA_WIDTH);
+        s_in_tdata(i) <= s_fifo_pack_out(i)(g_TDATA_WIDTH - 1 downto 0);
     end generate gen_in_fifo;
 
     -- =========================================================================
@@ -477,10 +514,10 @@ begin
                      else '0';
 
     -- =========================================================================
-    -- Input skid buffer m_ready control
+    -- Input elastic FIFO m_ready control
     --   Assert for current chip when FSM is forwarding real data and the
-    --   output pipe has space. v009: keep this as a single local qualify
-    --   from registered state/pipe flags to stay within the 2-depth rule.
+    --   output pipe has space. This ready no longer drives the XPM input
+    --   FIFO directly; the elastic FIFO between them closes that boundary.
     -- =========================================================================
     gen_in_tready : for i in 0 to c_N_CHIPS - 1 generate
         s_in_tready(i) <= '1' when s_state_r = ST_FORWARD
@@ -589,7 +626,7 @@ begin
                     end if;
                 end if;
 
-                -- Latch tvalid from input skid buffers (all active states)
+                -- Latch tvalid from input elastic FIFOs (all active states)
                 if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE
                    or s_state_r = ST_FORWARD then
                     for i in 0 to c_N_CHIPS - 1 loop
@@ -773,7 +810,7 @@ begin
 
                         else
                             -- --------------------------------------------------
-                            -- Ready chip: forward from input skid buffer
+                            -- Ready chip: forward from input elastic FIFO
                             -- --------------------------------------------------
                             v_chip_idx := to_integer(s_cur_chip_r);
 
