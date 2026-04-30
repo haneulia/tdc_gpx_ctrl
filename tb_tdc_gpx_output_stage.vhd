@@ -40,10 +40,13 @@ architecture sim of tb_tdc_gpx_output_stage is
     constant C_WATCHDOG       : time    := 50 us;
     constant C_KEEP_WIDTH     : natural := fn_axis_keep_width(C_OUTPUT_WIDTH);
 
-    -- Beats per cell follows the selected AXI4-Stream data width.
-    constant C_BEATS_PER_CELL : natural := fn_beats_per_cell(C_OUTPUT_WIDTH);
+    -- Beats per cell follows the runtime max_hits_cfg contract used by
+    -- C03 cell_builder and C04 face_assembler.
+    constant C_MAX_HITS_CFG_N : natural := 7;
+    constant C_BEATS_PER_CELL : natural := fn_beats_per_cell_rt(C_MAX_HITS_CFG_N, C_OUTPUT_WIDTH);
+    constant C_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(C_OUTPUT_WIDTH);
     constant C_STOPS          : natural := 2;
-    constant C_TOTAL_BEATS    : natural := C_STOPS * C_BEATS_PER_CELL;  -- 2*4 = 8
+    constant C_TOTAL_BEATS    : natural := C_STOPS * C_BEATS_PER_CELL;
 
     -- =========================================================================
     -- DUT signals
@@ -170,6 +173,8 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal s_frame_faulted_fall_cnt : natural := 0;
     signal s_keep_ok            : boolean := true;
     signal s_fall_keep_ok       : boolean := true;
+    signal s_metadata_sanitize_ok : boolean := true;
+    signal s_metadata_seen_count  : natural := 0;
 
 begin
 
@@ -301,13 +306,29 @@ begin
     -- VDMA output monitor
     -- =========================================================================
     p_monitor : process(clk)
+        variable v_out_idx  : natural;
+        variable v_data_idx : natural;
+        variable v_rise_line_beat_cnt : natural := 0;
     begin
         if rising_edge(clk) then
             if m_axis_tvalid = '1' and m_axis_tready = '1' then
+                if m_axis_tuser(0) = '1' then
+                    v_rise_line_beat_cnt := 0;
+                end if;
+                v_out_idx := v_rise_line_beat_cnt;
                 v_out_beat_cnt <= v_out_beat_cnt + 1;
                 if m_axis_tkeep /= (m_axis_tkeep'range => '1')
                    or m_axis_tstrb /= (m_axis_tstrb'range => '1') then
                     s_keep_ok <= false;
+                end if;
+                if v_out_idx >= C_HDR_PREFIX_BEATS then
+                    v_data_idx := v_out_idx - C_HDR_PREFIX_BEATS;
+                    if (v_data_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
+                        s_metadata_seen_count <= s_metadata_seen_count + 1;
+                        if m_axis_tdata(6 downto 0) /= "0000000" then
+                            s_metadata_sanitize_ok <= false;
+                        end if;
+                    end if;
                 end if;
                 if m_axis_tuser(0) = '1' then
                     v_sof_seen <= true;
@@ -315,6 +336,9 @@ begin
                 end if;
                 if m_axis_tlast = '1' then
                     v_eol_seen <= true;
+                    v_rise_line_beat_cnt := 0;
+                else
+                    v_rise_line_beat_cnt := v_rise_line_beat_cnt + 1;
                 end if;
             end if;
             -- Fall-side monitor (#22)
@@ -399,6 +423,9 @@ begin
             end loop;
 
             v_beat_data := to_unsigned(beat_idx + 1, C_OUTPUT_WIDTH);
+            if (beat_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
+                v_beat_data(6 downto 0) := to_unsigned(85, 7);
+            end if;
             cell_rise_tdata_0 <= std_logic_vector(v_beat_data);
             cell_rise_tvalid  <= "0001";    -- only chip 0
 
@@ -435,9 +462,13 @@ begin
         report "  frame_done:   " & std_logic'image(frame_done)   severity note;
         report "  SOF count:    " & integer'image(s_sof_count)    severity note;
         report "  row_faulted_rise count: " & integer'image(s_row_faulted_rise_cnt) severity note;
+        report "  metadata sanitize ok: " & boolean'image(s_metadata_sanitize_ok) severity note;
+        report "  metadata seen count:  " & integer'image(s_metadata_seen_count) severity note;
 
         if frame_done = '1' and v_sof_seen and v_eol_seen and v_out_beat_cnt > 0
            and s_keep_ok
+           and s_metadata_sanitize_ok
+           and s_metadata_seen_count = C_STOPS
            and s_sof_count = 1
            and s_row_faulted_rise_cnt = 1
            and s_row_faulted_fall_cnt = 0
@@ -497,6 +528,9 @@ begin
             end loop;
 
             v_beat_data := to_unsigned(beat_idx + 1, C_OUTPUT_WIDTH);
+            if (beat_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
+                v_beat_data(6 downto 0) := to_unsigned(85, 7);
+            end if;
             cell_rise_tdata_0 <= std_logic_vector(v_beat_data);
             cell_fall_tdata_0 <= std_logic_vector(v_beat_data);
             cell_rise_tvalid  <= "0001";
@@ -574,6 +608,9 @@ begin
             severity failure;
         assert s_keep_ok and s_fall_keep_ok
             report "SCENARIO 2: AXIS tkeep/tstrb must remain all-ones on accepted beats"
+            severity failure;
+        assert s_metadata_sanitize_ok
+            report "SCENARIO 2: C04 final VDMA metadata[6:0] must discard Hit[16] vector"
             severity failure;
 
         report "*** SCENARIO 2 (slope-independent abort) PASS ***" severity note;

@@ -545,6 +545,7 @@ begin
         variable v_chip_idx       : natural range 0 to 3;
         variable v_row_completing : boolean;  -- row finishes on this edge
         variable v_faulted_this_cycle : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        variable v_sanitized_tdata : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -823,7 +824,11 @@ begin
                             v_chip_idx := to_integer(s_cur_chip_r);
 
                             if s_in_tvalid(v_chip_idx) = '1' then
-                                s_pipe_tdata_r  <= s_in_tdata(v_chip_idx);
+                                v_sanitized_tdata := s_in_tdata(v_chip_idx);
+                                if s_fwd_beat_r = s_rt_last_beat_r then
+                                    v_sanitized_tdata(6 downto 0) := (others => '0');
+                                end if;
+                                s_pipe_tdata_r  <= v_sanitized_tdata;
                                 s_pipe_tvalid_r <= '1';
                                 s_fwd_stall_cnt_r <= (others => '0');  -- Round 9 #2: reset stall counter on progress
                                 -- Track (stop_idx, beat_idx) position for Q&A #36
