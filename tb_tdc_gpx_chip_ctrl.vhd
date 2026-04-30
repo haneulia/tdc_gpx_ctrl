@@ -842,6 +842,7 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
+        v_t0_cycle := s_clk_cnt;
         s_irflag_pin <= '1';
         wait_clk(5);
 
@@ -854,6 +855,9 @@ begin
         if not v_found then
             pr_fail("[2c] drain_done timeout", v_fail);
         else
+            v_drain_done_cycle := s_clk_cnt;
+            pr_pass("[2c] zero-stop latency measured: output_done="
+                    & nat_img(v_drain_done_cycle - v_t0_cycle) & "clk");
             wait_clk(1);
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             if v_drain_words = 0 and s_empty_read_cnt = v_empty_read_snap then
@@ -889,6 +893,7 @@ begin
         pulse(s_shot_start);
         wait_clk(5);
 
+        v_t0_cycle := s_clk_cnt;
         s_irflag_pin <= '1';
         wait_clk(5);
 
@@ -901,6 +906,9 @@ begin
         if not v_found then
             pr_fail("[2d] drain_done timeout", v_fail);
         else
+            v_drain_done_cycle := s_clk_cnt;
+            pr_pass("[2d] zero-stop conflict latency measured: output_done="
+                    & nat_img(v_drain_done_cycle - v_t0_cycle) & "clk");
             wait_clk(1);
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             if v_drain_words = 0 and s_empty_read_cnt = v_empty_read_snap then
