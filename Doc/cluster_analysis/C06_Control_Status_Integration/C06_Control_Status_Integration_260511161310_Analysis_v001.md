@@ -279,7 +279,25 @@ AXI4-Lite CSR를 쓰고 읽는 TB는 반드시 `px_utility_pkg.vhd`의 `px_axi_l
 
 ---
 
-## 9. 다음 단계
+## 9. Fix Plan v001 실행 결과 반영
+
+이 문서는 C06 초기 분석 기준 문서이므로 원래 판단은 보존한다. 다만 이후 `C06_Control_Status_Integration_260511192515_Code_Fix_Plan_v001.md` 실행 결과 다음 항목의 상태가 바뀌었고, 남은 항목은 `C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002.md`로 승계한다.
+
+| 초기 분석 항목 | Fix Plan v001 / Result v001 반영 | 현재 상태 | 다음 추적 |
+|---|---|---|---|
+| F-C06-A01 end-to-end II 미검증 | face_seq start boundary는 register화됨 | Partial | FP2-C06-03, FP2-C06-04 |
+| F-C06-A02 output ready high 의존 | v001에서 직접 수정 없음 | Open | FP2-C06-04 |
+| F-C06-A03 `o_irq`/`o_irq_pipe` SW 계약 | `o_irq_pipe`는 reserved/tied-off로 수락 | Partial / Accepted Exception | FP2-C06-06 |
+| F-C06-A04 status source 분산 | 일부 sticky clear와 status boundary 반영 | Partial | FP2-C06-07 |
+| F-C06-A05 status_agg 조합 depth | `busy/overrun` register boundary 반영 및 xsim PASS | Verified | 없음 |
+| F-C06-A06 Datasheet status와 RTL soft_clear 의미 차이 | soft_clear 대상 일부 보완, reset-only 예외 유지 | Partial | FP2-C06-07, FP2-C06-08 |
+
+근거 문서:
+
+- `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md`
+- `C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002.md`
+
+## 10. 다음 단계
 
 다음 산출물은 `C06_Control_Status_Integration_<timestamp>_Code_Review_v001.md`가 맞다.
 

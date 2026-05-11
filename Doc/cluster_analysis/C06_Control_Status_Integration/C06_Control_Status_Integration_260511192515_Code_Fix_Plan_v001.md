@@ -280,7 +280,42 @@ flowchart TD
 
 사용자 확인이 필요한 항목은 현재 없다. 수정 중 timing 또는 TB가 기존 계약과 충돌하면 별도 Review 문서로 중단 보고한다.
 
-## 12. Lineage
+## 12. v001 실행 결과 및 v002 승계 기록
+
+| 항목 | v001 계획 | 실행 결과 반영 문서 | 상태 | v002 승계 여부 |
+| --- | --- | --- | --- | --- |
+| Phase A | `status_agg` busy/overrun register boundary | `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md` section 3, 4.2, 5 | Fixed + Verified | 아니오 |
+| Phase B | `face_seq` start output register boundary | `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md` section 3, 4.1, 5 | Fixed + Verified | 영향 분석은 v002 T0~T6에 승계 |
+| Phase C | top sticky soft_clear 정책 반영 | `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md` section 3, 4.3, 5 | Fixed + Verified | status map 상세는 v002에 승계 |
+| Phase D | `o_irq_pipe` reserved/tied-off 계약 명시 | `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md` section 3, 6 | Accepted Exception | `o_irq` 실제 CSR IRQ 검증은 v002에 승계 |
+| Phase E | T0~T6, stall, sticky/IRQ 검증 | `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md` section 5, 6 | Partial | 예 |
+| 신규 발견 | `tdc_gpx_sync_fifo` project compile-order warning | `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md` section 5, 7 | New Open | 예 |
+
+### 12.1 v002로 넘기는 항목
+
+다음 항목은 `C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002.md`에 추적 ID를 부여해 승계한다.
+
+| v002 ID | 승계 원인 | 요약 |
+| --- | --- | --- |
+| FP2-C06-01 | Result v001 잔여 warning | Vivado project `tdc_gpx_sync_fifo` compile-order warning 정리 |
+| FP2-C06-02 | Phase E partial | 수정 후 32/64/128-bit fresh xsim 재실행 |
+| FP2-C06-03 | Phase E partial | T0~T6 marker 기반 latency/throughput/pipeline/II 재계측 |
+| FP2-C06-04 | Phase E partial | `tready` stall/backpressure 검증 |
+| FP2-C06-05 | Code Review F-C06-CR-07 | rise/fall imbalance 및 fall-only abort 검증 또는 예외 승인 |
+| FP2-C06-06 | Code Review F-C06-CR-05 | `o_irq` CSR IRQ source/read/clear 검증 또는 예외 승인 |
+| FP2-C06-07 | Code Review F-C06-CR-06 | status source/clear field map 작성 |
+| FP2-C06-08 | Result v001 partial | top-level reset/soft_reset/force_reinit recovery 검증 또는 C02 인계 예외 승인 |
+
+### 12.2 운영 규칙 반영
+
+이번 작업에서 확인된 운영 공백은 “Fix Plan 실행 후 Result에서 끝내지 않고, 남은 항목을 다음 Fix Plan으로 승계해야 한다”는 점이다. 이 규칙은 다음 문서에 추가한다.
+
+| 문서 | 반영 위치 |
+| --- | --- |
+| `cluster_analysis_260511200655_operating_protocol_v012.md` | section 5 `Fix Plan 실행/승계 사이클 규칙` |
+| `cluster_analysis_communication_plan_260511200655_v002.md` | section 4 `Cluster별 Plan-Result-Rollover 소통 절차` |
+
+## 13. Lineage
 
 | 이전 문서 | 이번 문서 반영 위치 |
 | --- | --- |
@@ -288,4 +323,3 @@ flowchart TD
 | `C06_Control_Status_Integration_260511191005_Verify_Baseline_v001.md` | PASS/Open 상태를 필수 검증 Matrix와 수정 순서로 변환 |
 
 다음 문서는 `C06_Control_Status_Integration_<timestamp>_Code_Fix_v001.md` 또는 `C06_Control_Status_Integration_<timestamp>_Verify_v001.md`가 되어야 한다.
-

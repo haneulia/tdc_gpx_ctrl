@@ -189,7 +189,29 @@ baseline log의 `POLY_BOUNDARY` 요약:
 
 그 다음 `C06_Verify_v001`에서 fresh compile/elab/xsim으로 VB-C06-01/03/04/05/09/10을 닫아야 한다.
 
-## 10. Lineage
+## 10. Fix Plan v001 실행 결과 반영
+
+이 baseline 문서는 수정 전 상태를 고정해 두는 문서이므로 baseline 수치는 변경하지 않는다. 대신 Fix Plan v001 실행 후 각 VB-C06 항목의 현재 closure 상태와 다음 승계 계획을 아래에 기록한다.
+
+| VB 항목 | Baseline 상태 | Result v001 이후 상태 | 다음 추적 |
+|---|---|---|---|
+| VB-C06-01 normal sequence | Partial PASS | 64-bit top integration PASS, 32/128 fresh rerun 필요 | FP2-C06-02 |
+| VB-C06-02 start output boundary | Open | register boundary 수정 및 focused/integration PASS | Closed |
+| VB-C06-03 frame_done/face_close relation | Open | 기본 face_seq PASS, imbalance 상세는 미검증 | FP2-C06-05 |
+| VB-C06-04 status aggregation boundary | Open | `status_agg` focused PASS | Closed |
+| VB-C06-05 sticky clear | Open | top sticky probe PASS, 전체 map은 미완 | FP2-C06-07 |
+| VB-C06-06 IRQ contract | Open | `o_irq_pipe` reserved 수락, `o_irq` CSR 계약 미검증 | FP2-C06-06 |
+| VB-C06-07 tready stall | Open | v001에서 직접 재검증 없음 | FP2-C06-04 |
+| VB-C06-08 reset/soft_reset/force_reinit | Open | 정상 run PASS, recovery 상세 미검증 | FP2-C06-08 |
+| VB-C06-09 width compatibility | PASS baseline | 수정 후 64-bit fresh PASS, 32/128 재검증 필요 | FP2-C06-02 |
+| VB-C06-10 traceability | Partial PASS | v001/result/v002 연결 기록 완료 | Closed / 계속 유지 |
+
+근거 문서:
+
+- `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md`
+- `C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002.md`
+
+## 11. Lineage
 
 | 이전 문서 | 이번 문서 반영 위치 |
 | --- | --- |

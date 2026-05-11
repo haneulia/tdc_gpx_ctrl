@@ -241,7 +241,24 @@ sequenceDiagram
 
 ---
 
-## 8. 다음 진행 권고
+## 8. Fix Plan v001 실행 결과 반영
+
+이 문서는 C06 진행도 점검 시점의 판단을 보존한다. 이후 Fix Plan v001 실행 결과 C06 핵심 control/status boundary 보완은 완료되었고, 남은 항목은 Fix Plan v002에서 추적한다.
+
+| 점검 항목 | Fix Plan v001 이후 상태 | 다음 조치 |
+|---|---|---|
+| 계획 대비 진행 | Phase A~D 구현, 주요 xsim PASS | v002에서 검증 closure 보강 |
+| RTL 완성도 | `face_seq`, `status_agg`, top sticky clear 일부 개선 | compile-order warning 및 recovery/IRQ 검증 보강 |
+| Timing/II | start/status register boundary 영향은 식별됨 | T0~T6 marker로 계측 |
+| Backpressure | C06 v001에서 top stall 재검증 미완 | FP2-C06-04 |
+| Handoff 가능성 | 조건부 가능에서 검증 보강 필요로 유지 | Result v002 후 재판단 |
+
+근거 문서:
+
+- `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md`
+- `C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002.md`
+
+## 9. 다음 진행 권고
 
 다음 작업은 C06 실제 분석으로 진행하는 것이 맞다.
 

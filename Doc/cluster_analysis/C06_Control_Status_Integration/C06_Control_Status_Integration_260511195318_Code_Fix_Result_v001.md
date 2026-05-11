@@ -134,3 +134,20 @@ flowchart LR
 ## 7. 다음 판단
 
 C06는 control/status integration의 필수 보완이 반영되었다. 다음 단계로 넘어가기 전에 권장되는 작은 정리 항목은 Vivado project source list에 `tdc_gpx_sync_fifo.vhd` compile-order를 명시 반영해 syntax warning을 없애는 것이다. 기능상 blocker는 아니다.
+
+## 8. Result v001 -> Fix Plan v002 승계 기록
+
+이 결과 문서는 `C06_Control_Status_Integration_260511192515_Code_Fix_Plan_v001.md`의 실행 결과다. 오늘 추가 분석 결과, 아래 항목은 `C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002.md`로 승계한다.
+
+| v002 ID | Result v001 근거 | 승계 판단 |
+| --- | --- | --- |
+| FP2-C06-01 | section 5, 7: `tdc_gpx_sync_fifo` compile-order warning | 기능 blocker는 아니나 project syntax warning 제거 필요 |
+| FP2-C06-02 | section 1, 6: 64-bit만 수정 후 fresh rerun | 32/64/128-bit를 같은 수정본으로 재실행 |
+| FP2-C06-03 | section 4.1, 6: start output +1 clock 영향 | T0~T6 marker로 latency/II 실제 영향 재계측 |
+| FP2-C06-04 | section 6: `tready` stall 인계 유지 | top/full_int backpressure 검증 필요 |
+| FP2-C06-05 | section 6: frame_done/face_close relation 부분 PASS | rise/fall imbalance scenario 필요 |
+| FP2-C06-06 | section 6: IRQ contract는 `o_irq_pipe` 중심으로만 닫힘 | `o_irq` CSR IRQ source/read/clear 확인 필요 |
+| FP2-C06-07 | section 4.3, 6: sticky clear 일부 확인 | 전체 status source/clear map 작성 필요 |
+| FP2-C06-08 | section 6: reset/soft_reset/force_reinit 부분 PASS | top-level recovery 검증 또는 C02 인계 예외 승인 필요 |
+
+v002 실행 후에는 같은 방식으로 `Fix Plan v002`에 실행 결과를 기록하고, 남는 항목은 `Fix Plan v003`으로 승계한다.

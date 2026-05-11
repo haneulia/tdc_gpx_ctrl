@@ -330,7 +330,27 @@ PASS 조건
 
 이 순서를 권하는 이유는 `face_seq` start gating register화가 1 clock latency 변화를 만들 수 있기 때문이다. baseline 없이 바로 고치면 기존 C04 timing 결과와 C06 변화량을 분리해서 설명하기 어렵다.
 
-## 9. Lineage
+## 9. Fix Plan v001 실행 결과 반영
+
+이 코드 리뷰 문서의 finding은 원본 판단을 보존한다. 다만 Fix Plan v001 실행으로 일부 finding은 닫혔고, 일부는 Fix Plan v002로 승계되었다.
+
+| Finding | v001 실행 결과 | 현재 상태 | v002 승계 |
+|---|---|---|---|
+| F-C06-CR-01 end-to-end II/backpressure | v001에서 직접 검증 완료되지 않음 | Open | FP2-C06-03, FP2-C06-04 |
+| F-C06-CR-02 `face_seq` start 출력 조합 경계 | register boundary 반영, focused/integration xsim PASS | Verified | T0~T6 영향만 FP2-C06-03 |
+| F-C06-CR-03 `status_agg.o_status.busy` 조합 OR | `p_live_status` register boundary 반영, xsim PASS | Verified | 없음 |
+| F-C06-CR-04 top-level sticky soft_clear 불일치 | frame/row/run_timeout soft_clear 반영, probe PASS | Verified / Partial | 전체 status map은 FP2-C06-07 |
+| F-C06-CR-05 `o_irq`와 `o_irq_pipe` SW 계약 | `o_irq_pipe` reserved/tied-off는 수락 | Partial | FP2-C06-06 |
+| F-C06-CR-06 status source/clear source 분산 | 일부 개선됐으나 field map 필요 | Partial | FP2-C06-07 |
+| F-C06-CR-07 fall-only abort / rise-primary gating | v001에서 직접 검증 완료되지 않음 | Open | FP2-C06-05 |
+
+근거 문서:
+
+- `C06_Control_Status_Integration_260511192515_Code_Fix_Plan_v001.md` section 12
+- `C06_Control_Status_Integration_260511195318_Code_Fix_Result_v001.md` section 5, 6, 8
+- `C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002.md` section 5, 8
+
+## 10. Lineage
 
 | 이전 문서 | 이번 문서 반영 위치 |
 | --- | --- |
