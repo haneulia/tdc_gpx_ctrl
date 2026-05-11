@@ -8,12 +8,15 @@ pptx.layout = "CUSTOM_WIDE";
 pptx.author = "Codex";
 pptx.subject = "C06 Code Fix Plan v002";
 pptx.title = "C06 Code Fix Plan v002";
+pptx.company = "OpenAI";
 pptx.lang = "ko-KR";
 pptx.theme = {
   headFontFace: "Malgun Gothic",
   bodyFontFace: "Malgun Gothic",
   lang: "ko-KR",
 };
+pptx.layout = "CUSTOM_WIDE";
+pptx.margin = 0;
 
 const font = "Malgun Gothic";
 const C = {
@@ -21,89 +24,66 @@ const C = {
   ink: "111827",
   muted: "64748B",
   line: "CBD5E1",
-  white: "FFFFFF",
   blue: "2563EB",
-  blueFill: "EFF6FF",
+  blueFill: "DBEAFE",
   green: "16A34A",
-  greenFill: "ECFDF5",
+  greenFill: "DCFCE7",
   orange: "EA580C",
-  orangeFill: "FFF7ED",
+  orangeFill: "FFEDD5",
   red: "DC2626",
-  redFill: "FEF2F2",
-  purple: "7C3AED",
-  purpleFill: "F5F3FF",
+  redFill: "FEE2E2",
+  white: "FFFFFF",
   slate: "E2E8F0",
+  dark: "0F172A",
+  purple: "7C3AED",
+  purpleFill: "F3E8FF",
 };
 
-function setBg(slide) {
-  slide.background = { color: C.bg };
-}
-
-function text(slide, value, x, y, w, h, opt = {}) {
+function tx(slide, value, x, y, w, h, opt = {}) {
   slide.addText(value, {
-    x,
-    y,
-    w,
-    h,
+    x, y, w, h,
     fontFace: font,
     fontSize: opt.size || 10,
-    bold: opt.bold || false,
+    bold: !!opt.bold,
     color: opt.color || C.ink,
     align: opt.align || "left",
     valign: opt.valign || "mid",
     fit: "shrink",
     margin: opt.margin === undefined ? 0.04 : opt.margin,
-    breakLine: false,
+    breakLine: opt.breakLine || false,
   });
 }
 
 function title(slide, main, sub) {
-  setBg(slide);
-  text(slide, main, 0.58, 0.24, 12.2, 0.5, { size: 20.5, bold: true });
-  text(slide, sub, 0.6, 0.77, 12.0, 0.34, { size: 9.4, color: C.muted });
-  slide.addShape(pptx.ShapeType.line, {
-    x: 0.58,
-    y: 1.12,
-    w: 12.2,
-    h: 0,
-    line: { color: C.line, width: 0.8 },
-  });
-}
-
-function footer(slide, value) {
-  text(slide, value, 0.7, 7.0, 11.9, 0.24, {
-    size: 7.6,
-    color: C.muted,
-    align: "center",
-  });
+  slide.background = { color: C.bg };
+  tx(slide, main, 0.55, 0.28, 12.2, 0.46, { size: 21, bold: true });
+  tx(slide, sub, 0.58, 0.78, 12.0, 0.3, { size: 9.2, color: C.muted });
+  slide.addShape(pptx.ShapeType.line, { x: 0.58, y: 1.13, w: 12.1, h: 0, line: { color: C.line, width: 0.8 } });
 }
 
 function box(slide, value, x, y, w, h, opt = {}) {
   slide.addShape(pptx.ShapeType.roundRect, {
-    x,
-    y,
-    w,
-    h,
-    rectRadius: 0.06,
+    x, y, w, h,
+    rectRadius: 0.04,
     fill: { color: opt.fill || C.white },
-    line: { color: opt.line || C.line, width: opt.lineWidth || 1 },
+    line: { color: opt.line || C.line, width: opt.width || 1 },
   });
-  text(slide, value, x + 0.08, y + 0.05, w - 0.16, h - 0.1, {
-    size: opt.size || 9.4,
-    bold: opt.bold || false,
-    color: opt.color || C.ink,
+  tx(slide, value, x + 0.08, y + 0.06, w - 0.16, h - 0.12, {
+    size: opt.size || 10,
+    bold: opt.bold,
     align: opt.align || "center",
-    valign: "mid",
+    color: opt.color || C.ink,
   });
+}
+
+function footer(slide, value) {
+  tx(slide, value, 0.6, 7.04, 12.1, 0.24, { size: 7.4, color: C.muted, align: "center" });
 }
 
 function arrow(slide, x1, y1, x2, y2, color = C.muted) {
   slide.addShape(pptx.ShapeType.line, {
-    x: x1,
-    y: y1,
-    w: x2 - x1,
-    h: y2 - y1,
-    line: { color, width: 1.35, endArrowType: "triangle" },
+    x: x1, y: y1, w: x2 - x1, h: y2 - y1,
+    line: { color, width: 1.3, endArrowType: "triangle" },
   });
 }
 
@@ -111,18 +91,14 @@ function table(slide, rows, x, y, widths, rowH, size = 8.2) {
   rows.forEach((row, r) => {
     let curX = x;
     row.forEach((cell, c) => {
-      const head = r === 0;
       slide.addShape(pptx.ShapeType.rect, {
-        x: curX,
-        y: y + r * rowH,
-        w: widths[c],
-        h: rowH,
-        fill: { color: head ? C.slate : C.white },
-        line: { color: C.line, width: 0.5 },
+        x: curX, y: y + r * rowH, w: widths[c], h: rowH,
+        fill: { color: r === 0 ? C.slate : C.white },
+        line: { color: C.line, width: 0.45 },
       });
-      text(slide, cell, curX + 0.04, y + r * rowH + 0.02, widths[c] - 0.08, rowH - 0.04, {
+      tx(slide, cell, curX + 0.04, y + r * rowH + 0.02, widths[c] - 0.08, rowH - 0.04, {
         size,
-        bold: head,
+        bold: r === 0,
         align: c === 0 ? "center" : "left",
       });
       curX += widths[c];
@@ -132,155 +108,77 @@ function table(slide, rows, x, y, widths, rowH, size = 8.2) {
 
 {
   const s = pptx.addSlide();
-  setBg(s);
-  text(s, "C06 Code Fix Plan v002", 0.75, 0.82, 8.4, 0.62, { size: 27, bold: true });
-  text(
-    s,
-    "Fix Plan v001 실행 결과에서 닫히지 않은 검증/계약 항목을 v002 추적 ID로 승계한다.",
-    0.78,
-    1.52,
-    10.8,
-    0.44,
-    { size: 13, color: C.muted },
-  );
-  box(s, "Fix Plan v001\n수정 계약", 0.95, 3.02, 2.35, 0.92, { fill: C.blueFill, line: C.blue, bold: true });
-  arrow(s, 3.42, 3.48, 4.25, 3.48);
-  box(s, "Result v001\n실행 결과", 4.25, 3.02, 2.35, 0.92, { fill: C.greenFill, line: C.green, bold: true });
-  arrow(s, 6.78, 3.48, 7.62, 3.48);
-  box(s, "Fix Plan v001\n반영 위치 기록", 7.62, 3.02, 2.55, 0.92, { fill: C.orangeFill, line: C.orange, bold: true });
-  arrow(s, 10.28, 3.48, 11.05, 3.48);
-  box(s, "Fix Plan v002\n승계 관리", 11.05, 3.02, 1.85, 0.92, { fill: C.purpleFill, line: C.purple, bold: true, size: 8.4 });
-  footer(s, "C06_Control_Status_Integration_260511200655_Code_Fix_Plan_v002");
+  s.background = { color: C.dark };
+  tx(s, "C06", 0.72, 0.58, 1.4, 0.42, { size: 15, bold: true, color: "93C5FD" });
+  tx(s, "Control / Status Integration", 0.72, 1.08, 9.2, 0.58, { size: 27, bold: true, color: C.white });
+  tx(s, "Code Fix Plan v002", 0.76, 1.72, 5.0, 0.38, { size: 15, color: "CBD5E1" });
+  tx(s, "목표: v001 이후 남은 검증 계약을 실제 xsim 회귀로 닫고, 남은 항목은 v003으로 추적 승계한다.", 0.78, 2.5, 9.8, 0.55, { size: 14, color: C.white });
+  box(s, "Datasheet 기준\nI-Mode Single", 0.85, 3.62, 2.35, 0.95, { fill: "1E3A8A", line: "60A5FA", color: C.white, bold: true });
+  box(s, "T0~T6 marker\nLatency/II 계측", 3.55, 3.62, 2.5, 0.95, { fill: "14532D", line: "86EFAC", color: C.white, bold: true });
+  box(s, "32/64/128 width\nfresh xsim", 6.4, 3.62, 2.5, 0.95, { fill: "7C2D12", line: "FDBA74", color: C.white, bold: true });
+  box(s, "Result v002\nOpen은 v003 승계", 9.25, 3.62, 2.6, 0.95, { fill: "581C87", line: "C084FC", color: C.white, bold: true });
+  footer(s, "C06 Code Fix Plan v002 | 생성 2026-05-11 20:06:55 KST | 수정 2026-05-11 20:33:22 KST");
 }
 
 {
   const s = pptx.addSlide();
-  title(s, "오늘 문서 업데이트 반영", "v001 실행 결과를 C06 분석 문서와 v002 계획 문서에 연결했다.");
-  table(
-    s,
-    [
-      ["문서", "반영 내용"],
-      ["Progress Check", "v001 실행 뒤 C06 진행도와 남은 검증 항목을 v002로 승계"],
-      ["Analysis", "초기 finding F-C06-A01..A06의 현재 상태와 v002 추적 ID 기록"],
-      ["Code Review", "F-C06-CR-01..07을 Verified/Partial/Open으로 재분류"],
-      ["Verify Baseline", "VB-C06-01..10의 baseline 대비 Result v001 이후 상태 기록"],
-      ["Fix Plan v001", "실행 결과와 v002 승계 여부를 원 계획에 역기록"],
-      ["Result v001", "FP2-C06-01..08 승계 근거 기록"],
-    ],
-    0.72,
-    1.38,
-    [2.35, 9.75],
-    0.55,
-    8.0,
-  );
-  footer(s, "근거: Code_Fix_Plan_v002 section 3");
+  title(s, "v002 작업 항목", "P1은 직접 xsim closure, P2는 운영 계약과 status/IRQ 추적성 closure");
+  table(s, [
+    ["ID", "핵심 질문", "완료 기준"],
+    ["FP2-01", "sync FIFO compile-order가 안전한가?", "direct compile/elab PASS 또는 환경 예외 문서화"],
+    ["FP2-02", "32/64/128 width가 모두 동작하는가?", "expected beats/tlast PASS"],
+    ["FP2-03", "T0~T6로 latency/II를 계측하는가?", "cycle/time marker 로그"],
+    ["FP2-04", "downstream tready stall에서 보존되는가?", "bounded stall PASS"],
+    ["FP2-05", "fall-only abort가 rise를 죽이지 않는가?", "Scenario F PASS"],
+    ["FP2-06", "o_irq/o_irq_pipe 계약이 명확한가?", "no-spurious + reserved 정책"],
+    ["FP2-07", "STAT5/6/7 source/clear 추적 가능한가?", "status map 작성"],
+    ["FP2-08", "soft_reset/force_reinit recovery가 닫혔는가?", "deadlock 없음 또는 v003 승계"],
+  ], 0.65, 1.46, [1.05, 5.35, 5.65], 0.48, 8.0);
+  footer(s, "근거: Code_Fix_Plan_v002.md section 5, 8, 9");
 }
 
 {
   const s = pptx.addSlide();
-  title(s, "v001 실행 결과 요약", "닫힌 항목과 다음 계획으로 넘어갈 항목을 분리한다.");
-  table(
-    s,
-    [
-      ["항목", "Result v001 상태", "v002 처리"],
-      ["status_agg register", "Fixed + Verified", "Close"],
-      ["face_seq output register", "Fixed + Verified", "T0~T6 영향 계측"],
-      ["sticky soft_clear", "Fixed + Verified", "status map 상세 승계"],
-      ["o_irq_pipe reserved", "Accepted Exception", "o_irq 실제 계약 확인"],
-      ["Phase E 검증", "Partial", "v002 핵심 작업"],
-      ["sync_fifo warning", "New Open", "compile-order 정리"],
-    ],
-    0.8,
-    1.55,
-    [3.0, 3.0, 5.4],
-    0.52,
-    8.4,
-  );
-  footer(s, "근거: Code_Fix_Result_v001 section 5~8");
+  title(s, "실행 흐름", "계획은 Result v002로 닫고, 남은 Open/Partial만 Plan v003으로 승계한다.");
+  const xs = [0.75, 2.7, 4.65, 6.6, 8.55, 10.5];
+  const labels = ["compile\n입력 정리", "width\n32/64/128", "T0~T6\nmarker", "tready\nstall", "IRQ/status\n계약", "v003\n승계"];
+  labels.forEach((label, i) => {
+    box(s, label, xs[i], 2.35, 1.45, 0.82, { fill: i < 5 ? C.blueFill : C.orangeFill, line: i < 5 ? C.blue : C.orange, bold: true, size: 10 });
+    if (i < labels.length - 1) arrow(s, xs[i] + 1.48, 2.76, xs[i + 1] - 0.05, 2.76, C.muted);
+  });
+  tx(s, "운영 프로토콜", 0.8, 4.08, 2.5, 0.32, { size: 13, bold: true });
+  tx(s, "Fix Plan vN -> Result vN -> Plan vN에 실행 결과 역기록 -> Open/Partial/New 항목을 Fix Plan vN+1로 승계", 0.82, 4.55, 10.9, 0.5, { size: 12 });
+  footer(s, "근거: cluster_analysis operating protocol + Plan v002 section 2");
 }
 
 {
   const s = pptx.addSlide();
-  title(s, "v002 작업 항목", "FP2-C06-01..08로 남은 검증과 계약을 추적한다.");
-  table(
-    s,
-    [
-      ["ID", "작업", "완료 기준"],
-      ["01", "sync_fifo compile-order", "syntax warning 제거 또는 예외 근거"],
-      ["02", "32/64/128 fresh xsim", "width별 beat/tlast PASS"],
-      ["03", "T0~T6 marker", "cycle/time 표 생성"],
-      ["04", "tready backpressure", "bounded stall PASS/FAIL"],
-      ["05", "rise/fall imbalance", "PASS 또는 Accepted Exception"],
-      ["06", "o_irq 계약", "source/read/clear 검증"],
-      ["07", "status map", "field/source/clear/domain 표"],
-      ["08", "recovery", "deadlock 없음 또는 인계 예외"],
-    ],
-    0.72,
-    1.42,
-    [1.05, 4.0, 6.2],
-    0.43,
-    7.9,
-  );
-  footer(s, "근거: Fix Plan v002 section 6, 9");
+  title(s, "Datasheet 기준", "C06는 payload 의미를 바꾸지 않고 I-Mode single의 control/status 관측을 검증한다.");
+  table(s, [
+    ["근거", "위치", "v002 적용"],
+    ["I-Mode single", "PDF p25 section 2.3", "T0 start와 stop/drain/output marker만 관측"],
+    ["Single measurement", "PDF p29 section 2.11.1", "IrFlag, EF/IFIFO read, reset 흐름을 marker로 분해"],
+    ["IFIFO data structure", "PDF p27 section 2.4", "payload 의미는 C02/C03/C04 계약 유지"],
+    ["empty FIFO read 금지", "PDF p27", "backpressure에서도 beat 보존과 status 추적 분리"],
+  ], 0.78, 1.7, [2.5, 2.8, 6.5], 0.62, 8.3);
+  footer(s, "절대 기준: Doc/TDC-GPX-Datasheet.pdf");
 }
 
 {
   const s = pptx.addSlide();
-  title(s, "Timing / Latency / Throughput / Pipeline / II", "v002는 +1 clock 예측을 실제 T0~T6와 backpressure II로 닫는다.");
-  const y = 1.85;
-  box(s, "T0\nstart_tdc", 0.8, y, 1.35, 0.65, { fill: C.white, line: C.line, bold: true });
-  arrow(s, 2.2, y + 0.32, 3.0, y + 0.32);
-  box(s, "T1\npacket/start accept", 3.0, y, 1.75, 0.65, { fill: C.blueFill, line: C.blue, bold: true });
-  arrow(s, 4.8, y + 0.32, 5.6, y + 0.32);
-  box(s, "T2\nregistered start", 5.6, y, 1.75, 0.65, { fill: C.greenFill, line: C.green, bold: true });
-  arrow(s, 7.4, y + 0.32, 8.2, y + 0.32);
-  box(s, "T3~T5\nGPX/C02~C04", 8.2, y, 1.9, 0.65, { fill: C.purpleFill, line: C.purple, bold: true });
-  arrow(s, 10.15, y + 0.32, 10.95, y + 0.32);
-  box(s, "T6\nnext start allowed", 10.95, y, 1.75, 0.65, { fill: C.orangeFill, line: C.orange, bold: true });
-  table(
-    s,
-    [
-      ["분석", "v002 보완"],
-      ["Latency", "T0~T6 cycle/time 실측"],
-      ["Throughput", "32/64/128 + stall 조건 반영"],
-      ["Pipeline", "start FF, status FF, output drain stage 표시"],
-      ["II", "ready-high와 bounded stall 조건을 분리 산출"],
-    ],
-    1.05,
-    4.1,
-    [2.2, 9.0],
-    0.45,
-    8.5,
-  );
-  footer(s, "근거: Fix Plan v002 section 8~9");
+  title(s, "v002 실행 후 판정", "대부분 닫혔고, recovery closure만 v003으로 넘긴다.");
+  table(s, [
+    ["범주", "판정", "다음"],
+    ["compile/direct xsim", "Verified", "표준 증거로 유지"],
+    ["32/64/128 width", "Verified", "추가 수정 없음"],
+    ["T0~T6/Backpressure", "Verified", "Result v002에 수치 기록"],
+    ["rise/fall imbalance", "Verified", "Scenario F 유지"],
+    ["IRQ/status", "Verified + Accepted Exception", "reserved 유지 여부 v003에서 명시"],
+    ["soft_reset/force_reinit", "Partial / Open", "FP3-C06-01로 승계"],
+  ], 0.8, 1.55, [2.8, 3.4, 5.2], 0.64, 8.4);
+  footer(s, "근거: Plan v002 section 9, Result v002");
 }
 
-{
-  const s = pptx.addSlide();
-  title(s, "운영 규칙 반영", "앞으로 Plan, Result, 다음 Plan 승계를 문서 자체에 남긴다.");
-  box(s, "Plan vN\n실행 계약", 1.0, 1.7, 2.0, 0.78, { fill: C.blueFill, line: C.blue, bold: true });
-  arrow(s, 3.1, 2.08, 4.1, 2.08);
-  box(s, "Result vN\n검증 결과", 4.1, 1.7, 2.0, 0.78, { fill: C.greenFill, line: C.green, bold: true });
-  arrow(s, 6.2, 2.08, 7.2, 2.08);
-  box(s, "Plan vN\nforward trace", 7.2, 1.7, 2.0, 0.78, { fill: C.orangeFill, line: C.orange, bold: true });
-  arrow(s, 9.3, 2.08, 10.3, 2.08);
-  box(s, "Plan vN+1\ncarry-over", 10.3, 1.7, 2.0, 0.78, { fill: C.purpleFill, line: C.purple, bold: true });
-  table(
-    s,
-    [
-      ["문서", "반영"],
-      ["operating_protocol_v012", "Fix Plan 실행/승계 사이클 규칙"],
-      ["communication_plan_v002", "Cluster별 Plan-Result-Rollover 소통 절차"],
-      ["Fix Plan v001", "실행 결과 및 v002 승계 기록"],
-      ["Result v001", "Result에서 Fix Plan v002로 넘기는 근거"],
-    ],
-    1.05,
-    3.65,
-    [3.2, 8.0],
-    0.47,
-    8.5,
-  );
-  footer(s, "v002 이후에도 같은 패턴 반복");
-}
-
-pptx.writeFile({ fileName: out });
+pptx.writeFile({ fileName: out }).then(() => {
+  console.log(out);
+});

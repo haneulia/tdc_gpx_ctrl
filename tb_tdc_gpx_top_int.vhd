@@ -83,7 +83,10 @@ entity tb_tdc_gpx_top_int is
         G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
         G_POWERUP_CLKS    : positive := 16;
         G_RECOVERY_CLKS   : positive := 4;
-        G_ALU_PULSE_CLKS  : positive := 3
+        G_ALU_PULSE_CLKS  : positive := 3;
+        -- 0 = output sinks always ready. N = hold both output tready low for
+        -- two clocks every N clocks to verify bounded downstream stall.
+        G_BP_TREADY_GAP   : natural := 0
     );
 end entity tb_tdc_gpx_top_int;
 
@@ -333,6 +336,16 @@ architecture sim of tb_tdc_gpx_top_int is
     signal mon_rise_frame_end : natural := 0;  -- tlast count (rising stream)
     signal mon_fall_beats     : natural := 0;
     signal mon_fall_frame_end : natural := 0;
+    signal sim_cycle          : natural := 0;
+    signal mon_rise_first_seen : std_logic := '0';
+    signal mon_fall_first_seen : std_logic := '0';
+    signal mon_rise_first_cycle : natural := 0;
+    signal mon_fall_first_cycle : natural := 0;
+    signal mon_rise_last_cycle  : natural := 0;
+    signal mon_fall_last_cycle  : natural := 0;
+    signal mon_bp_stall_cycles  : natural := 0;
+    signal mon_irq_cnt          : natural := 0;
+    signal mon_irq_pipe_cnt     : natural := 0;
 
     -- =========================================================================
     -- Pipeline CSR register offsets (csr_pipeline internal)
@@ -375,6 +388,46 @@ begin
     -- Clock / Reset
     -- =========================================================================
     clk <= not clk after C_CLK_PERIOD / 2 when not sim_done else '0';
+
+    p_cycle : process(clk)
+    begin
+        if rising_edge(clk) then
+            if rst_n = '0' then
+                sim_cycle <= 0;
+            else
+                sim_cycle <= sim_cycle + 1;
+            end if;
+        end if;
+    end process p_cycle;
+
+    p_bp : process(clk)
+        variable v_cnt : natural := 0;
+    begin
+        if rising_edge(clk) then
+            if rst_n = '0' then
+                v_cnt := 0;
+                m_rise_tready <= '1';
+                m_fall_tready <= '1';
+            elsif G_BP_TREADY_GAP > 0 then
+                v_cnt := v_cnt + 1;
+                if v_cnt < G_BP_TREADY_GAP then
+                    m_rise_tready <= '1';
+                    m_fall_tready <= '1';
+                elsif v_cnt < G_BP_TREADY_GAP + 2 then
+                    m_rise_tready <= '0';
+                    m_fall_tready <= '0';
+                    mon_bp_stall_cycles <= mon_bp_stall_cycles + 1;
+                else
+                    v_cnt := 0;
+                    m_rise_tready <= '1';
+                    m_fall_tready <= '1';
+                end if;
+            else
+                m_rise_tready <= '1';
+                m_fall_tready <= '1';
+            end if;
+        end if;
+    end process p_bp;
 
     p_reset : process
     begin
@@ -608,7 +661,21 @@ begin
                 mon_rise_frame_end <= 0;
                 mon_fall_beats     <= 0;
                 mon_fall_frame_end <= 0;
+                mon_rise_first_seen <= '0';
+                mon_fall_first_seen <= '0';
+                mon_rise_first_cycle <= 0;
+                mon_fall_first_cycle <= 0;
+                mon_rise_last_cycle <= 0;
+                mon_fall_last_cycle <= 0;
+                mon_irq_cnt <= 0;
+                mon_irq_pipe_cnt <= 0;
             else
+                if o_irq = '1' then
+                    mon_irq_cnt <= mon_irq_cnt + 1;
+                end if;
+                if o_irq_pipe = '1' then
+                    mon_irq_pipe_cnt <= mon_irq_pipe_cnt + 1;
+                end if;
                 if m_rise_tvalid = '1' and m_rise_tready = '1' then
                     assert m_rise_tkeep = (m_rise_tkeep'range => '1')
                         report "top_int: rising tkeep must be all ones on accepted output beats"
@@ -616,9 +683,22 @@ begin
                     assert m_rise_tstrb = (m_rise_tstrb'range => '1')
                         report "top_int: rising tstrb must be all ones on accepted output beats"
                         severity error;
+                    if mon_rise_first_seen = '0' then
+                        mon_rise_first_seen <= '1';
+                        mon_rise_first_cycle <= sim_cycle;
+                        report "C06_MARKER T4_FIRST_RISE_BEAT cycle="
+                               & integer'image(sim_cycle)
+                               & " time=" & time'image(now)
+                            severity note;
+                    end if;
                     mon_rise_beats <= mon_rise_beats + 1;
                     if m_rise_tlast = '1' then
                         mon_rise_frame_end <= mon_rise_frame_end + 1;
+                        mon_rise_last_cycle <= sim_cycle;
+                        report "C06_MARKER T5_RISE_TLAST cycle="
+                               & integer'image(sim_cycle)
+                               & " time=" & time'image(now)
+                            severity note;
                     end if;
                 end if;
                 if m_fall_tvalid = '1' and m_fall_tready = '1' then
@@ -628,9 +708,22 @@ begin
                     assert m_fall_tstrb = (m_fall_tstrb'range => '1')
                         report "top_int: falling tstrb must be all ones on accepted output beats"
                         severity error;
+                    if mon_fall_first_seen = '0' then
+                        mon_fall_first_seen <= '1';
+                        mon_fall_first_cycle <= sim_cycle;
+                        report "C06_MARKER T4_FIRST_FALL_BEAT cycle="
+                               & integer'image(sim_cycle)
+                               & " time=" & time'image(now)
+                            severity note;
+                    end if;
                     mon_fall_beats <= mon_fall_beats + 1;
                     if m_fall_tlast = '1' then
                         mon_fall_frame_end <= mon_fall_frame_end + 1;
+                        mon_fall_last_cycle <= sim_cycle;
+                        report "C06_MARKER T5_FALL_TLAST cycle="
+                               & integer'image(sim_cycle)
+                               & " time=" & time'image(now)
+                            severity note;
                     end if;
                 end if;
             end if;
@@ -785,6 +878,10 @@ begin
             fire_count_tkeep  <= (others => '1');
             fire_count_tlast  <= '1';
             fire_count_tvalid <= '1';
+            pl("C06_MARKER T1_FIRE_COUNT_FINAL shot="
+               & integer'image(shot_count)
+               & " cycle=" & integer'image(sim_cycle)
+               & " time=" & time'image(now));
 
             wait until rising_edge(clk);
             fire_count_tvalid <= '0';
@@ -810,6 +907,10 @@ begin
                & " physical=" & integer'image(c_PHYSICAL_HITS));
 
             -- start_tdc (= i_shot_start), emulating laser_ctrl.o_start_tdc
+            pl("C06_MARKER T0_START_TDC shot="
+               & integer'image(shot_count)
+               & " cycle=" & integer'image(sim_cycle)
+               & " time=" & time'image(now));
             lc_start_tdc <= '1';
             wait_clk(1);
             lc_start_tdc <= '0';
@@ -826,12 +927,20 @@ begin
             wait_clk(80);
 
             -- Assert IrFlag after a few clk (MTimer expiry emulation)
+            pl("C06_MARKER T2_IRFLAG_ASSERT shot="
+               & integer'image(shot_count)
+               & " cycle=" & integer'image(sim_cycle)
+               & " time=" & time'image(now));
             i_tdc_irflag <= (others => '1');
 
             -- Wait for drain (max ~5 us = 1000 clks)
             wait_clk(1000);
 
             -- Deassert IrFlag + wait ALU recovery
+            pl("C06_MARKER T3_DRAIN_WAIT_END shot="
+               & integer'image(shot_count)
+               & " cycle=" & integer'image(sim_cycle)
+               & " time=" & time'image(now));
             i_tdc_irflag <= (others => '0');
             wait_clk(G_ALU_PULSE_CLKS + G_RECOVERY_CLKS + 8);
 
@@ -978,6 +1087,9 @@ begin
         wait_clk(2000);
 
         -- laser_ctrl.o_stop_tdc emulation
+        pl("C06_MARKER T6_STOP_TDC cycle="
+           & integer'image(sim_cycle)
+           & " time=" & time'image(now));
         lc_stop_tdc <= '1';
         wait_clk(2);
         lc_stop_tdc <= '0';
@@ -995,11 +1107,19 @@ begin
            & "  stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
            & "  faces=" & integer'image(G_N_FACES)
            & "  cols=" & integer'image(G_COLS_PER_FACE)
-           & "  expected_beats=" & integer'image(C_EXPECTED_AXIS_BEATS));
+           & "  expected_beats=" & integer'image(C_EXPECTED_AXIS_BEATS)
+           & "  bp_gap=" & integer'image(G_BP_TREADY_GAP));
         pl("  rising  stream  : beats=" & integer'image(mon_rise_beats)
            & "  tlast_cnt=" & integer'image(mon_rise_frame_end));
         pl("  falling stream  : beats=" & integer'image(mon_fall_beats)
            & "  tlast_cnt=" & integer'image(mon_fall_frame_end));
+        pl("  c06 timing       : rise_first_cycle=" & integer'image(mon_rise_first_cycle)
+           & "  rise_last_cycle=" & integer'image(mon_rise_last_cycle)
+           & "  fall_first_cycle=" & integer'image(mon_fall_first_cycle)
+           & "  fall_last_cycle=" & integer'image(mon_fall_last_cycle)
+           & "  bp_stall_cycles=" & integer'image(mon_bp_stall_cycles));
+        pl("  irq counters     : o_irq=" & integer'image(mon_irq_cnt)
+           & "  o_irq_pipe=" & integer'image(mon_irq_pipe_cnt));
         pl("====================================================");
         assert mon_rise_beats > 0
             report "tb_tdc_gpx_top_int: no rising beats observed"
@@ -1019,6 +1139,19 @@ begin
         assert mon_fall_beats = C_EXPECTED_AXIS_BEATS
             report "tb_tdc_gpx_top_int: falling beat count mismatch"
             severity error;
+        assert mon_irq_pipe_cnt = 0
+            report "tb_tdc_gpx_top_int: o_irq_pipe must stay reserved/low"
+            severity error;
+        assert mon_irq_cnt = 0
+            report "tb_tdc_gpx_top_int: o_irq must not fire in normal C06 top_int run"
+            severity error;
+        if G_BP_TREADY_GAP > 0 then
+            assert mon_bp_stall_cycles > 0
+                report "tb_tdc_gpx_top_int: backpressure mode did not create stall cycles"
+                severity error;
+            report "tb_tdc_gpx_top_int: bounded output backpressure preserved beats/tlast - PASS"
+                severity note;
+        end if;
         report "tb_tdc_gpx_top_int: output streams emitted beats/tlast as expected - PASS"
             severity note;
 

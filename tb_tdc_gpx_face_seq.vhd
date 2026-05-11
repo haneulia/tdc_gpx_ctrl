@@ -387,8 +387,49 @@ begin
         wait_clk(3);
 
         -------------------------------------------------------------------------
+        -- Scenario F: fall-only abort must not kill rise-side shot gating, but
+        -- it must satisfy the fall side of frame_done_both.
+        -------------------------------------------------------------------------
+        report "=== Scenario F: fall-only abort completion ===" severity note;
+        start_run;
+        v_seq_before := global_shot_seq;
+
+        shot_start_raw <= '1';
+        wait_clk(1);
+        shot_start_raw <= '0';
+        wait_clk(8);
+
+        assert global_shot_seq = v_seq_before + 1
+            report "FAIL F-pre: shot counter expected +1 before fall abort"
+            severity failure;
+
+        face_fall_abort <= '1';
+        wait for 1 ns;
+        assert pipeline_abort_fall = '1'
+            report "FAIL F: fall-only abort did not assert pipeline_abort_fall"
+            severity failure;
+        assert pipeline_abort = '0'
+            report "FAIL F: fall-only abort incorrectly killed rise pipeline"
+            severity failure;
+        wait_clk(1);
+        face_fall_abort <= '0';
+        wait_clk(1);
+
+        frame_done <= '1';
+        wait_clk(1);
+        frame_done <= '0';
+        wait_clk(4);
+
+        assert frame_done_both = '1'
+            report "FAIL F: frame_done_both did not close after rise done + fall abort"
+            severity failure;
+        report "PASS F: fall-only abort closes fall side without killing rise" severity note;
+
+        end_run;
+
+        -------------------------------------------------------------------------
         report "====================================" severity note;
-        report "ALL SCENARIOS PASSED (A,B,C,D,E)"    severity note;
+        report "ALL SCENARIOS PASSED (A,B,C,D,E,F)"  severity note;
         report "====================================" severity note;
         test_done <= true;
         wait;
