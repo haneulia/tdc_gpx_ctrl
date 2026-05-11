@@ -342,6 +342,9 @@ begin
             stat5_in => s_stat_out,     -- STATUS (CDC'd from i_axis_aclk)
             stat6_in => s_stat6_out,    -- STATUS_EXT (Round 5 follow-up, CDC'd)
             stat7_in => s_stat7_out,    -- STATUS_EXT2 (Round 11 Category C, CDC'd)
+            -- C06 contract: pipeline IRQ is reserved/tied-off. SW shall read
+            -- STAT5/6/7 for pipeline done/fault visibility instead of waiting
+            -- for a dedicated pipeline interrupt source.
             intrpt_src_in => "0",
             irq           => o_irq
         );

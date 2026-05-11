@@ -167,6 +167,9 @@ entity tdc_gpx_top is
 
         -- Interrupts
         o_irq            : out std_logic;
+        -- C06 contract: legacy/reserved pipeline IRQ output. It is currently
+        -- tied to the CSR pipeline interrupt source, whose input is reserved.
+        -- Pipeline fault/done observability is provided through STAT5/6/7.
         o_irq_pipe       : out std_logic
     );
 end entity tdc_gpx_top;
@@ -1068,7 +1071,7 @@ begin
     p_frame_faulted_sticky : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
+            if i_axis_aresetn = '0' or s_err_soft_clear = '1' then
                 s_frame_done_faulted_sticky_r <= '0';
             elsif s_frame_done_faulted_rise = '1' or s_frame_done_faulted_fall = '1' then
                 s_frame_done_faulted_sticky_r <= '1';
@@ -1081,7 +1084,7 @@ begin
     p_row_faulted_sticky : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
+            if i_axis_aresetn = '0' or s_err_soft_clear = '1' then
                 s_row_done_faulted_sticky_r <= '0';
             elsif s_row_done_faulted_rise = '1' or s_row_done_faulted_fall = '1' then
                 s_row_done_faulted_sticky_r <= '1';
@@ -1115,7 +1118,7 @@ begin
     p_run_timeout_sticky : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
+            if i_axis_aresetn = '0' or s_err_soft_clear = '1' then
                 s_run_timeout_sticky_r <= (others => '0');
             else
                 s_run_timeout_sticky_r <= s_run_timeout_sticky_r or s_run_timeout;

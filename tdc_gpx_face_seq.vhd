@@ -143,7 +143,11 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_shot_deferred_r   : std_logic := '0';
     signal s_shot_drop_cnt_r   : unsigned(15 downto 0) := (others => '0');
     signal s_cfg_rejected_r    : std_logic := '0';
-    signal s_shot_start_gated  : std_logic;
+    signal s_face_start_gated_comb : std_logic := '0';
+    signal s_face_start_gated_r    : std_logic := '0';
+    signal s_shot_start_gated_comb : std_logic := '0';
+    signal s_shot_start_gated_r    : std_logic := '0';
+    signal s_shot_start_per_chip_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     -- #22 Sprint 1: rise/fall abort infrastructure (values still coupled)
     -- s_pipeline_abort_rise : gates all logic that protects rise-side primary
     --                         data (FSM state, packet_start, counters, etc.)
@@ -299,7 +303,7 @@ begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or s_cmd_start_accepted_r = '1' then
                 s_global_shot_seq_r <= (others => '0');
-            elsif o_shot_start_gated = '1' then
+            elsif s_shot_start_gated_r = '1' then
                 s_global_shot_seq_r <= s_global_shot_seq_r + 1;
             end if;
         end if;
@@ -327,7 +331,7 @@ begin
             if i_rst_n = '0' or s_packet_start_r = '1'
                or s_frame_done_both_r = '1' then
                 s_face_shot_cnt_r <= (others => '0');
-            elsif o_shot_start_gated = '1' then
+            elsif s_shot_start_gated_r = '1' then
                 s_face_shot_cnt_r <= s_face_shot_cnt_r + 1;
             end if;
         end if;
@@ -425,9 +429,9 @@ begin
 
     -- v009 sequential-logic rule: close the multi-source face-closing
     -- decision in registers. The accepted last shot is detected with
-    -- s_shot_start_gated and the pre-increment shot counter, so the close
-    -- flag asserts immediately after the last accepted gated shot without a
-    -- long output-boundary combinational chain.
+    -- s_shot_start_gated_r and the pre-increment shot counter, so the close
+    -- flag aligns to the registered module-boundary shot_start pulse without
+    -- a long output-boundary combinational chain.
     p_face_closing : process(i_clk)
         variable v_next_shot_cnt : unsigned(15 downto 0);
         variable v_all_fired     : std_logic;
@@ -442,7 +446,7 @@ begin
                 s_face_closing_r    <= '0';
             else
                 v_next_shot_cnt := s_face_shot_cnt_r;
-                if s_shot_start_gated = '1' then
+                if s_shot_start_gated_r = '1' then
                     v_next_shot_cnt := s_face_shot_cnt_r + 1;
                 end if;
 
@@ -631,7 +635,7 @@ begin
                 end if;
 
                 -- Auto-defer killed pending
-                if s_shot_pending_r = '1' and s_shot_start_gated = '0'
+                if s_shot_pending_r = '1' and s_shot_start_gated_comb = '0'
                    and i_cmd_stop = '0' and i_cmd_soft_reset = '0'
                    and s_pipeline_abort = '0' then
                     if s_shot_deferred_r = '0' then
@@ -671,26 +675,48 @@ begin
     -- independently without killing the rise VDMA stream). frame_done_both
     -- still waits on fall completion, but that is downstream completion
     -- accounting — separate from start gating.
-    s_shot_start_gated <= s_shot_pending_r
-                          when s_face_closing_r = '0'
-                               and i_cmd_stop = '0'
-                               and i_cmd_soft_reset = '0'
-                               and s_pipeline_abort_rise = '0'
-                               and s_abort_quiesce_r = '0'
-                          else '0';
+    s_shot_start_gated_comb <= s_shot_pending_r
+                               when s_face_closing_r = '0'
+                                    and i_cmd_stop = '0'
+                                    and i_cmd_soft_reset = '0'
+                                    and s_pipeline_abort_rise = '0'
+                                    and s_abort_quiesce_r = '0'
+                               else '0';
 
-    -- Per-chip shot masking
-    gen_shot_mask : for i in 0 to c_N_CHIPS - 1 generate
-        o_shot_start_per_chip(i) <= s_shot_start_gated and s_face_active_mask_r(i);
-    end generate;
+    s_face_start_gated_comb <= s_face_start_r
+                               when i_cmd_stop = '0'
+                                    and i_cmd_soft_reset = '0'
+                                    and s_pipeline_abort_rise = '0'
+                                    and s_abort_quiesce_r = '0'
+                               else '0';
+
+    -- C06 Phase B: close start pulse module boundaries with FFs.
+    -- The combinational *_comb values remain internal acceptance decisions;
+    -- downstream modules observe only the registered outputs below.
+    p_start_output_reg : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_cmd_soft_reset = '1' then
+                s_face_start_gated_r    <= '0';
+                s_shot_start_gated_r    <= '0';
+                s_shot_start_per_chip_r <= (others => '0');
+            else
+                s_face_start_gated_r <= s_face_start_gated_comb;
+                s_shot_start_gated_r <= s_shot_start_gated_comb;
+                for i in 0 to c_N_CHIPS - 1 loop
+                    s_shot_start_per_chip_r(i) <=
+                        s_shot_start_gated_comb and s_face_active_mask_r(i);
+                end loop;
+            end if;
+        end if;
+    end process p_start_output_reg;
 
     -- Output assignments
     o_face_start       <= s_face_start_r;
-    -- Round 9 #15: rise-only gating (same rationale as s_shot_start_gated).
-    o_face_start_gated <= s_face_start_r when i_cmd_stop = '0' and i_cmd_soft_reset = '0'
-                                            and s_pipeline_abort_rise = '0' and s_abort_quiesce_r = '0'
-                          else '0';
-    o_shot_start_gated <= s_shot_start_gated;
+    -- Round 9 #15: rise-only gating; C06 Phase B exports registered boundary.
+    o_face_start_gated <= s_face_start_gated_r;
+    o_shot_start_gated <= s_shot_start_gated_r;
+    o_shot_start_per_chip <= s_shot_start_per_chip_r;
     o_pipeline_abort      <= s_pipeline_abort;
     o_pipeline_abort_rise <= s_pipeline_abort_rise;
     o_pipeline_abort_fall <= s_pipeline_abort_fall;

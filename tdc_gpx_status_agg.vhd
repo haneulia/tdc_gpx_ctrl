@@ -8,7 +8,7 @@
 --   Extracted from tdc_gpx_top to reduce top-level complexity.
 --
 -- Extracted processes: p_timestamp, p_error_cnt, p_err_sticky
--- Plus concurrent status aggregation assignments.
+-- Plus registered status aggregation assignments.
 --
 -- SW-initiated sticky/count clear (Q&A #40, Round 4):
 --   i_soft_clear (default '0') clears s_err_drain_sticky_r,
@@ -85,6 +85,10 @@ architecture rtl of tdc_gpx_status_agg is
     signal s_chip_error_prev_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_err_drain_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_err_seq_sticky_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_busy_r             : std_logic := '0';
+    signal s_pipeline_overrun_r : std_logic := '0';
+    signal s_rise_overrun_r     : std_logic := '0';
+    signal s_fall_overrun_r     : std_logic := '0';
 
 begin
 
@@ -156,27 +160,49 @@ begin
     end process;
 
     -- =========================================================================
-    -- Status aggregation
+    -- Registered live status aggregation.
+    -- The wide busy/overrun fan-in is closed at this module boundary to keep
+    -- CSR status packing from inheriting a long combinational path.
     -- =========================================================================
-    o_status.busy <= '1' when i_face_state_idle = '0'
-                          or i_chip_busy /= C_ZEROS
-                          or i_face_asm_idle = '0'
-                          or i_face_asm_fall_idle = '0'
-                          or i_hdr_idle = '0'
-                          or i_hdr_fall_idle = '0'
-                          or i_face_tvalid = '1'
-                          or i_face_fall_tvalid = '1'
-                          or i_face_buf_tvalid = '1'
-                          or i_face_fall_buf_tvalid = '1'
-                          or i_m_axis_tvalid = '1'
-                          or i_m_axis_fall_tvalid = '1'
-                          or i_reg_outstanding = '1'
-                     else '0';
+    p_live_status : process(i_clk)
+        variable v_busy : std_logic;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_busy_r             <= '0';
+                s_pipeline_overrun_r <= '0';
+                s_rise_overrun_r     <= '0';
+                s_fall_overrun_r     <= '0';
+            else
+                v_busy := '0';
+                if i_face_state_idle = '0'
+                   or i_chip_busy /= C_ZEROS
+                   or i_face_asm_idle = '0'
+                   or i_face_asm_fall_idle = '0'
+                   or i_hdr_idle = '0'
+                   or i_hdr_fall_idle = '0'
+                   or i_face_tvalid = '1'
+                   or i_face_fall_tvalid = '1'
+                   or i_face_buf_tvalid = '1'
+                   or i_face_fall_buf_tvalid = '1'
+                   or i_m_axis_tvalid = '1'
+                   or i_m_axis_fall_tvalid = '1'
+                   or i_reg_outstanding = '1' then
+                    v_busy := '1';
+                end if;
 
-    -- Combined + per-slope overrun flags (#22 Sprint 3)
-    o_status.pipeline_overrun <= i_shot_overrun or i_shot_fall_overrun;
-    o_status.rise_overrun     <= i_shot_overrun;
-    o_status.fall_overrun     <= i_shot_fall_overrun;
+                s_busy_r             <= v_busy;
+                s_pipeline_overrun_r <= i_shot_overrun or i_shot_fall_overrun;
+                s_rise_overrun_r     <= i_shot_overrun;
+                s_fall_overrun_r     <= i_shot_fall_overrun;
+            end if;
+        end if;
+    end process p_live_status;
+
+    o_status.busy              <= s_busy_r;
+    o_status.pipeline_overrun  <= s_pipeline_overrun_r;
+    o_status.rise_overrun      <= s_rise_overrun_r;
+    o_status.fall_overrun      <= s_fall_overrun_r;
 
     o_timestamp       <= s_timestamp_r;
     o_error_cycle_count <= s_error_count_r;
