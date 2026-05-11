@@ -86,7 +86,10 @@ entity tb_tdc_gpx_top_int is
         G_ALU_PULSE_CLKS  : positive := 3;
         -- 0 = output sinks always ready. N = hold both output tready low for
         -- two clocks every N clocks to verify bounded downstream stall.
-        G_BP_TREADY_GAP   : natural := 0
+        G_BP_TREADY_GAP   : natural := 0;
+        -- 0 = no recovery. 1 = normal run -> soft_reset -> normal run.
+        -- 2 = normal run -> force_reinit -> normal run.
+        G_RECOVERY_MODE   : natural := 0
     );
 end entity tb_tdc_gpx_top_int;
 
@@ -188,6 +191,25 @@ architecture sim of tb_tdc_gpx_top_int is
             when 1      => return "early";
             when 2      => return "zero-alias";
             when 3      => return "late-after-packet-start";
+            when others => return "invalid";
+        end case;
+    end function;
+
+    function fn_recovery_runs(mode : natural) return natural is
+    begin
+        if mode = 0 then
+            return 1;
+        else
+            return 2;
+        end if;
+    end function;
+
+    function fn_recovery_mode_name(mode : natural) return string is
+    begin
+        case mode is
+            when 0      => return "none";
+            when 1      => return "soft_reset";
+            when 2      => return "force_reinit";
             when others => return "invalid";
         end case;
     end function;
@@ -355,6 +377,10 @@ architecture sim of tb_tdc_gpx_top_int is
     -- =========================================================================
     constant C_PIPE_MAIN_CTRL  : std_logic_vector(6 downto 0) := "0000000";  -- 0x00
     constant C_PIPE_RANGE_COLS : std_logic_vector(6 downto 0) := "0000100";  -- 0x04
+    constant C_PIPE_AUX_CMD    : std_logic_vector(6 downto 0) := "0001000";  -- 0x08
+    constant C_PIPE_STATUS     : std_logic_vector(6 downto 0) := "1010100";  -- 0x54
+    constant C_PIPE_STATUS_EXT : std_logic_vector(6 downto 0) := "1011000";  -- 0x58
+    constant C_PIPE_STATUS_EXT2: std_logic_vector(6 downto 0) := "1011100";  -- 0x5C
 
     -- MAIN_CTRL + RANGE_COLS packed from the entity generics so changing
     -- G_ACTIVE_CHIP_MASK / G_N_FACES / G_STOPS_PER_CHIP / G_COLS_PER_FACE /
@@ -375,6 +401,9 @@ architecture sim of tb_tdc_gpx_top_int is
     constant C_EXPECTED_AXIS_BEATS : natural :=
         fn_expected_axis_beats(G_MAX_HITS_WRITE_MODE, G_N_FACES,
                                C_TARGET_FACE_BEATS, C_DEFAULT_FACE_BEATS);
+    constant C_RECOVERY_RUNS : natural := fn_recovery_runs(G_RECOVERY_MODE);
+    constant C_EXPECTED_TOTAL_LINES : natural := C_TOTAL_LINES * C_RECOVERY_RUNS;
+    constant C_EXPECTED_TOTAL_AXIS_BEATS : natural := C_EXPECTED_AXIS_BEATS * C_RECOVERY_RUNS;
 
     -- Chip CSR addresses (9-bit)
     constant C_CHIP_CFG_REG0   : std_logic_vector(8 downto 0) := "0" & x"14";  -- CTL5
@@ -783,6 +812,32 @@ begin
         end procedure;
 
         ----------------------------------------------------------------
+        -- AXI4-Lite read: Pipeline CSR (7-bit addr)
+        -- Handshake and optional compare are owned by px_utility_pkg.
+        ----------------------------------------------------------------
+        procedure pipe_rd(addr          : std_logic_vector(6 downto 0);
+                          expected      : std_logic_vector(31 downto 0);
+                          compare_en    : std_logic;
+                          fail_on_error : std_logic) is
+        begin
+            px_axi_lite_reader(
+                addr          => addr,
+                val           => expected,
+                comp          => compare_en,
+                fail_on_error => fail_on_error,
+                axi_aclk      => clk,
+                axi_araddr    => sp_araddr,
+                axi_arprot    => sp_arprot,
+                axi_arvalid   => sp_arvalid,
+                axi_arready   => sp_arready,
+                axi_rdata     => sp_rdata,
+                axi_rresp     => sp_rresp,
+                axi_rvalid    => sp_rvalid,
+                axi_rready    => sp_rready
+            );
+        end procedure;
+
+        ----------------------------------------------------------------
         -- AXI4-Lite write: Chip CSR (9-bit addr)
         -- Handshake is owned by px_utility_pkg; this wrapper only selects ports.
         ----------------------------------------------------------------
@@ -805,6 +860,23 @@ begin
                 axi_bvalid  => s_axi_bvalid,
                 axi_bready  => s_axi_bready
             );
+        end procedure;
+
+        ----------------------------------------------------------------
+        -- Pipeline status readback checkpoint.
+        -- STAT5 is expected to be clean/idle. STAT6 is logged without exact
+        -- compare because run_drain_complete_mask is a valid non-zero result.
+        -- STAT7 is expected to stay zero in the nominal recovery scenario.
+        ----------------------------------------------------------------
+        procedure read_pipeline_status(tag : string) is
+        begin
+            wait_clk(64);
+            pl("C06_MARKER T7_STATUS_READ tag=" & tag
+               & " cycle=" & integer'image(sim_cycle)
+               & " time=" & time'image(now));
+            pipe_rd(C_PIPE_STATUS, x"00000000", '1', '1');
+            pipe_rd(C_PIPE_STATUS_EXT, x"00000000", '0', '0');
+            pipe_rd(C_PIPE_STATUS_EXT2, x"00000000", '1', '1');
         end procedure;
 
         ----------------------------------------------------------------
@@ -976,6 +1048,95 @@ begin
             pl("  ---- shot [" & tag & "] drain done");
         end procedure;
 
+        ----------------------------------------------------------------
+        -- Start/run/stop helpers for optional recovery regression.
+        ----------------------------------------------------------------
+        procedure start_measurement_run(run_idx : natural) is
+        begin
+            pl("[S5] START command pulse -> face_seq active, run="
+               & integer'image(run_idx));
+            pipe_wr(C_PIPE_MAIN_CTRL, (C_MAIN_CTRL_BASE or x"10000000"));
+            wait_clk(4);
+            pipe_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
+            if G_RECOVERY_MODE = 1 and run_idx > 1 then
+                -- Soft reset enters chip_ctrl PH_RESP_DRAIN before re-init.
+                -- The pipeline CSR holds START pending until face_seq accepts,
+                -- so the TB waits for the worst-case black-box recovery window
+                -- before applying shot stimulus.
+                wait_clk(12000);
+            else
+                wait_clk(80);  -- cmd_start_accepted latency + CDC
+            end if;
+        end procedure;
+
+        procedure run_all_shots(run_idx : natural) is
+        begin
+            for f in 0 to G_N_FACES - 1 loop
+                for c in 0 to G_COLS_PER_FACE - 1 loop
+                    do_shot(c + 1,
+                            G_STOPS_PER_CHIP,
+                            "run" & integer'image(run_idx)
+                            & "/face" & integer'image(f)
+                            & "/col" & integer'image(c));
+
+                    if G_MAX_HITS_WRITE_MODE = 3 and f = 0 and c = 0 then
+                        pl("[S_LATE] CTL21.max_hits_cfg write after first packet_start -> "
+                           & integer'image(C_MAX_HITS));
+                        chip_wr(C_CHIP_SCAN_CFG, fn_pack_scan_timeout(C_MAX_HITS, 0));
+                        wait_clk(20);
+                    end if;
+
+                    if not (f = G_N_FACES - 1 and c = G_COLS_PER_FACE - 1) then
+                        pl("[S7] shot_period wait (500m -> 1000 clks)");
+                        wait_clk(C_SHOT_PERIOD);
+                    end if;
+                end loop;
+            end loop;
+        end procedure;
+
+        procedure stop_measurement_run(run_idx : natural) is
+        begin
+            pl("[S9] wait VDMA frame emit, then stop_tdc pulse, run="
+               & integer'image(run_idx));
+            wait_clk(2000);
+
+            -- laser_ctrl.o_stop_tdc emulation
+            pl("C06_MARKER T6_STOP_TDC run="
+               & integer'image(run_idx)
+               & " cycle=" & integer'image(sim_cycle)
+               & " time=" & time'image(now));
+            lc_stop_tdc <= '1';
+            wait_clk(2);
+            lc_stop_tdc <= '0';
+            wait_clk(500);
+        end procedure;
+
+        procedure issue_recovery(mode : natural) is
+        begin
+            case mode is
+                when 1 =>
+                    pl("C06_MARKER T8_SOFT_RESET cycle="
+                       & integer'image(sim_cycle)
+                       & " time=" & time'image(now));
+                    pipe_wr(C_PIPE_MAIN_CTRL, (C_MAIN_CTRL_BASE or x"40000000"));
+                    wait_clk(4);
+                    pipe_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
+                    wait_clk(2800);
+                    read_pipeline_status("post-soft-reset");
+                when 2 =>
+                    pl("C06_MARKER T8_FORCE_REINIT cycle="
+                       & integer'image(sim_cycle)
+                       & " time=" & time'image(now));
+                    pipe_wr(C_PIPE_AUX_CMD, x"00000001");
+                    wait_clk(4);
+                    pipe_wr(C_PIPE_AUX_CMD, x"00000000");
+                    wait_clk(2800);
+                    read_pipeline_status("post-force-reinit");
+                when others =>
+                    null;
+            end case;
+        end procedure;
+
     begin
         -- Wait reset deassert
         wait until rst_n = '1';
@@ -984,6 +1145,9 @@ begin
         assert G_MAX_HITS_WRITE_MODE <= 3
             report "tb_tdc_gpx_top_int: G_MAX_HITS_WRITE_MODE must be 0..3"
             severity failure;
+        assert G_RECOVERY_MODE <= 2
+            report "tb_tdc_gpx_top_int: G_RECOVERY_MODE must be 0..2"
+            severity failure;
         assert not (G_MAX_HITS_WRITE_MODE = 3 and G_N_FACES < 2)
             report "tb_tdc_gpx_top_int: late max_hits mode requires G_N_FACES >= 2"
             severity failure;
@@ -991,7 +1155,8 @@ begin
         pl("====================================================");
         pl(" tdc_gpx_top integrated sim start (500m / "
            & integer'image(G_TDATA_WIDTH) & "-bit / I-mode / max_hits_mode="
-           & fn_mode_name(G_MAX_HITS_WRITE_MODE) & ")");
+           & fn_mode_name(G_MAX_HITS_WRITE_MODE)
+           & " / recovery=" & fn_recovery_mode_name(G_RECOVERY_MODE) & ")");
         pl("====================================================");
 
         ----------------------------------------------------------------
@@ -1048,52 +1213,18 @@ begin
         pl("[S4] wait cfg_write completion");
         wait_clk(200);
 
-        ----------------------------------------------------------------
-        -- [S5] START command pulse (MAIN_CTRL[28])
-        ----------------------------------------------------------------
-        pl("[S5] START command pulse -> face_seq active");
-        pipe_wr(C_PIPE_MAIN_CTRL, (C_MAIN_CTRL_BASE or x"10000000"));
-        wait_clk(4);
-        pipe_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);
-        wait_clk(80);  -- cmd_start_accepted latency + CDC
+        start_measurement_run(1);
+        run_all_shots(1);
+        stop_measurement_run(1);
+        read_pipeline_status("after-run1");
 
-        ----------------------------------------------------------------
-        -- [S6~S8] I-Mode single measurements across faces / columns
-        ----------------------------------------------------------------
-        for f in 0 to G_N_FACES - 1 loop
-            for c in 0 to G_COLS_PER_FACE - 1 loop
-                do_shot(c + 1,
-                        G_STOPS_PER_CHIP,
-                        "face" & integer'image(f) & "/col" & integer'image(c));
-
-                if G_MAX_HITS_WRITE_MODE = 3 and f = 0 and c = 0 then
-                    pl("[S_LATE] CTL21.max_hits_cfg write after first packet_start -> "
-                       & integer'image(C_MAX_HITS));
-                    chip_wr(C_CHIP_SCAN_CFG, fn_pack_scan_timeout(C_MAX_HITS, 0));
-                    wait_clk(20);
-                end if;
-
-                if not (f = G_N_FACES - 1 and c = G_COLS_PER_FACE - 1) then
-                    pl("[S7] shot_period wait (500m -> 1000 clks)");
-                    wait_clk(C_SHOT_PERIOD);
-                end if;
-            end loop;
-        end loop;
-
-        ----------------------------------------------------------------
-        -- [S9] Wait frame emit, then stop_tdc pulse
-        ----------------------------------------------------------------
-        pl("[S9] wait VDMA frame emit, then stop_tdc pulse");
-        wait_clk(2000);
-
-        -- laser_ctrl.o_stop_tdc emulation
-        pl("C06_MARKER T6_STOP_TDC cycle="
-           & integer'image(sim_cycle)
-           & " time=" & time'image(now));
-        lc_stop_tdc <= '1';
-        wait_clk(2);
-        lc_stop_tdc <= '0';
-        wait_clk(500);
+        if G_RECOVERY_MODE > 0 then
+            issue_recovery(G_RECOVERY_MODE);
+            start_measurement_run(2);
+            run_all_shots(2);
+            stop_measurement_run(2);
+            read_pipeline_status("after-recovery-run");
+        end if;
 
         ----------------------------------------------------------------
         -- [S10] Summary
@@ -1107,8 +1238,11 @@ begin
            & "  stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
            & "  faces=" & integer'image(G_N_FACES)
            & "  cols=" & integer'image(G_COLS_PER_FACE)
-           & "  expected_beats=" & integer'image(C_EXPECTED_AXIS_BEATS)
-           & "  bp_gap=" & integer'image(G_BP_TREADY_GAP));
+           & "  expected_beats_per_run=" & integer'image(C_EXPECTED_AXIS_BEATS)
+           & "  recovery_runs=" & integer'image(C_RECOVERY_RUNS)
+           & "  expected_beats_total=" & integer'image(C_EXPECTED_TOTAL_AXIS_BEATS)
+           & "  bp_gap=" & integer'image(G_BP_TREADY_GAP)
+           & "  recovery=" & fn_recovery_mode_name(G_RECOVERY_MODE));
         pl("  rising  stream  : beats=" & integer'image(mon_rise_beats)
            & "  tlast_cnt=" & integer'image(mon_rise_frame_end));
         pl("  falling stream  : beats=" & integer'image(mon_fall_beats)
@@ -1127,16 +1261,16 @@ begin
         assert mon_fall_beats > 0
             report "tb_tdc_gpx_top_int: no falling beats observed"
             severity error;
-        assert mon_rise_frame_end = C_TOTAL_LINES
+        assert mon_rise_frame_end = C_EXPECTED_TOTAL_LINES
             report "tb_tdc_gpx_top_int: rising tlast count mismatch"
             severity error;
-        assert mon_fall_frame_end = C_TOTAL_LINES
+        assert mon_fall_frame_end = C_EXPECTED_TOTAL_LINES
             report "tb_tdc_gpx_top_int: falling tlast count mismatch"
             severity error;
-        assert mon_rise_beats = C_EXPECTED_AXIS_BEATS
+        assert mon_rise_beats = C_EXPECTED_TOTAL_AXIS_BEATS
             report "tb_tdc_gpx_top_int: rising beat count mismatch"
             severity error;
-        assert mon_fall_beats = C_EXPECTED_AXIS_BEATS
+        assert mon_fall_beats = C_EXPECTED_TOTAL_AXIS_BEATS
             report "tb_tdc_gpx_top_int: falling beat count mismatch"
             severity error;
         assert mon_irq_pipe_cnt = 0
@@ -1152,6 +1286,13 @@ begin
             report "tb_tdc_gpx_top_int: bounded output backpressure preserved beats/tlast - PASS"
                 severity note;
         end if;
+        if G_RECOVERY_MODE = 1 then
+            report "tb_tdc_gpx_top_int: recovery mode soft_reset PASS"
+                severity note;
+        elsif G_RECOVERY_MODE = 2 then
+            report "tb_tdc_gpx_top_int: recovery mode force_reinit PASS"
+                severity note;
+        end if;
         report "tb_tdc_gpx_top_int: output streams emitted beats/tlast as expected - PASS"
             severity note;
 
@@ -1164,7 +1305,7 @@ begin
     -- =========================================================================
     p_wdog : process
     begin
-        wait for 200 us;
+        wait for 300 us;
         if not sim_done then
             report "tb_tdc_gpx_top_int: watchdog timeout (200 us)"
                 severity failure;
