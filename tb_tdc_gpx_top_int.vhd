@@ -71,6 +71,9 @@ entity tb_tdc_gpx_top_int is
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;
+        -- 0 = derive from G_MAX_RANGE_M. 1..7 = force CTL21.max_hits_cfg
+        -- for C07 width/max_hits chain stress.
+        G_MAX_HITS_OVERRIDE : natural := 0;
         -- CTL21.max_hits_cfg timing mode:
         --   0: leave CTL21 unset     -> RTL alias 0 to 7
         --   1: write range max_hits before first packet_start
@@ -84,6 +87,9 @@ entity tb_tdc_gpx_top_int is
         G_POWERUP_CLKS    : positive := 16;
         G_RECOVERY_CLKS   : positive := 4;
         G_ALU_PULSE_CLKS  : positive := 3;
+        -- Passed through to tdc_gpx_top.g_STREAM_CLK_MODE.
+        -- "ASYNC" uses raw CDC FIFO; "SYNC" bypasses raw CDC in config_ctrl.
+        G_STREAM_CLK_MODE : string := "ASYNC";
         -- 0 = output sinks always ready. N = hold both output tready low for
         -- two clocks every N clocks to verify bounded downstream stall.
         G_BP_TREADY_GAP   : natural := 0;
@@ -121,7 +127,18 @@ architecture sim of tb_tdc_gpx_top_int is
         else                   return 7;
         end if;
     end function;
-    constant C_MAX_HITS : natural := fn_max_hits(G_MAX_RANGE_M);
+
+    function fn_effective_max_hits(r_m : real; override : natural) return natural is
+    begin
+        if override = 0 then
+            return fn_max_hits(r_m);
+        else
+            return override;
+        end if;
+    end function;
+
+    constant C_MAX_HITS : natural :=
+        fn_effective_max_hits(G_MAX_RANGE_M, G_MAX_HITS_OVERRIDE);
 
     -- TDC sub-module generic override values
     constant C_OUTPUT_W     : natural := G_TDATA_WIDTH;
@@ -585,6 +602,7 @@ begin
             g_POWERUP_CLKS   => G_POWERUP_CLKS,
             g_RECOVERY_CLKS  => G_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS => G_ALU_PULSE_CLKS,
+            g_STREAM_CLK_MODE => G_STREAM_CLK_MODE,
             g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW
         )
@@ -1157,6 +1175,9 @@ begin
         assert G_MAX_HITS_WRITE_MODE <= 3
             report "tb_tdc_gpx_top_int: G_MAX_HITS_WRITE_MODE must be 0..3"
             severity failure;
+        assert G_MAX_HITS_OVERRIDE <= c_MAX_HITS_PER_STOP
+            report "tb_tdc_gpx_top_int: G_MAX_HITS_OVERRIDE must be 0..7"
+            severity failure;
         assert G_RECOVERY_MODE <= 2
             report "tb_tdc_gpx_top_int: G_RECOVERY_MODE must be 0..2"
             severity failure;
@@ -1248,7 +1269,9 @@ begin
         pl(" integrated sim end");
         pl("  config          : width=" & integer'image(G_TDATA_WIDTH)
            & "  max_hits=" & integer'image(C_MAX_HITS)
+           & "  max_hits_override=" & integer'image(G_MAX_HITS_OVERRIDE)
            & "  max_hits_mode=" & fn_mode_name(G_MAX_HITS_WRITE_MODE)
+           & "  stream_clk_mode=" & G_STREAM_CLK_MODE
            & "  active_chips=" & integer'image(C_ACTIVE_CHIPS)
            & "  stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
            & "  faces=" & integer'image(G_N_FACES)

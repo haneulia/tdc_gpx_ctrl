@@ -260,3 +260,8 @@ flowchart LR
 | `C03_Cell_Pipe_260501022223_Analysis_v001.md` | C03 direct matrix 미검증 항목을 C07 P1로 승격 |
 | `C04_Output_Stage_260501030046_Plan_v002.md` | ready/header pending 검증 항목을 C07 P1로 승격 |
 
+## 11. v001 실행 반영 기록
+
+| 실행 결과 문서 | 반영 내용 |
+|---|---|
+| `C07_System_Integration_260514153208_Chain_Stress_Result_v001.md` | P0-01 output stream CDC는 RTL 내부 architecture contract로 닫고, P0-02 width/max_hits/bounded-stall chain stress는 PASS로 닫았다. P0-03 marker audit, P0-04 reserve measurement, P1 C03/C04 direct matrix는 후속으로 유지한다. |
