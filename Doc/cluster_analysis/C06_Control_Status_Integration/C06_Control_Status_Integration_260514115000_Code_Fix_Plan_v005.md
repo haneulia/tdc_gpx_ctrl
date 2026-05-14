@@ -72,3 +72,24 @@ v005 이후 C06 또는 다음 cluster 문서에는 아래 항목을 계속 포�
 4. simulation-only report 유지 정책을 사용자와 결정한다.
 5. C07 진입 전, C06 계약 수락 표를 communication plan lineage에 연결한다.
 
+## 7. v005 실행 결과 반영
+
+| 항목 | v005 반영 위치 | 결과 |
+|---|---|---|
+| FP5-C06-01 C06 handoff 문서 갱신 | `C06_Control_Status_Integration_260514132259_C07_Handoff_v001.md` | Closed |
+| FP5-C06-02 공식 recovery regression 지정 | `C06_Control_Status_Integration_260514132259_Code_Fix_Result_v005.md` section 3 | Closed |
+| FP5-C06-03 simulation-only report 정책 | `C06_Control_Status_Integration_260514132259_Code_Fix_Result_v005.md` section 7 | Accepted / 유지 |
+| FP5-C06-04 C06 완료도 체크 갱신 | `C06_Control_Status_Integration_260514132259_Code_Fix_Result_v005.md` section 8 | Closed |
+| FP5-C06-05 다음 cluster 진입 판단 | `C06_Control_Status_Integration_260514132259_C07_Handoff_v001.md` section 10 | GO_WITH_CONTRACT |
+
+최신 공식 회귀 실행:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_c06_v004_recovery.ps1 -Stamp 260514132259
+```
+
+근거 archive:
+
+```text
+sim_results/vivado_xsim/sessions/260514132259_c06_v004_recovery/
+```
