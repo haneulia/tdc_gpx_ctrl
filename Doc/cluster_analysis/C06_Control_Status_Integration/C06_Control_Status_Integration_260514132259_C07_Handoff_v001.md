@@ -5,7 +5,7 @@
 | 문서 종류 | C06 종료 / 다음 Cluster 인계 문서 |
 | 문서 버전 | v001 |
 | 생성 시간 | 2026-05-14 13:22:59 KST |
-| 수정 시간 | 2026-05-14 13:30:33 KST |
+| 수정 시간 | 2026-05-14 13:41:16 KST |
 | 현재 Cluster | C06 Control / Status Integration |
 | 다음 단계 | C07 또는 release-readiness / system integration 검토 |
 | 절대 기준 문서 | `Doc/TDC-GPX-Datasheet.pdf` |
@@ -144,3 +144,14 @@ sequenceDiagram
 C06은 `GO_WITH_CONTRACT`다.
 
 다음 단계는 C06 내부 recovery/control/status를 다시 고치는 것이 아니라, 위 계약을 수락하고 시스템 소비자 관점에서 VDMA/PS/Ethernet reserve, parser, board timing, release policy를 닫는 것이다.
+
+## 11. Post-review 강화 조건
+
+사용자 종합 평가 이후, 본 handoff의 `GO_WITH_CONTRACT`는 아래 조건을 명시적으로 포함하는 것으로 강화한다.
+
+| 조건 | 후속 반영 위치 |
+|---|---|
+| recovery width sweep은 32/64/128 force/soft 모두로 확장한다. | `C06_Control_Status_Integration_260514134116_Code_Fix_Plan_v006.md` FP6-C06-01 |
+| 8 us VDMA/PS/Ethernet reserve는 실측값이 아니므로 reserve sweep 또는 board/system measurement로 닫는다. | `C06_Control_Status_Integration_260514134116_Code_Fix_Plan_v006.md` FP6-C06-03 |
+| Hit[16] 폐기는 이번 generation 정책으로 유지하되, 16-bit hit slot 거리 한계와 SW parser 계약을 명시한다. | `C06_Control_Status_Integration_260514134116_Code_Fix_Plan_v006.md` FP6-C06-05 |
+| v003 false positive 교훈에 따라 C01~C04 PASS marker를 source/destination/effect 기준으로 audit한다. | `C06_Control_Status_Integration_260514134116_Code_Fix_Plan_v006.md` FP6-C06-04 |

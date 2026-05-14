@@ -4,7 +4,7 @@
 |---|---|
 | 문서 버전 | v005 |
 | 생성 시간 | 2026-05-14 13:22:59 KST |
-| 수정 시간 | 2026-05-14 13:30:33 KST |
+| 수정 시간 | 2026-05-14 13:41:16 KST |
 | Cluster | C06 Control / Status Integration |
 | 절대 기준 문서 | `Doc/TDC-GPX-Datasheet.pdf` |
 | 선행 계획 | `Doc/cluster_analysis/C06_Control_Status_Integration/C06_Control_Status_Integration_260514115000_Code_Fix_Plan_v005.md` |
@@ -202,3 +202,14 @@ v005에서 선택한 정책은 `유지`다.
 | `C06_Control_Status_Integration_260514132259_Code_Fix_Result_v005.pptx` | v005 핵심 공유 PPT |
 | `C06_Control_Status_Integration_260514132259_C07_Handoff_v001.md` | 다음 Cluster / release-readiness 인계 계약 |
 | `C06_Control_Status_Integration_260514132259_C07_Handoff_v001.pptx` | handoff 핵심 공유 PPT |
+
+## 12. Post-review 반영
+
+사용자 종합 평가에서 C06 v003 false positive 패턴, recovery width sweep 공백, 8 us reserve 가정, Hit[16] 폐기 위험, lane imbalance/sticky clear 잔여 위험이 지적되었다.
+
+최신 v005 기준 재판정 결과, C06 판정은 절대 PASS가 아니라 `GO_WITH_CONTRACT`로 유지한다. 다만 release/system integration 전 hardening이 필요한 항목은 아래 문서로 이관한다.
+
+| 후속 문서 | 반영 내용 |
+|---|---|
+| `C06_Control_Status_Integration_260514134116_Review_v001.md` | 사용자 종합 평가를 최신 v005 기준으로 재판정 |
+| `C06_Control_Status_Integration_260514134116_Code_Fix_Plan_v006.md` | 32/64/128 recovery sweep, backpressure/polygon reserve, Hit[16] SW 계약, C01~C04 marker audit 계획화 |
