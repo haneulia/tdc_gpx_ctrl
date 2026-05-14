@@ -253,6 +253,19 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- Coordinator phase tracking
     -- =========================================================================
     type t_phase is (PH_INIT, PH_IDLE, PH_RUN, PH_REG, PH_CFG_WRITE, PH_RESP_DRAIN);
+    -- synthesis translate_off
+    function fn_phase_name(p_phase : t_phase) return string is
+    begin
+        case p_phase is
+            when PH_INIT       => return "PH_INIT";
+            when PH_IDLE       => return "PH_IDLE";
+            when PH_RUN        => return "PH_RUN";
+            when PH_REG        => return "PH_REG";
+            when PH_CFG_WRITE  => return "PH_CFG_WRITE";
+            when PH_RESP_DRAIN => return "PH_RESP_DRAIN";
+        end case;
+    end function;
+    -- synthesis translate_on
     signal s_phase_r      : t_phase := PH_INIT;
     signal s_drain_cnt_r    : unsigned(3 downto 0) := (others => '0');  -- stale response drain counter
     signal s_drain_to_init_r : std_logic := '0';  -- '1' = drain→PH_INIT (soft reset), '0' = drain→PH_IDLE (timeout)
@@ -468,12 +481,16 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- Effective reset for ALL sub-FSMs: hard reset OR soft_reset
     signal s_sub_rst_n            : std_logic;
     -- s_soft_reset_d1_r removed: PH_RESP_DRAIN handles delayed init start
+    signal s_force_reinit_start_pending_r : std_logic := '0';
     signal s_stopdis_latch_r      : std_logic := '1';  -- latched stopdis for PH_IDLE
 
 begin
 
     -- Combine global soft_reset with per-chip error recovery reset
-    s_sub_rst_n <= i_rst_n and (not i_cmd_soft_reset) and (not i_cmd_soft_reset_err);
+    s_sub_rst_n <= i_rst_n
+                   and (not i_cmd_soft_reset)
+                   and (not i_cmd_soft_reset_err)
+                   and (not i_cmd_force_reinit);
 
     -- =========================================================================
     -- Sub-FSM instantiations
@@ -703,6 +720,7 @@ begin
                 s_err_bus_fatal_r        <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_bus_idle_stable_cnt_r  <= (others => '0');
+                s_force_reinit_start_pending_r <= '0';
                 s_max_range_snap_r   <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
             else
@@ -838,9 +856,31 @@ begin
                            and s_drain_cnt_r >= to_unsigned(3, 4)
                            and s_err_bus_fatal_r = '0' then
                             if s_drain_to_init_r = '1' then
+                                -- synthesis translate_off
+                                assert false
+                                    report "chip_ctrl[" & integer'image(g_CHIP_ID) &
+                                           "]: PH_RESP_DRAIN exit to PH_INIT cnt=" &
+                                           integer'image(to_integer(s_drain_cnt_r)) &
+                                           " bus_busy=" & std_logic'image(i_bus_busy) &
+                                           " rsp_pending=" & std_logic'image(i_bus_rsp_pending) &
+                                           " axis_valid=" & std_logic'image(i_s_axis_tvalid) &
+                                           " skid_valid=" & std_logic'image(s_rsp_sk_tvalid)
+                                    severity note;
+                                -- synthesis translate_on
                                 s_phase_r    <= PH_INIT;
                                 s_init_start <= '1';
                             else
+                                -- synthesis translate_off
+                                assert false
+                                    report "chip_ctrl[" & integer'image(g_CHIP_ID) &
+                                           "]: PH_RESP_DRAIN exit to PH_IDLE cnt=" &
+                                           integer'image(to_integer(s_drain_cnt_r)) &
+                                           " bus_busy=" & std_logic'image(i_bus_busy) &
+                                           " rsp_pending=" & std_logic'image(i_bus_rsp_pending) &
+                                           " axis_valid=" & std_logic'image(i_s_axis_tvalid) &
+                                           " skid_valid=" & std_logic'image(s_rsp_sk_tvalid)
+                                    severity note;
+                                -- synthesis translate_on
                                 s_phase_r <= PH_IDLE;
                             end if;
                             s_drain_to_init_r <= '0';  -- always clear on drain exit
@@ -861,6 +901,19 @@ begin
                             --   s_err_drain_cap_r — recovery is a full
                             --   i_rst_n / power cycle, not an in-band re-init.
                             if i_bus_busy = '1' or i_bus_rsp_pending = '1' then
+                                if s_drain_quarantine_cnt_r = x"0000" then
+                                    -- synthesis translate_off
+                                    assert false
+                                        report "chip_ctrl[" & integer'image(g_CHIP_ID) &
+                                               "]: PH_RESP_DRAIN cap entered bus_busy=" &
+                                               std_logic'image(i_bus_busy) &
+                                               " rsp_pending=" & std_logic'image(i_bus_rsp_pending) &
+                                               " axis_valid=" & std_logic'image(i_s_axis_tvalid) &
+                                               " skid_valid=" & std_logic'image(s_rsp_sk_tvalid) &
+                                               " drain_to_init=" & std_logic'image(s_drain_to_init_r)
+                                        severity warning;
+                                    -- synthesis translate_on
+                                end if;
                                 s_err_drain_cap_r <= '1';
                                 if s_drain_quarantine_cnt_r /= x"FFFF" then
                                     s_drain_quarantine_cnt_r <=
@@ -874,6 +927,16 @@ begin
                                     -- unresponsive for 65K consecutive cycles.
                                     -- OR-folded into status.err_fatal at top
                                     -- so it joins err_handler's fatal path.
+                                    -- synthesis translate_off
+                                    assert false
+                                        report "chip_ctrl[" & integer'image(g_CHIP_ID) &
+                                               "]: PH_RESP_DRAIN bus fatal latched bus_busy=" &
+                                               std_logic'image(i_bus_busy) &
+                                               " rsp_pending=" & std_logic'image(i_bus_rsp_pending) &
+                                               " axis_valid=" & std_logic'image(i_s_axis_tvalid) &
+                                               " skid_valid=" & std_logic'image(s_rsp_sk_tvalid)
+                                        severity warning;
+                                    -- synthesis translate_on
                                     s_err_bus_fatal_r <= '1';
                                 end if;
                                 -- At x"FFFF": saturate in place. No in-band
@@ -911,6 +974,12 @@ begin
                                        s_bus_idle_stable_cnt_r'length) then
                             s_bus_idle_stable_cnt_r <= s_bus_idle_stable_cnt_r + 1;
                         else
+                            -- synthesis translate_off
+                            assert false
+                                report "chip_ctrl[" & integer'image(g_CHIP_ID) &
+                                       "]: PH_RESP_DRAIN auto-recover to PH_INIT after idle-stable window"
+                                severity note;
+                            -- synthesis translate_on
                             s_phase_r                <= PH_INIT;
                             s_init_start             <= '1';
                             s_drain_cnt_r            <= (others => '0');
@@ -926,10 +995,28 @@ begin
                     s_bus_idle_stable_cnt_r <= (others => '0');
                 end if;
 
+                if s_force_reinit_start_pending_r = '1' then
+                    s_init_start <= '1';
+                    s_force_reinit_start_pending_r <= '0';
+                end if;
+
                 -- Soft reset: global OR per-chip error recovery
                 -- Drain stale responses first, then restart init
                 -- (s_soft_reset_d1_r removed)
                 if i_cmd_soft_reset = '1' or i_cmd_soft_reset_err = '1' then
+                    -- synthesis translate_off
+                    assert false
+                        report "chip_ctrl[" & integer'image(g_CHIP_ID) &
+                               "]: soft_reset enter PH_RESP_DRAIN old_phase=" &
+                               fn_phase_name(s_phase_r) &
+                               " soft=" & std_logic'image(i_cmd_soft_reset) &
+                               " err_soft=" & std_logic'image(i_cmd_soft_reset_err) &
+                               " bus_busy=" & std_logic'image(i_bus_busy) &
+                               " rsp_pending=" & std_logic'image(i_bus_rsp_pending) &
+                               " axis_valid=" & std_logic'image(i_s_axis_tvalid) &
+                               " skid_valid=" & std_logic'image(s_rsp_sk_tvalid)
+                        severity note;
+                    -- synthesis translate_on
                     s_cfg_image_snap_r   <= i_cfg_image;
                     s_phase_r            <= PH_RESP_DRAIN;
                     s_drain_cnt_r        <= (others => '0');
@@ -942,12 +1029,24 @@ begin
                 -- externally before pulsing this. Sets the force_reinit
                 -- sticky so the event is SW-visible for post-mortem.
                 if i_cmd_force_reinit = '1' then
+                    -- synthesis translate_off
+                    assert false
+                        report "chip_ctrl[" & integer'image(g_CHIP_ID) &
+                               "]: force_reinit to PH_INIT old_phase=" &
+                               fn_phase_name(s_phase_r) &
+                               " bus_busy=" & std_logic'image(i_bus_busy) &
+                               " rsp_pending=" & std_logic'image(i_bus_rsp_pending) &
+                               " axis_valid=" & std_logic'image(i_s_axis_tvalid) &
+                               " skid_valid=" & std_logic'image(s_rsp_sk_tvalid)
+                        severity note;
+                    -- synthesis translate_on
                     s_cfg_image_snap_r       <= i_cfg_image;
                     s_phase_r                <= PH_INIT;
-                    s_init_start             <= '1';
+                    s_init_start             <= '0';
                     s_drain_cnt_r            <= (others => '0');
                     s_drain_to_init_r        <= '0';
                     s_drain_quarantine_cnt_r <= (others => '0');
+                    s_force_reinit_start_pending_r <= '1';
                     s_err_force_reinit_r     <= '1';
                 end if;
             end if;

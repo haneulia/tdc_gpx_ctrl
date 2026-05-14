@@ -466,6 +466,13 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_stop_tdc        : std_logic;
     signal s_cmd_soft_reset_tdc  : std_logic;
     signal s_cmd_force_reinit_tdc : std_logic;  -- Round 12 A1
+    -- C06 v004: recovery commands are issued as single AXIS-domain pulses.
+    -- A toggle bridge preserves them across both async and same-clock
+    -- deployments, where a one-shot pulse CDC can otherwise miss the event.
+    signal s_cmd_soft_reset_toggle_src_r   : std_logic := '0';
+    signal s_cmd_force_reinit_toggle_src_r : std_logic := '0';
+    signal s_cmd_soft_reset_sync_tdc_r     : std_logic_vector(2 downto 0) := (others => '0');
+    signal s_cmd_force_reinit_sync_tdc_r   : std_logic_vector(2 downto 0) := (others => '0');
     signal s_err_force_reinit    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A1: per-chip force-reinit sticky
     signal s_err_raw_ctrl_drop   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A2: per-chip control-beat drop sticky
     signal s_err_drain_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A4: per-chip drain mismatch sticky
@@ -554,6 +561,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     attribute ASYNC_REG of s_err_bus_fatal_axi_r          : signal is "TRUE";
     attribute ASYNC_REG of s_drain_faulted_mask_meta_r    : signal is "TRUE";
     attribute ASYNC_REG of s_drain_faulted_mask_axi_r     : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_soft_reset_sync_tdc_r     : signal is "TRUE";
+    attribute ASYNC_REG of s_cmd_force_reinit_sync_tdc_r   : signal is "TRUE";
     signal s_cmd_cfg_write_g_tdc : std_logic;
     signal s_stop_tdc_tdc        : std_logic;  -- stop_tdc after xpm_cdc_pulse (#13)
     -- Round 7 B-5: i_err_soft_clear CDC'd to TDC domain so chip_reg can
@@ -1160,28 +1169,82 @@ begin
             dest_pulse => s_cmd_stop_tdc
         );
 
-    u_cdc_cmd_soft_reset : xpm_cdc_pulse
-        generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
-        port map (
-            src_clk    => i_axis_aclk,
-            src_rst    => '0',
-            src_pulse  => i_cmd_soft_reset,
-            dest_clk   => i_tdc_clk,
-            dest_rst   => '0',
-            dest_pulse => s_cmd_soft_reset_tdc
-        );
+    p_recovery_cmd_cdc_src : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_cmd_soft_reset_toggle_src_r   <= '0';
+                s_cmd_force_reinit_toggle_src_r <= '0';
+            else
+                if i_cmd_soft_reset = '1' then
+                    s_cmd_soft_reset_toggle_src_r <= not s_cmd_soft_reset_toggle_src_r;
+                end if;
+                if i_cmd_force_reinit = '1' then
+                    s_cmd_force_reinit_toggle_src_r <= not s_cmd_force_reinit_toggle_src_r;
+                end if;
+            end if;
+        end if;
+    end process;
 
-    -- Round 12 A1: force-reinit CDC (global, fan-out to all 4 chip_ctrl).
-    u_cdc_cmd_force_reinit : xpm_cdc_pulse
-        generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
-        port map (
-            src_clk    => i_axis_aclk,
-            src_rst    => '0',
-            src_pulse  => i_cmd_force_reinit,
-            dest_clk   => i_tdc_clk,
-            dest_rst   => '0',
-            dest_pulse => s_cmd_force_reinit_tdc
-        );
+    p_recovery_cmd_cdc_dest : process(i_tdc_clk)
+    begin
+        if rising_edge(i_tdc_clk) then
+            if s_tdc_aresetn = '0' then
+                s_cmd_soft_reset_sync_tdc_r   <= (others => '0');
+                s_cmd_force_reinit_sync_tdc_r <= (others => '0');
+                s_cmd_soft_reset_tdc          <= '0';
+                s_cmd_force_reinit_tdc        <= '0';
+            else
+                s_cmd_soft_reset_sync_tdc_r <=
+                    s_cmd_soft_reset_sync_tdc_r(1 downto 0) &
+                    s_cmd_soft_reset_toggle_src_r;
+                s_cmd_force_reinit_sync_tdc_r <=
+                    s_cmd_force_reinit_sync_tdc_r(1 downto 0) &
+                    s_cmd_force_reinit_toggle_src_r;
+
+                s_cmd_soft_reset_tdc <=
+                    s_cmd_soft_reset_sync_tdc_r(2) xor
+                    s_cmd_soft_reset_sync_tdc_r(1);
+                s_cmd_force_reinit_tdc <=
+                    s_cmd_force_reinit_sync_tdc_r(2) xor
+                    s_cmd_force_reinit_sync_tdc_r(1);
+            end if;
+        end if;
+    end process;
+
+    -- synthesis translate_off
+    p_dbg_recovery_src : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_cmd_soft_reset = '1' then
+                assert false
+                    report "config_ctrl: soft_reset source pulse"
+                    severity note;
+            end if;
+            if i_cmd_force_reinit = '1' then
+                assert false
+                    report "config_ctrl: force_reinit source pulse"
+                    severity note;
+            end if;
+        end if;
+    end process;
+
+    p_dbg_recovery_dest : process(i_tdc_clk)
+    begin
+        if rising_edge(i_tdc_clk) then
+            if s_cmd_soft_reset_tdc = '1' then
+                assert false
+                    report "config_ctrl: soft_reset tdc pulse"
+                    severity note;
+            end if;
+            if s_cmd_force_reinit_tdc = '1' then
+                assert false
+                    report "config_ctrl: force_reinit tdc pulse"
+                    severity note;
+            end if;
+        end if;
+    end process;
+    -- synthesis translate_on
 
     u_cdc_cmd_cfg_write : xpm_cdc_pulse
         generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)

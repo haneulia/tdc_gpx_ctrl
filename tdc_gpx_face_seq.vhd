@@ -260,9 +260,27 @@ begin
                                 -- re-pulse cmd_start.
                                 s_cmd_start_pending_r <= '1';
                                 -- synthesis translate_off
-                                assert false
-                                    report "face_seq: cmd_start pending-latched (pipeline busy)"
-                                    severity note;
+                                if s_cmd_start_pending_r = '0' then
+                                    assert false
+                                        report "face_seq: cmd_start pending-latched (pipeline busy)" &
+                                               " chip_busy=" &
+                                               std_logic'image(i_chip_busy(3)) &
+                                               std_logic'image(i_chip_busy(2)) &
+                                               std_logic'image(i_chip_busy(1)) &
+                                               std_logic'image(i_chip_busy(0)) &
+                                               " reg_outstanding=" & std_logic'image(i_reg_outstanding) &
+                                               " face_idle=" & std_logic'image(i_face_asm_idle) &
+                                               " face_fall_idle=" & std_logic'image(i_face_asm_fall_idle) &
+                                               " hdr_idle=" & std_logic'image(i_hdr_idle) &
+                                               " hdr_fall_idle=" & std_logic'image(i_hdr_fall_idle) &
+                                               " face_tv=" & std_logic'image(i_face_tvalid) &
+                                               " face_fall_tv=" & std_logic'image(i_face_fall_tvalid) &
+                                               " face_buf_tv=" & std_logic'image(i_face_buf_tvalid) &
+                                               " face_fall_buf_tv=" & std_logic'image(i_face_fall_buf_tvalid) &
+                                               " m_tv=" & std_logic'image(i_m_axis_tvalid) &
+                                               " m_fall_tv=" & std_logic'image(i_m_axis_fall_tvalid)
+                                        severity note;
+                                end if;
                                 -- synthesis translate_on
                             end if;
                         end if;

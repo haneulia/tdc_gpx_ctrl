@@ -192,6 +192,7 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_stop         : std_logic;
     signal s_cmd_soft_reset   : std_logic;
     signal s_cmd_force_reinit : std_logic;  -- Round 12 A1
+    signal s_cmd_recovery_reset : std_logic;
     signal s_err_force_reinit_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_raw_ctrl_drop_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A2
     signal s_err_drain_mismatch_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A4
@@ -408,6 +409,11 @@ architecture rtl of tdc_gpx_top is
     signal s_err_cause     : std_logic_vector(2 downto 0);
 
 begin
+
+    -- C06 v004: force_reinit is a recovery boundary for the chip-control
+    -- cluster and the face sequencer. Treat it like soft_reset for
+    -- AXIS-domain sequencing state so the next START begins from ST_IDLE.
+    s_cmd_recovery_reset <= s_cmd_soft_reset or s_cmd_force_reinit;
 
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
         report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
@@ -864,7 +870,7 @@ begin
             i_rst_n                => i_axis_aresetn,
             i_cmd_start            => s_cmd_start,
             i_cmd_stop             => s_cmd_stop,
-            i_cmd_soft_reset       => s_cmd_soft_reset,
+            i_cmd_soft_reset       => s_cmd_recovery_reset,
             i_chip_busy            => s_chip_busy,
             i_reg_outstanding      => s_reg_outstanding,
             i_face_asm_idle        => s_face_asm_idle,
@@ -923,7 +929,7 @@ begin
         port map (
             i_clk                  => i_axis_aclk,
             i_rst_n                => i_axis_aresetn,
-            i_cmd_soft_reset       => s_cmd_soft_reset,
+            i_cmd_soft_reset       => s_cmd_recovery_reset,
             i_cmd_start_accepted   => s_cmd_start_accepted,
             i_soft_clear           => s_err_soft_clear,
             i_face_state_idle      => s_face_state_idle,
