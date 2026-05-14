@@ -87,6 +87,9 @@ entity tb_tdc_gpx_top_int is
         -- 0 = output sinks always ready. N = hold both output tready low for
         -- two clocks every N clocks to verify bounded downstream stall.
         G_BP_TREADY_GAP   : natural := 0;
+        -- 0 = stall both rise/fall lanes, 1 = stall rise lane only,
+        -- 2 = stall fall lane only. Used by C06 lane-imbalance stress.
+        G_BP_LANE_MODE    : natural := 0;
         -- 0 = no recovery. 1 = normal run -> soft_reset -> normal run.
         -- 2 = normal run -> force_reinit -> normal run.
         G_RECOVERY_MODE   : natural := 0
@@ -443,8 +446,17 @@ begin
                     m_rise_tready <= '1';
                     m_fall_tready <= '1';
                 elsif v_cnt < G_BP_TREADY_GAP + 2 then
-                    m_rise_tready <= '0';
-                    m_fall_tready <= '0';
+                    case G_BP_LANE_MODE is
+                        when 1 =>
+                            m_rise_tready <= '0';
+                            m_fall_tready <= '1';
+                        when 2 =>
+                            m_rise_tready <= '1';
+                            m_fall_tready <= '0';
+                        when others =>
+                            m_rise_tready <= '0';
+                            m_fall_tready <= '0';
+                    end case;
                     mon_bp_stall_cycles <= mon_bp_stall_cycles + 1;
                 else
                     v_cnt := 0;
@@ -1148,6 +1160,9 @@ begin
         assert G_RECOVERY_MODE <= 2
             report "tb_tdc_gpx_top_int: G_RECOVERY_MODE must be 0..2"
             severity failure;
+        assert G_BP_LANE_MODE <= 2
+            report "tb_tdc_gpx_top_int: G_BP_LANE_MODE must be 0..2"
+            severity failure;
         assert not (G_MAX_HITS_WRITE_MODE = 3 and G_N_FACES < 2)
             report "tb_tdc_gpx_top_int: late max_hits mode requires G_N_FACES >= 2"
             severity failure;
@@ -1242,6 +1257,7 @@ begin
            & "  recovery_runs=" & integer'image(C_RECOVERY_RUNS)
            & "  expected_beats_total=" & integer'image(C_EXPECTED_TOTAL_AXIS_BEATS)
            & "  bp_gap=" & integer'image(G_BP_TREADY_GAP)
+           & "  bp_lane_mode=" & integer'image(G_BP_LANE_MODE)
            & "  recovery=" & fn_recovery_mode_name(G_RECOVERY_MODE));
         pl("  rising  stream  : beats=" & integer'image(mon_rise_beats)
            & "  tlast_cnt=" & integer'image(mon_rise_frame_end));

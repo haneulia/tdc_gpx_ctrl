@@ -5,7 +5,7 @@
 | 문서 종류 | Review-driven release hardening plan |
 | 문서 버전 | v006 |
 | 생성 시간 | 2026-05-14 13:41:16 KST |
-| 수정 시간 | 2026-05-14 13:41:16 KST |
+| 수정 시간 | 2026-05-14 14:58:26 KST |
 | Cluster | C06 Control / Status Integration |
 | 절대 기준 문서 | `Doc/TDC-GPX-Datasheet.pdf` |
 | 선행 결과 | `Doc/cluster_analysis/C06_Control_Status_Integration/C06_Control_Status_Integration_260514132259_Code_Fix_Result_v005.md` |
@@ -157,3 +157,27 @@ v003 false positive 교훈을 C01~C04에 적용한다.
 | `R-C06-HO-04` Hit[16] final stream 폐기 | FP6-C06-05 |
 | 사용자 Review `C06 v003 false positive pattern` | FP6-C06-04 marker audit |
 | 사용자 Review `lane imbalance / sticky clear` | FP6-C06-06, FP6-C06-07 |
+
+## 12. v006 실행 결과 반영
+
+| Plan ID | 결과 반영 위치 | 상태 |
+|---|---|---|
+| FP6-C06-01 | `C06_Control_Status_Integration_260514144755_Code_Fix_Result_v006.md` section 5 | Closed / PASS |
+| FP6-C06-02 | `C06_Control_Status_Integration_260514144755_Code_Fix_Result_v006.md` section 6 | Closed / PASS |
+| FP6-C06-03 | `C06_Control_Status_Integration_260514144755_Code_Fix_Result_v006.md` section 8 | Closed as analysis / system measurement remains |
+| FP6-C06-04 | `C06_Control_Status_Integration_260514144755_Code_Fix_Result_v006.md` section 10 | Closed as document audit |
+| FP6-C06-05 | `C06_Control_Status_Integration_260514144755_Code_Fix_Result_v006.md` section 9 | Closed / contract documented |
+| FP6-C06-06 | `C06_Control_Status_Integration_260514144755_Code_Fix_Result_v006.md` section 11 | Closed / contract documented |
+| FP6-C06-07 | `C06_Control_Status_Integration_260514144755_Code_Fix_Result_v006.md` section 7 | Closed / PASS |
+
+최신 공식 실행:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_c06_v006_hardening.ps1 -Stamp 260514144755
+```
+
+근거 archive:
+
+```text
+sim_results/vivado_xsim/sessions/260514144755_c06_v006_hardening/
+```
