@@ -21,3 +21,7 @@ hs_err_*.dmp
 # Ad-hoc synthesis diagnostic script (per-session, not shared)
 /scripts/run_synth_cs_opt.tcl
 tmp/
+
+# Structured Vivado/xsim archives. Keep the policy README, ignore sessions.
+/sim_results/vivado_xsim/sessions/
+/sim_work/

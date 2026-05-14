@@ -1,7 +1,8 @@
 param(
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [switch]$RunProjectSyntax,
-    [switch]$RequireSoftPass
+    [switch]$RequireSoftPass,
+    [switch]$NoArchiveOnExit
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,12 +83,12 @@ function Invoke-Xelab {
 
 Push-Location $Hdl
 try {
-    $baseArgs = @("-Stamp", $Stamp)
     if ($RunProjectSyntax) {
-        $baseArgs += "-RunProjectSyntax"
+        & "$Hdl/scripts/run_c06_v002_regression.ps1" -Stamp $Stamp -RunProjectSyntax -NoArchiveOnExit
     }
-
-    & "$Hdl/scripts/run_c06_v002_regression.ps1" @baseArgs
+    else {
+        & "$Hdl/scripts/run_c06_v002_regression.ps1" -Stamp $Stamp -NoArchiveOnExit
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "C06 v002 baseline regression failed"
     }
@@ -113,4 +114,10 @@ try {
 }
 finally {
     Pop-Location
+    if (-not $NoArchiveOnExit) {
+        & "$Hdl/scripts/archive_vivado_xsim_outputs.ps1" `
+            -Root $Hdl `
+            -Stamp $Stamp `
+            -Label "c06_v003_recovery"
+    }
 }

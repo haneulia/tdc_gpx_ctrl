@@ -77,10 +77,10 @@ function Invoke-Xelab {
 Push-Location $Hdl
 try {
     if ($RunProjectSyntax) {
-        & "$Hdl/scripts/run_c06_v002_regression.ps1" -Stamp $Stamp -RunProjectSyntax
+        & "$Hdl/scripts/run_c06_v002_regression.ps1" -Stamp $Stamp -RunProjectSyntax -NoArchiveOnExit
     }
     else {
-        & "$Hdl/scripts/run_c06_v002_regression.ps1" -Stamp $Stamp
+        & "$Hdl/scripts/run_c06_v002_regression.ps1" -Stamp $Stamp -NoArchiveOnExit
     }
     if ($LASTEXITCODE -ne 0) {
         throw "C06 v002 baseline regression failed"
@@ -100,4 +100,8 @@ try {
 }
 finally {
     Pop-Location
+    & "$Hdl/scripts/archive_vivado_xsim_outputs.ps1" `
+        -Root $Hdl `
+        -Stamp $Stamp `
+        -Label "c06_v004_recovery"
 }

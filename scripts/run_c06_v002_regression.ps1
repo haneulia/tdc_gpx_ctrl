@@ -1,6 +1,7 @@
 param(
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
-    [switch]$RunProjectSyntax
+    [switch]$RunProjectSyntax,
+    [switch]$NoArchiveOnExit
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,13 +89,13 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_cfg_pkg.vhd",
     "$Hdl/tdc_gpx_bus_phy.vhd",
+    "$Hdl/tdc_gpx_skid_buffer.vhd",
+    "$Hdl/tdc_gpx_sync_fifo.vhd",
     "$Hdl/tdc_gpx_cell_builder.vhd",
     "$Hdl/tdc_gpx_cell_pipe.vhd",
     "$Hdl/tdc_gpx_chip_init.vhd",
     "$Hdl/tdc_gpx_chip_run.vhd",
     "$Hdl/tdc_gpx_chip_reg.vhd",
-    "$Hdl/tdc_gpx_skid_buffer.vhd",
-    "$Hdl/tdc_gpx_sync_fifo.vhd",
     "$Hdl/tdc_gpx_chip_ctrl.vhd",
     "$Hdl/tdc_gpx_csr_chip.vhd",
     "$Hdl/tdc_gpx_cmd_arb.vhd",
@@ -166,4 +167,10 @@ try {
 }
 finally {
     Pop-Location
+    if (-not $NoArchiveOnExit) {
+        & "$Hdl/scripts/archive_vivado_xsim_outputs.ps1" `
+            -Root $Hdl `
+            -Stamp $Stamp `
+            -Label "c06_v002_regression"
+    }
 }
