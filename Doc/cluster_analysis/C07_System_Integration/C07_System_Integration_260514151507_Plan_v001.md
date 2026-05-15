@@ -5,7 +5,7 @@
 | 문서 종류 | C07 진입 계획 / C01-C06 chain hardening 계획 |
 | 문서 버전 | v001 |
 | 생성 시간 | 2026-05-14 15:15:07 KST |
-| 수정 시간 | 2026-05-14 15:15:07 KST |
+| 수정 시간 | 2026-05-15 19:24:00 KST |
 | Cluster | C07 System Integration / Release Readiness |
 | 절대 기준 문서 | `Doc/TDC-GPX-Datasheet.pdf` |
 | 입력 문서 | `cluster_analysis_260514151507_Chain_Integrity_Review_v001.md` |
@@ -238,6 +238,7 @@ flowchart LR
 | Chain stress result | `C07_System_Integration_<YYMMDDHHMMSS>_Chain_Stress_Result_v001.md/.pptx` |
 | Marker audit result | `C07_System_Integration_<YYMMDDHHMMSS>_Marker_Audit_Result_v001.md/.pptx` |
 | Reserve measurement result | `C07_System_Integration_<YYMMDDHHMMSS>_Reserve_Measurement_Result_v001.md/.pptx` |
+| C03 direct matrix result | `C07_System_Integration_<YYMMDDHHMMSS>_C03_Direct_Matrix_Result_v001.md/.pptx` |
 | Final readiness | `C07_System_Integration_<YYMMDDHHMMSS>_Release_Readiness_v001.md/.pptx` |
 | Vivado/xsim archive | `sim_results/vivado_xsim/sessions/<stamp>_c07_<label>/` |
 
@@ -267,6 +268,7 @@ flowchart LR
 | `C07_System_Integration_260514153208_Chain_Stress_Result_v001.md` | P0-01 output stream CDC는 RTL 내부 architecture contract로 닫고, P0-02 width/max_hits/bounded-stall chain stress는 PASS로 닫았다. P0-03 marker audit, P0-04 reserve measurement, P1 C03/C04 direct matrix는 후속으로 유지한다. |
 | `C07_System_Integration_260515162050_Marker_Audit_Result_v001.md` | P0-03 marker audit를 Source/Destination/Effect/Output 기준으로 수행했다. C02 downstream `tuser`는 `PASS_WITH_TRACE`, C04 `Hit[16]` sanitize와 C04/C07 width beat/tlast는 `PASS`로 판정했고, P0-04 reserve measurement 및 P1 C03/C04 direct matrix는 후속으로 유지했다. |
 | `C07_System_Integration_260515174538_Reserve_Budget_Result_v001.md` | P0-04를 8/9/10/11/12us reserve sensitivity xsim으로 수행했다. 8us는 128-bit 810m cfg7 PASS지만 margin 38.69ns로 얇고, 9us 보수 reserve에서는 128-bit cfg7이 660m까지로 내려간다. 실제 VDMA/PS/Ethernet 실측은 release gate로 분리했다. |
+| `C07_System_Integration_260515191624_C03_Direct_Matrix_Result_v001.md` | P1 `CHAIN-P1-01`을 C03 direct TB로 수행했다. 32/64/128 bit x max_hits 1/3/5/7 matrix, IFIFO2 timeout 32/64/128, dual-buffer next-shot II, no-free-buffer drop/quarantine clean exit, 기존 cell_pipe slope abort 회귀가 PASS했다. |
 
 ## 12. 현재 진행 상태
 
@@ -276,6 +278,6 @@ flowchart LR
 | P0 | CHAIN-P0-02 end-to-end ready/stall stress TB | PASS | 결과 유지 |
 | P0 | CHAIN-P0-03 marker audit retro-verification | Closed by marker audit | release bundle 필요 시 C02 tuser historical logs 재패키징 |
 | P0 | CHAIN-P0-04 8 us reserve 측정/보수치 갱신 | Closed for RTL/xsim sensitivity | system 실측 또는 보수 reserve 선택은 release gate로 유지 |
-| P1 | CHAIN-P1-01 C03 direct matrix TB | Open | P0-04 이후 진행 |
+| P1 | CHAIN-P1-01 C03 direct matrix TB | Closed | `C07_System_Integration_260515191624_C03_Direct_Matrix_Result_v001.md`에서 17개 xsim + 기존 C03 regression PASS |
 | P1 | CHAIN-P1-02 C04 ready/header pending direct TB | Open | P0-04 이후 진행 |
 | P1 | CHAIN-P1-03 Hit[16] SW/range 계약 | Open | P0-04 이후 거리 정책과 함께 정리 |
