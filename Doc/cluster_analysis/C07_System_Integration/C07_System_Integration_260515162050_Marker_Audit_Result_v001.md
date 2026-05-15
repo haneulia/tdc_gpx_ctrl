@@ -200,3 +200,9 @@ sequenceDiagram
 | `C07_System_Integration_260514153208_Chain_Stress_Result_v001.md` | P0-01/P0-02 PASS를 fresh chain evidence로 사용하고, P0-03 open 항목을 본 문서에서 닫음 |
 | `C02_Chip_Acquisition_260430224233_Downstream_TUSER_Boundary_Fix_v001.md` | C02 OP-C02-04의 historical xsim evidence를 marker chain 기준으로 재해석 |
 | `C04_Output_Stage_260501031720_Result_v001.md` | Hit[16] sanitize 및 width beat/tlast direct evidence를 C07 release audit에 연결 |
+
+## 10. 후속 반영
+
+| 후속 문서 | 반영 내용 |
+|---|---|
+| `C07_System_Integration_260515174538_Reserve_Budget_Result_v001.md` | 본 문서에서 Open으로 남긴 `CHAIN-P0-04 8 us reserve`를 8/9/10/11/12us xsim sensitivity로 수행했다. RTL/xsim sensitivity는 닫혔고, 실제 VDMA/PS/Ethernet 실측 또는 보수 reserve 선택은 release gate로 분리됐다. |

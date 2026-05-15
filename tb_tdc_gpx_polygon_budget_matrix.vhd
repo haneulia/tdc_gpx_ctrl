@@ -26,6 +26,12 @@ use std.env.all;
 use work.tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_polygon_budget_matrix is
+    generic (
+        G_START_INTERVAL_PS  : integer := 13888889;  -- 13.888889 us
+        G_SYSTEM_RESERVED_PS : integer := 8000000;   -- VDMA/PS/Ethernet reserve
+        G_OUTPUT_PERIOD_PS   : natural := 6667;      -- 150 MHz
+        G_MAX_DISTANCE_M     : natural := 900
+    );
 end entity;
 
 architecture sim of tb_tdc_gpx_polygon_budget_matrix is
@@ -34,11 +40,11 @@ architecture sim of tb_tdc_gpx_polygon_budget_matrix is
     constant C_STOPS_PER_CHIP      : natural := 8;
     constant C_START_DISTANCE_M    : natural := 10;
     constant C_DISTANCE_STEP_M     : natural := 10;
-    constant C_MAX_DISTANCE_M      : natural := 900;
+    constant C_MAX_DISTANCE_M      : natural := G_MAX_DISTANCE_M;
     constant C_RT_PS_PER_M         : natural := 6671;
-    constant C_OUTPUT_PERIOD_PS    : natural := 6667;      -- 150 MHz
-    constant C_START_INTERVAL_PS   : integer := 13888889;  -- 13.888889 us
-    constant C_SYSTEM_RESERVED_PS  : integer := 8000000;   -- 8 us
+    constant C_OUTPUT_PERIOD_PS    : natural := G_OUTPUT_PERIOD_PS;
+    constant C_START_INTERVAL_PS   : integer := G_START_INTERVAL_PS;
+    constant C_SYSTEM_RESERVED_PS  : integer := G_SYSTEM_RESERVED_PS;
     constant C_PRE_TOF_BUDGET_PS   : integer :=
         C_START_INTERVAL_PS - C_SYSTEM_RESERVED_PS;
 

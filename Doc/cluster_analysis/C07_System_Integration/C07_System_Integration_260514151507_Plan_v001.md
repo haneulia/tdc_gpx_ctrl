@@ -266,6 +266,7 @@ flowchart LR
 |---|---|
 | `C07_System_Integration_260514153208_Chain_Stress_Result_v001.md` | P0-01 output stream CDC는 RTL 내부 architecture contract로 닫고, P0-02 width/max_hits/bounded-stall chain stress는 PASS로 닫았다. P0-03 marker audit, P0-04 reserve measurement, P1 C03/C04 direct matrix는 후속으로 유지한다. |
 | `C07_System_Integration_260515162050_Marker_Audit_Result_v001.md` | P0-03 marker audit를 Source/Destination/Effect/Output 기준으로 수행했다. C02 downstream `tuser`는 `PASS_WITH_TRACE`, C04 `Hit[16]` sanitize와 C04/C07 width beat/tlast는 `PASS`로 판정했고, P0-04 reserve measurement 및 P1 C03/C04 direct matrix는 후속으로 유지했다. |
+| `C07_System_Integration_260515174538_Reserve_Budget_Result_v001.md` | P0-04를 8/9/10/11/12us reserve sensitivity xsim으로 수행했다. 8us는 128-bit 810m cfg7 PASS지만 margin 38.69ns로 얇고, 9us 보수 reserve에서는 128-bit cfg7이 660m까지로 내려간다. 실제 VDMA/PS/Ethernet 실측은 release gate로 분리했다. |
 
 ## 12. 현재 진행 상태
 
@@ -274,7 +275,7 @@ flowchart LR
 | P0 | CHAIN-P0-01 output stream CDC closure | Closed in RTL scope | external VDMA clock CDC/STA는 system item으로 유지 |
 | P0 | CHAIN-P0-02 end-to-end ready/stall stress TB | PASS | 결과 유지 |
 | P0 | CHAIN-P0-03 marker audit retro-verification | Closed by marker audit | release bundle 필요 시 C02 tuser historical logs 재패키징 |
-| P0 | CHAIN-P0-04 8 us reserve 측정/보수치 갱신 | Open | 다음 C07 P0 작업으로 진행 |
+| P0 | CHAIN-P0-04 8 us reserve 측정/보수치 갱신 | Closed for RTL/xsim sensitivity | system 실측 또는 보수 reserve 선택은 release gate로 유지 |
 | P1 | CHAIN-P1-01 C03 direct matrix TB | Open | P0-04 이후 진행 |
 | P1 | CHAIN-P1-02 C04 ready/header pending direct TB | Open | P0-04 이후 진행 |
 | P1 | CHAIN-P1-03 Hit[16] SW/range 계약 | Open | P0-04 이후 거리 정책과 함께 정리 |
