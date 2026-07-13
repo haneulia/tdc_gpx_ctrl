@@ -133,7 +133,7 @@ begin
                 v(11) := '0';
                 v(10) := '0';
                 v(9 downto 8) := std_logic_vector(to_unsigned(chip, 2));
-                v(6 downto 0) := (others => '0');
+                v(6 downto 0) := "1010101";
             end if;
             return v;
         end function;

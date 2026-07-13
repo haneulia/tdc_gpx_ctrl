@@ -71,6 +71,10 @@ entity tb_tdc_gpx_top_int is
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;
+        -- Behavioral IFIFO load per stop/channel. Default 1 keeps the
+        -- historical top_int smoke tests small; target 7 models 7 echoes
+        -- per channel.
+        G_ECHOES_PER_STOP : natural := 1;
         -- 0 = derive from G_MAX_RANGE_M. 1..7 = force CTL21.max_hits_cfg
         -- for C07 width/max_hits chain stress.
         G_MAX_HITS_OVERRIDE : natural := 0;
@@ -84,6 +88,16 @@ entity tb_tdc_gpx_top_int is
         -- All 4 chips active by default (top_int has no echo_receiver, so
         -- the 16-channel STAT packing limit does not apply).
         G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
+        -- Bit i = 1 drives chip i raw events as rising slope; bit i = 0
+        -- drives falling slope. Target 4-chip split is "0011":
+        -- chip0/1 rising, chip2/3 falling.
+        G_CHIP_SLOPE_MASK : std_logic_vector(3 downto 0) := "1111";
+        -- Force raw Hit[16]=1 in the behavioral GPX model. This makes
+        -- long-range metadata preservation visible at final VDMA output.
+        G_FORCE_HIT16     : boolean := false;
+        -- Optional release check: require at least this many metadata beats
+        -- per slope stream to carry non-zero [6:0] Hit[16] vectors.
+        G_EXPECT_HIT16_META_MIN : natural := 0;
         G_POWERUP_CLKS    : positive := 16;
         G_RECOVERY_CLKS   : positive := 4;
         G_ALU_PULSE_CLKS  : positive := 3;
@@ -221,6 +235,18 @@ architecture sim of tb_tdc_gpx_top_int is
             return 1;
         else
             return 2;
+        end if;
+    end function;
+
+    function fn_expected_words_per_ififo(
+        stops_per_chip : natural;
+        echoes_per_stop : natural
+    ) return natural is
+    begin
+        if echoes_per_stop = 1 then
+            return stops_per_chip;
+        else
+            return (stops_per_chip / 2) * echoes_per_stop;
         end if;
     end function;
 
@@ -388,6 +414,10 @@ architecture sim of tb_tdc_gpx_top_int is
     signal mon_bp_stall_cycles  : natural := 0;
     signal mon_irq_cnt          : natural := 0;
     signal mon_irq_pipe_cnt     : natural := 0;
+    signal mon_rise_metadata_count : natural := 0;
+    signal mon_fall_metadata_count : natural := 0;
+    signal mon_rise_hit16_meta_nonzero : natural := 0;
+    signal mon_fall_hit16_meta_nonzero : natural := 0;
 
     -- =========================================================================
     -- Pipeline CSR register offsets (csr_pipeline internal)
@@ -424,6 +454,11 @@ architecture sim of tb_tdc_gpx_top_int is
     constant C_RECOVERY_RUNS : natural := fn_recovery_runs(G_RECOVERY_MODE);
     constant C_EXPECTED_TOTAL_LINES : natural := C_TOTAL_LINES * C_RECOVERY_RUNS;
     constant C_EXPECTED_TOTAL_AXIS_BEATS : natural := C_EXPECTED_AXIS_BEATS * C_RECOVERY_RUNS;
+    constant C_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(C_OUTPUT_W);
+    constant C_BEATS_PER_CELL : natural :=
+        fn_beats_per_cell_rt(C_MAX_HITS, C_OUTPUT_W);
+    constant C_EXPECTED_WORDS_PER_IFIFO : natural :=
+        fn_expected_words_per_ififo(G_STOPS_PER_CHIP, G_ECHOES_PER_STOP);
 
     -- Chip CSR addresses (9-bit)
     constant C_CHIP_CFG_REG0   : std_logic_vector(8 downto 0) := "0" & x"14";  -- CTL5
@@ -517,6 +552,8 @@ begin
             variable v_my_fill2  : natural   := 0;
             variable v_my_rd1    : natural   := 0;
             variable v_my_rd2    : natural   := 0;
+            variable v_hit_value : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+            variable v_cha_code  : std_logic_vector(1 downto 0);
         begin
             if rising_edge(clk) then
                 if rst_n = '0' then
@@ -541,26 +578,38 @@ begin
 
                     -- On READ strobe: drive D-bus with 28-bit TDC-GPX I-Mode
                     -- raw word.
-                    --   [27:26] ChaCode  = 00
+                    --   [27:26] ChaCode  = read_count mod 4
                     --   [25:18] StartNum = 0 (SINGLE_SHOT)
-                    --   [17]    Slope    = 0 (rising)
+                    --   [17]    Slope    = G_CHIP_SLOPE_MASK(i)
+                    --                     (1=rising, 0=falling)
                     --   [16: 0] Hit      = sequential test pattern
                     -- Chip addresses: IFIFO1 = 8, IFIFO2 = 9.
                     if o_tdc_oen(i) = '0' and o_tdc_rdn(i) = '0'
                        and o_tdc_csn(i) = '0' then
                         chip_d_oe(i) <= '1';
                         if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 then
-                            chip_d_out(i) <= "00" &                          -- ChaCode
+                            v_cha_code := std_logic_vector(to_unsigned(v_my_rd1 mod 4, 2));
+                            v_hit_value := to_unsigned(
+                                (i * 256) + v_my_rd1 + 1,
+                                c_RAW_HIT_WIDTH);
+                            if G_FORCE_HIT16 then
+                                v_hit_value(c_RAW_HIT_WIDTH - 1) := '1';
+                            end if;
+                            chip_d_out(i) <= v_cha_code &                    -- ChaCode
                                              x"00" &                         -- StartNum
-                                             '0' &                           -- Slope=rising
-                                             std_logic_vector(to_unsigned(
-                                                 (i * 256) + v_my_rd1 + 1,
-                                                 c_RAW_HIT_WIDTH));
+                                             G_CHIP_SLOPE_MASK(i) &
+                                             std_logic_vector(v_hit_value);
                         elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 then
-                            chip_d_out(i) <= "00" & x"00" & '0' &
-                                             std_logic_vector(to_unsigned(
-                                                 (i * 256) + 128 + v_my_rd2 + 1,
-                                                 c_RAW_HIT_WIDTH));
+                            v_cha_code := std_logic_vector(to_unsigned(v_my_rd2 mod 4, 2));
+                            v_hit_value := to_unsigned(
+                                (i * 256) + 128 + v_my_rd2 + 1,
+                                c_RAW_HIT_WIDTH);
+                            if G_FORCE_HIT16 then
+                                v_hit_value(c_RAW_HIT_WIDTH - 1) := '1';
+                            end if;
+                            chip_d_out(i) <= v_cha_code & x"00" &
+                                             G_CHIP_SLOPE_MASK(i) &
+                                             std_logic_vector(v_hit_value);
                         else
                             chip_d_out(i) <= (others => '0');
                         end if;
@@ -713,6 +762,9 @@ begin
     -- Monitor: VDMA rising / falling beat counter
     -- =========================================================================
     p_mon : process(clk)
+        variable v_rise_line_beat : natural := 0;
+        variable v_fall_line_beat : natural := 0;
+        variable v_data_idx       : natural := 0;
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
@@ -728,6 +780,12 @@ begin
                 mon_fall_last_cycle <= 0;
                 mon_irq_cnt <= 0;
                 mon_irq_pipe_cnt <= 0;
+                mon_rise_metadata_count <= 0;
+                mon_fall_metadata_count <= 0;
+                mon_rise_hit16_meta_nonzero <= 0;
+                mon_fall_hit16_meta_nonzero <= 0;
+                v_rise_line_beat := 0;
+                v_fall_line_beat := 0;
             else
                 if o_irq = '1' then
                     mon_irq_cnt <= mon_irq_cnt + 1;
@@ -750,6 +808,18 @@ begin
                                & " time=" & time'image(now)
                             severity note;
                     end if;
+                    if m_rise_tuser(0) = '1' then
+                        v_rise_line_beat := 0;
+                    end if;
+                    if v_rise_line_beat >= C_HDR_PREFIX_BEATS then
+                        v_data_idx := v_rise_line_beat - C_HDR_PREFIX_BEATS;
+                        if (v_data_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
+                            mon_rise_metadata_count <= mon_rise_metadata_count + 1;
+                            if m_rise_tdata(6 downto 0) /= "0000000" then
+                                mon_rise_hit16_meta_nonzero <= mon_rise_hit16_meta_nonzero + 1;
+                            end if;
+                        end if;
+                    end if;
                     mon_rise_beats <= mon_rise_beats + 1;
                     if m_rise_tlast = '1' then
                         mon_rise_frame_end <= mon_rise_frame_end + 1;
@@ -758,6 +828,9 @@ begin
                                & integer'image(sim_cycle)
                                & " time=" & time'image(now)
                             severity note;
+                        v_rise_line_beat := 0;
+                    else
+                        v_rise_line_beat := v_rise_line_beat + 1;
                     end if;
                 end if;
                 if m_fall_tvalid = '1' and m_fall_tready = '1' then
@@ -775,6 +848,18 @@ begin
                                & " time=" & time'image(now)
                             severity note;
                     end if;
+                    if m_fall_tuser(0) = '1' then
+                        v_fall_line_beat := 0;
+                    end if;
+                    if v_fall_line_beat >= C_HDR_PREFIX_BEATS then
+                        v_data_idx := v_fall_line_beat - C_HDR_PREFIX_BEATS;
+                        if (v_data_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
+                            mon_fall_metadata_count <= mon_fall_metadata_count + 1;
+                            if m_fall_tdata(6 downto 0) /= "0000000" then
+                                mon_fall_hit16_meta_nonzero <= mon_fall_hit16_meta_nonzero + 1;
+                            end if;
+                        end if;
+                    end if;
                     mon_fall_beats <= mon_fall_beats + 1;
                     if m_fall_tlast = '1' then
                         mon_fall_frame_end <= mon_fall_frame_end + 1;
@@ -783,6 +868,9 @@ begin
                                & integer'image(sim_cycle)
                                & " time=" & time'image(now)
                             severity note;
+                        v_fall_line_beat := 0;
+                    else
+                        v_fall_line_beat := v_fall_line_beat + 1;
                     end if;
                 end if;
             end if;
@@ -938,20 +1026,42 @@ begin
             variable v_data : std_logic_vector(C_STOP_DW - 1 downto 0);
             variable v_user : std_logic_vector(C_STOP_DW - 1 downto 0);
             variable v_lo   : natural;
+            variable v_data_nib1 : natural;
+            variable v_user_nib1 : natural;
+            variable v_data_nib2 : natural;
+            variable v_user_nib2 : natural;
         begin
-            assert ififo1_cnt <= 15 and ififo2_cnt <= 15
+            assert ififo1_cnt <= 30 and ififo2_cnt <= 30
                 report "tb_tdc_gpx_top_int: expected-count field overflow"
                 severity failure;
 
             v_data := (others => '0');
             v_user := (others => '0');
+            if ififo1_cnt > 15 then
+                v_data_nib1 := 15;
+            else
+                v_data_nib1 := ififo1_cnt;
+            end if;
+            v_user_nib1 := ififo1_cnt - v_data_nib1;
+
+            if ififo2_cnt > 15 then
+                v_data_nib2 := 15;
+            else
+                v_data_nib2 := ififo2_cnt;
+            end if;
+            v_user_nib2 := ififo2_cnt - v_data_nib2;
+
             for i in 0 to c_N_CHIPS - 1 loop
                 v_lo := i * 8;
                 if G_ACTIVE_CHIP_MASK(i) = '1' then
                     v_data(v_lo + 3 downto v_lo) :=
-                        std_logic_vector(to_unsigned(ififo1_cnt, 4));
+                        std_logic_vector(to_unsigned(v_data_nib1, 4));
+                    v_user(v_lo + 3 downto v_lo) :=
+                        std_logic_vector(to_unsigned(v_user_nib1, 4));
                     v_data(v_lo + 7 downto v_lo + 4) :=
-                        std_logic_vector(to_unsigned(ififo2_cnt, 4));
+                        std_logic_vector(to_unsigned(v_data_nib2, 4));
+                    v_user(v_lo + 7 downto v_lo + 4) :=
+                        std_logic_vector(to_unsigned(v_user_nib2, 4));
                 end if;
             end loop;
 
@@ -1104,7 +1214,7 @@ begin
             for f in 0 to G_N_FACES - 1 loop
                 for c in 0 to G_COLS_PER_FACE - 1 loop
                     do_shot(c + 1,
-                            G_STOPS_PER_CHIP,
+                            C_EXPECTED_WORDS_PER_IFIFO,
                             "run" & integer'image(run_idx)
                             & "/face" & integer'image(f)
                             & "/col" & integer'image(c));
@@ -1273,7 +1383,13 @@ begin
            & "  max_hits_mode=" & fn_mode_name(G_MAX_HITS_WRITE_MODE)
            & "  stream_clk_mode=" & G_STREAM_CLK_MODE
            & "  active_chips=" & integer'image(C_ACTIVE_CHIPS)
+           & "  chip_slope_mask=" & std_logic'image(G_CHIP_SLOPE_MASK(3))
+           & std_logic'image(G_CHIP_SLOPE_MASK(2))
+           & std_logic'image(G_CHIP_SLOPE_MASK(1))
+           & std_logic'image(G_CHIP_SLOPE_MASK(0))
            & "  stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
+           & "  echoes_per_stop=" & integer'image(G_ECHOES_PER_STOP)
+           & "  expected_words_per_ififo=" & integer'image(C_EXPECTED_WORDS_PER_IFIFO)
            & "  faces=" & integer'image(G_N_FACES)
            & "  cols=" & integer'image(G_COLS_PER_FACE)
            & "  expected_beats_per_run=" & integer'image(C_EXPECTED_AXIS_BEATS)
@@ -1291,6 +1407,12 @@ begin
            & "  fall_first_cycle=" & integer'image(mon_fall_first_cycle)
            & "  fall_last_cycle=" & integer'image(mon_fall_last_cycle)
            & "  bp_stall_cycles=" & integer'image(mon_bp_stall_cycles));
+        pl("  hit16 metadata   : force_hit16=" & boolean'image(G_FORCE_HIT16)
+           & "  expect_min=" & integer'image(G_EXPECT_HIT16_META_MIN)
+           & "  rise_meta=" & integer'image(mon_rise_metadata_count)
+           & "  rise_nonzero=" & integer'image(mon_rise_hit16_meta_nonzero)
+           & "  fall_meta=" & integer'image(mon_fall_metadata_count)
+           & "  fall_nonzero=" & integer'image(mon_fall_hit16_meta_nonzero));
         pl("  irq counters     : o_irq=" & integer'image(mon_irq_cnt)
            & "  o_irq_pipe=" & integer'image(mon_irq_pipe_cnt));
         pl("====================================================");
@@ -1318,6 +1440,16 @@ begin
         assert mon_irq_cnt = 0
             report "tb_tdc_gpx_top_int: o_irq must not fire in normal C06 top_int run"
             severity error;
+        if G_EXPECT_HIT16_META_MIN > 0 then
+            assert mon_rise_hit16_meta_nonzero >= G_EXPECT_HIT16_META_MIN
+                report "tb_tdc_gpx_top_int: rising Hit[16] metadata preservation count below expected"
+                severity error;
+            assert mon_fall_hit16_meta_nonzero >= G_EXPECT_HIT16_META_MIN
+                report "tb_tdc_gpx_top_int: falling Hit[16] metadata preservation count below expected"
+                severity error;
+            report "tb_tdc_gpx_top_int: Hit[16] final metadata preservation - PASS"
+                severity note;
+        end if;
         if G_BP_TREADY_GAP > 0 then
             assert mon_bp_stall_cycles > 0
                 report "tb_tdc_gpx_top_int: backpressure mode did not create stall cycles"

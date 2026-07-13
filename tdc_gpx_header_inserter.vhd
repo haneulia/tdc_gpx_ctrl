@@ -18,7 +18,9 @@
 --     Per-stop-channel diagnostic. Carries hit_valid bitmap, slope_vec,
 --     hit_count_actual, hit_dropped, error_fill, chip_id. These act as the
 --     "per-cell footer" — SW iterates cells to detect per-chip/per-stop
---     problems without needing a separate frame-level footer.
+--     problems without needing a separate frame-level footer. Cell metadata
+--     bits [6:0] carry Hit[16] per hit slot; header word3 bit30 tells SW that
+--     this final stream preserves those metadata bits.
 --
 --   SW reads VDMA frame as a raw data blob (Zybo-style VDMA→framebuffer);
 --   SW uses cell metadata for validation, CSR status registers for
@@ -62,7 +64,7 @@
 --                   n_faces[14:12] | stops[18:15] |
 --                   ndcap[22:19] | pipe_en[23] |
 --                   hit_store[25:24] | dist_scale[28:26] |
---                   drain_mode[29]                              30/32
+--                   drain_mode[29] | hit_msb_meta_en[30]        31/32
 --       4   0x10    rows_per_face[15:0] | cols[31:16]   [31:0]  32 full
 --       5   0x14    max_hits[7:0] | cell_size[15:8] |
 --                   hit_slot_w[23:16] | n_chips[27:24] |
@@ -352,6 +354,7 @@ begin
                     word(25 downto 24) := std_logic_vector(s_hit_store_mode_r);
                     word(28 downto 26) := std_logic_vector(s_dist_scale_r);
                     word(29)           := s_drain_mode_r;
+                    word(30)           := '1';  -- cell metadata [6:0] preserves Hit[16]
                 when 4  =>
                     word(15 downto 0)  := std_logic_vector(s_rows_per_face_r);
                     word(31 downto 16) := std_logic_vector(s_cols_per_face_r);

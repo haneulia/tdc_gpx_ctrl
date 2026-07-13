@@ -175,9 +175,9 @@ architecture sim of tb_tdc_gpx_output_stage is
     signal s_frame_faulted_fall_cnt : natural := 0;
     signal s_keep_ok            : boolean := true;
     signal s_fall_keep_ok       : boolean := true;
-    signal s_metadata_sanitize_ok : boolean := true;
+    signal s_metadata_hit_msb_ok : boolean := true;
     signal s_metadata_seen_count  : natural := 0;
-    signal s_fall_metadata_sanitize_ok : boolean := true;
+    signal s_fall_metadata_hit_msb_ok : boolean := true;
     signal s_fall_metadata_seen_count  : natural := 0;
 
     function fn_effective_max_hits_cfg(
@@ -348,8 +348,8 @@ begin
                     v_data_idx := v_out_idx - C_HDR_PREFIX_BEATS;
                     if (v_data_idx mod v_mon_beats_per_cell) = (v_mon_beats_per_cell - 1) then
                         s_metadata_seen_count <= s_metadata_seen_count + 1;
-                        if m_axis_tdata(6 downto 0) /= "0000000" then
-                            s_metadata_sanitize_ok <= false;
+                        if m_axis_tdata(6 downto 0) /= "1010101" then
+                            s_metadata_hit_msb_ok <= false;
                         end if;
                     end if;
                 end if;
@@ -383,8 +383,8 @@ begin
                     v_fall_data_idx := v_fall_out_idx - C_HDR_PREFIX_BEATS;
                     if (v_fall_data_idx mod v_fall_beats_per_cell) = (v_fall_beats_per_cell - 1) then
                         s_fall_metadata_seen_count <= s_fall_metadata_seen_count + 1;
-                        if m_axis_fall_tdata(6 downto 0) /= "0000000" then
-                            s_fall_metadata_sanitize_ok <= false;
+                        if m_axis_fall_tdata(6 downto 0) /= "1010101" then
+                            s_fall_metadata_hit_msb_ok <= false;
                         end if;
                     end if;
                 end if;
@@ -557,13 +557,13 @@ begin
                            & integer'image(s_sof_count - v_sweep_base_sof)
                            & " expected=1"
                     severity failure;
-                assert s_metadata_sanitize_ok
+                assert s_metadata_hit_msb_ok
                     report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
-                           & ": metadata[6:0] sanitize failed"
+                           & ": metadata[6:0] Hit[16] preserve failed"
                     severity failure;
-                assert s_fall_metadata_sanitize_ok
+                assert s_fall_metadata_hit_msb_ok
                     report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
-                           & ": fall metadata[6:0] sanitize failed"
+                           & ": fall metadata[6:0] Hit[16] preserve failed"
                     severity failure;
 
                 report "SCENARIO 3 cfg=" & integer'image(cfg_idx)
@@ -653,12 +653,12 @@ begin
         report "  frame_done:   " & std_logic'image(frame_done)   severity note;
         report "  SOF count:    " & integer'image(s_sof_count)    severity note;
         report "  row_faulted_rise count: " & integer'image(s_row_faulted_rise_cnt) severity note;
-        report "  metadata sanitize ok: " & boolean'image(s_metadata_sanitize_ok) severity note;
+        report "  metadata Hit[16] preserve ok: " & boolean'image(s_metadata_hit_msb_ok) severity note;
         report "  metadata seen count:  " & integer'image(s_metadata_seen_count) severity note;
 
         if frame_done = '1' and v_sof_seen and v_eol_seen and v_out_beat_cnt > 0
            and s_keep_ok
-           and s_metadata_sanitize_ok
+           and s_metadata_hit_msb_ok
            and s_metadata_seen_count = C_STOPS
            and s_sof_count = 1
            and s_row_faulted_rise_cnt = 1
@@ -800,8 +800,8 @@ begin
         assert s_keep_ok and s_fall_keep_ok
             report "SCENARIO 2: AXIS tkeep/tstrb must remain all-ones on accepted beats"
             severity failure;
-        assert s_metadata_sanitize_ok
-            report "SCENARIO 2: C04 final VDMA metadata[6:0] must discard Hit[16] vector"
+        assert s_metadata_hit_msb_ok
+            report "SCENARIO 2: C04 final VDMA metadata[6:0] must preserve Hit[16] vector"
             severity failure;
 
         report "*** SCENARIO 2 (slope-independent abort) PASS ***" severity note;

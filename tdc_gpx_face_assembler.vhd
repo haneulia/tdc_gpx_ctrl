@@ -824,10 +824,11 @@ begin
                             v_chip_idx := to_integer(s_cur_chip_r);
 
                             if s_in_tvalid(v_chip_idx) = '1' then
+                                -- Preserve cell metadata [6:0] = Hit[16]
+                                -- vector from cell_builder. Datasheet raw hit
+                                -- is 17-bit, so the final VDMA stream must keep
+                                -- this metadata for long-range reconstruction.
                                 v_sanitized_tdata := s_in_tdata(v_chip_idx);
-                                if s_fwd_beat_r = s_rt_last_beat_r then
-                                    v_sanitized_tdata(6 downto 0) := (others => '0');
-                                end if;
                                 s_pipe_tdata_r  <= v_sanitized_tdata;
                                 s_pipe_tvalid_r <= '1';
                                 s_fwd_stall_cnt_r <= (others => '0');  -- Round 9 #2: reset stall counter on progress

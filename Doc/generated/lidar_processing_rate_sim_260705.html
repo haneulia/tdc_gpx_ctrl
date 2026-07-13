@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>LiDAR 수신 데이터 처리 속도 상세설계 검토 시뮬레이션</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --text:#1a1a2e; --muted:#6b7280;
+    --line:#e5e7eb; --accent:#2563eb; --ok:#059669; --okbg:#d1fae5;
+    --ng:#dc2626; --ngbg:#fee2e2; --warn:#b45309; --warnbg:#fef3c7;
+    --formula:#7c3aed; --head:#f1f5f9;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;padding:24px;background:var(--bg);color:var(--text);
+       font-family:"Segoe UI","Malgun Gothic",sans-serif;font-size:14px;line-height:1.5;}
+  h1{font-size:20px;margin:0 0 4px;}
+  h2{font-size:16px;margin:28px 0 8px;padding:6px 10px;background:var(--head);
+     border-left:4px solid var(--accent);border-radius:2px;}
+  .sub{color:var(--muted);font-size:12px;margin-bottom:16px;}
+  .layout{display:grid;grid-template-columns:340px 1fr;gap:20px;align-items:start;}
+  .inputs{position:sticky;top:16px;background:var(--panel);border:1px solid var(--line);
+          border-radius:8px;padding:16px;max-height:calc(100vh - 40px);overflow-y:auto;}
+  .inputs h3{font-size:14px;margin:14px 0 6px;color:var(--accent);}
+  .inputs h3:first-child{margin-top:0;}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0;}
+  .row label{flex:1;font-size:13px;}
+  .row input[type=number]{width:90px;padding:3px 6px;border:1px solid var(--line);
+       border-radius:4px;text-align:right;font-size:13px;}
+  .row input[readonly]{background:var(--head);color:var(--muted);}
+  .row select{width:150px;padding:3px 4px;border:1px solid var(--line);border-radius:4px;font-size:13px;}
+  .unit{color:var(--muted);font-size:12px;width:44px;}
+  .hint{font-size:11px;color:var(--muted);margin:2px 0 8px;}
+  .report{min-width:0;}
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+        border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+  th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;font-size:13px;}
+  th{background:var(--head);font-weight:600;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;}
+  td.formula{color:var(--formula);font-family:Consolas,monospace;font-size:12px;}
+  .badge{display:inline-block;padding:1px 10px;border-radius:10px;font-size:12px;font-weight:700;}
+  .badge.ok{background:var(--okbg);color:var(--ok);}
+  .badge.ng{background:var(--ngbg);color:var(--ng);}
+  .badge.warn{background:var(--warnbg);color:var(--warn);}
+  .badge.na{background:var(--head);color:var(--muted);}
+  .verdict{margin-top:16px;padding:14px 18px;border-radius:8px;font-size:16px;font-weight:700;}
+  .verdict.ok{background:var(--okbg);color:var(--ok);border:1px solid var(--ok);}
+  .verdict.warn{background:var(--warnbg);color:var(--warn);border:1px solid var(--warn);}
+  .verdict.ng{background:var(--ngbg);color:var(--ng);border:1px solid var(--ng);}
+  .bcards{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .bcard{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 14px;}
+  .bcard.active{border-color:var(--ng);background:var(--ngbg);}
+  .bcard b{display:block;margin-bottom:4px;}
+  .bcard ul{margin:4px 0 0 18px;padding:0;font-size:12px;color:var(--muted);}
+  .bcard .state{float:right;}
+  button.print{padding:6px 14px;border:1px solid var(--accent);background:var(--accent);
+    color:#fff;border-radius:5px;cursor:pointer;font-size:13px;}
+  .viz{position:relative;background:var(--panel);border:1px solid var(--line);
+       border-radius:6px;padding:10px;}
+  .viz canvas{width:100%;display:block;cursor:crosshair;}
+  #viztip{position:absolute;display:none;pointer-events:none;z-index:5;
+    background:#1a1a2e;color:#fff;font-size:12px;padding:4px 8px;border-radius:4px;
+    white-space:nowrap;}
+  .vizcap{font-size:12px;color:var(--muted);margin-top:6px;display:flex;
+    flex-wrap:wrap;gap:14px;align-items:center;}
+  .sw{display:inline-block;width:12px;height:12px;border-radius:2px;
+      vertical-align:-2px;margin-right:4px;}
+  @media print{
+    .inputs,button.print{display:none;}
+    .layout{display:block;}
+    body{background:#fff;padding:0;}
+    h2{break-inside:avoid;}
+    table,.bcards{break-inside:avoid;}
+  }
+</style>
+</head>
+<body>
+<h1>LiDAR 수신 데이터 처리 속도 상세설계 검토 시뮬레이션</h1>
+<div class="sub">TDC-GPX 컨트롤러 기반 · 200 MHz 처리 클럭 · shot_period = 1.5 × round-trip 운용 규칙 반영 ·
+생성일 2026-07-05 &nbsp; <button class="print" onclick="window.print()">보고서 인쇄 / PDF 저장</button></div>
+
+<div class="layout">
+<!-- ============ 입력 패널 ============ -->
+<div class="inputs">
+  <h3>기본 조건</h3>
+  <div class="row"><label>Target range R</label><input type="number" id="R" value="1000" step="50" min="10"><span class="unit">m</span></div>
+  <div class="row"><label><input type="checkbox" id="prfAuto" checked> PRF 자동 (1.5× 규칙)</label></div>
+  <div class="row"><label>PRF f_PRF</label><input type="number" id="prf" value="100" step="1" min="0.1"><span class="unit">kHz</span></div>
+  <div class="hint">자동 시 f_PRF = c / (3R) — shot_period = 1.5 × round-trip(R)</div>
+  <div class="row"><label>Frame rate f_frame</label><input type="number" id="fframe" value="20" step="1" min="0.1"><span class="unit">Hz</span></div>
+
+  <h3>Scan FoV / 분해능</h3>
+  <div class="row"><label>H FoV left</label><input type="number" id="hL" value="30" step="1"><span class="unit">deg</span></div>
+  <div class="row"><label>H FoV right</label><input type="number" id="hR" value="30" step="1"><span class="unit">deg</span></div>
+  <div class="row"><label>V FoV down</label><input type="number" id="vD" value="10" step="1"><span class="unit">deg</span></div>
+  <div class="row"><label>V FoV up</label><input type="number" id="vU" value="10" step="1"><span class="unit">deg</span></div>
+  <div class="row"><label>H resolution Δθ_H</label><input type="number" id="dH" value="0.1" step="0.01" min="0.001"><span class="unit">deg</span></div>
+  <div class="row"><label>V resolution Δθ_V</label><input type="number" id="dV" value="0.1" step="0.01" min="0.001"><span class="unit">deg</span></div>
+
+  <h3>APD array / 병렬</h3>
+  <div class="row"><label>APD columns</label><input type="number" id="apdC" value="8" step="1" min="1"><span class="unit">개</span></div>
+  <div class="row"><label>APD rows</label><input type="number" id="apdR" value="8" step="1" min="1"><span class="unit">개</span></div>
+  <div class="row"><label><input type="checkbox" id="parAuto" checked> N_parallel = cols × rows</label></div>
+  <div class="row"><label>Effective parallel N_parallel</label><input type="number" id="npar" value="64" step="1" min="1"><span class="unit">cell</span></div>
+  <div class="hint">병렬 기준: APD hit pixel 수와 fan-beam 조명 cell 수 중 물리적으로 유효한(작은) 값</div>
+
+  <h3>TDC 처리 파이프라인</h3>
+  <div class="row"><label>처리 클럭 f_clk</label><input type="number" id="fclk" value="200" step="10" min="1"><span class="unit">MHz</span></div>
+  <div class="row"><label>max_hits / cell</label><input type="number" id="maxhits" value="7" step="1" min="1" max="7"><span class="unit">hit</span></div>
+  <div class="hint">거리별 기준: 100m→1 / 250m→2 / 500m→3 / 750m→6 / 1000m→7</div>
+  <div class="row"><label>TDATA 폭</label><select id="tdw"><option value="64" selected>64-bit (3 slot/beat)</option><option value="32">32-bit (1 slot/beat)</option></select></div>
+  <div class="row"><label>Pipeline overhead</label><input type="number" id="ovh" value="32" step="1" min="0"><span class="unit">cyc</span></div>
+
+  <h3>Raw Data Rate 방식</h3>
+  <div class="row"><label>산출 방식</label><select id="drmode">
+    <option value="tdc" selected>TDC hit/beat (본 IP)</option>
+    <option value="gate">gate / sample</option>
+    <option value="adc">ADC waveform</option>
+  </select></div>
+  <div class="row dr-gate" style="display:none"><label>N_sample/gate</label><input type="number" id="nsg" value="1024" step="64"><span class="unit">smp</span></div>
+  <div class="row dr-gate dr-adc" style="display:none"><label>Bit depth N_bit</label><input type="number" id="nbit" value="12" step="1"><span class="unit">bit</span></div>
+  <div class="row dr-adc" style="display:none"><label>채널 수 N_ch</label><input type="number" id="nch" value="64" step="1"><span class="unit">ch</span></div>
+  <div class="row dr-adc" style="display:none"><label>Sample rate f_s</label><input type="number" id="fs" value="500" step="10"><span class="unit">MSPS</span></div>
+  <div class="row"><label>후단 처리 입력 한계</label><input type="number" id="drlimit" value="12800" step="100"><span class="unit">Mbps</span></div>
+  <div class="hint">기본 12,800 Mbps = AXI-Stream 64-bit @ 200 MHz</div>
+</div>
+
+<!-- ============ 보고서 본문 ============ -->
+<div class="report">
+
+<h2>1. 설계 목적</h2>
+<table>
+ <tr><th style="width:120px">항목</th><th>내용</th></tr>
+ <tr><td>목적</td><td>LiDAR 수신 데이터 처리 속도 만족성 검토</td></tr>
+ <tr><td>대상</td><td>PRF, Scan FoV, 각도 분해능, Frame rate, APD array 병렬 처리</td></tr>
+ <tr><td>판정 기준</td><td>1 frame 내 모든 grid(scan point) 처리 가능 여부</td></tr>
+</table>
+
+<h2>2. 입력 조건</h2>
+<table id="t2"></table>
+
+<h2>3. 스캔 포인트 산출</h2>
+<table id="t3"></table>
+
+<h2>3-1. 스캔 포인트 분포 시각화</h2>
+<div class="viz">
+  <canvas id="scanviz" height="300"></canvas>
+  <div id="viztip"></div>
+  <div class="vizcap" id="vizcap"></div>
+</div>
+
+<h2>4. 병렬 처리 반영</h2>
+<table id="t4"></table>
+
+<h2>5. 요구 PRF 산출</h2>
+<table id="t5"></table>
+
+<h2>6. 처리 시간 Budget</h2>
+<table id="t6"></table>
+
+<h2>7. 거리 모호성 검토</h2>
+<table id="t7"></table>
+
+<h2>8. Raw Data Rate</h2>
+<table id="t8"></table>
+
+<h2>9. 병목 및 대응</h2>
+<div class="bcards" id="t9"></div>
+
+<h2>10. 최종 판정</h2>
+<table id="t10"></table>
+<div class="verdict" id="verdict"></div>
+
+</div>
+</div>
+
+<script>
+const C = 3e8;                       // 광속 (프로젝트 컨벤션 3×10^8 m/s)
+const $ = id => document.getElementById(id);
+const ceil = x => Math.ceil(x - 1e-9);
+const fmt = (x, d=2) => x.toLocaleString('en-US', {maximumFractionDigits:d});
+const badge = (ok, okTxt='OK', ngTxt='부족') =>
+  `<span class="badge ${ok?'ok':'ng'}">${ok?okTxt:ngTxt}</span>`;
+const na = '<span class="badge na">—</span>';
+
+function rowsHTML(rows){
+  let h = '<tr><th style="width:200px">항목명</th><th style="width:150px">수치</th>'+
+          '<th style="width:170px">기준</th><th style="width:70px">판정</th><th>근거식</th></tr>';
+  for(const r of rows)
+    h += `<tr><td>${r[0]}</td><td class="num">${r[1]}</td><td>${r[2]}</td>`+
+         `<td>${r[3]}</td><td class="formula">${r[4]}</td></tr>`;
+  return h;
+}
+
+function calc(){
+  // ---- 입력 읽기 ----
+  const R = +$('R').value;
+  if($('prfAuto').checked){ $('prf').value = (C/(3*R)/1e3).toFixed(3); $('prf').readOnly = true; }
+  else $('prf').readOnly = false;
+  const fPRF = +$('prf').value * 1e3;              // Hz
+  const fFrame = +$('fframe').value;
+  const thH = +$('hL').value + +$('hR').value;
+  const thV = +$('vD').value + +$('vU').value;
+  const dH = +$('dH').value, dV = +$('dV').value;
+  const apdC = +$('apdC').value, apdR = +$('apdR').value;
+  if($('parAuto').checked){ $('npar').value = apdC*apdR; $('npar').readOnly = true; }
+  else $('npar').readOnly = false;
+  const Npar = +$('npar').value;
+  const fClk = +$('fclk').value * 1e6;
+  const maxHits = +$('maxhits').value;
+  const tdw = +$('tdw').value;
+  const ovh = +$('ovh').value;
+  const drmode = $('drmode').value;
+  document.querySelectorAll('.dr-gate').forEach(e=>e.style.display = drmode==='gate' ? 'flex':'none');
+  document.querySelectorAll('.dr-adc').forEach(e=>{
+    if(e.classList.contains('dr-gate')) e.style.display = (drmode==='gate'||drmode==='adc')?'flex':'none';
+    else e.style.display = drmode==='adc' ? 'flex':'none';
+  });
+  const drLimit = +$('drlimit').value;             // Mbps
+
+  // ---- 3. 스캔 포인트 ----
+  const NH = ceil(thH/dH), NV = ceil(thV/dV), Nframe = NH*NV;
+
+  // ---- 4. 병렬 ----
+  const Ngroup = ceil(Nframe/Npar);
+
+  // ---- 5. 요구 PRF ----
+  const fReq = Ngroup * fFrame;
+  const marginPRF = fPRF / fReq;
+  const okPRF = marginPRF >= 1;
+
+  // ---- 6. 처리 시간 ----
+  const T_PRI = 1/fPRF;                            // s
+  const T_frame = 1/fFrame;
+  const budgetFrame = T_frame/Ngroup;              // frame 기준 budget
+  const slots = tdw===64 ? 3 : 1;                  // 17-bit hit slot
+  const beats = ceil(maxHits/slots) + 1;           // +1 = META beat
+  const tProc = (Npar*beats + ovh)/fClk;           // group당 실제 처리 예상
+  const slack = T_PRI - tProc;
+  const okProc = slack >= 0;
+
+  // ---- 7. 거리 모호성 ----
+  const Runamb = C/(2*fPRF);
+  const okAmb = R <= Runamb + 1e-9;
+
+  // ---- 8. Raw Data Rate ----
+  let drRaw, drFormula, drRows;
+  if(drmode==='tdc'){
+    drRaw = fPRF * Npar * beats * tdw / 1e6;       // Mbps
+    drFormula = 'DataRate = f_PRF × N_parallel × beats/cell × TDATA폭';
+    drRows = [
+      ['beats / cell', fmt(beats,0)+' beats', 'HTML §4/§5 기준', na, 'beats = ceil(max_hits / '+slots+') + 1 (META)'],
+      ['cell당 데이터', fmt(beats*tdw,0)+' bit', '—', na, 'beats × '+tdw+' bit'],
+    ];
+  } else if(drmode==='gate'){
+    const nsg = +$('nsg').value, nbit = +$('nbit').value;
+    drRaw = fPRF * Npar * nsg * nbit / 1e6;
+    drFormula = 'DataRate = f_PRF × N_pixel × N_sample/gate × N_bit';
+    drRows = [
+      ['gate당 sample 수', fmt(nsg,0)+' smp', '—', na, 'N_sample/gate 입력값'],
+      ['bit depth', fmt(nbit,0)+' bit', '—', na, 'N_bit 입력값'],
+    ];
+  } else {
+    const nch = +$('nch').value, fs = +$('fs').value*1e6, nbit = +$('nbit').value;
+    drRaw = nch * fs * nbit / 1e6;
+    drFormula = 'DataRate = N_ch × f_s × N_bit';
+    drRows = [
+      ['채널 수 N_ch', fmt(nch,0)+' ch', '—', na, '입력값'],
+      ['sample rate f_s', fmt(fs/1e6,0)+' MSPS', '—', na, '입력값'],
+    ];
+  }
+  const okDR = drRaw <= drLimit;
+
+  // ---- 렌더링 ----
+  $('t2').innerHTML = rowsHTML([
+    ['Target range R', fmt(R,0)+' m', '요구 사양', na, '입력값'],
+    ['PRF f_PRF', fmt(fPRF/1e3,3)+' kHz', $('prfAuto').checked?'1.5× 규칙 자동':'수동 입력', na,
+      $('prfAuto').checked?'f_PRF = c/(3R) — shot_period = 1.5 × 2R/c':'입력값'],
+    ['Frame rate f_frame', fmt(fFrame,1)+' Hz', '요구 사양', na, '입력값'],
+    ['H FoV θ_H', fmt(thH,2)+'° ('+$('hL').value+'+'+$('hR').value+')', '—', na, 'θ_H = left + right'],
+    ['V FoV θ_V', fmt(thV,2)+'° ('+$('vD').value+'+'+$('vU').value+')', '—', na, 'θ_V = down + up'],
+    ['H resolution Δθ_H', fmt(dH,3)+'°', '—', na, '입력값'],
+    ['V resolution Δθ_V', fmt(dV,3)+'°', '—', na, '입력값'],
+    ['APD array', apdC+' × '+apdR+' = '+fmt(apdC*apdR,0)+' cell', '—', na, 'columns × rows'],
+    ['Effective parallel N_parallel', fmt(Npar,0)+' cell', 'hit pixel vs fan-beam cell 中 유효값', na,
+      $('parAuto').checked?'N_parallel = cols × rows':'수동 입력'],
+  ]);
+
+  $('t3').innerHTML = rowsHTML([
+    ['수평 포인트 수 N_H', fmt(NH,0)+' points', '—', na, 'N_H = ceil(θ_H / Δθ_H) = ceil('+fmt(thH,1)+'/'+dH+')'],
+    ['수직 포인트 수 N_V', fmt(NV,0)+' points', '—', na, 'N_V = ceil(θ_V / Δθ_V) = ceil('+fmt(thV,1)+'/'+dV+')'],
+    ['1 frame 총 포인트 N_frame', fmt(Nframe,0)+' points/frame', '—', na, 'N_frame = N_H × N_V'],
+  ]);
+
+  $('t4').innerHTML = rowsHTML([
+    ['1 PRF 담당 cell', apdC+' × '+apdR+' 배열', '물리적 유효 병렬', na, 'APD array H × V'],
+    ['Effective parallel cells', fmt(Npar,0)+' cell', '—', na, 'min(hit pixel 수, fan-beam 조명 cell 수)'],
+    ['Frame당 처리 group 수 N_group', fmt(Ngroup,0)+' group', '—', na,
+      'N_group = ceil(N_frame / N_parallel) = ceil('+fmt(Nframe,0)+'/'+Npar+')'],
+  ]);
+
+  $('t5').innerHTML = rowsHTML([
+    ['요구 PRF f_PRF,req', fmt(fReq/1e3,2)+' kHz', '—', na, 'f_PRF,req = N_group × f_frame'],
+    ['현재 PRF f_PRF', fmt(fPRF/1e3,3)+' kHz', 'f_PRF ≥ f_PRF,req', badge(okPRF), '입력 조건'],
+    ['PRF 여유율 Margin_PRF', '×'+fmt(marginPRF,2), '≥ 1.0', badge(okPRF), 'Margin = f_PRF / f_PRF,req'],
+  ]);
+
+  $('t6').innerHTML = rowsHTML([
+    ['PRF 주기 T_PRI', fmt(T_PRI*1e6,3)+' µs', '—', na, 'T_PRI = 1 / f_PRF'],
+    ['group당 허용 시간 (PRI 기준)', fmt(T_PRI*1e6,3)+' µs/group', '보수적 budget', na, 'T_group,budget = T_PRI'],
+    ['group당 허용 시간 (frame 기준)', fmt(budgetFrame*1e6,2)+' µs/group', '참고', na, 'T_frame / N_group = (1/f_frame)/N_group'],
+    ['실제 처리 예상시간', fmt(tProc*1e6,3)+' µs/group', '≤ T_PRI', badge(okProc),
+      't = (N_parallel × beats + overhead)/f_clk = ('+Npar+'×'+beats+'+'+ovh+')/'+fmt(fClk/1e6,0)+'MHz'],
+    ['처리 여유', fmt(slack*1e6,3)+' µs', '≥ 0', badge(okProc,'OK','부족'), 'T_PRI − t_proc'],
+  ]);
+
+  $('t7').innerHTML = rowsHTML([
+    ['비모호 거리 R_unamb', fmt(Runamb,1)+' m', '—', na, 'R_unamb = c / (2 f_PRF)'],
+    ['Target range R', fmt(R,0)+' m', 'R ≤ R_unamb', badge(okAmb,'만족','위반'), '입력 조건'],
+    ['모호성 여유', fmt(Runamb-R,1)+' m (×'+fmt(Runamb/R,2)+')', '1.5× 규칙 시 ×1.5', badge(okAmb,'OK','부족'),
+      'R_unamb − R (PRF↑ → R_unamb↓ trade-off)'],
+  ]);
+
+  $('t8').innerHTML = rowsHTML([
+    ...drRows,
+    ['Raw data rate', fmt(drRaw,1)+' Mbps', '≤ 후단 입력률', badge(okDR,'OK','초과'), drFormula],
+    ['후단 처리 입력 한계', fmt(drLimit,0)+' Mbps', 'AXI-S '+tdw+'-bit @ '+fmt(fClk/1e6,0)+' MHz 등', na, '인터페이스 사양'],
+    ['점유율', fmt(drRaw/drLimit*100,1)+' %', '≤ 100 %', badge(okDR), 'raw / limit'],
+  ]);
+
+  // ---- 9. 병목 카드 ----
+  const bn = [
+    {t:'병목 1 — PRF 부족', bad:!okPRF,
+     m:['frame rate 감소','FoV 감소','resolution 완화','병렬 cell 증가']},
+    {t:'병목 2 — 거리 모호성', bad:!okAmb,
+     m:['PRF 감소','다중 PRF','coded pulse','tracking gate 적용']},
+    {t:'병목 3 — APD/TIA 처리 대역폭 부족', bad:!okProc,
+     m:['gate 폭 조정','analog threshold','peak detect','FPGA 전처리']},
+    {t:'병목 4 — 데이터 전송률 초과', bad:!okDR,
+     m:['ROI crop','event-only output','range bin decimation']},
+  ];
+  $('t9').innerHTML = bn.map(b=>
+    `<div class="bcard${b.bad?' active':''}"><span class="state">${
+      b.bad?'<span class="badge ng">해당</span>':'<span class="badge ok">양호</span>'
+    }</span><b>${b.t}</b>대응: <ul>${b.m.map(x=>'<li>'+x+'</li>').join('')}</ul></div>`).join('');
+
+  // ---- 10. 최종 판정 ----
+  const items = [
+    ['Scan 속도 (PRF 여유율)', '×'+fmt(marginPRF,2), 'Margin ≥ 1.0', okPRF],
+    ['ToF 비모호성', fmt(Runamb,0)+' m ≥ '+fmt(R,0)+' m', 'R ≤ R_unamb', okAmb],
+    ['APD/TIA 처리 가능성', fmt(slack*1e6,2)+' µs 여유', 't_proc ≤ T_PRI', okProc],
+    ['데이터 전송률', fmt(drRaw/drLimit*100,1)+' % 점유', 'raw ≤ 후단 한계', okDR],
+  ];
+  $('t10').innerHTML = rowsHTML(items.map(i=>[i[0], i[1], i[2], badge(i[3]), '§5 / §7 / §6 / §8 참조']));
+  const fails = items.filter(i=>!i[3]).length;
+  const v = $('verdict');
+  if(fails===0){ v.className='verdict ok'; v.textContent='종합 판정: 구현 가능 — 4개 판정 항목 모두 만족'; }
+  else if(fails===1){ v.className='verdict warn'; v.textContent='종합 판정: 조건부 가능 — 1개 항목 부족, §9 대응안 적용 필요'; }
+  else { v.className='verdict ng'; v.textContent='종합 판정: 구조 변경 필요 — '+fails+'개 항목 부족'; }
+
+  // ---- 3-1. 시각화 파라미터 저장 후 그리기 ----
+  window._p = {thH, thV, dH, dV, hL:+$('hL').value, vU:+$('vU').value,
+               NH, NV, Nframe, apdC, apdR, Ngroup};
+  drawScan();
+}
+
+// ============ 3-1. 스캔 포인트 분포 시각화 ============
+function niceStep(range){
+  const raw = range/8, p10 = Math.pow(10, Math.floor(Math.log10(raw)));
+  for(const m of [1,2,5,10]) if(raw <= m*p10) return m*p10;
+  return 10*p10;
+}
+
+function drawScan(){
+  const p = window._p; if(!p) return;
+  const cv = $('scanviz');
+  const W = cv.clientWidth || 800;
+  const H = Math.min(420, Math.max(180, W * p.thV/p.thH + 40));
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+'px';
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+
+  const mL=46, mR=12, mT=10, mB=34;
+  const pw = W-mL-mR, ph = H-mT-mB;
+  const sx = pw/p.NH, sy = ph/p.NV;
+
+  // --- APD group 타일 (checkerboard, group #1 강조) ---
+  const gC = Math.ceil(p.NH/p.apdC), gR = Math.ceil(p.NV/p.apdR);
+  for(let gj=0; gj<gR; gj++){
+    for(let gi=0; gi<gC; gi++){
+      const x0 = mL + gi*p.apdC*sx;
+      const x1 = mL + Math.min((gi+1)*p.apdC, p.NH)*sx;
+      const y0 = mT + gj*p.apdR*sy;
+      const y1 = mT + Math.min((gj+1)*p.apdR, p.NV)*sy;
+      ctx.fillStyle = (gi===0 && gj===0) ? 'rgba(245,158,11,0.45)'
+                    : ((gi+gj)%2 ? 'rgba(37,99,235,0.13)' : 'rgba(37,99,235,0.05)');
+      ctx.fillRect(x0, y0, x1-x0, y1-y0);
+    }
+  }
+
+  // --- 스캔 포인트 (과밀 시 표시 decimation, 계산은 전체 기준) ---
+  const MAXDOT = 60000;
+  const step = Math.max(1, Math.ceil(Math.sqrt(p.Nframe/MAXDOT)));
+  const r = Math.max(0.6, Math.min(2.5, Math.min(sx,sy)*0.3*step));
+  ctx.fillStyle = '#1e3a8a';
+  for(let j=0; j<p.NV; j+=step)
+    for(let i=0; i<p.NH; i+=step)
+      ctx.fillRect(mL+(i+0.5)*sx - r/2, mT+(j+0.5)*sy - r/2, r, r);
+
+  // --- 외곽선 + 축 눈금 ---
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+  ctx.strokeRect(mL, mT, pw, ph);
+  ctx.fillStyle = '#6b7280'; ctx.font = '11px Segoe UI';
+  ctx.textAlign = 'center';
+  const tsx = niceStep(p.thH);
+  for(let a = Math.ceil(-p.hL/tsx)*tsx; a <= p.thH-p.hL+1e-9; a += tsx){
+    const x = mL + (a + p.hL)/p.thH*pw;
+    ctx.fillText((a>0?'+':'')+a+'°', x, mT+ph+14);
+    ctx.beginPath(); ctx.moveTo(x, mT+ph); ctx.lineTo(x, mT+ph+3); ctx.stroke();
+  }
+  ctx.fillText('Azimuth (deg)', mL+pw/2, mT+ph+28);
+  ctx.textAlign = 'right';
+  const tsy = niceStep(p.thV);
+  for(let e = Math.ceil(-(p.thV-p.vU)/tsy)*tsy; e <= p.vU+1e-9; e += tsy){
+    const y = mT + (p.vU - e)/p.thV*ph;
+    ctx.fillText((e>0?'+':'')+e+'°', mL-6, y+4);
+    ctx.beginPath(); ctx.moveTo(mL-3, y); ctx.lineTo(mL, y); ctx.stroke();
+  }
+  ctx.save();
+  ctx.translate(12, mT+ph/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign = 'center'; ctx.fillText('Elevation (deg)', 0, 0);
+  ctx.restore();
+
+  // --- 캡션 ---
+  $('vizcap').innerHTML =
+    `<span><span class="sw" style="background:#1e3a8a"></span>스캔 포인트 N_H × N_V = ${fmt(p.NH,0)} × ${fmt(p.NV,0)} = ${fmt(p.Nframe,0)} pts</span>`+
+    `<span><span class="sw" style="background:rgba(245,158,11,0.6)"></span>1 PRF group (APD ${p.apdC}×${p.apdR})</span>`+
+    `<span><span class="sw" style="background:rgba(37,99,235,0.15)"></span>group 타일 = ${fmt(p.Ngroup,0)} groups/frame</span>`+
+    (step>1 ? `<span style="color:var(--warn)">※ 표시만 1/${step*step} decimation (계산은 전체 포인트 기준)</span>` : '');
+
+  cv._geo = {mL, mT, sx, sy, gC};
+}
+
+$('scanviz').addEventListener('mousemove', ev=>{
+  const p = window._p, g = $('scanviz')._geo; if(!p||!g) return;
+  const rc = $('scanviz').getBoundingClientRect();
+  const mx = ev.clientX-rc.left, my = ev.clientY-rc.top;
+  const i = Math.floor((mx-g.mL)/g.sx), j = Math.floor((my-g.mT)/g.sy);
+  const tip = $('viztip');
+  if(i<0||i>=p.NH||j<0||j>=p.NV){ tip.style.display='none'; return; }
+  const az = -p.hL + (i+0.5)*p.thH/p.NH;
+  const el = p.vU - (j+0.5)*p.thV/p.NV;
+  const grp = Math.floor(j/p.apdR)*g.gC + Math.floor(i/p.apdC) + 1;
+  tip.style.display='block';
+  tip.style.left = (mx+16)+'px'; tip.style.top = (my+8)+'px';
+  tip.innerHTML = `az ${az.toFixed(2)}° / el ${el.toFixed(2)}°<br>`+
+    `point (${i+1}, ${j+1}) · group #${fmt(grp,0)} / ${fmt(p.Ngroup,0)}`;
+});
+$('scanviz').addEventListener('mouseleave', ()=>{ $('viztip').style.display='none'; });
+window.addEventListener('resize', drawScan);
+
+document.querySelectorAll('input,select').forEach(e=>e.addEventListener('input',calc));
+calc();
+</script>
+</body>
+</html>
