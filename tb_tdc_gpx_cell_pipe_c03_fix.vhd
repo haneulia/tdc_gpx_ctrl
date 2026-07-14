@@ -94,7 +94,8 @@ begin
 
     u_dut : entity work.tdc_gpx_cell_pipe
         generic map (
-            g_OUTPUT_WIDTH => c_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => c_OUTPUT_WIDTH,
+            g_AXIS_CLK_MHZ => 200
         )
         port map (
             i_clk                    => s_clk,
@@ -109,7 +110,7 @@ begin
             i_abort_fall             => s_abort_fall,
             i_face_stops_per_chip    => s_face_stops,
             i_max_hits_cfg           => s_max_hits,
-            i_max_range_clks         => (others => '0'),
+            i_max_range_5ns_ticks    => (others => '0'),
             o_cell_rise_tdata_0      => s_cell_rise_tdata_0,
             o_cell_rise_tdata_1      => s_cell_rise_tdata_1,
             o_cell_rise_tdata_2      => s_cell_rise_tdata_2,

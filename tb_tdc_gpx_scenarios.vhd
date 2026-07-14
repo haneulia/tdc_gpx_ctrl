@@ -159,7 +159,7 @@ begin
             i_stops_per_chip  => cb_stops_per_chip,
             i_max_hits_cfg    => cb_max_hits_cfg,
             -- Phase B: disabled cap (legacy x"FFFF" via fn_timeout_cap)
-            i_max_range_clks  => (others => '0'),
+            i_max_range_axis_clks => (others => '0'),
             o_m_axis_tdata    => cb_m_axis_tdata,
             o_m_axis_tvalid   => cb_m_axis_tvalid,
             o_m_axis_tlast    => cb_m_axis_tlast,

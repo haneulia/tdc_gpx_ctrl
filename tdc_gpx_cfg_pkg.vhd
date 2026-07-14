@@ -13,11 +13,16 @@
 --
 --   CTL[0]      = MAIN_CTRL (packed control + COMMAND[31:28])
 --   CTL[1]      = BUS_TIMING
---   CTL[2]      = RANGE_COLS (max_range_clks + cols_per_face)
+--   CTL[2]      = RANGE_COLS (max_range_5ns_ticks + cols_per_face)
 --   CTL[3]      = START_OFF1
 --   CTL[4]      = CFG_REG7
 --   CTL[5..20]  = cfg_image[0..15]
 --   CTL[21..31] = reserved
+--
+--   This is the 32-register chip-CSR layout. Its CTL2 RANGE_COLS slot is
+--   intentionally left open by tdc_gpx_csr_chip. The compact pipeline CSR
+--   owns RANGE_COLS and maps the same field definitions/init value to its
+--   CTL1 at 0x04; software must write that pipeline-CSR address.
 --
 --   TDC-GPX chip register bitfield constants (for cfg_image override):
 --     Reg0: TRiseEn[0:8], TFallEn[0:8] (edge sensitivity per stop)
@@ -99,12 +104,13 @@ package tdc_gpx_cfg_pkg is
     constant c_BT_REG_WRITE_TRIG    : natural := 31;   -- [31] reg_write trigger (edge)
 
     -- =========================================================================
-    -- CTL2: RANGE_COLS (max_range_clks + cols_per_face)
+    -- CTL2: RANGE_COLS slot in the chip-CSR map (left open by csr_chip).
+    -- The pipeline CSR remaps these field positions to CTL1 at 0x04.
     -- =========================================================================
     constant c_ADDR_RANGE_COLS       : natural := 16#08#;   -- CTL2
 
-    constant c_RC_MAX_RANGE_HI       : natural := 15;   -- [15:0]  max_range_clks
-    constant c_RC_MAX_RANGE_LO       : natural := 0;
+    constant c_RC_MAX_RANGE_5NS_HI   : natural := 15;   -- [15:0]  max_range_5ns_ticks
+    constant c_RC_MAX_RANGE_5NS_LO   : natural := 0;
     constant c_RC_COLS_HI            : natural := 31;   -- [31:16] cols_per_face
     constant c_RC_COLS_LO            : natural := 16;
 

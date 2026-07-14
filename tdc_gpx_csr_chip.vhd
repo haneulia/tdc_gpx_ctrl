@@ -47,7 +47,7 @@
 --
 -- Clock domains:
 --   s_axi_aclk  : AXI4-Lite domain (PS clock)
---   i_axis_aclk : TDC processing / AXI-Stream domain (200 MHz)
+--   i_axis_aclk : AXI-Stream domain selected by top-level g_AXIS_CLK_MHZ
 --
 -- Standard: VHDL-2008
 -- =============================================================================

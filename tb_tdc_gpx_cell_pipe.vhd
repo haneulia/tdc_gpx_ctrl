@@ -89,7 +89,8 @@ begin
     -- =========================================================================
     u_dut : entity work.tdc_gpx_cell_pipe
         generic map (
-            g_OUTPUT_WIDTH => OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => OUTPUT_WIDTH,
+            g_AXIS_CLK_MHZ => 200
         )
         port map (
             i_clk                 => clk,
@@ -104,7 +105,7 @@ begin
             i_face_stops_per_chip => face_stops,
             i_max_hits_cfg        => max_hits,
             -- Phase B: disabled cap (legacy x"FFFF" via fn_timeout_cap)
-            i_max_range_clks      => (others => '0'),
+            i_max_range_5ns_ticks => (others => '0'),
 
             o_cell_rise_tdata_0   => cell_rise_tdata_0,
             o_cell_rise_tdata_1   => cell_rise_tdata_1,

@@ -54,6 +54,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;
 use std.textio.all;
 
 use work.tdc_gpx_pkg.all;
@@ -120,15 +121,19 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_CLK_PERIOD     : time    := C_CLK_PERIOD_PS * 1 ps;
     constant C_RST_HOLD       : time    := 30 * C_CLK_PERIOD;
 
-    -- Range-derived counters (clk units)
-    --   round-trip(D) = 2 * D / c * f_clk
+    -- Range-derived counters. The TDC CSR uses 5 ns reference ticks; local
+    -- laser/echo scheduling uses the selected common simulation clock.
+    constant C_DOMAIN_CLK_MHZ : positive := positive(integer(G_AXIS_CLK_MHZ));
+    constant C_MAX_RANGE_5NS_TICKS : natural := natural(ceil(
+        2.0 * G_MAX_RANGE_M / C_LIGHT_M_PER_US * real(c_RANGE_REF_CLK_MHZ)));
     constant C_MAX_RANGE_CLKS : natural :=
-        natural(2.0 * G_MAX_RANGE_M  / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
+        to_integer(fn_range_5ns_ticks_to_clks(
+            to_unsigned(C_MAX_RANGE_5NS_TICKS, 16), C_DOMAIN_CLK_MHZ));
     constant C_SIM_TARGET_CLKS: natural :=
         natural(2.0 * G_SIM_TARGET_M / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
 
     -- PRF headroom (shot_period = 1.5 x round-trip per TDC window design memo)
-    constant C_SHOT_PERIOD_CLKS : natural := (C_MAX_RANGE_CLKS * 3) / 2;
+    constant C_SHOT_PERIOD_CLKS : natural := (C_MAX_RANGE_CLKS * 3 + 1) / 2;
 
     -- TB photodiode echo delay (clk units)
     constant C_ECHO_DELAY     : natural := C_SIM_TARGET_CLKS;
@@ -178,7 +183,7 @@ architecture sim of tb_tdc_gpx_full_int is
 
     -- tdc_gpx pipeline CSR values (packed from generics)
     --   MAIN_CTRL  [3:0]=chip_mask, [14:12]=n_faces, [18:15]=stops
-    --   RANGE_COLS [15:0]=max_range_clks, [31:16]=cols_per_face
+    --   RANGE_COLS [15:0]=max_range_5ns_ticks, [31:16]=cols_per_face
     function fn_pack_main_ctrl(mask  : std_logic_vector(3 downto 0);
                                faces : natural;
                                stops : natural) return std_logic_vector is
@@ -194,7 +199,7 @@ architecture sim of tb_tdc_gpx_full_int is
 
     constant C_RANGE_COLS_VAL : std_logic_vector(31 downto 0) :=
         std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
-        std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 16));
+        std_logic_vector(to_unsigned(C_MAX_RANGE_5NS_TICKS, 16));
 
     -- Output width + stop-event width (for sub-module generic override)
     constant C_OUTPUT_W   : natural := G_TDATA_WIDTH;
@@ -805,6 +810,8 @@ begin
         generic map (
             g_HW_VERSION      => x"00010000",
             g_OUTPUT_WIDTH    => C_OUTPUT_W,
+            g_AXIS_CLK_MHZ    => C_DOMAIN_CLK_MHZ,
+            g_TDC_CLK_MHZ     => C_DOMAIN_CLK_MHZ,
             g_POWERUP_CLKS    => G_POWERUP_CLKS,
             g_RECOVERY_CLKS   => G_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS  => G_ALU_PULSE_CLKS,
@@ -1431,7 +1438,8 @@ begin
                & "MHz  range=" & integer'image(integer(G_MAX_RANGE_M)) & "m"
                & "  sim_tgt=" & integer'image(integer(G_SIM_TARGET_M)) & "m"
                & "  tdata=" & integer'image(G_TDATA_WIDTH) & "b");
-            pl("  derived:  max_range_clks=" & integer'image(C_MAX_RANGE_CLKS)
+            pl("  derived:  max_range_5ns_ticks=" & integer'image(C_MAX_RANGE_5NS_TICKS)
+               & "  local_range_clks=" & integer'image(C_MAX_RANGE_CLKS)
                & "  sim_target_clks=" & integer'image(C_SIM_TARGET_CLKS)
                & "  shot_period=" & integer'image(C_SHOT_PERIOD_CLKS)
                & "  step_interval=" & integer'image(C_STEP_INTERVAL)

@@ -19,12 +19,15 @@
 --   csr_chip outputs.  Merged config drives stop_decode and chip_ctrl.
 --
 -- Clock domains:
---   i_axis_aclk  : AXI-Stream processing domain (150 MHz)
---   i_tdc_clk    : TDC-GPX bus control domain (200 MHz)
+--   i_axis_aclk  : AXI-Stream processing domain (g_AXIS_CLK_MHZ)
+--   i_tdc_clk    : TDC-GPX bus control domain (g_TDC_CLK_MHZ)
 --                  Drives bus_phy, sk_brsp, chip_ctrl.
 --                  raw_cdc (xpm_fifo_async) crosses TDC -> AXI-Stream when
 --                  g_STREAM_CLK_MODE="ASYNC"; "SYNC" bypasses this FIFO.
 --   s_axi_aclk   : AXI4-Lite PS domain
+--   g_AXIS_CLK_MHZ/g_TDC_CLK_MHZ must match the physical clocks and XDC.
+--   AXIS <= TDC is required; cross-domain processing margin is AXIS-limited,
+--   while each domain-local watchdog uses its own converted clock count.
 --
 -- Reset-domain map (Round 6 C1):
 --   AXI-Stream clock (i_axis_aclk) uses i_axis_aresetn directly:
@@ -59,6 +62,8 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_config_ctrl is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
+        g_AXIS_CLK_MHZ    : positive := 150;
+        g_TDC_CLK_MHZ     : positive := 200;
         g_POWERUP_CLKS    : positive := 48;
         g_RECOVERY_CLKS   : positive := 8;
         g_ALU_PULSE_CLKS  : positive := 4;
@@ -70,11 +75,11 @@ entity tdc_gpx_config_ctrl is
         g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH
     );
     port (
-        -- Clock / Reset: processing domain (AXI-Stream, 150 MHz)
+        -- Clock / Reset: processing domain (g_AXIS_CLK_MHZ)
         i_axis_aclk          : in  std_logic;
         i_axis_aresetn       : in  std_logic;
 
-        -- TDC-GPX bus control clock (200 MHz)
+        -- TDC-GPX bus control clock (g_TDC_CLK_MHZ)
         -- Drives bus_phy and chip_ctrl (same clock group).
         i_tdc_clk            : in  std_logic;
 
@@ -313,6 +318,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- Merged configuration (pipeline + chip fields)
     -- =========================================================================
     signal s_cfg_merged      : t_tdc_cfg;
+    -- The CSR stores one physical range in 5 ns reference ticks. Convert it
+    -- once per consuming domain; do not reuse a clock count across domains.
+    signal s_max_range_axis_clks : unsigned(15 downto 0);
+    signal s_max_range_tdc_clks  : unsigned(15 downto 0);
 
     -- =========================================================================
     -- cmd_arb internal signals
@@ -711,6 +720,22 @@ begin
     assert g_STREAM_CLK_MODE = "ASYNC" or g_STREAM_CLK_MODE = "SYNC"
         report "config_ctrl: unsupported g_STREAM_CLK_MODE"
         severity failure;
+
+    assert fn_range_clk_mhz_supported(g_AXIS_CLK_MHZ)
+        report "config_ctrl: unsupported g_AXIS_CLK_MHZ"
+        severity failure;
+
+    assert fn_range_clk_mhz_supported(g_TDC_CLK_MHZ)
+        report "config_ctrl: unsupported g_TDC_CLK_MHZ"
+        severity failure;
+
+    assert g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ
+        report "config_ctrl: g_AXIS_CLK_MHZ must not exceed g_TDC_CLK_MHZ; cross-domain signal-processing margin is AXIS-limited"
+        severity failure;
+
+    assert g_STREAM_CLK_MODE /= "SYNC" or g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ
+        report "config_ctrl: SYNC stream mode requires identical AXIS and TDC clocks"
+        severity failure;
     -- synthesis translate_on
 
     -- =========================================================================
@@ -768,7 +793,7 @@ begin
     s_cfg_merged.stops_per_chip   <= i_cfg_pipeline.stops_per_chip;
     s_cfg_merged.n_drain_cap      <= i_cfg_pipeline.n_drain_cap;
     s_cfg_merged.stopdis_override <= i_cfg_pipeline.stopdis_override;
-    s_cfg_merged.max_range_clks   <= i_cfg_pipeline.max_range_clks;
+    s_cfg_merged.max_range_5ns_ticks <= i_cfg_pipeline.max_range_5ns_ticks;
     s_cfg_merged.cols_per_face    <= i_cfg_pipeline.cols_per_face;
 
     -- Chip fields (from csr_chip outputs)
@@ -778,6 +803,13 @@ begin
     s_cfg_merged.cfg_reg7         <= s_cfg_reg7;
     s_cfg_merged.max_scan_clks    <= s_max_scan_clks;
     s_cfg_merged.max_hits_cfg     <= s_max_hits_cfg;
+
+    -- Static-ratio shift/add conversion. g_*_CLK_MHZ are elaboration-time
+    -- constants, so there is no general runtime multiplier or divider.
+    s_max_range_axis_clks <= fn_range_5ns_ticks_to_clks(
+        s_cfg_merged.max_range_5ns_ticks, g_AXIS_CLK_MHZ);
+    s_max_range_tdc_clks <= fn_range_5ns_ticks_to_clks(
+        s_cfg_tdc.max_range_5ns_ticks, g_TDC_CLK_MHZ);
 
     -- Drive merged config to output
     o_cfg <= s_cfg_merged;
@@ -1133,6 +1165,7 @@ begin
             i_fire_count_tlast  => i_fire_count_tlast,
             i_shot_start_gated => i_shot_start_gated,
             i_current_fire_count => i_current_fire_count,
+            i_max_range_axis_clks => s_max_range_axis_clks,
             o_expected_ififo1  => s_expected_ififo1,
             o_expected_ififo2  => s_expected_ififo2,
             o_expected_final_valid => s_expected_final_valid,
@@ -1799,7 +1832,7 @@ begin
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
                 o_cmd_reg_done      => s_cmd_reg_done(i),
                 i_shot_start        => s_shot_start_tdc(i),
-                i_max_range_clks    => s_cfg_tdc.max_range_clks,
+                i_max_range_tdc_clks => s_max_range_tdc_clks,
                 i_stop_tdc          => s_stop_tdc_tdc,
                 i_expected_ififo1   => s_expected_ififo1_tdc(i),
                 i_expected_ififo2   => s_expected_ififo2_tdc(i),

@@ -18,7 +18,15 @@
 --
 -- Clock domains:
 --   i_axis_aclk  : TDC processing / AXI-Stream domain (nominal 150 MHz)
+--   i_tdc_clk    : TDC-GPX bus-control domain (nominal 200 MHz)
 --   s_axi_aclk   : AXI4-Lite PS domain
+--
+-- Signal-processing clock contract:
+--   g_AXIS_CLK_MHZ and g_TDC_CLK_MHZ are timing metadata; they do not create
+--   clocks. Each generic must exactly match the implemented clock source and
+--   XDC constraint. AXIS <= TDC is required, so cross-domain throughput and
+--   end-to-end time margin are closed against the slower AXIS domain. A local
+--   watchdog still counts clocks in its own domain.
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -34,6 +42,13 @@ entity tdc_gpx_top is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
         g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32, 64, or 128)
+        -- Signal-processing clock contract. Supported values are
+        -- 50/100/125/150/200 MHz. AXIS must not be faster than TDC; therefore
+        -- end-to-end processing margin and throughput closure use AXIS timing.
+        -- Domain-local watchdogs still use counts converted for their clock.
+        -- These values must match the real clocks and XDC constraints.
+        g_AXIS_CLK_MHZ    : positive := 150;
+        g_TDC_CLK_MHZ     : positive := 200;
         g_POWERUP_CLKS    : positive := 48;
         g_RECOVERY_CLKS   : positive := 8;
         g_ALU_PULSE_CLKS  : positive := 4;
@@ -47,11 +62,11 @@ entity tdc_gpx_top is
         g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH
     );
     port (
-        -- Processing / AXI-Stream clock and reset (150 MHz)
+        -- Processing / AXI-Stream clock and reset (g_AXIS_CLK_MHZ)
         i_axis_aclk      : in  std_logic;
         i_axis_aresetn   : in  std_logic;
 
-        -- TDC-GPX bus control clock (200 MHz)
+        -- TDC-GPX bus control clock (g_TDC_CLK_MHZ)
         -- Drives bus_phy and chip_ctrl (same clock group).
         -- May be same as i_axis_aclk for single-clock designs.
         i_tdc_clk        : in  std_logic;
@@ -419,6 +434,26 @@ begin
         report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
         severity failure;
 
+    assert fn_range_clk_mhz_supported(g_AXIS_CLK_MHZ)
+        report "tdc_gpx_top: g_AXIS_CLK_MHZ must be 50, 100, 125, 150, or 200"
+        severity failure;
+
+    assert fn_range_clk_mhz_supported(g_TDC_CLK_MHZ)
+        report "tdc_gpx_top: g_TDC_CLK_MHZ must be 50, 100, 125, 150, or 200"
+        severity failure;
+
+    assert g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ
+        report "tdc_gpx_top: signal-processing contract requires g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ; close cross-domain timing against AXIS"
+        severity failure;
+
+    assert g_STREAM_CLK_MODE = "ASYNC" or g_STREAM_CLK_MODE = "SYNC"
+        report "tdc_gpx_top: g_STREAM_CLK_MODE must be ASYNC or SYNC"
+        severity failure;
+
+    assert g_STREAM_CLK_MODE /= "SYNC" or g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ
+        report "tdc_gpx_top: SYNC stream mode requires identical AXIS and TDC clocks; use ASYNC for different clocks"
+        severity failure;
+
     -- =========================================================================
     -- Chip error merged (concurrent glue)
     -- =========================================================================
@@ -480,6 +515,8 @@ begin
     u_config_ctrl : entity work.tdc_gpx_config_ctrl
         generic map (
             g_HW_VERSION      => g_HW_VERSION,
+            g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
+            g_TDC_CLK_MHZ     => g_TDC_CLK_MHZ,
             g_POWERUP_CLKS    => g_POWERUP_CLKS,
             g_RECOVERY_CLKS   => g_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS  => g_ALU_PULSE_CLKS,
@@ -670,7 +707,8 @@ begin
     -- =========================================================================
     u_cell_pipe : entity work.tdc_gpx_cell_pipe
         generic map (
-            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
+            g_AXIS_CLK_MHZ => g_AXIS_CLK_MHZ
         )
         port map (
             i_clk                   => i_axis_aclk,
@@ -690,11 +728,13 @@ begin
             -- instead of live s_cfg, so cell_builder's beat-per-cell lookup
             -- stays aligned with the header metadata for the same face.
             i_max_hits_cfg          => s_cfg_face_r.max_hits_cfg,
-            -- Phase B: face-snapshotted max_range_clks so cell_builder's
+            -- Face-snapshotted 5 ns reference ticks. cell_pipe converts once
+            -- to g_AXIS_CLK_MHZ local clocks before distributing the value,
+            -- so all cell_builder watchdogs use AXIS-domain units.
             -- watchdog caps stay aligned with the rest of the shot's
             -- config set (face_seq latches s_cfg_face_r on packet_start,
             -- same source as max_hits above).
-            i_max_range_clks        => s_cfg_face_r.max_range_clks,
+            i_max_range_5ns_ticks   => s_cfg_face_r.max_range_5ns_ticks,
             -- Rising cell output
             o_cell_rise_tdata_0     => s_cell_rise_tdata_0,
             o_cell_rise_tdata_1     => s_cell_rise_tdata_1,

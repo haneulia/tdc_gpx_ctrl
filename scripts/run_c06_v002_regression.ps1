@@ -112,6 +112,7 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_csr_pipeline.vhd",
     "$Hdl/tdc_gpx_status_agg.vhd",
     "$Hdl/tdc_gpx_top.vhd",
+    "$Hdl/tb_tdc_gpx_range_ticks.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
     "$Hdl/tb_tdc_gpx_status_agg_c06_fix.vhd"
@@ -141,6 +142,11 @@ try {
     Invoke-Checked "$Vivado/xvlog.bat" @("--relax", "-prj", $vlogPrj, "-log", "xvlog_c06_v002_$Stamp.log")
     Invoke-Checked "$Vivado/xvhdl.bat" @("--relax", "-prj", $vhdlPrj, "-log", "xvhdl_c06_v002_$Stamp.log")
 
+    Invoke-Xelab "tb_c06_v002_range_ticks_snap" "xelab_c06_v002_range_ticks_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_range_ticks"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_range_ticks_snap", "-runall", "-log", "xsim_c06_v002_range_ticks_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_range_ticks_$Stamp.log" "5 ns range tick conversion matrix - PASS"
+
     Invoke-Xelab "tb_c06_v002_face_seq_snap" "xelab_c06_v002_face_seq_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_face_seq"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_face_seq_snap", "-runall", "-log", "xsim_c06_v002_face_seq_$Stamp.log")
@@ -158,6 +164,16 @@ try {
         Invoke-Checked "$Vivado/xsim.bat" @($snap, "-runall", "-log", "xsim_c06_v002_top_int_w${w}_$Stamp.log")
         Assert-SimLog "xsim_c06_v002_top_int_w${w}_$Stamp.log" "output streams emitted beats/tlast as expected - PASS"
     }
+
+    $dualSnap = "tb_c06_v002_top_int_axis150_tdc200_snap"
+    Invoke-Xelab $dualSnap "xelab_c06_v002_top_int_axis150_tdc200_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_top_int" @(
+            "G_TDATA_WIDTH=64",
+            "G_AXIS_CLK_MHZ=150.0",
+            "G_TDC_CLK_MHZ=200.0"
+        )
+    Invoke-Checked "$Vivado/xsim.bat" @($dualSnap, "-runall", "-log", "xsim_c06_v002_top_int_axis150_tdc200_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_top_int_axis150_tdc200_$Stamp.log" "output streams emitted beats/tlast as expected - PASS"
 
     $bpSnap = "tb_c06_v002_top_int_w64_bp_snap"
     Invoke-Xelab $bpSnap "xelab_c06_v002_top_int_w64_bp_$Stamp.log" `

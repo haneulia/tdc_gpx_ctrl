@@ -75,6 +75,7 @@ begin
             i_fire_count_tlast  => s_fire_count_tlast,
             i_shot_start_gated => s_shot_start_gated,
             i_current_fire_count => s_current_fire_count,
+            i_max_range_axis_clks => to_unsigned(8, 16),
             o_expected_ififo1  => s_expected_ififo1,
             o_expected_ififo2  => s_expected_ififo2,
             o_expected_final_valid => s_expected_final_valid,
@@ -88,7 +89,7 @@ begin
     p_stim : process
     begin
         s_cfg <= c_TDC_CFG_INIT;
-        s_cfg.max_range_clks <= to_unsigned(8, 16);
+        s_cfg.max_range_5ns_ticks <= to_unsigned(8, 16);
 
         wait_clk(s_clk, 4);
         s_rst_n <= '1';

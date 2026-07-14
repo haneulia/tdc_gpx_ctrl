@@ -50,7 +50,7 @@ architecture sim of tb_tdc_gpx_downstream is
     signal shot_start      : std_logic := '0';
     signal active_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
     signal stops_per_chip  : unsigned(3 downto 0) := to_unsigned(8, 4);
-    signal max_range_clks  : unsigned(15 downto 0) := to_unsigned(60000, 16);
+    signal max_scan_clks   : unsigned(15 downto 0) := to_unsigned(60000, 16);
     signal bus_ticks       : unsigned(2 downto 0) := to_unsigned(5, 3);
     signal bus_clk_div     : unsigned(7 downto 0) := to_unsigned(1, 8);
 
@@ -138,7 +138,7 @@ begin
             i_active_chip_mask => active_mask,
             i_stops_per_chip   => stops_per_chip,
             i_max_hits_cfg     => "001",
-            i_max_scan_clks   => max_range_clks,
+            i_max_scan_clks   => max_scan_clks,
             o_m_axis_tdata     => face_tdata,
             o_m_axis_tvalid    => face_tvalid,
             o_m_axis_tlast     => face_tlast,

@@ -51,7 +51,7 @@ architecture sim of tb_tdc_gpx_config_ctrl is
         stopdis_override    => (others => '0'),
         bus_clk_div         => to_unsigned(2, 6),
         bus_ticks           => to_unsigned(5, 3),
-        max_range_clks      => to_unsigned(267, 16),
+        max_range_5ns_ticks => to_unsigned(267, 16),
         cols_per_face       => to_unsigned(2400, 16),
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
@@ -329,6 +329,8 @@ begin
     -- =========================================================================
     u_dut : entity work.tdc_gpx_config_ctrl
         generic map (
+            g_AXIS_CLK_MHZ    => 200,
+            g_TDC_CLK_MHZ     => 200,
             g_STREAM_CLK_MODE => g_DUT_STREAM_CLK_MODE
         )
         port map (

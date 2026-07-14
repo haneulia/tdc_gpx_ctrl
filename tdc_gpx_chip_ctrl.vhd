@@ -14,7 +14,8 @@
 --     - Bus request mux (active sub-FSM → bus_phy)
 --     - Bus response routing (bus_phy → active sub-FSM)
 --     - Tick enable generation (bus_clk_div clock divider)
---     - Config snapshots (bus_clk_div, bus_ticks, drain_mode, n_drain_cap, max_range_clks)
+--     - Config snapshots (bus_clk_div, bus_ticks, drain_mode, n_drain_cap,
+--       max_range_tdc_clks)
 --     - StopDis override (INTENTIONALLY LIVE for debug)
 --     - Range counter (err_drain_timeout) and sequence error detection
 --     - AXI-Stream raw word output (passthrough from chip_run)
@@ -112,8 +113,8 @@ entity tdc_gpx_chip_ctrl is
         -- Shot start (from laser_ctrl, 1-clk pulse)
         i_shot_start        : in  std_logic;
 
-        -- Max range clock budget (from cfg, latched at shot_start)
-        i_max_range_clks    : in  unsigned(15 downto 0);
+        -- Max range budget converted from CSR 5 ns ticks to TDC-local clocks.
+        i_max_range_tdc_clks : in unsigned(15 downto 0);
 
         -- External stop signal (from laser_ctrl, already CDC'd to TDC domain).
         -- #13: wrapper config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse, DEST_SYNC_FF=4)
@@ -203,7 +204,7 @@ entity tdc_gpx_chip_ctrl is
         o_busy              : out std_logic;
 
         -- Error flags (1-clk pulses)
-        o_err_drain_timeout : out std_logic;    -- max_range_clks expired before drain_done
+        o_err_drain_timeout : out std_logic;    -- max_range_tdc_clks expired before drain_done
         o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
         o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
         o_err_raw_overflow  : out std_logic;    -- sticky: OR of raw-drop + drain-cap (legacy, retained)
@@ -408,7 +409,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_n_drain_cap_snap_r : unsigned(3 downto 0) := (others => '0');
     signal s_bus_clk_div_snap_r : unsigned(5 downto 0) := to_unsigned(2, 6);
     signal s_bus_ticks_snap_r   : unsigned(2 downto 0) := to_unsigned(5, 3);
-    signal s_max_range_snap_r   : unsigned(15 downto 0) := (others => '0');
+    signal s_max_range_tdc_snap_r : unsigned(15 downto 0) := (others => '0');
     signal s_cfg_image_snap_r   : t_cfg_image := (others => (others => '0'));
 
     -- =========================================================================
@@ -544,11 +545,11 @@ begin
             i_n_drain_cap       => s_n_drain_cap_snap_r,
             i_cfg_image         => s_cfg_image_snap_r,
             i_shot_start        => i_shot_start,
-            -- Phase B: pass through the live CSR max_range_clks.
-            -- chip_run takes its own shot-bounded snapshot internally
+            -- Pass through the TDC-local count. chip_run takes its own
+            -- shot-bounded snapshot internally
             -- on the ST_ARMED→ST_CAPTURE edge, so passing the live
             -- value (rather than a coordinator-latched copy) is fine.
-            i_max_range_clks    => i_max_range_clks,
+            i_max_range_tdc_clks => i_max_range_tdc_clks,
             i_expected_ififo1   => i_expected_ififo1,
             i_expected_ififo2   => i_expected_ififo2,
             i_expected_final_valid => i_expected_final_valid,
@@ -721,7 +722,7 @@ begin
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_bus_idle_stable_cnt_r  <= (others => '0');
                 s_force_reinit_start_pending_r <= '0';
-                s_max_range_snap_r   <= (others => '0');
+                s_max_range_tdc_snap_r <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
             else
                 -- Default: clear 1-clk dispatch pulses
@@ -785,7 +786,7 @@ begin
                             s_n_drain_cap_snap_r <= i_cfg.n_drain_cap;
                             s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
                             s_bus_ticks_snap_r   <= i_cfg.bus_ticks;
-                            s_max_range_snap_r   <= i_max_range_clks;
+                            s_max_range_tdc_snap_r <= i_max_range_tdc_clks;
                             s_run_start          <= '1';
                             s_phase_r            <= PH_RUN;
                         elsif i_cmd_cfg_write = '1' then
@@ -1076,7 +1077,8 @@ begin
                     s_range_cnt_r          <= (others => '0');
                     s_err_drain_to_fired_r <= '0';
                 elsif s_range_active_r = '1' then
-                    if s_max_range_snap_r /= 0 and s_range_cnt_r >= s_max_range_snap_r then
+                    if s_max_range_tdc_snap_r /= 0
+                       and s_range_cnt_r >= s_max_range_tdc_snap_r then
                         if s_err_drain_to_fired_r = '0' then
                             s_err_drain_timeout_r  <= '1';
                             s_err_drain_to_fired_r <= '1';

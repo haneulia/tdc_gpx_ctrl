@@ -64,10 +64,12 @@ entity tdc_gpx_chip_run is
         g_BUS_DATA_WIDTH    : natural  := c_TDC_BUS_WIDTH;
         g_RECOVERY_CLKS     : positive := 8;
         g_ALU_PULSE_CLKS    : positive := 4;
-        -- Phase B: drain/flush watchdog headroom above max_range_clks.
+        -- Drain/flush watchdog headroom above max_range_tdc_clks.
         -- The cap used by the 7 s_wait_cnt_r timeouts is computed at
-        -- shot_start as (i_max_range_clks + g_DRAIN_MARGIN_CLKS), saturating
-        -- at x"FFFF". 256 clocks @ 200 MHz ≈ 1.28 µs — covers bus
+        -- shot_start as (i_max_range_tdc_clks + g_DRAIN_MARGIN_CLKS), saturating
+        -- at x"FFFF". At the fastest supported clock, 256 clocks @ 200 MHz
+        -- is about 1.28 us; slower TDC clocks provide a longer physical margin.
+        -- This covers bus
         -- roundtrip + ALU service + downstream backpressure jitter with
         -- generous margin while still tightening the timeout from the
         -- legacy fixed-65535 value that hid upstream hangs for ~327 µs.
@@ -100,7 +102,7 @@ entity tdc_gpx_chip_run is
         -- NOT cmd_start, so mid-shot SW changes to the CSR do not leak
         -- into a running shot's timeout behavior. Zero is treated as
         -- "disabled" (fallback to the legacy x"FFFF" cap).
-        i_max_range_clks    : in  unsigned(15 downto 0);
+        i_max_range_tdc_clks : in unsigned(15 downto 0);
 
         -- Expected IFIFO counts (from echo_receiver).
         -- Sampled once at ST_DRAIN_LATCH. Stability before that moment is
@@ -408,7 +410,7 @@ begin
                             -- timeout horizon. The cap is used by all 7
                             -- s_wait_cnt_r comparisons in the drain/flush path.
                             s_wait_cap_r         <= fn_timeout_cap(
-                                                       i_max_range_clks,
+                                                       i_max_range_tdc_clks,
                                                        g_DRAIN_MARGIN_CLKS);
                             s_state_r            <= ST_CAPTURE;
                         end if;

@@ -71,6 +71,18 @@ package tdc_gpx_pkg is
     function fn_hdr_prefix_beats(tdata_width : natural) return natural;
     function fn_axis_keep_width(tdata_width : natural) return natural;
 
+    -- Range timing uses one CSR timebase independent of the clock domain.
+    -- One tick is always 5 ns (the period of the 200 MHz reference clock).
+    -- Domain-local watchdog counts are derived with ceil conversion so the
+    -- represented physical window is never shorter than the CSR request.
+    constant c_RANGE_REF_CLK_MHZ : positive := 200;
+    constant c_RANGE_REF_TICK_NS : positive := 5;
+    function fn_range_clk_mhz_supported(clk_mhz : natural) return boolean;
+    function fn_range_5ns_ticks_to_clks(
+        ticks_5ns : unsigned(15 downto 0);
+        clk_mhz   : positive
+    ) return unsigned;
+
     -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
     function fn_cell_size_rt(max_hits : natural) return natural;
     function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
@@ -252,12 +264,12 @@ package tdc_gpx_pkg is
     -- Fields latched at appropriate boundaries (face_start / shot_start /
     -- transaction entry) and stable during active processing.
     --
-    -- Register layout (compact):
-    --   CTL0  MAIN_CTRL  : packed control fields + COMMAND[31:28]
-    --   CTL1  BUS_TIMING : bus_clk_div[5:0] + bus_ticks[8:6]
-    --   CTL2  RANGE_COLS : max_range_clks[15:0] + cols_per_face[31:16]
-    --   CTL3  START_OFF1 : [17:0]
-    --   CTL4  CFG_REG7   : [31:0]
+    -- Merged field ownership across the two AXI-Lite CSR banks:
+    --   PIPE CTL0  MAIN_CTRL  : packed control fields + COMMAND[31:28]
+    --   PIPE CTL1  RANGE_COLS : max_range_5ns_ticks[15:0] + cols_per_face[31:16]
+    --   CHIP CTL1  BUS_TIMING : bus_clk_div[5:0] + bus_ticks[8:6]
+    --   CHIP CTL3  START_OFF1 : [17:0]
+    --   CHIP CTL4  CFG_REG7   : [31:0]
     -- =========================================================================
     type t_tdc_cfg is record
         -- CTL0: MAIN_CTRL packed fields
@@ -274,16 +286,20 @@ package tdc_gpx_pkg is
         -- CTL1: BUS_TIMING
         bus_clk_div         : unsigned(5 downto 0);                         -- CTL1[5:0]
         bus_ticks           : unsigned(2 downto 0);                         -- CTL1[8:6]
-        -- CTL2: RANGE_COLS
-        -- max_range_clks: physical round-trip bound (= 2 × max_distance / c,
-        -- ~1.335 cy per meter @200MHz). Drives chip_run drain range check AND
-        -- stop_cfg_decode orphan window (Round 13 follow-up). SW operating
+        -- Pipeline CSR CTL1 (0x04): RANGE_COLS
+        -- max_range_5ns_ticks: physical round-trip bound (= 2 × max_distance
+        -- / c) encoded in 200 MHz reference ticks, i.e. fixed 5 ns units.
+        -- Software must calculate ceil(round_trip_time / 5 ns), regardless
+        -- of the actual TDC or AXIS clock. Each processing domain converts
+        -- this value to its local clock count with fn_range_5ns_ticks_to_clks.
+        -- Drives chip_run drain range check AND stop_cfg_decode orphan window.
+        -- SW operating
         -- contract: shot_period = 1.5 × round-trip (50% PRF headroom) — see
         -- Doc/vdma_packet_structure.html §5 and Doc/260419/task_distance_
         -- bounded_windows_2026-04-19.md for the 5-distance reference table.
         -- Value 0 disables the range/window check entirely.
-        max_range_clks      : unsigned(15 downto 0);                        -- CTL2[15:0]
-        cols_per_face       : unsigned(15 downto 0);                        -- CTL2[31:16]
+        max_range_5ns_ticks : unsigned(15 downto 0);                        -- PIPE CTL1[15:0]
+        cols_per_face       : unsigned(15 downto 0);                        -- PIPE CTL1[31:16]
         -- CTL3: START_OFF1
         start_off1          : unsigned(17 downto 0);                        -- CTL3[17:0]
         -- CTL4: CFG_REG7
@@ -306,7 +322,7 @@ package tdc_gpx_pkg is
         stopdis_override    => (others => '0'),
         bus_clk_div         => to_unsigned(2, 6),  -- safe default; min legal div is 1
         bus_ticks           => to_unsigned(5, 3),
-        max_range_clks      => to_unsigned(267, 16),    -- ~200m @200MHz
+        max_range_5ns_ticks => to_unsigned(267, 16),    -- ~200m, 267 x 5ns
         cols_per_face       => to_unsigned(2400, 16),
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
@@ -334,7 +350,7 @@ package tdc_gpx_pkg is
         + 5            -- stopdis_override
         + 6            -- bus_clk_div
         + 3            -- bus_ticks
-        + 16           -- max_range_clks
+        + 16           -- max_range_5ns_ticks
         + 16           -- cols_per_face
         + 18           -- start_off1
         + 32           -- cfg_reg7
@@ -805,6 +821,57 @@ package body tdc_gpx_pkg is
         return tdata_width / 8;
     end function;
 
+    function fn_range_clk_mhz_supported(clk_mhz : natural) return boolean is
+    begin
+        return clk_mhz = 50
+            or clk_mhz = 100
+            or clk_mhz = 125
+            or clk_mhz = 150
+            or clk_mhz = 200;
+    end function;
+
+    function fn_range_5ns_ticks_to_clks(
+        ticks_5ns : unsigned(15 downto 0);
+        clk_mhz   : positive
+    ) return unsigned is
+        -- 19 bits cover the largest supported numerator:
+        -- 5 * 65535 + 7 = 327682.
+        variable v_ticks  : unsigned(18 downto 0);
+        variable v_scaled : unsigned(18 downto 0);
+    begin
+        assert fn_range_clk_mhz_supported(clk_mhz)
+            report "tdc_gpx_pkg: range clock must be 50, 100, 125, 150, or 200 MHz"
+            severity failure;
+
+        v_ticks := resize(ticks_5ns, v_ticks'length);
+        case clk_mhz is
+            when 50 =>
+                -- ceil(N / 4) = (N + 3) >> 2
+                v_scaled := v_ticks + to_unsigned(3, v_scaled'length);
+                return resize(shift_right(v_scaled, 2), ticks_5ns'length);
+            when 100 =>
+                -- ceil(N / 2) = (N + 1) >> 1
+                v_scaled := v_ticks + to_unsigned(1, v_scaled'length);
+                return resize(shift_right(v_scaled, 1), ticks_5ns'length);
+            when 125 =>
+                -- ceil(5N / 8) = ((N << 2) + N + 7) >> 3
+                v_scaled := shift_left(v_ticks, 2) + v_ticks
+                            + to_unsigned(7, v_scaled'length);
+                return resize(shift_right(v_scaled, 3), ticks_5ns'length);
+            when 150 =>
+                -- ceil(3N / 4) = ((N << 1) + N + 3) >> 2
+                v_scaled := shift_left(v_ticks, 1) + v_ticks
+                            + to_unsigned(3, v_scaled'length);
+                return resize(shift_right(v_scaled, 2), ticks_5ns'length);
+            when 200 =>
+                return ticks_5ns;
+            when others =>
+                -- The assertion above is fatal in simulation. Keep a defined
+                -- synthesis return for tools that still elaborate this arm.
+                return ticks_5ns;
+        end case;
+    end function;
+
     -- Runtime cell size: same algorithm as fn_cell_size_bytes but with variable max_hits
     function fn_cell_size_rt(max_hits : natural) return natural is
     begin
@@ -851,7 +918,7 @@ package body tdc_gpx_pkg is
         v(i + 4 downto i)             := cfg.stopdis_override;    i := i + 5;
         v(i + 5 downto i)             := std_logic_vector(cfg.bus_clk_div);       i := i + 6;
         v(i + 2 downto i)             := std_logic_vector(cfg.bus_ticks);         i := i + 3;
-        v(i + 15 downto i)            := std_logic_vector(cfg.max_range_clks);    i := i + 16;
+        v(i + 15 downto i)            := std_logic_vector(cfg.max_range_5ns_ticks);    i := i + 16;
         v(i + 15 downto i)            := std_logic_vector(cfg.cols_per_face);     i := i + 16;
         v(i + 17 downto i)            := std_logic_vector(cfg.start_off1);        i := i + 18;
         v(i + 31 downto i)            := cfg.cfg_reg7;            i := i + 32;
@@ -877,7 +944,7 @@ package body tdc_gpx_pkg is
         cfg.stopdis_override := v(i + 4 downto i);                i := i + 5;
         cfg.bus_clk_div      := unsigned(v(i + 5 downto i));      i := i + 6;
         cfg.bus_ticks        := unsigned(v(i + 2 downto i));      i := i + 3;
-        cfg.max_range_clks   := unsigned(v(i + 15 downto i));     i := i + 16;
+        cfg.max_range_5ns_ticks := unsigned(v(i + 15 downto i));  i := i + 16;
         cfg.cols_per_face    := unsigned(v(i + 15 downto i));     i := i + 16;
         cfg.start_off1       := unsigned(v(i + 17 downto i));     i := i + 18;
         cfg.cfg_reg7         := v(i + 31 downto i);               i := i + 32;

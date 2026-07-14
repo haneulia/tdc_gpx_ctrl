@@ -8,7 +8,7 @@
 -- Architecture rules:
 --   - KEEP_HIERARCHY = "yes"
 --   - All sub-modules use direct entity instantiation (entity work.xxx)
---   - Single registered process for slope demux (200 MHz timing)
+--   - Single registered process for slope demux (g_AXIS_CLK_MHZ timing)
 --------------------------------------------------------------------------------
 library ieee;
 use ieee.std_logic_1164.all;
@@ -18,7 +18,8 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_cell_pipe is
     generic (
-        g_OUTPUT_WIDTH : natural := 32  -- 32, 64, or 128
+        g_OUTPUT_WIDTH : natural := 32;  -- 32, 64, or 128
+        g_AXIS_CLK_MHZ : positive := 150
     );
     port (
         -- Clock / Reset
@@ -42,11 +43,10 @@ entity tdc_gpx_cell_pipe is
         i_abort_fall            : in  std_logic := '0';
         i_face_stops_per_chip   : in  unsigned(3 downto 0);
         i_max_hits_cfg          : in  unsigned(2 downto 0);
-        -- Phase B: passthrough for the cell_builder watchdog caps.
-        -- Feeds u_cell_bld_rise/fall.i_max_range_clks without buffering --
-        -- each cell_builder takes its own per-buffer / drop / output-side
-        -- snapshots internally.
-        i_max_range_clks        : in  unsigned(15 downto 0);
+        -- Physical max-range window from CSR in fixed 5 ns reference ticks.
+        -- This module converts it once to AXIS clocks, then every cell_builder
+        -- takes its existing per-buffer/drop/output snapshot from that value.
+        i_max_range_5ns_ticks   : in  unsigned(15 downto 0);
 
         -- Rising cell output to Cluster 4 (AXI-Stream x4)
         o_cell_rise_tdata_0     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
@@ -108,6 +108,7 @@ architecture rtl of tdc_gpx_cell_pipe is
     signal s_evt_skid_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal s_evt_skid_tdata  : t_evt_axis_tdata_array;
     signal s_evt_skid_tuser  : t_evt_axis_tuser_array;
+    signal s_max_range_axis_clks : unsigned(15 downto 0);
 
     ---------------------------------------------------------------------------
     -- Slope-demux registered outputs
@@ -148,6 +149,13 @@ begin
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
         report "tdc_gpx_cell_pipe: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
         severity failure;
+
+    assert fn_range_clk_mhz_supported(g_AXIS_CLK_MHZ)
+        report "tdc_gpx_cell_pipe: g_AXIS_CLK_MHZ must be 50, 100, 125, 150, or 200"
+        severity failure;
+
+    s_max_range_axis_clks <= fn_range_5ns_ticks_to_clks(
+        i_max_range_5ns_ticks, g_AXIS_CLK_MHZ);
 
     ---------------------------------------------------------------------------
     -- Slope demux (REGISTERED, with tready backpressure)
@@ -316,7 +324,7 @@ begin
                 i_abort             => s_abort_rise,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
-                i_max_range_clks    => i_max_range_clks,  -- Phase B
+                i_max_range_axis_clks => s_max_range_axis_clks,
                 o_m_axis_tdata      => s_cell_rise_tdata(i),
                 o_m_axis_tvalid     => o_cell_rise_tvalid(i),
                 o_m_axis_tlast      => o_cell_rise_tlast(i),
@@ -347,7 +355,7 @@ begin
                 i_abort             => s_abort_fall,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
-                i_max_range_clks    => i_max_range_clks,  -- Phase B
+                i_max_range_axis_clks => s_max_range_axis_clks,
                 o_m_axis_tdata      => s_cell_fall_tdata(i),
                 o_m_axis_tvalid     => o_cell_fall_tvalid(i),
                 o_m_axis_tlast      => o_cell_fall_tlast(i),

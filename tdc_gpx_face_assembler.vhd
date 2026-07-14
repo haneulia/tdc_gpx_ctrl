@@ -461,7 +461,7 @@ begin
     -- Concurrent signals
     -- =========================================================================
 
-    -- Timeout limit: max_range_clks only (drain/ALU margins TBD after bench)
+    -- Timeout limit: max_scan_clks only (drain/ALU margins TBD after bench)
     s_timeout_limit <= i_max_scan_clks;
 
     -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset).

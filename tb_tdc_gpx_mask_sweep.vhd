@@ -92,7 +92,7 @@ architecture sim of tb_tdc_gpx_mask_sweep is
         stopdis_override    => (others => '0'),
         bus_clk_div         => to_unsigned(2, 6),
         bus_ticks           => to_unsigned(5, 3),
-        max_range_clks      => to_unsigned(100, 16),
+        max_range_5ns_ticks => to_unsigned(100, 16),
         cols_per_face       => to_unsigned(1, 16),
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),

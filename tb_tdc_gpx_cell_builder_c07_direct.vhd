@@ -87,7 +87,7 @@ begin
             i_abort             => s_abort,
             i_stops_per_chip    => s_stops,
             i_max_hits_cfg      => s_max_hits,
-            i_max_range_clks    => s_max_range,
+            i_max_range_axis_clks => s_max_range,
             o_m_axis_tdata      => s_m_tdata,
             o_m_axis_tvalid     => s_m_tvalid,
             o_m_axis_tlast      => s_m_tlast,

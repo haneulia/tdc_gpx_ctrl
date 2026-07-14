@@ -10,7 +10,7 @@
 --   "I-Mode Single Measurement" flow per shot.
 --
 -- Scenario (single distance / single tdata width)
---   * distance        = 500 m     -> max_range_clks = 667 (round-trip @200 MHz)
+--   * distance        = 500 m     -> max_range_5ns_ticks = 668 (ceil, 5 ns unit)
 --   * g_OUTPUT_WIDTH  = 64        -- default cell / VDMA stream width
 --   * active chip mask = 4'hF, stops_per_chip = 2, cols_per_face = 2, n_faces = 1
 --   * drain_mode      = count-known expected drain, with EF fallback disabled
@@ -27,7 +27,7 @@
 --          i_shot_start 1-clk pulse -> preload IFIFO -> assert IrFlag
 --          wait for drain complete, deassert IrFlag, wait for ALU pulse
 --          (shot #1, col 0)
---   [S7] Wait shot_period = 1000 cycles (500 m: 1.5 * round-trip)
+--   [S7] Wait shot_period = 1002 cycles (500 m: ceil(1.5 * round-trip))
 --   [S8] Shot #2 (col 1) -> face complete, frame emitted on m_axis
 --   [S9] Emulate laser_ctrl.o_stop_tdc:
 --          i_stop_tdc pulse -> config_ctrl routes to chip_ctrl stop path
@@ -51,6 +51,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;
 use std.textio.all;
 
 use work.tdc_gpx_pkg.all;
@@ -65,7 +66,8 @@ entity tb_tdc_gpx_top_int is
         -- width here propagates consistently through the whole TB (DUT
         -- generics + CSR values + chip model preload + timing waits).
         -- =================================================================
-        G_AXIS_CLK_MHZ    : real    := 200.0;   -- common clock freq (MHz)
+        G_AXIS_CLK_MHZ    : real    := 200.0;   -- AXIS/AXI-Lite clock (MHz)
+        G_TDC_CLK_MHZ     : real    := 200.0;   -- TDC bus/control clock (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (m)
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
@@ -122,14 +124,22 @@ architecture sim of tb_tdc_gpx_top_int is
     -- DEPENDENT (derived) constants -- all computed from the generics above.
     -- =========================================================================
     constant C_LIGHT_M_PER_US : real    := 299.792;
-    constant C_CLK_PERIOD_PS  : natural := natural(1000000.0 / G_AXIS_CLK_MHZ);
+    constant C_CLK_PERIOD_PS  : natural := natural(round(1000000.0 / G_AXIS_CLK_MHZ));
     constant C_CLK_PERIOD     : time    := C_CLK_PERIOD_PS * 1 ps;
+    constant C_TDC_CLK_PERIOD_PS : natural := natural(round(1000000.0 / G_TDC_CLK_MHZ));
+    constant C_TDC_CLK_PERIOD : time    := C_TDC_CLK_PERIOD_PS * 1 ps;
     constant C_RST_HOLD       : time    := 24 * C_CLK_PERIOD;
 
-    -- Range-derived counters
+    -- CSR range is always encoded in 200 MHz reference ticks (5 ns), while
+    -- local shot scheduling uses the selected AXIS clock.
+    constant C_DOMAIN_CLK_MHZ : positive := positive(integer(G_AXIS_CLK_MHZ));
+    constant C_TDC_DOMAIN_CLK_MHZ : positive := positive(integer(G_TDC_CLK_MHZ));
+    constant C_MAX_RANGE_5NS_TICKS : natural := natural(ceil(
+        2.0 * G_MAX_RANGE_M / C_LIGHT_M_PER_US * real(c_RANGE_REF_CLK_MHZ)));
     constant C_MAX_RANGE_CLKS : natural :=
-        natural(2.0 * G_MAX_RANGE_M / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
-    constant C_SHOT_PERIOD    : natural := (C_MAX_RANGE_CLKS * 3) / 2;
+        to_integer(fn_range_5ns_ticks_to_clks(
+            to_unsigned(C_MAX_RANGE_5NS_TICKS, 16), C_DOMAIN_CLK_MHZ));
+    constant C_SHOT_PERIOD    : natural := (C_MAX_RANGE_CLKS * 3 + 1) / 2;
 
     -- max_hits table (see Doc/260419/task_distance_bounded_windows_2026-04-19.md)
     function fn_max_hits(r_m : real) return natural is
@@ -264,6 +274,7 @@ architecture sim of tb_tdc_gpx_top_int is
     -- Clock / Reset
     -- =========================================================================
     signal clk          : std_logic := '0';
+    signal tdc_clk      : std_logic := '0';
     signal rst_n        : std_logic := '0';
     signal sim_done     : boolean   := false;
 
@@ -423,7 +434,8 @@ architecture sim of tb_tdc_gpx_top_int is
     -- Pipeline CSR register offsets (csr_pipeline internal)
     --   CTL0 = 0x00 MAIN_CTRL   [31:28]=COMMAND, [22:19]=n_drain_cap,
     --                            [18:15]=stops, [14:12]=n_faces, [3:0]=mask
-    --   CTL1 = 0x04 RANGE_COLS  [31:16]=cols_per_face, [15:0]=max_range_clks
+    --   CTL1 = 0x04 RANGE_COLS  [31:16]=cols_per_face,
+    --                             [15:0]=max_range_5ns_ticks
     -- =========================================================================
     constant C_PIPE_MAIN_CTRL  : std_logic_vector(6 downto 0) := "0000000";  -- 0x00
     constant C_PIPE_RANGE_COLS : std_logic_vector(6 downto 0) := "0000100";  -- 0x04
@@ -439,7 +451,7 @@ architecture sim of tb_tdc_gpx_top_int is
         fn_pack_main_ctrl(G_ACTIVE_CHIP_MASK, G_N_FACES, G_STOPS_PER_CHIP);
     constant C_RANGE_COLS_VAL : std_logic_vector(31 downto 0) :=
         std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
-        std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 16));
+        std_logic_vector(to_unsigned(C_MAX_RANGE_5NS_TICKS, 16));
     constant C_ACTIVE_CHIPS : natural := fn_count_ones(G_ACTIVE_CHIP_MASK);
     constant C_TOTAL_LINES  : natural := G_N_FACES * G_COLS_PER_FACE;
     constant C_TARGET_FACE_BEATS : natural :=
@@ -472,6 +484,7 @@ begin
     -- Clock / Reset
     -- =========================================================================
     clk <= not clk after C_CLK_PERIOD / 2 when not sim_done else '0';
+    tdc_clk <= not tdc_clk after C_TDC_CLK_PERIOD / 2 when not sim_done else '0';
 
     p_cycle : process(clk)
     begin
@@ -545,7 +558,7 @@ begin
     -- Chip model body (FIFO state + writes per chip)
     gen_chip : for i in 0 to c_N_CHIPS - 1 generate
 
-        p_chip : process(clk)
+        p_chip : process(tdc_clk)
             variable v_rdn_prev  : std_logic := '1';
             variable v_load_prev : std_logic := '0';
             variable v_my_fill1  : natural   := 0;
@@ -555,7 +568,7 @@ begin
             variable v_hit_value : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
             variable v_cha_code  : std_logic_vector(1 downto 0);
         begin
-            if rising_edge(clk) then
+            if rising_edge(tdc_clk) then
                 if rst_n = '0' then
                     v_my_fill1 := 0;
                     v_my_fill2 := 0;
@@ -648,6 +661,8 @@ begin
         generic map (
             g_HW_VERSION     => x"00010000",
             g_OUTPUT_WIDTH   => C_OUTPUT_W,
+            g_AXIS_CLK_MHZ   => C_DOMAIN_CLK_MHZ,
+            g_TDC_CLK_MHZ    => C_TDC_DOMAIN_CLK_MHZ,
             g_POWERUP_CLKS   => G_POWERUP_CLKS,
             g_RECOVERY_CLKS  => G_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS => G_ALU_PULSE_CLKS,
@@ -656,10 +671,10 @@ begin
             g_STOP_EVT_DWIDTH => C_STOP_DW
         )
         port map (
-            -- Common clock / reset (single domain)
+            -- AXIS/AXI-Lite and TDC clocks may run at different rates.
             i_axis_aclk     => clk,
             i_axis_aresetn  => rst_n,
-            i_tdc_clk       => clk,
+            i_tdc_clk       => tdc_clk,
             s_axi_aclk      => clk,
             s_axi_aresetn   => rst_n,
             -- Chip CSR (9-bit)
@@ -1145,7 +1160,7 @@ begin
                & " time=" & time'image(now));
             i_tdc_irflag <= (others => '1');
 
-            -- Wait for drain (max ~5 us = 1000 clks)
+            -- Allow 1000 AXIS clocks for the behavioral drain to complete.
             wait_clk(1000);
 
             -- Deassert IrFlag + wait ALU recovery
@@ -1227,7 +1242,8 @@ begin
                     end if;
 
                     if not (f = G_N_FACES - 1 and c = G_COLS_PER_FACE - 1) then
-                        pl("[S7] shot_period wait (500m -> 1000 clks)");
+                        pl("[S7] shot_period wait ("
+                           & integer'image(C_SHOT_PERIOD) & " AXIS clks)");
                         wait_clk(C_SHOT_PERIOD);
                     end if;
                 end loop;
@@ -1378,6 +1394,8 @@ begin
         pl("====================================================");
         pl(" integrated sim end");
         pl("  config          : width=" & integer'image(G_TDATA_WIDTH)
+           & "  axis_mhz=" & real'image(G_AXIS_CLK_MHZ)
+           & "  tdc_mhz=" & real'image(G_TDC_CLK_MHZ)
            & "  max_hits=" & integer'image(C_MAX_HITS)
            & "  max_hits_override=" & integer'image(G_MAX_HITS_OVERRIDE)
            & "  max_hits_mode=" & fn_mode_name(G_MAX_HITS_WRITE_MODE)

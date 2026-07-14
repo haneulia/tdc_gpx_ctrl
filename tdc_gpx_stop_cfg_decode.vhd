@@ -23,10 +23,10 @@
 --     can mean "known zero" instead of the legacy fallback encoding.
 --
 -- Distance-based shot window (Round 13 follow-up, audit 5번):
---   Orphan detection timing is derived from i_cfg.max_range_clks (physical
---   time-of-flight bound) rather than an arbitrary generic. Design contract:
+--   Orphan detection timing is derived from max_range_5ns_ticks after it is
+--   converted to i_clk-domain cycles by config_ctrl. Design contract:
 --
---     shot_start < R = max_range_clks < W = R + margin < T1 = next shot_start
+--     shot_start < R = max_range_axis_clks < W = R + margin < next shot_start
 --                   │                     │                 │
 --                   │ (valid beats done)  │ (orphan zone)   │ (window reopens)
 --
@@ -41,16 +41,20 @@
 --
 --     | distance | R (cy) | shot_period (cy) | PRF     | orphan zone @ margin=32 |
 --     |---------:|-------:|-----------------:|--------:|------------------------:|
---     | 100  m   |  134   |  200  (1.0 µs)   | 1.0 MHz |  34 cy (170 ns)         |
---     | 250  m   |  334   |  500  (2.5 µs)   | 400 kHz | 134 cy (670 ns)         |
---     | 500  m   |  667   | 1000  (5.0 µs)   | 200 kHz | 301 cy (1.51 µs)        |
---     | 750  m   | 1000   | 1500  (7.5 µs)   | 133 kHz | 468 cy (2.34 µs)        |
---     | 1000 m   | 1334   | 2000 (10.0 µs)   | 100 kHz | 634 cy (3.17 µs)        |
+--     | 100  m   |  134   |  201  (1.005 us) | 995 kHz |  35 cy (175 ns)         |
+--     | 250  m   |  334   |  501  (2.505 us) | 399 kHz | 135 cy (675 ns)         |
+--     | 500  m   |  668   | 1002  (5.010 us) | 200 kHz | 302 cy (1.51 us)        |
+--     | 750  m   | 1001   | 1502  (7.510 us) | 133 kHz | 469 cy (2.35 us)        |
+--     | 1000 m   | 1335   | 2003 (10.015 us) | 99.9kHz | 636 cy (3.18 us)        |
+--
+--   R uses ceil(round_trip / 5 ns), and shot_period uses ceil(1.5 * R).
+--   For 50/100/125/150 MHz AXIS operation, convert the same 5 ns CSR value
+--   with fn_range_5ns_ticks_to_clks; do not reuse the 200 MHz count directly.
 --
 --   If SW runs tighter PRF (no headroom): window close timer never beats the
 --   next shot_start → orphan detection degrades to "pre-first-shot only".
 --   That is intentional; tightening margin further would only create false
---   positives. max_range_clks = 0 disables distance-based close entirely
+--   positives. max_range_5ns_ticks = 0 disables distance-based close entirely
 --   (chip_run convention).
 --
 -- Edge-case rules (P5/P6):
@@ -59,9 +63,9 @@
 --     NOT counted in running totals — upstream contract says beats
 --     arrive STRICTLY between shot_start pulses, so this coincidence is
 --     a contract violation and silent drop is acceptable.
---   - `max_range_clks = 0` disables BOTH the range check (chip_run) and
+--   - `max_range_5ns_ticks = 0` disables BOTH the range check (chip_run) and
 --     this orphan window. If SW wants orphan detection without a range
---     limit, set `max_range_clks` to the largest practical value rather
+--     limit, set `max_range_5ns_ticks` to the largest practical value rather
 --     than 0.
 --
 -- Standard: VHDL-2008
@@ -80,24 +84,25 @@ entity tdc_gpx_stop_cfg_decode is
         g_STOP_EVT_TUSER_WIDTH : natural := c_STOP_EVT_TUSER_WIDTH;
         g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH;
         -- Round 13 follow-up (audit 5번): stop-event window margin.
-        -- The effective window close = snapshot(i_cfg.max_range_clks) + this
-        -- margin. max_range_clks is the physical distance-of-flight bound
-        -- for this shot (all valid beats must arrive within it); the margin
+        -- The effective window close = snapshot(i_max_range_axis_clks) + this
+        -- margin. i_max_range_axis_clks is the 5 ns CSR range converted to
+        -- this AXIS clock domain; the margin
         -- absorbs echo_receiver internal latency + pipeline stage delay on
-        -- the stop_evt path. Default 32 cycles (~160ns @200MHz).
+        -- the stop_evt path. Default 32 cycles is about 213 ns @150 MHz and
+        -- 160 ns @200 MHz; slower AXIS clocks intentionally give more time.
         --
         -- Sizing guidance (see Doc/vdma_packet_structure.html §5 for the
         -- distance / max_hits / shot-period table):
         --   - Must be > typical echo_receiver emission delay (few cycles).
-        --   - Must be < (shot_period - max_range_clks) for orphan detection
+        --   - Must be < (shot_period - max_range_axis_clks) for orphan detection
         --     to have a non-empty zone; at near-max-PRF workloads the gap
         --     is already near zero, so orphan detection degrades naturally
         --     into "pre-first-shot only". That is intentional: tightening
         --     margin further would only buy false positives.
-        --   - UPPER BOUND: ≤ 65535 (16-bit). Combined counter width is
-        --     17-bit (= max_range_clks 16-bit + margin 16-bit headroom).
-        --     Exceeding 65535 wraps silently. Use generic override for
-        --     slower pipeline stacks (e.g. deep CDC) but stay within bound.
+        --   - UPPER BOUND: <= 65535 (16-bit policy). The 24-bit combined
+        --     counter safely covers the 16-bit range plus this margin.
+        --     Use a generic override for slower pipelines but stay within
+        --     this explicit elaboration bound.
         g_WINDOW_MARGIN_CLKS : natural := 32
     );
     port (
@@ -122,6 +127,9 @@ entity tdc_gpx_stop_cfg_decode is
         i_shot_start_gated : in  std_logic;
         -- Face-local 1-base shot/fire count aligned to the current TDC shot.
         i_current_fire_count : in unsigned(15 downto 0);
+        -- CSR max_range_5ns_ticks converted once by config_ctrl for the AXIS
+        -- clock. Never pass the raw 5 ns tick value to this local counter.
+        i_max_range_axis_clks : in unsigned(15 downto 0);
 
         -- Per-chip expected IFIFO counts
         o_expected_ififo1 : out t_expected_array;
@@ -165,8 +173,8 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
     -- Round 13 follow-up (audit 5번): distance-bounded shot window.
     --
     -- Timing contract:
-    --   shot_start < max_range_clks (R) < window_close (W) < next_shot_start
-    --   where W = snapshot(max_range_clks) + g_WINDOW_MARGIN_CLKS.
+    --   shot_start < max_range_axis_clks (R) < window_close (W) < next_shot_start
+    --   where W = snapshot(max_range_axis_clks) + g_WINDOW_MARGIN_CLKS.
     --
     -- R is the physical time-of-flight bound — all VALID stop events arrive
     -- within it. The margin between R and W absorbs echo_receiver internal
@@ -175,19 +183,19 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
     -- as orphan. Snapshot semantics at shot_start prevent mid-shot SW config
     -- writes from shifting the active window.
     --
-    -- max_range_clks = 0 is treated as "distance check disabled" (matches
+    -- max_range_5ns_ticks = 0 is treated as "distance check disabled" (matches
     -- chip_run's range-counter convention) — window stays open until the
     -- next shot_start, i.e. orphan only fires pre-first-shot.
     --
-    -- Counter width = 24 bits: max_range_clks (16 bit) + margin (up to
+    -- Counter width = 24 bits: max_range_axis_clks (16 bit) + margin (up to
     -- 16-bit generic) fits with ample headroom. 24 bits gives ~84 ms @
-    -- 200 MHz window span which comfortably covers the generic bound
+    -- 200 MHz minimum window span which comfortably covers the generic bound
     -- documented above, with zero overflow risk for any legal override.
     constant c_WINDOW_CNT_WIDTH : natural := 24;
     signal s_window_active_r    : std_logic := '0';
     signal s_window_cnt_r       : unsigned(c_WINDOW_CNT_WIDTH - 1 downto 0)
                                   := (others => '0');
-    signal s_max_range_snap_r   : unsigned(15 downto 0) := (others => '0');
+    signal s_max_range_axis_snap_r : unsigned(15 downto 0) := (others => '0');
     signal s_window_cap_r       : unsigned(c_WINDOW_CNT_WIDTH - 1 downto 0)
                                   := (others => '0');
     signal s_orphan_evt_sticky_r : std_logic := '0';
@@ -203,6 +211,9 @@ begin
         severity failure;
     assert g_STOP_EVT_TUSER_WIDTH >= c_N_CHIPS * 8
         report "tdc_gpx_stop_cfg_decode: g_STOP_EVT_TUSER_WIDTH must cover 8 bits per chip"
+        severity failure;
+    assert g_WINDOW_MARGIN_CLKS <= 65535
+        report "tdc_gpx_stop_cfg_decode: g_WINDOW_MARGIN_CLKS must be <= 65535"
         severity failure;
 
     o_stop_evt_tready <= '1';
@@ -235,26 +246,27 @@ begin
                 s_mono_viol_r   <= (others => '0');
                 s_window_active_r     <= '0';
                 s_window_cnt_r        <= (others => '0');
-                s_max_range_snap_r    <= (others => '0');
+                s_max_range_axis_snap_r <= (others => '0');
                 s_window_cap_r        <= (others => '0');
                 s_orphan_evt_sticky_r <= '0';
                 s_expected_final_r    <= '0';
             else
                 -- Round 13 follow-up (audit 5번): distance-bounded window.
-                -- Snapshot max_range_clks at shot_start so a mid-shot config
-                -- change cannot retroactively shift the window. Effective
+                -- Snapshot the converted AXIS count at shot_start so a
+                -- mid-shot config change cannot retroactively shift the
+                -- window. Effective
                 -- cap = snapshot + margin. If the snapshot is zero (distance
                 -- check disabled), keep the window open — no timer-based
                 -- close, only the next shot_start re-opens.
                 if i_shot_start_gated = '1' then
-                    s_max_range_snap_r <= i_cfg.max_range_clks;
-                    s_window_cap_r     <= resize(i_cfg.max_range_clks,
+                    s_max_range_axis_snap_r <= i_max_range_axis_clks;
+                    s_window_cap_r     <= resize(i_max_range_axis_clks,
                                                   c_WINDOW_CNT_WIDTH)
                                           + to_unsigned(g_WINDOW_MARGIN_CLKS,
                                                          c_WINDOW_CNT_WIDTH);
                     s_window_active_r  <= '1';
                     s_window_cnt_r     <= (others => '0');
-                elsif s_window_active_r = '1' and s_max_range_snap_r /= 0 then
+                elsif s_window_active_r = '1' and s_max_range_axis_snap_r /= 0 then
                     if s_window_cnt_r < s_window_cap_r then
                         s_window_cnt_r <= s_window_cnt_r + 1;
                     else

@@ -15,7 +15,9 @@
 --                               [14:12] n_faces, [18:15] stops_per_chip,
 --                               [22:19] n_drain_cap, [27:23] stopdis_override,
 --                               [31:28] COMMAND
---   CTL1  (0x04) RANGE_COLS    [15:0] max_range_clks, [31:16] cols_per_face
+--   CTL1  (0x04) RANGE_COLS    [15:0] max_range_5ns_ticks, [31:16] cols_per_face
+--                               max_range_5ns_ticks is always encoded in
+--                               200 MHz reference units (1 tick = 5 ns).
 --   CTL2  (0x08) AUX_CMD       [0] force_reinit (rising edge),
 --                               [1] err_soft_clear (rising edge),
 --                               [31:2] reserved
@@ -32,19 +34,19 @@
 --   STAT6..7 reserved
 --
 -- CDC structure:
---   CTL: 2 × xpm_cdc_handshake (s_axi_aclk → i_axis_aclk) for CTL0, CTL1
---   STAT: 1 × xpm_cdc_handshake (i_axis_aclk → s_axi_aclk) for STAT5
---   CDC idle flag: 2-FF sync of NOR(src_send_ctl0, src_send_ctl1)
+--   CTL: 3 × xpm_cdc_handshake (s_axi_aclk → i_axis_aclk) for CTL0..CTL2
+--   STAT: handshake transfers from i_axis_aclk to s_axi_aclk
+--   CDC idle flag: 2-FF sync of NOR(src_send_ctl0..src_send_ctl2)
 --
 -- Command safety:
 --   cmd_start and cmd_cfg_write are gated by:
---     1. local CDC idle (this module's CTL0/CTL1 handshakes)
+--     1. local CDC idle (this module's CTL0..CTL2 handshakes)
 --     2. external chip CSR CDC idle (i_chip_csr_cdc_idle)
 --   Both must be '1' for commands to pass.
 --
 -- Clock domains:
 --   s_axi_aclk   : AXI4-Lite domain (PS clock)
---   i_axis_aclk  : TDC processing / AXI-Stream domain (200 MHz)
+--   i_axis_aclk  : AXI-Stream domain selected by top-level g_AXIS_CLK_MHZ
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -202,7 +204,7 @@ architecture rtl of tdc_gpx_csr_pipeline is
     -- =========================================================================
     signal s_ctl_src : t_cdc_data_array(0 to 7);  -- 8 CTL from IP
 
-    -- CTL after CDC (i_axis_aclk domain) — CTL0, CTL1
+    -- CTL after CDC (i_axis_aclk domain) — CTL0..CTL2
     signal s_ctl_out : t_cdc_data_array(0 to C_NUM_CTL_CDC - 1) := (others => C_ZERO32);
 
     -- CTL CDC handshake
@@ -545,7 +547,7 @@ begin
     end process p_send_stat7;
 
     -- =========================================================================
-    -- [5] CTL CDC: s_axi_aclk → i_axis_aclk (CTL0, CTL1)
+    -- [5] CTL CDC: s_axi_aclk → i_axis_aclk (CTL0..CTL2)
     -- =========================================================================
     gen_ctl_cdc : for i in 0 to C_NUM_CTL_CDC - 1 generate
         u_cdc_ctl : xpm_cdc_handshake
@@ -744,7 +746,8 @@ begin
     o_cfg.stopdis_override <= s_ctl_out(0)(c_MC_STOPDIS_HI downto c_MC_STOPDIS_LO);
 
     -- CTL1: RANGE_COLS
-    o_cfg.max_range_clks   <= unsigned(s_ctl_out(1)(c_RC_MAX_RANGE_HI downto c_RC_MAX_RANGE_LO));
+    o_cfg.max_range_5ns_ticks <= unsigned(
+        s_ctl_out(1)(c_RC_MAX_RANGE_5NS_HI downto c_RC_MAX_RANGE_5NS_LO));
 
     o_cfg.cols_per_face    <= s_lsr_cols_r
                               when s_lsr_valid_r = '1' and s_lsr_cols_r >= 1

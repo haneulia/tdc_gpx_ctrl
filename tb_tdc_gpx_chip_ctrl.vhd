@@ -314,7 +314,8 @@ begin
             o_cmd_reg_rvalid    => s_cmd_reg_rvalid,
             o_cmd_reg_done      => open,
             i_shot_start        => s_shot_start,
-            i_max_range_clks    => s_cfg.max_range_clks,
+            i_max_range_tdc_clks => fn_range_5ns_ticks_to_clks(
+                s_cfg.max_range_5ns_ticks, 200),
             i_stop_tdc          => s_stop_tdc,
             i_expected_ififo1   => s_expected_ififo1,
             i_expected_ififo2   => s_expected_ififo2,
