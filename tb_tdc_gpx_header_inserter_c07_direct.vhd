@@ -94,6 +94,7 @@ begin
             i_face_start        => s_face_start,
             i_face_abort        => s_face_abort,
             i_cfg               => s_cfg,
+            i_lane_chip_mask    => s_cfg.active_chip_mask,
             i_vdma_frame_id     => to_unsigned(16#1234#, 32),
             i_face_id           => to_unsigned(3, 8),
             i_shot_seq_start    => to_unsigned(16#55AA#, c_SHOT_SEQ_WIDTH),

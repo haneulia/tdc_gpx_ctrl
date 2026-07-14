@@ -52,7 +52,9 @@
 --        - col_cnt = cols_per_face -> frame_done, ST_IDLE
 --
 --   VDMA line structure (all lines uniform):
---     [HDR prefix, 12 beats] [Cell data, 256 beats] = 268 beats = 1072 bytes
+--     [48-byte prefix] [packed canonical cell words] [0..12-byte line pad]
+--   The beat count is HSIZE / (g_TDATA_WIDTH / 8); wider AXIS widths reduce
+--   transfer cycles without changing the number of bytes stored in DDR.
 --
 --     Header prefix layout (only line 0, little-endian):
 --     Beat  Offset  Content (packed, LE)
@@ -77,10 +79,18 @@
 --      10   0x28    timestamp_ns [63:32]                [31:0]  32 full
 --      11   0x2C    error_count                         [31:0]  32 full
 --
---   VDMA frame:
+--   Legacy full-cell formula (superseded by the packed contract below):
 --     HSIZE  = (c_DATA_BEATS_MAX + c_G_HDR_PREFIX_BEATS) × TDATA_BYTES
 --     VSIZE  = cols_per_face
 --     STRIDE = HSIZE
+--
+--   Canonical packed contract (current):
+--     HSIZE  = 48 B + align16(rows_per_face x canonical_cell_bytes)
+--     VSIZE  = cols_per_face (one accepted shot per line)
+--     STRIDE = HSIZE for tightly packed buffers
+--   Per-cell 64/128-bit padding is removed before this module. Only zero to
+--   12 bytes of line-end padding remain, keeping full TKEEP and one HSIZE for
+--   every supported output width.
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -105,6 +115,9 @@ entity tdc_gpx_header_inserter is
 
         -- Configuration (from CSR, stable before face_start)
         i_cfg               : in  t_tdc_cfg;
+        -- Physical chips represented by this slope lane. This can differ
+        -- from i_cfg.active_chip_mask in dedicated 2-rise + 2-fall mode.
+        i_lane_chip_mask    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
 
         -- Header metadata (captured at face_start)
         i_vdma_frame_id     : in  unsigned(31 downto 0);
@@ -117,6 +130,7 @@ entity tdc_gpx_header_inserter is
         i_k_dist_fixed      : in  unsigned(31 downto 0);
 
         -- VDMA line geometry (from top, shared with VDMA config)
+        -- rows_per_face means cell slots per shot on this slope lane.
         i_rows_per_face     : in  unsigned(15 downto 0);   -- active_chips × stops_per_chip
 
         -- AXI-Stream slave (from face_assembler)
@@ -290,7 +304,7 @@ architecture rtl of tdc_gpx_header_inserter is
 begin
 
     assert fn_output_width_supported(g_TDATA_WIDTH)
-        report "tdc_gpx_header_inserter: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        report "tdc_gpx_header_inserter: g_TDATA_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
     assert c_G_TKEEP_WIDTH * 8 = g_TDATA_WIDTH
@@ -368,15 +382,16 @@ begin
                     else
                         word(7 downto 0)   := "00000" & std_logic_vector(s_max_hits_cfg_r);
                     end if;
-                    -- Runtime cell_size from max_hits_cfg
+                    -- Canonical 32-bit-word storage size, independent of the
+                    -- external 32/64/128-bit AXIS width.
                     case s_max_hits_cfg_r is
-                        when "001" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(1), 8));
-                        when "010" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(2), 8));
-                        when "011" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(3), 8));
-                        when "100" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(4), 8));
-                        when "101" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(5), 8));
-                        when "110" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(6), 8));
-                        when others => word(15 downto 8) := std_logic_vector(to_unsigned(fn_cell_size_rt(7), 8));
+                        when "001" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(1), 8));
+                        when "010" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(2), 8));
+                        when "011" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(3), 8));
+                        when "100" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(4), 8));
+                        when "101" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(5), 8));
+                        when "110" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(6), 8));
+                        when others => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(7), 8));
                     end case;
                     word(23 downto 16) := std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 8));
                     word(27 downto 24) := std_logic_vector(to_unsigned(c_N_CHIPS, 4));
@@ -655,7 +670,7 @@ begin
                     s_face_id_r           <= i_face_id;
 
                     -- Structure
-                    s_active_chip_mask_r  <= i_cfg.active_chip_mask;
+                    s_active_chip_mask_r  <= i_lane_chip_mask;
                     s_n_faces_r           <= i_cfg.n_faces;
                     s_cols_per_face_r     <= i_cfg.cols_per_face;
                     if i_cfg.cols_per_face >= 1 then

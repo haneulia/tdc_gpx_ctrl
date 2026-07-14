@@ -46,6 +46,7 @@ architecture sim of tb_tdc_gpx_output_stage is
     constant C_MAX_HITS_CFG_N : natural := 7;
     constant C_BEATS_PER_CELL : natural := fn_beats_per_cell_rt(C_MAX_HITS_CFG_N, C_OUTPUT_WIDTH);
     constant C_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(C_OUTPUT_WIDTH);
+    constant C_WORDS_PER_BEAT : natural := C_OUTPUT_WIDTH / 32;
     constant C_STOPS          : natural := 2;
     constant C_TOTAL_BEATS    : natural := C_STOPS * C_BEATS_PER_CELL;
 
@@ -233,11 +234,13 @@ begin
             i_pipeline_abort_fall  => pipeline_abort_fall,
             i_face_start_gated     => face_start_gated,
             -- Configuration
-            i_face_active_mask     => face_active_mask,
+            i_face_rise_mask       => face_active_mask,
+            i_face_fall_mask       => face_active_mask,
             i_face_stops_per_chip  => face_stops_per_chip,
             i_max_hits_cfg         => max_hits_cfg,
             i_max_scan_clks        => max_scan_clks,
-            i_rows_per_face        => rows_per_face,
+            i_cell_slots_rise      => rows_per_face,
+            i_cell_slots_fall      => rows_per_face,
             -- Header metadata
             i_cfg_face             => cfg_face,
             i_frame_id             => frame_id,
@@ -321,20 +324,24 @@ begin
     -- =========================================================================
     p_monitor : process(clk)
         variable v_out_idx  : natural;
-        variable v_data_idx : natural;
+        variable v_data_word_idx : natural;
         variable v_rise_line_beat_cnt : natural := 0;
-        variable v_mon_beats_per_cell : natural;
+        variable v_mon_words_per_cell : natural;
+        variable v_mon_data_words : natural;
         variable v_fall_out_idx  : natural;
-        variable v_fall_data_idx : natural;
+        variable v_fall_data_word_idx : natural;
         variable v_fall_line_beat_cnt : natural := 0;
-        variable v_fall_beats_per_cell : natural;
+        variable v_fall_words_per_cell : natural;
+        variable v_fall_data_words : natural;
+        variable v_meta_inc : natural range 0 to 4;
+        variable v_fall_meta_inc : natural range 0 to 4;
+        variable v_word : std_logic_vector(31 downto 0);
     begin
         if rising_edge(clk) then
             if m_axis_tvalid = '1' and m_axis_tready = '1' then
-                v_mon_beats_per_cell := fn_beats_per_cell_rt(
-                    fn_effective_max_hits_cfg(max_hits_cfg),
-                    C_OUTPUT_WIDTH
-                );
+                v_mon_words_per_cell := fn_canonical_cell_words(
+                    fn_effective_max_hits_cfg(max_hits_cfg));
+                v_mon_data_words := C_STOPS * v_mon_words_per_cell;
                 if m_axis_tuser(0) = '1' then
                     v_rise_line_beat_cnt := 0;
                 end if;
@@ -345,12 +352,22 @@ begin
                     s_keep_ok <= false;
                 end if;
                 if v_out_idx >= C_HDR_PREFIX_BEATS then
-                    v_data_idx := v_out_idx - C_HDR_PREFIX_BEATS;
-                    if (v_data_idx mod v_mon_beats_per_cell) = (v_mon_beats_per_cell - 1) then
-                        s_metadata_seen_count <= s_metadata_seen_count + 1;
-                        if m_axis_tdata(6 downto 0) /= "1010101" then
-                            s_metadata_hit_msb_ok <= false;
+                    v_meta_inc := 0;
+                    for lane in 0 to C_WORDS_PER_BEAT - 1 loop
+                        v_data_word_idx := (v_out_idx - C_HDR_PREFIX_BEATS)
+                                           * C_WORDS_PER_BEAT + lane;
+                        if v_data_word_idx < v_mon_data_words
+                           and (v_data_word_idx mod v_mon_words_per_cell)
+                               = v_mon_words_per_cell - 1 then
+                            v_meta_inc := v_meta_inc + 1;
+                            v_word := m_axis_tdata(32 * lane + 31 downto 32 * lane);
+                            if v_word(6 downto 0) /= "1010101" then
+                                s_metadata_hit_msb_ok <= false;
+                            end if;
                         end if;
+                    end loop;
+                    if v_meta_inc > 0 then
+                        s_metadata_seen_count <= s_metadata_seen_count + v_meta_inc;
                     end if;
                 end if;
                 if m_axis_tuser(0) = '1' then
@@ -366,10 +383,9 @@ begin
             end if;
             -- Fall-side monitor (#22)
             if m_axis_fall_tvalid = '1' and m_axis_fall_tready = '1' then
-                v_fall_beats_per_cell := fn_beats_per_cell_rt(
-                    fn_effective_max_hits_cfg(max_hits_cfg),
-                    C_OUTPUT_WIDTH
-                );
+                v_fall_words_per_cell := fn_canonical_cell_words(
+                    fn_effective_max_hits_cfg(max_hits_cfg));
+                v_fall_data_words := C_STOPS * v_fall_words_per_cell;
                 if m_axis_fall_tuser(0) = '1' then
                     v_fall_line_beat_cnt := 0;
                 end if;
@@ -380,12 +396,24 @@ begin
                     s_fall_keep_ok <= false;
                 end if;
                 if v_fall_out_idx >= C_HDR_PREFIX_BEATS then
-                    v_fall_data_idx := v_fall_out_idx - C_HDR_PREFIX_BEATS;
-                    if (v_fall_data_idx mod v_fall_beats_per_cell) = (v_fall_beats_per_cell - 1) then
-                        s_fall_metadata_seen_count <= s_fall_metadata_seen_count + 1;
-                        if m_axis_fall_tdata(6 downto 0) /= "1010101" then
-                            s_fall_metadata_hit_msb_ok <= false;
+                    v_fall_meta_inc := 0;
+                    for lane in 0 to C_WORDS_PER_BEAT - 1 loop
+                        v_fall_data_word_idx :=
+                            (v_fall_out_idx - C_HDR_PREFIX_BEATS)
+                            * C_WORDS_PER_BEAT + lane;
+                        if v_fall_data_word_idx < v_fall_data_words
+                           and (v_fall_data_word_idx mod v_fall_words_per_cell)
+                               = v_fall_words_per_cell - 1 then
+                            v_fall_meta_inc := v_fall_meta_inc + 1;
+                            v_word := m_axis_fall_tdata(32 * lane + 31 downto 32 * lane);
+                            if v_word(6 downto 0) /= "1010101" then
+                                s_fall_metadata_hit_msb_ok <= false;
+                            end if;
                         end if;
+                    end loop;
+                    if v_fall_meta_inc > 0 then
+                        s_fall_metadata_seen_count <=
+                            s_fall_metadata_seen_count + v_fall_meta_inc;
                     end if;
                 end if;
                 if m_axis_fall_tlast = '1' then
@@ -456,7 +484,9 @@ begin
                     C_OUTPUT_WIDTH
                 );
                 v_sweep_total_beats := C_STOPS * v_sweep_beats_per_cell;
-                v_sweep_expected_out := C_HDR_PREFIX_BEATS + v_sweep_total_beats;
+                v_sweep_expected_out :=
+                    fn_vdma_line_bytes(C_STOPS, v_sweep_effective_max_hits)
+                    / (C_OUTPUT_WIDTH / 8);
 
                 v_sweep_base_out  := v_out_beat_cnt;
                 v_sweep_base_meta := s_metadata_seen_count;

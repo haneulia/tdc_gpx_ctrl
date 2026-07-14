@@ -162,6 +162,7 @@ begin
             i_face_start        => face_start,
             i_face_abort        => '0',
             i_cfg               => cfg,
+            i_lane_chip_mask    => cfg.active_chip_mask,
             i_vdma_frame_id     => vdma_frame_id,
             i_face_id           => face_id_sig,
             i_shot_seq_start    => shot_seq,

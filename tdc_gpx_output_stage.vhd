@@ -75,12 +75,15 @@ entity tdc_gpx_output_stage is
         i_pipeline_abort_fall : in  std_logic := '0';
         i_face_start_gated   : in  std_logic;
 
-        -- Configuration (latched at face_start by caller)
-        i_face_active_mask   : in  std_logic_vector(3 downto 0);
+        -- Configuration (latched at face_start by caller). Each lane gets
+        -- only the physical chips that produce that slope.
+        i_face_rise_mask     : in  std_logic_vector(3 downto 0);
+        i_face_fall_mask     : in  std_logic_vector(3 downto 0);
         i_face_stops_per_chip: in  unsigned(3 downto 0);
         i_max_hits_cfg       : in  unsigned(2 downto 0);
         i_max_scan_clks      : in  unsigned(15 downto 0);
-        i_rows_per_face      : in  unsigned(15 downto 0);
+        i_cell_slots_rise    : in  unsigned(15 downto 0);
+        i_cell_slots_fall    : in  unsigned(15 downto 0);
 
         -- Header metadata
         i_cfg_face           : in  t_tdc_cfg;
@@ -203,6 +206,19 @@ architecture rtl of tdc_gpx_output_stage is
     signal s_face_fall_buf_tlast  : std_logic;
     signal s_face_fall_buf_tready : std_logic;
 
+    -- =========================================================================
+    -- Canonical line packer -> header_inserter
+    -- =========================================================================
+    signal s_face_pack_tdata  : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_face_pack_tvalid : std_logic;
+    signal s_face_pack_tlast  : std_logic;
+    signal s_face_pack_tready : std_logic;
+
+    signal s_face_fall_pack_tdata  : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+    signal s_face_fall_pack_tvalid : std_logic;
+    signal s_face_fall_pack_tlast  : std_logic;
+    signal s_face_fall_pack_tready : std_logic;
+
     -- FIFO reset: active-low, per-slope (#22 Sprint 3)
     signal s_fifo_rst_n_rise : std_logic;
     signal s_fifo_rst_n_fall : std_logic;
@@ -214,7 +230,7 @@ architecture rtl of tdc_gpx_output_stage is
 begin
 
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
-        report "tdc_gpx_output_stage: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        report "tdc_gpx_output_stage: g_OUTPUT_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
     -- Effective per-slope abort: global always aborts both; slope-specific
@@ -253,7 +269,7 @@ begin
             i_s_axis_tuser     => i_cell_rise_tuser,
             i_shot_start       => i_shot_start_gated,
             i_abort            => s_abort_rise,
-            i_active_chip_mask => i_face_active_mask,
+            i_active_chip_mask => i_face_rise_mask,
             i_stops_per_chip   => i_face_stops_per_chip,
             i_max_hits_cfg     => i_max_hits_cfg,
             i_max_scan_clks    => i_max_scan_clks,
@@ -295,7 +311,7 @@ begin
             i_s_axis_tuser     => i_cell_fall_tuser,
             i_shot_start       => i_shot_start_gated,
             i_abort            => s_abort_fall,
-            i_active_chip_mask => i_face_active_mask,
+            i_active_chip_mask => i_face_fall_mask,
             i_stops_per_chip   => i_face_stops_per_chip,
             i_max_hits_cfg     => i_max_hits_cfg,
             i_max_scan_clks    => i_max_scan_clks,
@@ -405,6 +421,49 @@ begin
         );
 
     -- =========================================================================
+    -- Canonical word line packers
+    -- =========================================================================
+    u_line_packer_rise : entity work.tdc_gpx_line_packer
+        generic map (
+            g_TDATA_WIDTH => g_OUTPUT_WIDTH
+        )
+        port map (
+            i_clk           => i_clk,
+            i_rst_n         => i_rst_n,
+            i_abort         => s_abort_rise,
+            i_max_hits_cfg  => i_max_hits_cfg,
+            i_s_axis_tdata  => s_face_buf_tdata,
+            i_s_axis_tvalid => s_face_buf_tvalid,
+            i_s_axis_tlast  => s_face_buf_tlast,
+            o_s_axis_tready => s_face_buf_tready,
+            o_m_axis_tdata  => s_face_pack_tdata,
+            o_m_axis_tvalid => s_face_pack_tvalid,
+            o_m_axis_tlast  => s_face_pack_tlast,
+            i_m_axis_tready => s_face_pack_tready,
+            o_idle          => open
+        );
+
+    u_line_packer_fall : entity work.tdc_gpx_line_packer
+        generic map (
+            g_TDATA_WIDTH => g_OUTPUT_WIDTH
+        )
+        port map (
+            i_clk           => i_clk,
+            i_rst_n         => i_rst_n,
+            i_abort         => s_abort_fall,
+            i_max_hits_cfg  => i_max_hits_cfg,
+            i_s_axis_tdata  => s_face_fall_buf_tdata,
+            i_s_axis_tvalid => s_face_fall_buf_tvalid,
+            i_s_axis_tlast  => s_face_fall_buf_tlast,
+            o_s_axis_tready => s_face_fall_buf_tready,
+            o_m_axis_tdata  => s_face_fall_pack_tdata,
+            o_m_axis_tvalid => s_face_fall_pack_tvalid,
+            o_m_axis_tlast  => s_face_fall_pack_tlast,
+            i_m_axis_tready => s_face_fall_pack_tready,
+            o_idle          => open
+        );
+
+    -- =========================================================================
     -- Rising header inserter
     -- =========================================================================
     u_header_rise : entity work.tdc_gpx_header_inserter
@@ -417,6 +476,7 @@ begin
             i_face_start        => i_face_start_gated,
             i_face_abort        => s_abort_rise,
             i_cfg               => i_cfg_face,
+            i_lane_chip_mask    => i_face_rise_mask,
             i_vdma_frame_id     => i_frame_id,
             i_face_id           => i_face_id,
             i_shot_seq_start    => i_global_shot_seq,
@@ -425,11 +485,11 @@ begin
             i_chip_error_cnt    => std_logic_vector(i_error_count),
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
-            i_rows_per_face     => i_rows_per_face,
-            i_s_axis_tdata      => s_face_buf_tdata,
-            i_s_axis_tvalid     => s_face_buf_tvalid,
-            i_s_axis_tlast      => s_face_buf_tlast,
-            o_s_axis_tready     => s_face_buf_tready,
+            i_rows_per_face     => i_cell_slots_rise,
+            i_s_axis_tdata      => s_face_pack_tdata,
+            i_s_axis_tvalid     => s_face_pack_tvalid,
+            i_s_axis_tlast      => s_face_pack_tlast,
+            o_s_axis_tready     => s_face_pack_tready,
             o_m_axis_tdata      => o_m_axis_tdata,
             o_m_axis_tkeep      => o_m_axis_tkeep,
             o_m_axis_tstrb      => o_m_axis_tstrb,
@@ -460,6 +520,7 @@ begin
             i_face_start        => i_face_start_gated,
             i_face_abort        => s_abort_fall,
             i_cfg               => i_cfg_face,
+            i_lane_chip_mask    => i_face_fall_mask,
             i_vdma_frame_id     => i_frame_id,
             i_face_id           => i_face_id,
             i_shot_seq_start    => i_global_shot_seq,
@@ -468,11 +529,11 @@ begin
             i_chip_error_cnt    => std_logic_vector(i_error_count),
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
-            i_rows_per_face     => i_rows_per_face,
-            i_s_axis_tdata      => s_face_fall_buf_tdata,
-            i_s_axis_tvalid     => s_face_fall_buf_tvalid,
-            i_s_axis_tlast      => s_face_fall_buf_tlast,
-            o_s_axis_tready     => s_face_fall_buf_tready,
+            i_rows_per_face     => i_cell_slots_fall,
+            i_s_axis_tdata      => s_face_fall_pack_tdata,
+            i_s_axis_tvalid     => s_face_fall_pack_tvalid,
+            i_s_axis_tlast      => s_face_fall_pack_tlast,
+            o_s_axis_tready     => s_face_fall_pack_tready,
             o_m_axis_tdata      => o_m_axis_fall_tdata,
             o_m_axis_tkeep      => o_m_axis_fall_tkeep,
             o_m_axis_tstrb      => o_m_axis_fall_tstrb,
@@ -495,7 +556,7 @@ begin
     -- =========================================================================
     o_face_tvalid          <= s_face_tvalid;
     o_face_fall_tvalid     <= s_face_fall_tvalid;
-    o_face_buf_tvalid      <= s_face_buf_tvalid;
-    o_face_fall_buf_tvalid <= s_face_fall_buf_tvalid;
+    o_face_buf_tvalid      <= s_face_buf_tvalid or s_face_pack_tvalid;
+    o_face_fall_buf_tvalid <= s_face_fall_buf_tvalid or s_face_fall_pack_tvalid;
 
 end architecture rtl;

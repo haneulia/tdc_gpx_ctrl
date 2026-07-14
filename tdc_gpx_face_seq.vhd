@@ -30,7 +30,10 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_face_seq is
     generic (
-        g_OUTPUT_WIDTH : natural := 32  -- 32, 64, or 128 (for hsize/geometry calculation)
+        g_OUTPUT_WIDTH : natural := 32;  -- 32, 64, or 128 output contract validation
+        -- Dedicated topology must retain at least one active chip in each
+        -- fixed group: chip0/1 rise and chip2/3 fall.
+        g_REQUIRE_DEDICATED_GROUPS : boolean := false
     );
     port (
         i_clk                : in  std_logic;
@@ -187,7 +190,7 @@ architecture rtl of tdc_gpx_face_seq is
 begin
 
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
-        report "tdc_gpx_face_seq: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        report "tdc_gpx_face_seq: g_OUTPUT_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
     -- =========================================================================
@@ -231,6 +234,9 @@ begin
                             -- logic at line 256). Policy is now: n_faces
                             -- must be in [1..7]; anything else is rejected.
                             if i_cfg.active_chip_mask = "0000"
+                               or (g_REQUIRE_DEDICATED_GROUPS
+                                   and (i_cfg.active_chip_mask(1 downto 0) = "00"
+                                        or i_cfg.active_chip_mask(3 downto 2) = "00"))
                                or i_cfg.stops_per_chip < 2
                                or i_cfg.stops_per_chip > c_MAX_STOPS_PER_CHIP
                                or i_cfg.cols_per_face < 1
@@ -361,7 +367,7 @@ begin
     p_geometry : process(i_clk)
         variable v_active_cnt : natural range 0 to c_N_CHIPS;
         variable v_rows       : natural range 0 to c_MAX_ROWS_PER_FACE;
-        variable v_data_beats : natural range 0 to c_DATA_BEATS_MAX;
+        variable v_max_hits   : natural range 1 to c_MAX_HITS_PER_STOP;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -372,19 +378,20 @@ begin
                 v_rows := v_active_cnt * to_integer(i_cfg.stops_per_chip);
                 if v_rows < 2 then v_rows := 2; end if;
                 s_rows_per_face_r <= to_unsigned(v_rows, 16);
-                -- Runtime beats_per_cell lookup (same pattern as cell_builder)
+                -- Canonical 32-bit cell words are packed across cell
+                -- boundaries. HSIZE therefore depends on semantic cell bytes,
+                -- not g_OUTPUT_WIDTH; only the line end is aligned to 16 B.
                 case i_cfg.max_hits_cfg is
-                    when "001" => v_data_beats := v_rows * fn_beats_per_cell_rt(1, g_OUTPUT_WIDTH);
-                    when "010" => v_data_beats := v_rows * fn_beats_per_cell_rt(2, g_OUTPUT_WIDTH);
-                    when "011" => v_data_beats := v_rows * fn_beats_per_cell_rt(3, g_OUTPUT_WIDTH);
-                    when "100" => v_data_beats := v_rows * fn_beats_per_cell_rt(4, g_OUTPUT_WIDTH);
-                    when "101" => v_data_beats := v_rows * fn_beats_per_cell_rt(5, g_OUTPUT_WIDTH);
-                    when "110" => v_data_beats := v_rows * fn_beats_per_cell_rt(6, g_OUTPUT_WIDTH);
-                    when others => v_data_beats := v_rows * fn_beats_per_cell_rt(7, g_OUTPUT_WIDTH);
+                    when "001" => v_max_hits := 1;
+                    when "010" => v_max_hits := 2;
+                    when "011" => v_max_hits := 3;
+                    when "100" => v_max_hits := 4;
+                    when "101" => v_max_hits := 5;
+                    when "110" => v_max_hits := 6;
+                    when others => v_max_hits := 7;
                 end case;
                 s_hsize_bytes_r <= to_unsigned(
-                    (v_data_beats + fn_hdr_prefix_beats(g_OUTPUT_WIDTH))
-                    * (g_OUTPUT_WIDTH / 8), 16);
+                    fn_vdma_line_bytes(v_rows, v_max_hits), 16);
             end if;
         end if;
     end process;

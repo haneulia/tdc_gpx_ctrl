@@ -42,6 +42,10 @@ entity tdc_gpx_top is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
         g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32, 64, or 128)
+        -- Compile-time board topology; no extra CSR is required.
+        -- DEDICATED_2X2: chip0/1 rise, chip2/3 fall.
+        -- SHARED_DUAL_EDGE: every active chip participates in both lanes.
+        g_SLOPE_CHIP_MODE : string := "DEDICATED_2X2";
         -- Signal-processing clock contract. Supported values are
         -- 50/100/125/150/200 MHz. AXIS must not be faster than TDC; therefore
         -- end-to-end processing margin and throughput closure use AXIS timing.
@@ -176,6 +180,14 @@ entity tdc_gpx_top is
         o_m_axis_fall_tuser  : out std_logic_vector(0 downto 0);
         i_m_axis_fall_tready : in  std_logic;
 
+        -- VDMA programming contract, stable for the active Face snapshot:
+        --   HSIZE_lane = 48 + align16(lane_cell_slots * canonical_cell_bytes)
+        --   VSIZE      = cols_per_face (one accepted shot per line)
+        -- STRIDE is equal to the matching HSIZE for tightly packed buffers.
+        o_vdma_hsize_bytes_rise : out unsigned(15 downto 0);
+        o_vdma_hsize_bytes_fall : out unsigned(15 downto 0);
+        o_vdma_vsize_lines      : out unsigned(15 downto 0);
+
         -- Calibration inputs (from external computation, i_axis_aclk domain)
         i_bin_resolution_ps : in  unsigned(15 downto 0);
         i_k_dist_fixed      : in  unsigned(31 downto 0);
@@ -190,6 +202,43 @@ entity tdc_gpx_top is
 end entity tdc_gpx_top;
 
 architecture rtl of tdc_gpx_top is
+
+    function fn_lane_cell_slots(
+        chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        stops     : unsigned(3 downto 0)
+    ) return unsigned is
+        variable v_slots : natural range 0 to c_MAX_ROWS_PER_FACE;
+    begin
+        v_slots := fn_count_ones(chip_mask) * to_integer(stops);
+        return to_unsigned(v_slots, 16);
+    end function;
+
+    function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural is
+    begin
+        case cfg is
+            when "001" => return 1;
+            when "010" => return 2;
+            when "011" => return 3;
+            when "100" => return 4;
+            when "101" => return 5;
+            when "110" => return 6;
+            -- 000 is the defined alias for 7. Treat startup X/U the same
+            -- way so combinational geometry has a conservative value before
+            -- the first registered Face snapshot settles.
+            when others => return c_MAX_HITS_PER_STOP;
+        end case;
+    end function;
+
+    function fn_lane_hsize(
+        cell_slots : unsigned(15 downto 0);
+        max_hits   : unsigned(2 downto 0)
+    ) return unsigned is
+    begin
+        return to_unsigned(
+            fn_vdma_line_bytes(to_integer(cell_slots),
+                               fn_effective_max_hits(max_hits)),
+            16);
+    end function;
 
     -- =========================================================================
     -- Configuration signals
@@ -336,10 +385,16 @@ architecture rtl of tdc_gpx_top is
     signal s_global_shot_seq_r      : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal s_face_shot_count_r      : unsigned(15 downto 0);
     signal s_face_active_mask_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_face_rise_mask         : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_face_fall_mask         : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_face_stops_per_chip_r  : unsigned(3 downto 0);
     signal s_face_cols_per_face_r   : unsigned(15 downto 0);
     signal s_rows_per_face_r        : unsigned(15 downto 0);
     signal s_hsize_bytes_r          : unsigned(15 downto 0);
+    signal s_cell_slots_rise        : unsigned(15 downto 0);
+    signal s_cell_slots_fall        : unsigned(15 downto 0);
+    signal s_vdma_hsize_rise        : unsigned(15 downto 0);
+    signal s_vdma_hsize_fall        : unsigned(15 downto 0);
     signal s_face_state_idle        : std_logic;
     signal s_face_closing           : std_logic;
     signal s_packet_start           : std_logic;
@@ -425,13 +480,38 @@ architecture rtl of tdc_gpx_top is
 
 begin
 
+    assert g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
+        or g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
+        report "tdc_gpx_top: g_SLOPE_CHIP_MODE must be DEDICATED_2X2 or SHARED_DUAL_EDGE"
+        severity failure;
+
+    s_face_rise_mask <= s_face_active_mask_r
+        when g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
+        else s_face_active_mask_r and "0011";
+    s_face_fall_mask <= s_face_active_mask_r
+        when g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
+        else s_face_active_mask_r and "1100";
+
+    s_cell_slots_rise <= fn_lane_cell_slots(s_face_rise_mask,
+                                             s_face_stops_per_chip_r);
+    s_cell_slots_fall <= fn_lane_cell_slots(s_face_fall_mask,
+                                             s_face_stops_per_chip_r);
+    s_vdma_hsize_rise <= fn_lane_hsize(s_cell_slots_rise,
+                                        s_cfg_face_r.max_hits_cfg);
+    s_vdma_hsize_fall <= fn_lane_hsize(s_cell_slots_fall,
+                                        s_cfg_face_r.max_hits_cfg);
+
+    o_vdma_hsize_bytes_rise <= s_vdma_hsize_rise;
+    o_vdma_hsize_bytes_fall <= s_vdma_hsize_fall;
+    o_vdma_vsize_lines      <= s_face_cols_per_face_r;
+
     -- C06 v004: force_reinit is a recovery boundary for the chip-control
     -- cluster and the face sequencer. Treat it like soft_reset for
     -- AXIS-domain sequencing state so the next START begins from ST_IDLE.
     s_cmd_recovery_reset <= s_cmd_soft_reset or s_cmd_force_reinit;
 
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
-        report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+        report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
     assert fn_range_clk_mhz_supported(g_AXIS_CLK_MHZ)
@@ -806,14 +886,16 @@ begin
             i_pipeline_abort_fall => s_pipeline_abort_fall,  -- #22 Sprint 3
             i_face_start_gated   => s_face_start_gated,
             -- Configuration (latched at face_start)
-            i_face_active_mask   => s_face_active_mask_r,
+            i_face_rise_mask     => s_face_rise_mask,
+            i_face_fall_mask     => s_face_fall_mask,
             i_face_stops_per_chip => s_face_stops_per_chip_r,
             -- Round 11 item 2: use face snapshot so output_stage's beat count
             -- and scan-timeout match header metadata and cell_builder within
             -- the same face (both driven by s_cfg_face_r).
             i_max_hits_cfg       => s_cfg_face_r.max_hits_cfg,
             i_max_scan_clks      => s_cfg_face_r.max_scan_clks,
-            i_rows_per_face      => s_rows_per_face_r,
+            i_cell_slots_rise    => s_cell_slots_rise,
+            i_cell_slots_fall    => s_cell_slots_fall,
             -- Header metadata
             i_cfg_face           => s_cfg_face_r,
             i_frame_id           => s_frame_id_r,
@@ -903,7 +985,9 @@ begin
     -- =========================================================================
     u_face_seq : entity work.tdc_gpx_face_seq
         generic map (
-            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
+            g_REQUIRE_DEDICATED_GROUPS =>
+                g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
         )
         port map (
             i_clk                  => i_axis_aclk,

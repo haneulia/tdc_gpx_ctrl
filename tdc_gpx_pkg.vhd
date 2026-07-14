@@ -86,6 +86,14 @@ package tdc_gpx_pkg is
     -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
     function fn_cell_size_rt(max_hits : natural) return natural;
     function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
+    -- Canonical VDMA storage keeps the existing 32-bit cell word ABI:
+    -- ceil(max_hits/2) hit words followed by one metadata word. Wider AXIS
+    -- outputs pack these words across cell boundaries instead of padding each
+    -- cell to a full 64/128-bit beat.
+    function fn_canonical_cell_words(max_hits : natural) return natural;
+    function fn_canonical_cell_bytes(max_hits : natural) return natural;
+    function fn_align_up(value : natural; alignment : positive) return natural;
+    function fn_vdma_line_bytes(cell_slots : natural; max_hits : natural) return natural;
 
     -- AXI4-Stream boundary width constants.
     -- Phase B keeps C01/C02 internal raw/event payloads at their current
@@ -198,6 +206,10 @@ package tdc_gpx_pkg is
     -- Header prefix (embedded in each VDMA line, 48 bytes fixed)
     constant c_HDR_PREFIX_BYTES     : natural := 48;
     constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_TDATA_BYTES;  -- 12@32b, 6@64b, 3@128b via generics
+    -- All supported output widths divide 16 bytes. Aligning only at the line
+    -- boundary keeps full TKEEP and a width-independent HSIZE/STRIDE while
+    -- avoiding the former per-cell padding.
+    constant c_VDMA_LINE_ALIGN_BYTES : positive := 16;
 
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
@@ -894,6 +906,31 @@ package body tdc_gpx_pkg is
         v_hit_beats := fn_ceil_div(max_hits, tdata_width / c_HIT_SLOT_DATA_WIDTH);
         -- total = hit beats + 1 metadata beat (always present)
         return v_hit_beats + 1;
+    end function;
+
+    function fn_canonical_cell_words(max_hits : natural) return natural is
+    begin
+        assert max_hits >= 1 and max_hits <= c_MAX_HITS_PER_STOP
+            report "tdc_gpx_pkg: canonical cell max_hits must be in 1..7"
+            severity failure;
+        return fn_ceil_div(max_hits, 2) + 1;
+    end function;
+
+    function fn_canonical_cell_bytes(max_hits : natural) return natural is
+    begin
+        return fn_canonical_cell_words(max_hits) * 4;
+    end function;
+
+    function fn_align_up(value : natural; alignment : positive) return natural is
+    begin
+        return fn_ceil_div(value, alignment) * alignment;
+    end function;
+
+    function fn_vdma_line_bytes(cell_slots : natural; max_hits : natural) return natural is
+    begin
+        return c_HDR_PREFIX_BYTES
+             + fn_align_up(cell_slots * fn_canonical_cell_bytes(max_hits),
+                           c_VDMA_LINE_ALIGN_BYTES);
     end function;
 
     -- =========================================================================

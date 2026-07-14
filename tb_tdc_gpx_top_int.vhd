@@ -70,6 +70,7 @@ entity tb_tdc_gpx_top_int is
         G_TDC_CLK_MHZ     : real    := 200.0;   -- TDC bus/control clock (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (m)
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
+        G_SLOPE_CHIP_MODE : string  := "DEDICATED_2X2";
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;
@@ -93,7 +94,7 @@ entity tb_tdc_gpx_top_int is
         -- Bit i = 1 drives chip i raw events as rising slope; bit i = 0
         -- drives falling slope. Target 4-chip split is "0011":
         -- chip0/1 rising, chip2/3 falling.
-        G_CHIP_SLOPE_MASK : std_logic_vector(3 downto 0) := "1111";
+        G_CHIP_SLOPE_MASK : std_logic_vector(3 downto 0) := "0011";
         -- Force raw Hit[16]=1 in the behavioral GPX model. This makes
         -- long-range metadata preservation visible at final VDMA output.
         G_FORCE_HIT16     : boolean := false;
@@ -202,10 +203,24 @@ architecture sim of tb_tdc_gpx_top_int is
                                 max_hits       : natural;
                                 tdata_width    : natural) return natural is
     begin
-        return cols_per_face *
-               (fn_hdr_prefix_beats(tdata_width) +
-                active_chips * stops_per_chip *
-                fn_beats_per_cell_rt(max_hits, tdata_width));
+        return cols_per_face
+             * fn_vdma_line_bytes(active_chips * stops_per_chip, max_hits)
+             / (tdata_width / 8);
+    end function;
+
+    function fn_slope_active_chips(
+        active_mask : std_logic_vector(3 downto 0);
+        mode        : string;
+        rise_lane   : boolean
+    ) return natural is
+    begin
+        if mode = "SHARED_DUAL_EDGE" then
+            return fn_count_ones(active_mask);
+        elsif rise_lane then
+            return fn_count_ones(active_mask and "0011");
+        else
+            return fn_count_ones(active_mask and "1100");
+        end if;
     end function;
 
     function fn_expected_axis_beats(mode             : natural;
@@ -380,6 +395,9 @@ architecture sim of tb_tdc_gpx_top_int is
     signal m_fall_tlast  : std_logic;
     signal m_fall_tuser  : std_logic_vector(0 downto 0);
     signal m_fall_tready : std_logic := '1';
+    signal vdma_hsize_rise : unsigned(15 downto 0);
+    signal vdma_hsize_fall : unsigned(15 downto 0);
+    signal vdma_vsize_lines : unsigned(15 downto 0);
 
     -- =========================================================================
     -- Calibration constants
@@ -453,22 +471,43 @@ architecture sim of tb_tdc_gpx_top_int is
         std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
         std_logic_vector(to_unsigned(C_MAX_RANGE_5NS_TICKS, 16));
     constant C_ACTIVE_CHIPS : natural := fn_count_ones(G_ACTIVE_CHIP_MASK);
+    constant C_RISE_ACTIVE_CHIPS : natural :=
+        fn_slope_active_chips(G_ACTIVE_CHIP_MASK, G_SLOPE_CHIP_MODE, true);
+    constant C_FALL_ACTIVE_CHIPS : natural :=
+        fn_slope_active_chips(G_ACTIVE_CHIP_MASK, G_SLOPE_CHIP_MODE, false);
     constant C_TOTAL_LINES  : natural := G_N_FACES * G_COLS_PER_FACE;
-    constant C_TARGET_FACE_BEATS : natural :=
-        fn_face_axis_beats(G_COLS_PER_FACE, C_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
+    constant C_TARGET_FACE_BEATS_RISE : natural :=
+        fn_face_axis_beats(G_COLS_PER_FACE, C_RISE_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
                            C_MAX_HITS, C_OUTPUT_W);
-    constant C_DEFAULT_FACE_BEATS : natural :=
-        fn_face_axis_beats(G_COLS_PER_FACE, C_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
+    constant C_TARGET_FACE_BEATS_FALL : natural :=
+        fn_face_axis_beats(G_COLS_PER_FACE, C_FALL_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
+                           C_MAX_HITS, C_OUTPUT_W);
+    constant C_DEFAULT_FACE_BEATS_RISE : natural :=
+        fn_face_axis_beats(G_COLS_PER_FACE, C_RISE_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
                            c_MAX_HITS_PER_STOP, C_OUTPUT_W);
-    constant C_EXPECTED_AXIS_BEATS : natural :=
+    constant C_DEFAULT_FACE_BEATS_FALL : natural :=
+        fn_face_axis_beats(G_COLS_PER_FACE, C_FALL_ACTIVE_CHIPS, G_STOPS_PER_CHIP,
+                           c_MAX_HITS_PER_STOP, C_OUTPUT_W);
+    constant C_EXPECTED_AXIS_BEATS_RISE : natural :=
         fn_expected_axis_beats(G_MAX_HITS_WRITE_MODE, G_N_FACES,
-                               C_TARGET_FACE_BEATS, C_DEFAULT_FACE_BEATS);
+                               C_TARGET_FACE_BEATS_RISE, C_DEFAULT_FACE_BEATS_RISE);
+    constant C_EXPECTED_AXIS_BEATS_FALL : natural :=
+        fn_expected_axis_beats(G_MAX_HITS_WRITE_MODE, G_N_FACES,
+                               C_TARGET_FACE_BEATS_FALL, C_DEFAULT_FACE_BEATS_FALL);
     constant C_RECOVERY_RUNS : natural := fn_recovery_runs(G_RECOVERY_MODE);
     constant C_EXPECTED_TOTAL_LINES : natural := C_TOTAL_LINES * C_RECOVERY_RUNS;
-    constant C_EXPECTED_TOTAL_AXIS_BEATS : natural := C_EXPECTED_AXIS_BEATS * C_RECOVERY_RUNS;
+    constant C_EXPECTED_TOTAL_AXIS_BEATS_RISE : natural :=
+        C_EXPECTED_AXIS_BEATS_RISE * C_RECOVERY_RUNS;
+    constant C_EXPECTED_TOTAL_AXIS_BEATS_FALL : natural :=
+        C_EXPECTED_AXIS_BEATS_FALL * C_RECOVERY_RUNS;
     constant C_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(C_OUTPUT_W);
-    constant C_BEATS_PER_CELL : natural :=
-        fn_beats_per_cell_rt(C_MAX_HITS, C_OUTPUT_W);
+    constant C_WORDS_PER_BEAT : natural := C_OUTPUT_W / 32;
+    constant C_CANONICAL_WORDS_PER_CELL : natural :=
+        fn_canonical_cell_words(C_MAX_HITS);
+    constant C_RISE_DATA_WORDS : natural :=
+        C_RISE_ACTIVE_CHIPS * G_STOPS_PER_CHIP * C_CANONICAL_WORDS_PER_CELL;
+    constant C_FALL_DATA_WORDS : natural :=
+        C_FALL_ACTIVE_CHIPS * G_STOPS_PER_CHIP * C_CANONICAL_WORDS_PER_CELL;
     constant C_EXPECTED_WORDS_PER_IFIFO : natural :=
         fn_expected_words_per_ififo(G_STOPS_PER_CHIP, G_ECHOES_PER_STOP);
 
@@ -661,6 +700,7 @@ begin
         generic map (
             g_HW_VERSION     => x"00010000",
             g_OUTPUT_WIDTH   => C_OUTPUT_W,
+            g_SLOPE_CHIP_MODE => G_SLOPE_CHIP_MODE,
             g_AXIS_CLK_MHZ   => C_DOMAIN_CLK_MHZ,
             g_TDC_CLK_MHZ    => C_TDC_DOMAIN_CLK_MHZ,
             g_POWERUP_CLKS   => G_POWERUP_CLKS,
@@ -765,6 +805,9 @@ begin
             o_m_axis_fall_tlast  => m_fall_tlast,
             o_m_axis_fall_tuser  => m_fall_tuser,
             i_m_axis_fall_tready => m_fall_tready,
+            o_vdma_hsize_bytes_rise => vdma_hsize_rise,
+            o_vdma_hsize_bytes_fall => vdma_hsize_fall,
+            o_vdma_vsize_lines      => vdma_vsize_lines,
             -- Calibration
             i_bin_resolution_ps => i_bin_resolution_ps,
             i_k_dist_fixed      => i_k_dist_fixed,
@@ -779,7 +822,10 @@ begin
     p_mon : process(clk)
         variable v_rise_line_beat : natural := 0;
         variable v_fall_line_beat : natural := 0;
-        variable v_data_idx       : natural := 0;
+        variable v_data_word_idx  : natural := 0;
+        variable v_meta_inc       : natural range 0 to 4 := 0;
+        variable v_nonzero_inc    : natural range 0 to 4 := 0;
+        variable v_word           : std_logic_vector(31 downto 0);
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
@@ -827,12 +873,26 @@ begin
                         v_rise_line_beat := 0;
                     end if;
                     if v_rise_line_beat >= C_HDR_PREFIX_BEATS then
-                        v_data_idx := v_rise_line_beat - C_HDR_PREFIX_BEATS;
-                        if (v_data_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
-                            mon_rise_metadata_count <= mon_rise_metadata_count + 1;
-                            if m_rise_tdata(6 downto 0) /= "0000000" then
-                                mon_rise_hit16_meta_nonzero <= mon_rise_hit16_meta_nonzero + 1;
+                        v_meta_inc    := 0;
+                        v_nonzero_inc := 0;
+                        for lane in 0 to C_WORDS_PER_BEAT - 1 loop
+                            v_data_word_idx :=
+                                (v_rise_line_beat - C_HDR_PREFIX_BEATS)
+                                * C_WORDS_PER_BEAT + lane;
+                            if v_data_word_idx < C_RISE_DATA_WORDS
+                               and (v_data_word_idx mod C_CANONICAL_WORDS_PER_CELL)
+                                   = C_CANONICAL_WORDS_PER_CELL - 1 then
+                                v_meta_inc := v_meta_inc + 1;
+                                v_word := m_rise_tdata(32 * lane + 31 downto 32 * lane);
+                                if v_word(6 downto 0) /= "0000000" then
+                                    v_nonzero_inc := v_nonzero_inc + 1;
+                                end if;
                             end if;
+                        end loop;
+                        if v_meta_inc > 0 then
+                            mon_rise_metadata_count <= mon_rise_metadata_count + v_meta_inc;
+                            mon_rise_hit16_meta_nonzero <=
+                                mon_rise_hit16_meta_nonzero + v_nonzero_inc;
                         end if;
                     end if;
                     mon_rise_beats <= mon_rise_beats + 1;
@@ -867,12 +927,26 @@ begin
                         v_fall_line_beat := 0;
                     end if;
                     if v_fall_line_beat >= C_HDR_PREFIX_BEATS then
-                        v_data_idx := v_fall_line_beat - C_HDR_PREFIX_BEATS;
-                        if (v_data_idx mod C_BEATS_PER_CELL) = (C_BEATS_PER_CELL - 1) then
-                            mon_fall_metadata_count <= mon_fall_metadata_count + 1;
-                            if m_fall_tdata(6 downto 0) /= "0000000" then
-                                mon_fall_hit16_meta_nonzero <= mon_fall_hit16_meta_nonzero + 1;
+                        v_meta_inc    := 0;
+                        v_nonzero_inc := 0;
+                        for lane in 0 to C_WORDS_PER_BEAT - 1 loop
+                            v_data_word_idx :=
+                                (v_fall_line_beat - C_HDR_PREFIX_BEATS)
+                                * C_WORDS_PER_BEAT + lane;
+                            if v_data_word_idx < C_FALL_DATA_WORDS
+                               and (v_data_word_idx mod C_CANONICAL_WORDS_PER_CELL)
+                                   = C_CANONICAL_WORDS_PER_CELL - 1 then
+                                v_meta_inc := v_meta_inc + 1;
+                                v_word := m_fall_tdata(32 * lane + 31 downto 32 * lane);
+                                if v_word(6 downto 0) /= "0000000" then
+                                    v_nonzero_inc := v_nonzero_inc + 1;
+                                end if;
                             end if;
+                        end loop;
+                        if v_meta_inc > 0 then
+                            mon_fall_metadata_count <= mon_fall_metadata_count + v_meta_inc;
+                            mon_fall_hit16_meta_nonzero <=
+                                mon_fall_hit16_meta_nonzero + v_nonzero_inc;
                         end if;
                     end if;
                     mon_fall_beats <= mon_fall_beats + 1;
@@ -1410,9 +1484,11 @@ begin
            & "  expected_words_per_ififo=" & integer'image(C_EXPECTED_WORDS_PER_IFIFO)
            & "  faces=" & integer'image(G_N_FACES)
            & "  cols=" & integer'image(G_COLS_PER_FACE)
-           & "  expected_beats_per_run=" & integer'image(C_EXPECTED_AXIS_BEATS)
+           & "  expected_beats_per_run_rise=" & integer'image(C_EXPECTED_AXIS_BEATS_RISE)
+           & "  expected_beats_per_run_fall=" & integer'image(C_EXPECTED_AXIS_BEATS_FALL)
            & "  recovery_runs=" & integer'image(C_RECOVERY_RUNS)
-           & "  expected_beats_total=" & integer'image(C_EXPECTED_TOTAL_AXIS_BEATS)
+           & "  expected_beats_total_rise=" & integer'image(C_EXPECTED_TOTAL_AXIS_BEATS_RISE)
+           & "  expected_beats_total_fall=" & integer'image(C_EXPECTED_TOTAL_AXIS_BEATS_FALL)
            & "  bp_gap=" & integer'image(G_BP_TREADY_GAP)
            & "  bp_lane_mode=" & integer'image(G_BP_LANE_MODE)
            & "  recovery=" & fn_recovery_mode_name(G_RECOVERY_MODE));
@@ -1420,6 +1496,9 @@ begin
            & "  tlast_cnt=" & integer'image(mon_rise_frame_end));
         pl("  falling stream  : beats=" & integer'image(mon_fall_beats)
            & "  tlast_cnt=" & integer'image(mon_fall_frame_end));
+        pl("  vdma geometry   : hsize_rise=" & integer'image(to_integer(vdma_hsize_rise))
+           & "  hsize_fall=" & integer'image(to_integer(vdma_hsize_fall))
+           & "  vsize=" & integer'image(to_integer(vdma_vsize_lines)));
         pl("  c06 timing       : rise_first_cycle=" & integer'image(mon_rise_first_cycle)
            & "  rise_last_cycle=" & integer'image(mon_rise_last_cycle)
            & "  fall_first_cycle=" & integer'image(mon_fall_first_cycle)
@@ -1446,11 +1525,26 @@ begin
         assert mon_fall_frame_end = C_EXPECTED_TOTAL_LINES
             report "tb_tdc_gpx_top_int: falling tlast count mismatch"
             severity error;
-        assert mon_rise_beats = C_EXPECTED_TOTAL_AXIS_BEATS
+        assert mon_rise_beats = C_EXPECTED_TOTAL_AXIS_BEATS_RISE
             report "tb_tdc_gpx_top_int: rising beat count mismatch"
             severity error;
-        assert mon_fall_beats = C_EXPECTED_TOTAL_AXIS_BEATS
+        assert mon_fall_beats = C_EXPECTED_TOTAL_AXIS_BEATS_FALL
             report "tb_tdc_gpx_top_int: falling beat count mismatch"
+            severity error;
+        if G_MAX_HITS_WRITE_MODE = 1 then
+            assert to_integer(vdma_hsize_rise) =
+                   fn_vdma_line_bytes(C_RISE_ACTIVE_CHIPS * G_STOPS_PER_CHIP,
+                                      C_MAX_HITS)
+                report "tb_tdc_gpx_top_int: rising HSIZE mismatch"
+                severity error;
+            assert to_integer(vdma_hsize_fall) =
+                   fn_vdma_line_bytes(C_FALL_ACTIVE_CHIPS * G_STOPS_PER_CHIP,
+                                      C_MAX_HITS)
+                report "tb_tdc_gpx_top_int: falling HSIZE mismatch"
+                severity error;
+        end if;
+        assert to_integer(vdma_vsize_lines) = G_COLS_PER_FACE
+            report "tb_tdc_gpx_top_int: VSIZE mismatch"
             severity error;
         assert mon_irq_pipe_cnt = 0
             report "tb_tdc_gpx_top_int: o_irq_pipe must stay reserved/low"
