@@ -106,6 +106,7 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_raw_event_builder.vhd",
     "$Hdl/tdc_gpx_decode_pipe.vhd",
     "$Hdl/tdc_gpx_face_assembler.vhd",
+    "$Hdl/tdc_gpx_line_packer.vhd",
     "$Hdl/tdc_gpx_header_inserter.vhd",
     "$Hdl/tdc_gpx_face_seq.vhd",
     "$Hdl/tdc_gpx_output_stage.vhd",
