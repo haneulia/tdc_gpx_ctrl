@@ -34,6 +34,19 @@ entity tdc_gpx_cell_pipe is
 
         -- Control / Config
         i_shot_start_per_chip   : in  std_logic_vector(c_N_CHIPS-1 downto 0);
+        -- CHAIN P1 (2026-07-16): per-slope lane chip masks (face snapshot).
+        -- A chip's builder participates in a slope lane only when its bit
+        -- is set: shot_start is gated per (chip, slope) and drain_done
+        -- control beats are forwarded only to enabled slopes. Without this,
+        -- DEDICATED_2X2 topology made every wrong-slope builder emit a full
+        -- blank slice per shot into a face_assembler input FIFO that is
+        -- never read (lane-masked chip), polluting the shot_flush_drop
+        -- sticky/mask on every single shot. Hit beats addressed to a masked
+        -- slope are consumed and dropped with a per-chip sticky (physical
+        -- edge misconfiguration visibility). Defaults keep the legacy
+        -- both-slopes-active behavior for existing instantiations.
+        i_rise_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+        i_fall_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
         i_abort                 : in  std_logic;   -- legacy global abort (default)
         -- #22 Sprint 2: per-slope abort ports. Tie to i_abort if caller wants
         -- legacy coupling; drive separately when slope-independence is
@@ -86,7 +99,11 @@ entity tdc_gpx_cell_pipe is
         -- a cross-shot race. Replaces the earlier slice_done_faulted
         -- side-channel which could mis-align across FIFO latency.
         o_cell_rise_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_cell_fall_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        o_cell_fall_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        -- CHAIN P1: sticky per chip -- a hit beat addressed a masked slope
+        -- and was dropped at the slope demux. Cleared on reset/global abort.
+        o_masked_slope_drop_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_masked_slope_drop_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
 end entity tdc_gpx_cell_pipe;
 
@@ -144,6 +161,13 @@ architecture rtl of tdc_gpx_cell_pipe is
     signal s_abort_rise  : std_logic;
     signal s_abort_fall  : std_logic;
 
+    -- CHAIN P1: lane-gated shot_start per (chip, slope) and masked-slope
+    -- hit-drop stickies (written by p_slope_demux, single driver).
+    signal s_shot_start_rise    : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_shot_start_fall    : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_masked_drop_rise_r : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
+    signal s_masked_drop_fall_r : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
+
 begin
 
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
@@ -170,6 +194,14 @@ begin
     -- Effective per-slope abort (Sprint 2): global takes priority, additive OR
     s_abort_rise <= i_abort or i_abort_rise;
     s_abort_fall <= i_abort or i_abort_fall;
+
+    -- CHAIN P1: a builder only opens a shot for its own lane. Masks are
+    -- face-snapshot values (stable at the registered shot_start pulse).
+    s_shot_start_rise <= i_shot_start_per_chip and i_rise_chip_mask;
+    s_shot_start_fall <= i_shot_start_per_chip and i_fall_chip_mask;
+
+    o_masked_slope_drop_rise <= s_masked_drop_rise_r;
+    o_masked_slope_drop_fall <= s_masked_drop_fall_r;
 
     -- Per-chip: can this chip's demux accept new input?
     -- drain_done goes to both → need both ready
@@ -217,6 +249,8 @@ begin
             if i_rst_n = '0' or i_abort = '1' then
                 s_rise_valid_r <= (others => '0');
                 s_fall_valid_r <= (others => '0');
+                s_masked_drop_rise_r <= (others => '0');
+                s_masked_drop_fall_r <= (others => '0');
             else
                 for i in 0 to c_N_CHIPS - 1 loop
                     -- Clear valid on downstream handshake or matching slope abort.
@@ -233,26 +267,35 @@ begin
 
                     -- Load only beats popped from the input skid. Aborted-slope
                     -- beats are consumed but intentionally not re-issued.
+                    -- CHAIN P1: lane-masked slopes are treated the same way --
+                    -- drain_done control beats simply skip a masked slope
+                    -- (broadcast by design, not an error), while a HIT beat
+                    -- addressed to a masked slope is dropped WITH a sticky
+                    -- (it indicates a physical edge misconfiguration).
                     if s_evt_skid_tvalid(i) = '1' and s_evt_skid_tready(i) = '1' then
                         if s_evt_skid_tuser(i)(7) = '1' then
-                            if s_abort_rise = '0' then
+                            if s_abort_rise = '0' and i_rise_chip_mask(i) = '1' then
                                 s_rise_valid_r(i) <= '1';
                                 s_rise_tdata_r(i) <= s_evt_skid_tdata(i);
                                 s_rise_tuser_r(i) <= s_evt_skid_tuser(i);
                             end if;
-                            if s_abort_fall = '0' then
+                            if s_abort_fall = '0' and i_fall_chip_mask(i) = '1' then
                                 s_fall_valid_r(i) <= '1';
                                 s_fall_tdata_r(i) <= s_evt_skid_tdata(i);
                                 s_fall_tuser_r(i) <= s_evt_skid_tuser(i);
                             end if;
                         elsif s_evt_skid_tuser(i)(0) = '1' then
-                            if s_abort_rise = '0' then
+                            if i_rise_chip_mask(i) = '0' then
+                                s_masked_drop_rise_r(i) <= '1';
+                            elsif s_abort_rise = '0' then
                                 s_rise_valid_r(i) <= '1';
                                 s_rise_tdata_r(i) <= s_evt_skid_tdata(i);
                                 s_rise_tuser_r(i) <= s_evt_skid_tuser(i);
                             end if;
                         else
-                            if s_abort_fall = '0' then
+                            if i_fall_chip_mask(i) = '0' then
+                                s_masked_drop_fall_r(i) <= '1';
+                            elsif s_abort_fall = '0' then
                                 s_fall_valid_r(i) <= '1';
                                 s_fall_tdata_r(i) <= s_evt_skid_tdata(i);
                                 s_fall_tuser_r(i) <= s_evt_skid_tuser(i);
@@ -320,7 +363,7 @@ begin
                 i_s_axis_tdata      => s_rise_tdata_r(i),
                 i_s_axis_tuser      => s_rise_tuser_r(i),
                 o_s_axis_tready     => s_rise_tready(i),
-                i_shot_start        => i_shot_start_per_chip(i),
+                i_shot_start        => s_shot_start_rise(i),
                 i_abort             => s_abort_rise,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,
@@ -351,7 +394,7 @@ begin
                 i_s_axis_tdata      => s_fall_tdata_r(i),
                 i_s_axis_tuser      => s_fall_tuser_r(i),
                 o_s_axis_tready     => s_fall_tready(i),
-                i_shot_start        => i_shot_start_per_chip(i),
+                i_shot_start        => s_shot_start_fall(i),
                 i_abort             => s_abort_fall,
                 i_stops_per_chip    => i_face_stops_per_chip,
                 i_max_hits_cfg      => i_max_hits_cfg,

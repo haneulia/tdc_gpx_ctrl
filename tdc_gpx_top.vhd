@@ -800,6 +800,13 @@ begin
             o_evt_sk_tready         => s_evt_sk_tready,
             -- Control / Config
             i_shot_start_per_chip   => s_shot_start_per_chip,
+            -- CHAIN P1: slope lane masks (same source as output_stage's
+            -- face_rise/fall_mask). In DEDICATED_2X2 this keeps the
+            -- wrong-slope cell_builders idle so they stop emitting blank
+            -- slices into never-read face_assembler input FIFOs (which
+            -- polluted shot_flush_drop every shot).
+            i_rise_chip_mask        => s_face_rise_mask,
+            i_fall_chip_mask        => s_face_fall_mask,
             i_abort                 => s_pipeline_abort,       -- global (legacy)
             i_abort_rise            => s_pipeline_abort_rise,  -- #22 Sprint 2
             i_abort_fall            => s_pipeline_abort_fall,  -- #22 Sprint 2
@@ -846,7 +853,12 @@ begin
             o_quarantine_escape_fall => s_quarantine_escape_fall,
             -- Round 13 follow-up P1: per-chip cell tuser (faulted flag on tlast)
             o_cell_rise_tuser => s_cell_rise_tuser,
-            o_cell_fall_tuser => s_cell_fall_tuser
+            o_cell_fall_tuser => s_cell_fall_tuser,
+            -- CHAIN P1: masked-slope hit-drop stickies. Not yet surfaced in
+            -- a CSR (no free STAT slot allocated); TB-observable. Wire into
+            -- status_agg when the next STAT map revision opens a slot.
+            o_masked_slope_drop_rise => open,
+            o_masked_slope_drop_fall => open
         );
 
     -- =========================================================================
