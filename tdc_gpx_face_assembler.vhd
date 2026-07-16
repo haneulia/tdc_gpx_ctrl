@@ -210,7 +210,15 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     signal s_flush        : std_logic;  -- input FIFO flush (every shot_start/abort)
     signal s_fifo_rst_n   : std_logic;  -- active-low reset for input FIFOs
-    signal s_out_fifo_rst_n : std_logic;  -- active-low reset for output FIFO (abort only)
+    signal s_out_fifo_rst_n : std_logic;  -- active-low reset for output FIFO
+                                          -- (abort, or shot_start when empty)
+
+    -- CHAIN-P0-01: output FIFO occupancy tracker (0..16 = FIFO_DEPTH) and
+    -- internal mirror of the FIFO's m_axis_tvalid so the read handshake can
+    -- be counted (out ports are not read back for tool portability).
+    signal s_m_axis_tvalid_int : std_logic;
+    signal s_out_fifo_cnt_r    : unsigned(4 downto 0) := (others => '0');
+    signal s_out_fifo_quiet    : std_logic;
 
     -- =========================================================================
     -- FSM
@@ -433,7 +441,7 @@ begin
         )
         port map (
             s_aclk          => i_clk,
-            s_aresetn       => s_out_fifo_rst_n,  -- flush on abort ONLY (not shot_start)
+            s_aresetn       => s_out_fifo_rst_n,  -- abort, or shot_start when provably empty
             s_axis_tdata    => s_pipe_tdata_r,
             s_axis_tvalid   => s_pipe_tvalid_r,
             s_axis_tready   => s_pipe_tready,
@@ -444,7 +452,7 @@ begin
             s_axis_tid      => "0",
             s_axis_tdest    => "0",
             m_axis_tdata    => o_m_axis_tdata,
-            m_axis_tvalid   => o_m_axis_tvalid,
+            m_axis_tvalid   => s_m_axis_tvalid_int,
             m_axis_tready   => i_m_axis_tready,
             m_axis_tlast    => o_m_axis_tlast,
             m_axis_tkeep    => open,
@@ -485,25 +493,54 @@ begin
     --   specific chip's stream needs fault isolation.
     s_flush          <= i_shot_start or i_abort;
     s_fifo_rst_n     <= i_rst_n and (not s_flush);         -- input FIFOs: flush on shot_start + abort
-    -- Output FIFO reset: abort OR shot_start.
+    -- Output FIFO reset: abort, or shot_start ONLY when the FIFO is
+    -- provably empty (CHAIN-P0-01 shot-boundary flush guard).
     --
-    -- The shot_start pulse is REQUIRED (not just a flush preference). The
-    -- xpm_fifo_axis primitive in xsim 2025.2.1 locks `s_axis_tready`='0'
-    -- forever after reset release unless there is at least one additional
-    -- reset toggle after elaboration. Input FIFOs (u_fifo_in) naturally get
-    -- that toggle via s_fifo_rst_n which flushes on shot_start, but the
-    -- output FIFO previously only saw reset on i_abort (which never fires
-    -- in normal flow), so it stayed stuck and swallowed every beat the FSM
-    -- pushed. Full_int TB observed this as "6 header beats and no tlast".
+    -- Background: the xpm_fifo_axis primitive in xsim 2025.2.1 locks
+    -- `s_axis_tready`='0' forever after reset release unless there is at
+    -- least one additional reset toggle after elaboration. Input FIFOs
+    -- (u_fifo_in) naturally get that toggle via s_fifo_rst_n which flushes
+    -- on shot_start; the output FIFO gets it from the first (empty)
+    -- shot_start below. Full_int TB observed the locked state as "6 header
+    -- beats and no tlast".
     --
-    -- The original design concern was that shot_start might flush tail
-    -- beats from the previous row. In practice face_seq gates packet_start
-    -- so that u_fifo_out is drained before the next shot_start arrives,
-    -- and confirming this in simulation is a follow-up. Until that check is
-    -- formal, the shot_start flush is the lesser-of-two-evils fix: it
-    -- unblocks the pipeline and only risks dropping a (possibly empty)
-    -- in-flight tail.
-    s_out_fifo_rst_n <= i_rst_n and (not (i_shot_start or i_abort));
+    -- The previous unconditional shot_start reset assumed face_seq drains
+    -- u_fifo_out before the next shot_start. That interlock only exists for
+    -- the FIRST shot of a face (packet_start gates on hdr_idle); for
+    -- mid-face shots under downstream backpressure the previous row's tail
+    -- (including tlast) was destroyed here, which desyncs line_packer word
+    -- alignment and header_inserter column counting (reproduced by
+    -- tb_tdc_gpx_output_stage_shot_bp scenario B). The occupancy tracker
+    -- below counts write/read handshakes; the reset pulse passes only when
+    -- the count is zero AND no write fires in the same cycle, so buffered
+    -- data can never be dropped while the unlock pulse is preserved.
+    p_out_fifo_track : process(i_clk)
+        variable v_wr : std_logic;
+        variable v_rd : std_logic;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' then
+                s_out_fifo_cnt_r <= (others => '0');
+            else
+                v_wr := s_pipe_tvalid_r and s_pipe_tready;
+                v_rd := s_m_axis_tvalid_int and i_m_axis_tready;
+                if v_wr = '1' and v_rd = '0' then
+                    s_out_fifo_cnt_r <= s_out_fifo_cnt_r + 1;
+                elsif v_wr = '0' and v_rd = '1' then
+                    s_out_fifo_cnt_r <= s_out_fifo_cnt_r - 1;
+                end if;
+            end if;
+        end if;
+    end process p_out_fifo_track;
+
+    s_out_fifo_quiet <= '1' when s_out_fifo_cnt_r = 0
+                                 and s_pipe_tvalid_r = '0'
+                        else '0';
+
+    s_out_fifo_rst_n <= i_rst_n and
+                        (not (i_abort or (i_shot_start and s_out_fifo_quiet)));
+
+    o_m_axis_tvalid  <= s_m_axis_tvalid_int;
 
     -- Flush output skid on face_abort only (registered, 1-cycle after
     -- overrun detection).  Uses s_face_abort_r which is only set in the

@@ -223,6 +223,14 @@ architecture rtl of tdc_gpx_output_stage is
     signal s_fifo_rst_n_rise : std_logic;
     signal s_fifo_rst_n_fall : std_logic;
 
+    -- CHAIN-P0-01: face FIFO occupancy trackers. Counted from the write/read
+    -- handshakes so the shot_start reset pulse below can be gated on
+    -- "provably empty". Range 0..16 matches FIFO_DEPTH.
+    signal s_face_fifo_cnt_rise_r : unsigned(4 downto 0) := (others => '0');
+    signal s_face_fifo_cnt_fall_r : unsigned(4 downto 0) := (others => '0');
+    signal s_face_fifo_quiet_rise : std_logic;
+    signal s_face_fifo_quiet_fall : std_logic;
+
     -- Effective abort per slope (global OR slope-specific)
     signal s_abort_rise : std_logic;
     signal s_abort_fall : std_logic;
@@ -239,14 +247,63 @@ begin
     s_abort_fall <= i_pipeline_abort or i_pipeline_abort_fall;
 
     -- FIFO flush: each slope has its own reset driven by its own abort.
-    -- Also pulse the reset on i_shot_start_gated: xpm_fifo_axis needs at least one
-    -- reset toggle after instantiation to bring s_axis_tready up in simulation --
-    -- without it the FIFO locks at s_axis_tready='0' permanently after reset
-    -- release. shot_start gives us a periodic pulse that's harmless here because
-    -- no face data is ever in-flight at shot_start boundary (face_seq holds
-    -- packet_start until chips drain).
-    s_fifo_rst_n_rise <= i_rst_n and not (s_abort_rise or i_shot_start_gated);
-    s_fifo_rst_n_fall <= i_rst_n and not (s_abort_fall or i_shot_start_gated);
+    --
+    -- CHAIN-P0-01 (shot-boundary flush guard): the reset is also pulsed on
+    -- i_shot_start_gated because xpm_fifo_axis in xsim needs at least one
+    -- reset toggle after elaboration to bring s_axis_tready up (without it
+    -- the FIFO locks at tready='0' and swallows every beat). The original
+    -- unconditional pulse assumed "no face data is in-flight at shot_start",
+    -- but that only holds for the FIRST shot of a face (packet_start is
+    -- interlocked on hdr_idle); mid-face shots have NO such guarantee, and
+    -- under VDMA backpressure the previous line's tail (including tlast)
+    -- was destroyed here, desyncing line_packer/header column accounting
+    -- (reproduced by tb_tdc_gpx_output_stage_shot_bp scenario B).
+    --
+    -- The pulse is therefore gated on a handshake-counted occupancy of
+    -- exactly zero AND no write in flight in the same cycle. The unlock
+    -- pulse still fires on the first (empty) shot_start; a non-empty FIFO
+    -- is left untouched -- by then tready is proven alive anyway.
+    p_face_fifo_track : process(i_clk)
+        variable v_wr : std_logic;
+        variable v_rd : std_logic;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or s_abort_rise = '1' then
+                s_face_fifo_cnt_rise_r <= (others => '0');
+            else
+                v_wr := s_face_tvalid and s_face_tready;
+                v_rd := s_face_buf_tvalid and s_face_buf_tready;
+                if v_wr = '1' and v_rd = '0' then
+                    s_face_fifo_cnt_rise_r <= s_face_fifo_cnt_rise_r + 1;
+                elsif v_wr = '0' and v_rd = '1' then
+                    s_face_fifo_cnt_rise_r <= s_face_fifo_cnt_rise_r - 1;
+                end if;
+            end if;
+            if i_rst_n = '0' or s_abort_fall = '1' then
+                s_face_fifo_cnt_fall_r <= (others => '0');
+            else
+                v_wr := s_face_fall_tvalid and s_face_fall_tready;
+                v_rd := s_face_fall_buf_tvalid and s_face_fall_buf_tready;
+                if v_wr = '1' and v_rd = '0' then
+                    s_face_fifo_cnt_fall_r <= s_face_fifo_cnt_fall_r + 1;
+                elsif v_wr = '0' and v_rd = '1' then
+                    s_face_fifo_cnt_fall_r <= s_face_fifo_cnt_fall_r - 1;
+                end if;
+            end if;
+        end if;
+    end process p_face_fifo_track;
+
+    s_face_fifo_quiet_rise <= '1' when s_face_fifo_cnt_rise_r = 0
+                                       and s_face_tvalid = '0'
+                              else '0';
+    s_face_fifo_quiet_fall <= '1' when s_face_fifo_cnt_fall_r = 0
+                                       and s_face_fall_tvalid = '0'
+                              else '0';
+
+    s_fifo_rst_n_rise <= i_rst_n and not (s_abort_rise
+                             or (i_shot_start_gated and s_face_fifo_quiet_rise));
+    s_fifo_rst_n_fall <= i_rst_n and not (s_abort_fall
+                             or (i_shot_start_gated and s_face_fifo_quiet_fall));
 
     -- =========================================================================
     -- Rising face assembler
