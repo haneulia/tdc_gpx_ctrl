@@ -67,8 +67,23 @@ entity tdc_gpx_status_agg is
         i_shot_overrun       : in  std_logic;
         i_shot_fall_overrun  : in  std_logic;
 
-        -- Outputs
-        o_status             : out t_tdc_status;
+        -- Outputs.
+        --
+        -- LATENT-BUG FIX (2026-07-17): these were one `o_status : out
+        -- t_tdc_status` record port while this module assigned only 4 of
+        -- its fields. In VHDL an out-port is a SOURCE for every element of
+        -- the actual, so the dozens of fields assigned in tdc_gpx_top
+        -- resolved against this port's unassigned-'U' contributions and
+        -- read 'U' in simulation. The Verilog XPM CDC then squashed 'U' to
+        -- 0, so every top-driven STAT5/6/7 sticky silently read as zero at
+        -- the CSR — the exact-zero compares always "passed". Each
+        -- t_tdc_status field must have exactly ONE source: this module now
+        -- exports only the fields it owns, as scalars, and top assembles
+        -- the record.
+        o_busy               : out std_logic;
+        o_pipeline_overrun   : out std_logic;
+        o_rise_overrun       : out std_logic;
+        o_fall_overrun       : out std_logic;
         o_timestamp          : out unsigned(63 downto 0);
         o_error_cycle_count  : out unsigned(31 downto 0);  -- error-active cycle count (not event count)
         o_err_drain_sticky   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -199,10 +214,10 @@ begin
         end if;
     end process p_live_status;
 
-    o_status.busy              <= s_busy_r;
-    o_status.pipeline_overrun  <= s_pipeline_overrun_r;
-    o_status.rise_overrun      <= s_rise_overrun_r;
-    o_status.fall_overrun      <= s_fall_overrun_r;
+    o_busy              <= s_busy_r;
+    o_pipeline_overrun  <= s_pipeline_overrun_r;
+    o_rise_overrun      <= s_rise_overrun_r;
+    o_fall_overrun      <= s_fall_overrun_r;
 
     o_timestamp       <= s_timestamp_r;
     o_error_cycle_count <= s_error_count_r;

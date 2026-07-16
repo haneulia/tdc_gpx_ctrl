@@ -102,6 +102,13 @@ entity tdc_gpx_face_seq is
         o_face_stops_per_chip : out unsigned(3 downto 0);
         o_face_cols_per_face : out unsigned(15 downto 0);
         o_face_n_faces       : out unsigned(3 downto 0);
+        -- Full-mask geometry references (P2 note, 2026-07-16):
+        -- o_rows_per_face = active_chips x stops_per_chip over the FULL
+        -- active mask; verified by tb_tdc_gpx_mask_sweep. o_hsize_bytes is
+        -- the matching full-mask line size. Neither is the VDMA programming
+        -- contract -- that is tdc_gpx_top's per-lane o_vdma_hsize_bytes_*
+        -- (slope lane masks differ from the full mask in DEDICATED mode).
+        -- Top maps both to open; TBs may keep consuming them.
         o_rows_per_face      : out unsigned(15 downto 0);
         o_hsize_bytes        : out unsigned(15 downto 0);
         o_cfg_face           : out t_tdc_cfg   -- full config snapshot for header

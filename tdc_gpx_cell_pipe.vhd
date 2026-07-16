@@ -101,7 +101,9 @@ entity tdc_gpx_cell_pipe is
         o_cell_rise_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_cell_fall_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
         -- CHAIN P1: sticky per chip -- a hit beat addressed a masked slope
-        -- and was dropped at the slope demux. Cleared on reset/global abort.
+        -- and was dropped at the slope demux. Cleared only by i_rst_n
+        -- (survives abort/cmd_stop so SW can read it post-run, matching
+        -- the quarantine_escape precedent).
         o_masked_slope_drop_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_masked_slope_drop_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
@@ -249,8 +251,15 @@ begin
             if i_rst_n = '0' or i_abort = '1' then
                 s_rise_valid_r <= (others => '0');
                 s_fall_valid_r <= (others => '0');
-                s_masked_drop_rise_r <= (others => '0');
-                s_masked_drop_fall_r <= (others => '0');
+                -- Stickies survive i_abort on purpose: cmd_stop at end of a
+                -- run raises the global abort, and SW reads STAT7 after
+                -- stopping — clearing here would erase the evidence before
+                -- it is ever readable (matches the quarantine_escape
+                -- precedent: cleared only by full i_rst_n).
+                if i_rst_n = '0' then
+                    s_masked_drop_rise_r <= (others => '0');
+                    s_masked_drop_fall_r <= (others => '0');
+                end if;
             else
                 for i in 0 to c_N_CHIPS - 1 loop
                     -- Clear valid on downstream handshake or matching slope abort.

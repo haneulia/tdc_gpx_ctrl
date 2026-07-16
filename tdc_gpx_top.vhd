@@ -389,8 +389,6 @@ architecture rtl of tdc_gpx_top is
     signal s_face_fall_mask         : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_face_stops_per_chip_r  : unsigned(3 downto 0);
     signal s_face_cols_per_face_r   : unsigned(15 downto 0);
-    signal s_rows_per_face_r        : unsigned(15 downto 0);
-    signal s_hsize_bytes_r          : unsigned(15 downto 0);
     signal s_cell_slots_rise        : unsigned(15 downto 0);
     signal s_cell_slots_fall        : unsigned(15 downto 0);
     signal s_vdma_hsize_rise        : unsigned(15 downto 0);
@@ -468,6 +466,9 @@ architecture rtl of tdc_gpx_top is
     -- Round 11 item 4: cell_builder QUARANTINE escalation sticky, per chip / slope
     signal s_quarantine_escape_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_quarantine_escape_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    -- CHAIN P1: cell_pipe masked-slope hit-drop stickies (per chip/slope).
+    signal s_masked_slope_drop_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_masked_slope_drop_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_quarantine_escape_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_stop_id_error_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
@@ -854,11 +855,12 @@ begin
             -- Round 13 follow-up P1: per-chip cell tuser (faulted flag on tlast)
             o_cell_rise_tuser => s_cell_rise_tuser,
             o_cell_fall_tuser => s_cell_fall_tuser,
-            -- CHAIN P1: masked-slope hit-drop stickies. Not yet surfaced in
-            -- a CSR (no free STAT slot allocated); TB-observable. Wire into
-            -- status_agg when the next STAT map revision opens a slot.
-            o_masked_slope_drop_rise => open,
-            o_masked_slope_drop_fall => open
+            -- CHAIN P1: masked-slope hit-drop stickies. The per-chip masks
+            -- feed the OR-reduced STAT7[15] bit below; full per-chip
+            -- resolution stays sim/ILA-only until the 8-STAT pipeline CSR
+            -- IP grows more STAT slots.
+            o_masked_slope_drop_rise => s_masked_slope_drop_rise,
+            o_masked_slope_drop_fall => s_masked_slope_drop_fall
         );
 
     -- =========================================================================
@@ -1053,8 +1055,14 @@ begin
             o_face_stops_per_chip  => s_face_stops_per_chip_r,
             o_face_cols_per_face   => s_face_cols_per_face_r,
             o_face_n_faces         => s_face_n_faces_r,
-            o_rows_per_face        => s_rows_per_face_r,
-            o_hsize_bytes          => s_hsize_bytes_r,
+            -- P2 cleanup (2026-07-16): full-mask legacy geometry. The VDMA
+            -- programming contract is the per-lane o_vdma_hsize_bytes_rise/
+            -- fall + o_vdma_vsize_lines computed above; keeping a second
+            -- full-mask HSIZE here invited a dual-source-of-truth mistake.
+            -- The ports stay on face_seq for TB verification (mask_sweep
+            -- checks rows_per_face) but top no longer consumes them.
+            o_rows_per_face        => open,
+            o_hsize_bytes          => open,
             o_cfg_face             => s_cfg_face_r
         );
 
@@ -1090,7 +1098,15 @@ begin
             i_face_active_mask     => s_face_active_mask_r,
             i_shot_overrun         => s_shot_overrun,
             i_shot_fall_overrun    => s_shot_fall_overrun,
-            o_status               => s_status,
+            -- LATENT-BUG FIX (2026-07-17): status_agg exports scalars and
+            -- top assembles the whole t_tdc_status record, so every field
+            -- has exactly one source. The previous whole-record out port
+            -- made status_agg a 'U' source for all top-driven fields (see
+            -- status_agg entity comment).
+            o_busy                 => s_status.busy,
+            o_pipeline_overrun     => s_status.pipeline_overrun,
+            o_rise_overrun         => s_status.rise_overrun,
+            o_fall_overrun         => s_status.fall_overrun,
             o_timestamp            => s_timestamp_r,
             o_error_cycle_count    => s_error_count_r,
             o_err_drain_sticky     => s_err_drain_to_sticky_r,
@@ -1145,6 +1161,15 @@ begin
     -- Round 11 item 3: header_inserter drain-watchdog sticky.
     s_status.rise_hdr_drain_timeout <= s_hdr_drain_timeout_rise;
     s_status.fall_hdr_drain_timeout <= s_hdr_drain_timeout_fall;
+
+    -- CHAIN P1: OR-reduced masked-slope hit-drop indicator (STAT7[15]).
+    -- Nonzero means some chip received a hit on a slope lane it does not
+    -- serve — a board/TDC edge misconfiguration. Per-chip isolation uses
+    -- the cell_pipe sticky masks in sim/ILA.
+    s_status.masked_slope_drop_any <=
+        '1' when s_masked_slope_drop_rise /= (s_masked_slope_drop_rise'range => '0')
+              or s_masked_slope_drop_fall /= (s_masked_slope_drop_fall'range => '0')
+        else '0';
 
     -- Round 11 item 4: aggregate cell_builder QUARANTINE escalation stickies.
     -- cell_builder's internal sticky is only cleared by its own i_rst_n so

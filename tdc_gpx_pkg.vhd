@@ -535,6 +535,13 @@ package tdc_gpx_pkg is
         drain_cap_mask           : std_logic_vector(c_N_CHIPS - 1 downto 0);
         -- Round 12 #17: per-chip last run_timeout_cause (3-bit × N_CHIPS packed).
         run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
+        -- CHAIN P1 (2026-07-16): cell_pipe masked-slope hit drop, OR across
+        -- all chips and both slopes. Set means a hit beat addressed a slope
+        -- lane its chip does not serve (physical edge misconfiguration in
+        -- DEDICATED topology). Per-chip masks exist at cell_pipe outputs
+        -- (o_masked_slope_drop_rise/fall) for sim/ILA use; the 8-STAT
+        -- pipeline CSR budget only carries this OR bit (STAT7[15]).
+        masked_slope_drop_any    : std_logic;
     end record;
 
     constant c_TDC_STATUS_INIT : t_tdc_status := (
@@ -595,6 +602,7 @@ package tdc_gpx_pkg is
         raw_drop_mask            => (others => '0'),
         drain_cap_mask           => (others => '0'),
         run_timeout_cause_per_chip => (others => '0'),
+        masked_slope_drop_any    => '0',
         rise_chip_error_partial  => (others => '0'),
         rise_chip_error_blank    => (others => '0'),
         fall_chip_error_partial  => (others => '0'),

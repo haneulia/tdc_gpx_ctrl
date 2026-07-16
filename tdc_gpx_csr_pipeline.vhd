@@ -244,6 +244,9 @@ architecture rtl of tdc_gpx_csr_pipeline is
     signal s_dest_req_stat7 : std_logic;
     signal s_stat7_d1      : std_logic_vector(31 downto 0) := (others => '1');
 
+    -- STAT read address remap into the IP's native window (see [2] below).
+    signal s_araddr_ip     : std_logic_vector(6 downto 0);
+
     -- HW_CONFIG constant (compile-time)
     signal s_hw_config : std_logic_vector(31 downto 0);
 
@@ -294,7 +297,23 @@ begin
 
     -- =========================================================================
     -- [2] tdc_gpx_axil_csr_pipeline instantiation (8 CTL, 8 STAT)
+    --
+    -- LATENT-BUG FIX (2026-07-17): STAT read address remap.
+    -- The IP was generated with num_ctl_regs=8 / num_stat_regs=8, which
+    -- places STAT0..7 at WORD addresses 8..15 (byte 0x20..0x3C). The
+    -- published register map — and every TB/SW consumer — reads STAT at
+    -- 0x40..0x5C, which decodes OUTSIDE the IP's register range, so every
+    -- pipeline STAT read has returned zero since the block was created.
+    -- Combined with the t_tdc_status 'U'-source defect (status_agg record
+    -- out port) the exact-zero STAT compares in the TBs passed vacuously.
+    -- The published 0x40-based contract is kept; the read address is
+    -- remapped into the IP's native window (0x40..0x5F -> 0x20..0x3F).
+    -- Writes are CTL-only (0x00..0x1C) and pass through unchanged.
     -- =========================================================================
+    s_araddr_ip <= "01" & s_axi_araddr(4 downto 0)
+                   when s_axi_araddr(6) = '1'
+                   else s_axi_araddr;
+
     u_srm : tdc_gpx_axil_csr_pipeline
         port map (
             s_axi_csr_aclk    => s_axi_aclk,
@@ -310,7 +329,7 @@ begin
             s_axi_csr_bresp   => s_axi_bresp,
             s_axi_csr_bvalid  => s_axi_bvalid,
             s_axi_csr_bready  => s_axi_bready,
-            s_axi_csr_araddr  => s_axi_araddr,
+            s_axi_csr_araddr  => s_araddr_ip,
             s_axi_csr_arprot  => s_axi_arprot,
             s_axi_csr_arvalid => s_axi_arvalid,
             s_axi_csr_arready => s_axi_arready,
@@ -410,7 +429,7 @@ begin
     --   [7:4]   stop_id_error_mask
     --   [10:8]  run_timeout_cause_last
     --   [14:11] quarantine_escape_mask       (Round 11 item 4)
-    --   [15]    reserved
+    --   [15]    masked_slope_drop_any        (CHAIN P1, 2026-07-16)
     --   [19:16] rise_face_start_collapsed_count (reduced from 8-bit; wrap-4)
     --   [23:20] mono_violation_mask          (Round 11 item 10)
     --   [27:24] fall_face_start_collapsed_count (reduced from 8-bit; wrap-4)
@@ -428,7 +447,9 @@ begin
     s_stat7_src(7 downto 4)   <= i_status.stop_id_error_mask;
     s_stat7_src(10 downto 8)  <= i_status.run_timeout_cause_last;
     s_stat7_src(14 downto 11) <= i_status.quarantine_escape_mask;
-    s_stat7_src(15)           <= '0';
+    -- CHAIN P1: OR of cell_pipe masked-slope hit-drop stickies (both
+    -- slopes, all chips). Nonzero = physical edge misconfiguration.
+    s_stat7_src(15)           <= i_status.masked_slope_drop_any;
     s_stat7_src(19 downto 16) <= std_logic_vector(i_status.rise_face_start_collapsed_count(3 downto 0));
     s_stat7_src(23 downto 20) <= i_status.mono_violation_mask;
     s_stat7_src(27 downto 24) <= std_logic_vector(i_status.fall_face_start_collapsed_count(3 downto 0));
