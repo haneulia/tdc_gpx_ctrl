@@ -475,9 +475,15 @@ architecture sim of tb_tdc_gpx_top_int is
     constant C_PIPE_MAIN_CTRL  : std_logic_vector(6 downto 0) := "0000000";  -- 0x00
     constant C_PIPE_RANGE_COLS : std_logic_vector(6 downto 0) := "0000100";  -- 0x04
     constant C_PIPE_AUX_CMD    : std_logic_vector(6 downto 0) := "0001000";  -- 0x08
+    constant C_PIPE_NATIVE_ALIAS : std_logic_vector(6 downto 0) := "0100000"; -- 0x20, reserved
+    constant C_PIPE_HW_VERSION : std_logic_vector(6 downto 0) := "1000000";  -- 0x40
+    constant C_PIPE_MAX_ROWS   : std_logic_vector(6 downto 0) := "1001000";  -- 0x48
+    constant C_PIPE_CELL_SIZE  : std_logic_vector(6 downto 0) := "1001100";  -- 0x4C
+    constant C_PIPE_MAX_HSIZE  : std_logic_vector(6 downto 0) := "1010000";  -- 0x50
     constant C_PIPE_STATUS     : std_logic_vector(6 downto 0) := "1010100";  -- 0x54
     constant C_PIPE_STATUS_EXT : std_logic_vector(6 downto 0) := "1011000";  -- 0x58
     constant C_PIPE_STATUS_EXT2: std_logic_vector(6 downto 0) := "1011100";  -- 0x5C
+    constant C_PIPE_HIGH_RESERVED : std_logic_vector(6 downto 0) := "1100000"; -- 0x60
 
     -- MAIN_CTRL + RANGE_COLS packed from the entity generics so changing
     -- G_ACTIVE_CHIP_MASK / G_N_FACES / G_STOPS_PER_CHIP / G_COLS_PER_FACE /
@@ -1470,6 +1476,18 @@ begin
            & " / recovery=" & fn_recovery_mode_name(G_RECOVERY_MODE) & ")");
         pl("====================================================");
 
+        -- Published CSR geometry is canonical packed storage, independent of
+        -- AXIS output width. Also prove that native/generated aliases stay
+        -- hidden outside the published 0x40..0x5C status window.
+        pipe_rd(C_PIPE_HW_VERSION, x"00010000", '1', '1');
+        pipe_rd(C_PIPE_MAX_ROWS, x"00000020", '1', '1');
+        pipe_rd(C_PIPE_CELL_SIZE, x"00000014", '1', '1'); -- 20 B
+        pipe_rd(C_PIPE_MAX_HSIZE, x"000002B0", '1', '1'); -- 688 B
+        pipe_rd(C_PIPE_NATIVE_ALIAS, x"00000000", '1', '1');
+        pipe_rd(C_PIPE_HIGH_RESERVED, x"00000000", '1', '1');
+        report "tb_tdc_gpx_top_int: canonical CSR geometry/address windows - PASS"
+            severity note;
+
         ----------------------------------------------------------------
         -- [S1] Pipeline CSR setup
         ----------------------------------------------------------------
@@ -1668,6 +1686,15 @@ begin
             wait_clk(64);
             pipe_rd(C_PIPE_STATUS_EXT2, x"00008000", '1', '1');
             report "tb_tdc_gpx_top_int: masked-slope drop surfaced in STAT7[15] - PASS"
+                severity note;
+            -- Post-run evidence must remain readable through stop/abort, then
+            -- CTL2[1] explicitly starts a clean diagnostic epoch.
+            pipe_wr(C_PIPE_AUX_CMD, x"00000002");
+            wait_clk(4);
+            pipe_wr(C_PIPE_AUX_CMD, x"00000000");
+            wait_clk(64);
+            pipe_rd(C_PIPE_STATUS_EXT2, x"00000000", '1', '1');
+            report "tb_tdc_gpx_top_int: masked-slope sticky soft-clear lifecycle - PASS"
                 severity note;
         end if;
         if G_RECOVERY_MODE = 1 then

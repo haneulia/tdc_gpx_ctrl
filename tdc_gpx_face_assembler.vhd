@@ -213,9 +213,15 @@ architecture rtl of tdc_gpx_face_assembler is
     signal s_out_fifo_rst_n : std_logic;  -- active-low reset for output FIFO
                                           -- (abort, or shot_start when empty)
 
-    -- CHAIN-P0-01: output FIFO occupancy tracker (0..16 = FIFO_DEPTH) and
-    -- internal mirror of the FIFO's m_axis_tvalid so the read handshake can
-    -- be counted (out ports are not read back for tool portability).
+    -- CHAIN-P0-01: xpm_fifo_axis is FWFT and has two elastic output stages in
+    -- addition to its 16 RAM entries. Track the full accepted-minus-emitted
+    -- range; only exact zero permits a shot-boundary reset.
+    constant c_OUT_FIFO_DEPTH           : natural := 16;
+    constant c_XPM_AXIS_FWFT_EXTRA_BEATS : natural := 2;
+    constant c_OUT_FIFO_OUTSTANDING_MAX : natural :=
+        c_OUT_FIFO_DEPTH + c_XPM_AXIS_FWFT_EXTRA_BEATS;
+    -- Internal mirror of m_axis_tvalid is used because an out port is not
+    -- read back here, preserving tool portability.
     signal s_m_axis_tvalid_int : std_logic;
     signal s_out_fifo_cnt_r    : unsigned(4 downto 0) := (others => '0');
     signal s_out_fifo_quiet    : std_logic;
@@ -430,7 +436,7 @@ begin
             CDC_SYNC_STAGES   => 2,
             CLOCKING_MODE     => "common_clock",
             ECC_MODE          => "no_ecc",
-            FIFO_DEPTH        => 16,
+            FIFO_DEPTH        => c_OUT_FIFO_DEPTH,
             FIFO_MEMORY_TYPE  => "distributed",
             PACKET_FIFO       => "false",
             TDATA_WIDTH       => g_TDATA_WIDTH,
@@ -524,6 +530,17 @@ begin
             else
                 v_wr := s_pipe_tvalid_r and s_pipe_tready;
                 v_rd := s_m_axis_tvalid_int and i_m_axis_tready;
+                -- synthesis translate_off
+                assert not (v_rd = '1' and v_wr = '0'
+                            and s_out_fifo_cnt_r = 0)
+                    report "tdc_gpx_face_assembler: output FIFO occupancy underflow"
+                    severity failure;
+                assert not (v_wr = '1' and v_rd = '0'
+                            and s_out_fifo_cnt_r =
+                                to_unsigned(c_OUT_FIFO_OUTSTANDING_MAX, 5))
+                    report "tdc_gpx_face_assembler: output FIFO outstanding counter overflow"
+                    severity failure;
+                -- synthesis translate_on
                 if v_wr = '1' and v_rd = '0' then
                     s_out_fifo_cnt_r <= s_out_fifo_cnt_r + 1;
                 elsif v_wr = '0' and v_rd = '1' then
@@ -539,6 +556,20 @@ begin
 
     s_out_fifo_rst_n <= i_rst_n and
                         (not (i_abort or (i_shot_start and s_out_fifo_quiet)));
+
+    -- synthesis translate_off
+    p_assert_shot_reset_guard : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '1' and i_shot_start = '1'
+               and s_out_fifo_quiet = '0' and i_abort = '0' then
+                assert s_out_fifo_rst_n = '1'
+                    report "tdc_gpx_face_assembler: non-empty output FIFO reset at shot boundary"
+                    severity failure;
+            end if;
+        end if;
+    end process p_assert_shot_reset_guard;
+    -- synthesis translate_on
 
     o_m_axis_tvalid  <= s_m_axis_tvalid_int;
 

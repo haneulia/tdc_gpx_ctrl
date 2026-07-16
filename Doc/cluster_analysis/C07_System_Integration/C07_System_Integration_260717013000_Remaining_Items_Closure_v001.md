@@ -1,5 +1,9 @@
 # C07 잔여 항목 Closure + CSR STAT 경로 잠재 결함 2건 수정
 
+> 2026-07-17 후속: sticky clear 수명, scoped CSR remap, packed STAT3/4
+> geometry는 `C07_System_Integration_260717_CSR_Geometry_Status_Hardening_v002.md`
+> 기준으로 대체된다.
+
 | 항목 | 내용 |
 |---|---|
 | 문서 종류 | 잔여 작업 closure + 잠재 결함 수정 결과 |
@@ -52,7 +56,7 @@ STAT7의 reserved bit 15에 OR-축약 지표를 배치했다.
 | `tdc_gpx_pkg.vhd` | `t_tdc_status.masked_slope_drop_any` 추가 |
 | `tdc_gpx_top.vhd` | cell_pipe sticky mask 수신 + OR-축약 배선 |
 | `tdc_gpx_csr_pipeline.vhd` | `STAT7[15] = masked_slope_drop_any` |
-| `tdc_gpx_cell_pipe.vhd` | sticky를 i_rst_n 전용 clear로 변경 (abort/cmd_stop 생존 — run 종료 후 SW가 읽어야 하므로; quarantine_escape 선례) |
+| `tdc_gpx_cell_pipe.vhd` | sticky는 abort/cmd_stop에서 생존하고 `CTL2[1] err_soft_clear` 또는 hard reset에서 clear |
 | `tb_tdc_gpx_top_int.vhd` | `G_EXPECT_MASKED_SLOPE_DROP` + 종단 STAT7 exact-compare(0x00008000) |
 | `tb_tdc_gpx_top_int_masked_slope_stat.vhd` | wrong-slope 구성 wrapper: chip model 전 chip rising × DUT DEDICATED_2X2 → chip2/3 rise hit가 masked drop |
 
@@ -87,8 +91,9 @@ rise/fall_overrun)를 **스칼라 출력**으로 내보내고 top이 record를 �
 반환했다. (chip CSR은 32/32 생성이라 STAT0=0x80 계약과 일치 — 정상.)
 
 **수정**: 공표된 0x40 계약을 유지하고 `tdc_gpx_csr_pipeline` 내부에서
-읽기 주소를 IP 네이티브 윈도우로 리매핑
-(`araddr(6)='1' → "01"&araddr(4:0)`; 쓰기는 CTL 전용이라 무변경).
+`0x40..0x5F` 읽기만 IP 네이티브 윈도우로 리매핑한다. 네이티브
+`0x20..0x3F` alias는 숨기고 `0x60..0x7F`는 reserved로 유지하며, 쓰기는
+`0x00..0x1C` CTL 범위만 통과시킨다.
 
 ## 7. 파생 수정 — TB 기대값의 정직화
 
@@ -106,7 +111,7 @@ post-soft-reset/post-force-reinit은 0 기대.
 | c06 v002 suite (face_seq/status_agg/top_int 32·64·128, bp, **살아난 STAT 비교 포함**) | ALL PASS |
 | masked-slope wrapper (STAT7=0x00008000 exact) | PASS |
 | top_int 샷 경계 stall 64/32 (260716231500) | PASS |
-| lane_mask 단위 TB (sticky i_rst_n-clear 변경 후) + cell_pipe 레거시 2종 | PASS |
+| lane_mask 단위 TB (abort retain → err_soft_clear → clean next run) + cell_pipe 레거시 2종 | PASS |
 
 ## 9. 남은/후속 항목
 

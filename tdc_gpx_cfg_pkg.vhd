@@ -236,11 +236,17 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT6_REG_ZERO_MASK     : natural := 2;   -- cmd_arb zero-mask req
     constant c_STAT6_SHOT_FLUSH_DROP_RISE : natural := 3;
     constant c_STAT6_SHOT_FLUSH_DROP_FALL : natural := 4;
-    -- bits [7:5] reserved
-    constant c_STAT6_OVRUN_CNT_RISE_HI : natural := 15;  -- rise shot_overrun count [7:0]
+    constant c_STAT6_HDR_DRAIN_TO_RISE : natural := 5;
+    constant c_STAT6_HDR_DRAIN_TO_FALL : natural := 6;
+    constant c_STAT6_FRAME_WAIT_ESCAPE : natural := 7;
+    constant c_STAT6_OVRUN_CNT_RISE_HI : natural := 11;  -- low nibble, wrap-4
     constant c_STAT6_OVRUN_CNT_RISE_LO : natural := 8;
-    constant c_STAT6_OVRUN_CNT_FALL_HI : natural := 23;  -- fall shot_overrun count [7:0]
+    constant c_STAT6_SHOT_FLUSH_MASK_HI : natural := 15;
+    constant c_STAT6_SHOT_FLUSH_MASK_LO : natural := 12;
+    constant c_STAT6_OVRUN_CNT_FALL_HI : natural := 19;  -- low nibble, wrap-4
     constant c_STAT6_OVRUN_CNT_FALL_LO : natural := 16;
+    constant c_STAT6_CMD_COLL_HI       : natural := 23;
+    constant c_STAT6_CMD_COLL_LO       : natural := 20;
     constant c_STAT6_ERR_REG_OVR_HI    : natural := 27;  -- err_reg_overflow_mask[3:0]
     constant c_STAT6_ERR_REG_OVR_LO    : natural := 24;
     constant c_STAT6_RUN_DRAIN_COMP_HI : natural := 31;  -- run_drain_complete_mask[3:0]
@@ -252,9 +258,12 @@ package tdc_gpx_cfg_pkg is
     --   [3:0]   reg_timeout_mask          (cmd_arb per-chip)
     --   [7:4]   stop_id_error_mask        (cell_builder per-chip sticky)
     --   [10:8]  run_timeout_cause_last    (3-bit code, most-recent)
-    --   [15:11] reserved
-    --   [23:16] rise_face_start_collapsed (8-bit wrap)
-    --   [31:24] fall_face_start_collapsed (8-bit wrap)
+    --   [14:11] quarantine_escape_mask
+    --   [15]    masked_slope_drop_any
+    --   [19:16] rise_face_start_collapsed_count low nibble
+    --   [23:20] mono_violation_mask
+    --   [27:24] fall_face_start_collapsed_count low nibble
+    --   [31:28] init_cfg_coalesced_mask
     -- =========================================================================
     constant c_ADDR_STATUS_EXT2        : natural := 16#5C#;  -- STAT7
     constant c_STAT7_REG_TO_HI         : natural := 3;
@@ -263,10 +272,17 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT7_STOP_ID_ERR_LO    : natural := 4;
     constant c_STAT7_RUN_CAUSE_HI      : natural := 10;
     constant c_STAT7_RUN_CAUSE_LO      : natural := 8;
-    constant c_STAT7_FS_COLL_RISE_HI   : natural := 23;
+    constant c_STAT7_QUARANTINE_HI     : natural := 14;
+    constant c_STAT7_QUARANTINE_LO     : natural := 11;
+    constant c_STAT7_MASKED_SLOPE_DROP : natural := 15;
+    constant c_STAT7_FS_COLL_RISE_HI   : natural := 19;
     constant c_STAT7_FS_COLL_RISE_LO   : natural := 16;
-    constant c_STAT7_FS_COLL_FALL_HI   : natural := 31;
+    constant c_STAT7_MONO_MASK_HI      : natural := 23;
+    constant c_STAT7_MONO_MASK_LO      : natural := 20;
+    constant c_STAT7_FS_COLL_FALL_HI   : natural := 27;
     constant c_STAT7_FS_COLL_FALL_LO   : natural := 24;
+    constant c_STAT7_INIT_COALESCE_HI  : natural := 31;
+    constant c_STAT7_INIT_COALESCE_LO  : natural := 28;
 
     -- =========================================================================
     -- Bus timing constraints (TDC-GPX datasheet @ 200 MHz, T_clk = 5 ns)

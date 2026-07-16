@@ -36,7 +36,7 @@ function Invoke-Checked {
 
 function Assert-SimLog {
     param([string]$Log, [string]$PassPattern)
-    if (Select-String -Path $Log -Pattern "Failure:|FAIL" -CaseSensitive:$false -Quiet) {
+    if (Select-String -Path $Log -Pattern "Failure:|Fatal:|assertion error|ERROR:|\bFAIL\b" -CaseSensitive:$false -Quiet) {
         throw "Simulation log contains failure marker: $Log"
     }
     if (-not (Select-String -Path $Log -Pattern $PassPattern -SimpleMatch -Quiet)) {

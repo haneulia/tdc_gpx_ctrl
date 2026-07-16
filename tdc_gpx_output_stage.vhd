@@ -223,9 +223,14 @@ architecture rtl of tdc_gpx_output_stage is
     signal s_fifo_rst_n_rise : std_logic;
     signal s_fifo_rst_n_fall : std_logic;
 
-    -- CHAIN-P0-01: face FIFO occupancy trackers. Counted from the write/read
-    -- handshakes so the shot_start reset pulse below can be gated on
-    -- "provably empty". Range 0..16 matches FIFO_DEPTH.
+    -- CHAIN-P0-01: face FIFO outstanding trackers. xpm_fifo_axis uses FWFT
+    -- READ_MODE=1 internally, so its two output stages can hold accepted data
+    -- in addition to the 16 RAM entries. Count interface handshakes across the
+    -- complete 18-beat elastic capacity; only exact zero permits shot reset.
+    constant c_FACE_FIFO_DEPTH           : natural := 16;
+    constant c_XPM_AXIS_FWFT_EXTRA_BEATS : natural := 2;
+    constant c_FACE_FIFO_OUTSTANDING_MAX : natural :=
+        c_FACE_FIFO_DEPTH + c_XPM_AXIS_FWFT_EXTRA_BEATS;
     signal s_face_fifo_cnt_rise_r : unsigned(4 downto 0) := (others => '0');
     signal s_face_fifo_cnt_fall_r : unsigned(4 downto 0) := (others => '0');
     signal s_face_fifo_quiet_rise : std_logic;
@@ -273,6 +278,17 @@ begin
             else
                 v_wr := s_face_tvalid and s_face_tready;
                 v_rd := s_face_buf_tvalid and s_face_buf_tready;
+                -- synthesis translate_off
+                assert not (v_rd = '1' and v_wr = '0'
+                            and s_face_fifo_cnt_rise_r = 0)
+                    report "tdc_gpx_output_stage: rise face FIFO occupancy underflow"
+                    severity failure;
+                assert not (v_wr = '1' and v_rd = '0'
+                            and s_face_fifo_cnt_rise_r =
+                                to_unsigned(c_FACE_FIFO_OUTSTANDING_MAX, 5))
+                    report "tdc_gpx_output_stage: rise face FIFO outstanding counter overflow"
+                    severity failure;
+                -- synthesis translate_on
                 if v_wr = '1' and v_rd = '0' then
                     s_face_fifo_cnt_rise_r <= s_face_fifo_cnt_rise_r + 1;
                 elsif v_wr = '0' and v_rd = '1' then
@@ -284,6 +300,17 @@ begin
             else
                 v_wr := s_face_fall_tvalid and s_face_fall_tready;
                 v_rd := s_face_fall_buf_tvalid and s_face_fall_buf_tready;
+                -- synthesis translate_off
+                assert not (v_rd = '1' and v_wr = '0'
+                            and s_face_fifo_cnt_fall_r = 0)
+                    report "tdc_gpx_output_stage: fall face FIFO occupancy underflow"
+                    severity failure;
+                assert not (v_wr = '1' and v_rd = '0'
+                            and s_face_fifo_cnt_fall_r =
+                                to_unsigned(c_FACE_FIFO_OUTSTANDING_MAX, 5))
+                    report "tdc_gpx_output_stage: fall face FIFO outstanding counter overflow"
+                    severity failure;
+                -- synthesis translate_on
                 if v_wr = '1' and v_rd = '0' then
                     s_face_fifo_cnt_fall_r <= s_face_fifo_cnt_fall_r + 1;
                 elsif v_wr = '0' and v_rd = '1' then
@@ -304,6 +331,26 @@ begin
                              or (i_shot_start_gated and s_face_fifo_quiet_rise));
     s_fifo_rst_n_fall <= i_rst_n and not (s_abort_fall
                              or (i_shot_start_gated and s_face_fifo_quiet_fall));
+
+    -- synthesis translate_off
+    p_assert_shot_reset_guard : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '1' and i_shot_start_gated = '1' then
+                if s_face_fifo_quiet_rise = '0' and s_abort_rise = '0' then
+                    assert s_fifo_rst_n_rise = '1'
+                        report "tdc_gpx_output_stage: non-empty rise FIFO reset at shot boundary"
+                        severity failure;
+                end if;
+                if s_face_fifo_quiet_fall = '0' and s_abort_fall = '0' then
+                    assert s_fifo_rst_n_fall = '1'
+                        report "tdc_gpx_output_stage: non-empty fall FIFO reset at shot boundary"
+                        severity failure;
+                end if;
+            end if;
+        end if;
+    end process p_assert_shot_reset_guard;
+    -- synthesis translate_on
 
     -- =========================================================================
     -- Rising face assembler
@@ -398,7 +445,7 @@ begin
             CDC_SYNC_STAGES   => 2,
             CLOCKING_MODE     => "common_clock",
             ECC_MODE          => "no_ecc",
-            FIFO_DEPTH        => 16,
+            FIFO_DEPTH        => c_FACE_FIFO_DEPTH,
             FIFO_MEMORY_TYPE  => "distributed",
             PACKET_FIFO       => "false",
             TDATA_WIDTH       => g_OUTPUT_WIDTH,
@@ -442,7 +489,7 @@ begin
             CDC_SYNC_STAGES   => 2,
             CLOCKING_MODE     => "common_clock",
             ECC_MODE          => "no_ecc",
-            FIFO_DEPTH        => 16,
+            FIFO_DEPTH        => c_FACE_FIFO_DEPTH,
             FIFO_MEMORY_TYPE  => "distributed",
             PACKET_FIFO       => "false",
             TDATA_WIDTH       => g_OUTPUT_WIDTH,

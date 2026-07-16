@@ -197,6 +197,8 @@ package tdc_gpx_pkg is
 
     -- Cell size and derived constants: auto-calculated from MAX_HITS
     -- (deferred constants — full definitions in package body using fn_cell_size_bytes)
+    -- Legacy power-of-two internal cell allocation; not the packed VDMA
+    -- serialized cell size reported through the pipeline CSR.
     constant c_CELL_SIZE_BYTES      : natural;
     constant c_BEATS_PER_CELL       : natural;
     constant c_DATA_BEATS_MAX       : natural;
@@ -210,6 +212,10 @@ package tdc_gpx_pkg is
     -- boundary keeps full TKEEP and a width-independent HSIZE/STRIDE while
     -- avoiding the former per-cell padding.
     constant c_VDMA_LINE_ALIGN_BYTES : positive := 16;
+    -- Packed VDMA maxima are width-independent: wider AXIS beats repack the
+    -- same canonical 32-bit words without per-cell padding.
+    constant c_CANONICAL_CELL_BYTES_MAX : natural;
+    constant c_VDMA_LINE_BYTES_MAX      : natural;
 
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
@@ -541,6 +547,8 @@ package tdc_gpx_pkg is
         -- DEDICATED topology). Per-chip masks exist at cell_pipe outputs
         -- (o_masked_slope_drop_rise/fall) for sim/ILA use; the 8-STAT
         -- pipeline CSR budget only carries this OR bit (STAT7[15]).
+        -- SOFT-CLEAR history: cmd_stop/abort preserves this for post-run
+        -- read; CTL2[1] err_soft_clear starts the next diagnostic epoch.
         masked_slope_drop_any    : std_logic;
     end record;
 
@@ -700,6 +708,10 @@ package body tdc_gpx_pkg is
     constant c_DATA_BEATS_MAX  : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;
     constant c_HSIZE_BEATS_MAX : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;
     constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);
+    constant c_CANONICAL_CELL_BYTES_MAX : natural :=
+        fn_canonical_cell_bytes(c_MAX_HITS_PER_STOP);
+    constant c_VDMA_LINE_BYTES_MAX : natural :=
+        fn_vdma_line_bytes(c_MAX_ROWS_PER_FACE, c_MAX_HITS_PER_STOP);
 
     -- Cell payload bits (Format 0, Zynq-7000)
     -- hit_slot[MAX] + metadata beat fields.

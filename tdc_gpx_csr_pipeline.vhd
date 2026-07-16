@@ -26,12 +26,13 @@
 --   STAT0  (0x40) HW_VERSION   [31:0] (constant)
 --   STAT1  (0x44) HW_CONFIG    packed generics (constant)
 --   STAT2  (0x48) MAX_ROWS     [15:0] (constant)
---   STAT3  (0x4C) CELL_SIZE    [15:0] (constant)
---   STAT4  (0x50) MAX_HSIZE    [15:0] (constant)
+    --   STAT3  (0x4C) CELL_SIZE    packed canonical maximum bytes/cell
+    --   STAT4  (0x50) MAX_HSIZE    packed full-mask maximum bytes/line
 --   STAT5  (0x54) STATUS       [0] busy, [1] overrun, [2] err_fatal,
 --                               [7:4] chip_err, [11:8] drain_timeout,
 --                               [15:12] seq_err
---   STAT6..7 reserved
+    --   STAT6  (0x58) STATUS_EXT   extended sticky/counter status
+    --   STAT7  (0x5C) STATUS_EXT2  extended diagnostic status
 --
 -- CDC structure:
 --   CTL: 3 × xpm_cdc_handshake (s_axi_aclk → i_axis_aclk) for CTL0..CTL2
@@ -244,8 +245,10 @@ architecture rtl of tdc_gpx_csr_pipeline is
     signal s_dest_req_stat7 : std_logic;
     signal s_stat7_d1      : std_logic_vector(31 downto 0) := (others => '1');
 
-    -- STAT read address remap into the IP's native window (see [2] below).
+    -- Published-to-native CSR address translation (see [2] below).
+    signal s_awaddr_ip     : std_logic_vector(6 downto 0);
     signal s_araddr_ip     : std_logic_vector(6 downto 0);
+    constant c_UNMAPPED_IP_ADDR : std_logic_vector(6 downto 0) := "1111100"; -- 0x7C
 
     -- HW_CONFIG constant (compile-time)
     signal s_hw_config : std_logic_vector(31 downto 0);
@@ -306,19 +309,27 @@ begin
     -- pipeline STAT read has returned zero since the block was created.
     -- Combined with the t_tdc_status 'U'-source defect (status_agg record
     -- out port) the exact-zero STAT compares in the TBs passed vacuously.
-    -- The published 0x40-based contract is kept; the read address is
-    -- remapped into the IP's native window (0x40..0x5F -> 0x20..0x3F).
-    -- Writes are CTL-only (0x00..0x1C) and pass through unchanged.
+    -- The published 0x40-based contract is kept while the native alias and
+    -- generated IRQ window are hidden by the scoped translation below.
     -- =========================================================================
+    -- Only the published status window is remapped. Hide the generated IP's
+    -- native 0x20 status alias, leave 0x60..0x7F unmapped, and permit writes
+    -- only to CTL0..7 so status writes cannot touch native IRQ registers.
     s_araddr_ip <= "01" & s_axi_araddr(4 downto 0)
-                   when s_axi_araddr(6) = '1'
-                   else s_axi_araddr;
+                   when s_axi_araddr(6 downto 5) = "10" else
+                   c_UNMAPPED_IP_ADDR
+                   when s_axi_araddr(6 downto 5) = "01" else
+                   s_axi_araddr;
+
+    s_awaddr_ip <= s_axi_awaddr
+                   when s_axi_awaddr(6 downto 5) = "00" else
+                   c_UNMAPPED_IP_ADDR;
 
     u_srm : tdc_gpx_axil_csr_pipeline
         port map (
             s_axi_csr_aclk    => s_axi_aclk,
             s_axi_csr_aresetn => s_axi_aresetn,
-            s_axi_csr_awaddr  => s_axi_awaddr,
+            s_axi_csr_awaddr  => s_awaddr_ip,
             s_axi_csr_awprot  => s_axi_awprot,
             s_axi_csr_awvalid => s_axi_awvalid,
             s_axi_csr_awready => s_axi_awready,
@@ -356,10 +367,8 @@ begin
             stat0_in => g_HW_VERSION,
             stat1_in => s_hw_config,
             stat2_in => std_logic_vector(to_unsigned(c_MAX_ROWS_PER_FACE, 32)),
-            stat3_in => std_logic_vector(to_unsigned(c_CELL_SIZE_BYTES, 32)),
-            stat4_in => std_logic_vector(to_unsigned(
-                (c_MAX_ROWS_PER_FACE * fn_beats_per_cell(g_OUTPUT_WIDTH)
-                 + fn_hdr_prefix_beats(g_OUTPUT_WIDTH)) * (g_OUTPUT_WIDTH / 8), 32)),
+            stat3_in => std_logic_vector(to_unsigned(c_CANONICAL_CELL_BYTES_MAX, 32)),
+            stat4_in => std_logic_vector(to_unsigned(c_VDMA_LINE_BYTES_MAX, 32)),
             stat5_in => s_stat_out,     -- STATUS (CDC'd from i_axis_aclk)
             stat6_in => s_stat6_out,    -- STATUS_EXT (Round 5 follow-up, CDC'd)
             stat7_in => s_stat7_out,    -- STATUS_EXT2 (Round 11 Category C, CDC'd)
@@ -408,20 +417,26 @@ begin
     -- 4-bit wrap suffices as a "nonzero = bug" indicator. Full 8-bit
     -- magnitude was never functionally required by SW.
     -- =========================================================================
-    s_stat6_src(0)            <= i_status.err_read_timeout;
-    s_stat6_src(1)            <= i_status.reg_rejected;
-    s_stat6_src(2)            <= i_status.reg_zero_mask;
-    s_stat6_src(3)            <= i_status.rise_shot_flush_drop;
-    s_stat6_src(4)            <= i_status.fall_shot_flush_drop;
-    s_stat6_src(5)            <= i_status.rise_hdr_drain_timeout;
-    s_stat6_src(6)            <= i_status.fall_hdr_drain_timeout;
-    s_stat6_src(7)            <= i_status.err_frame_wait_escape;
-    s_stat6_src(11 downto 8)  <= std_logic_vector(i_status.rise_shot_overrun_count(3 downto 0));
-    s_stat6_src(15 downto 12) <= i_status.shot_flush_drop_mask;
-    s_stat6_src(19 downto 16) <= std_logic_vector(i_status.fall_shot_overrun_count(3 downto 0));
-    s_stat6_src(23 downto 20) <= i_status.cmd_collision_mask;
-    s_stat6_src(27 downto 24) <= i_status.err_reg_overflow_mask;
-    s_stat6_src(31 downto 28) <= i_status.run_drain_complete_mask;
+    s_stat6_src(c_STAT6_ERR_READ_TIMEOUT) <= i_status.err_read_timeout;
+    s_stat6_src(c_STAT6_REG_REJECTED) <= i_status.reg_rejected;
+    s_stat6_src(c_STAT6_REG_ZERO_MASK) <= i_status.reg_zero_mask;
+    s_stat6_src(c_STAT6_SHOT_FLUSH_DROP_RISE) <= i_status.rise_shot_flush_drop;
+    s_stat6_src(c_STAT6_SHOT_FLUSH_DROP_FALL) <= i_status.fall_shot_flush_drop;
+    s_stat6_src(c_STAT6_HDR_DRAIN_TO_RISE) <= i_status.rise_hdr_drain_timeout;
+    s_stat6_src(c_STAT6_HDR_DRAIN_TO_FALL) <= i_status.fall_hdr_drain_timeout;
+    s_stat6_src(c_STAT6_FRAME_WAIT_ESCAPE) <= i_status.err_frame_wait_escape;
+    s_stat6_src(c_STAT6_OVRUN_CNT_RISE_HI downto c_STAT6_OVRUN_CNT_RISE_LO)
+        <= std_logic_vector(i_status.rise_shot_overrun_count(3 downto 0));
+    s_stat6_src(c_STAT6_SHOT_FLUSH_MASK_HI downto c_STAT6_SHOT_FLUSH_MASK_LO)
+        <= i_status.shot_flush_drop_mask;
+    s_stat6_src(c_STAT6_OVRUN_CNT_FALL_HI downto c_STAT6_OVRUN_CNT_FALL_LO)
+        <= std_logic_vector(i_status.fall_shot_overrun_count(3 downto 0));
+    s_stat6_src(c_STAT6_CMD_COLL_HI downto c_STAT6_CMD_COLL_LO)
+        <= i_status.cmd_collision_mask;
+    s_stat6_src(c_STAT6_ERR_REG_OVR_HI downto c_STAT6_ERR_REG_OVR_LO)
+        <= i_status.err_reg_overflow_mask;
+    s_stat6_src(c_STAT6_RUN_DRAIN_COMP_HI downto c_STAT6_RUN_DRAIN_COMP_LO)
+        <= i_status.run_drain_complete_mask;
 
     -- =========================================================================
     -- [3c] STAT7 source packing (Round 11 Category C + Round 11 items 4/10/14)
@@ -443,17 +458,46 @@ begin
     -- is surfaced (so a wrap at 16 is still observable as the bits
     -- changing; full saturation would appear as stuck zeros).
     -- =========================================================================
-    s_stat7_src(3 downto 0)   <= i_status.reg_timeout_mask;
-    s_stat7_src(7 downto 4)   <= i_status.stop_id_error_mask;
-    s_stat7_src(10 downto 8)  <= i_status.run_timeout_cause_last;
-    s_stat7_src(14 downto 11) <= i_status.quarantine_escape_mask;
+    s_stat7_src(c_STAT7_REG_TO_HI downto c_STAT7_REG_TO_LO)
+        <= i_status.reg_timeout_mask;
+    s_stat7_src(c_STAT7_STOP_ID_ERR_HI downto c_STAT7_STOP_ID_ERR_LO)
+        <= i_status.stop_id_error_mask;
+    s_stat7_src(c_STAT7_RUN_CAUSE_HI downto c_STAT7_RUN_CAUSE_LO)
+        <= i_status.run_timeout_cause_last;
+    s_stat7_src(c_STAT7_QUARANTINE_HI downto c_STAT7_QUARANTINE_LO)
+        <= i_status.quarantine_escape_mask;
     -- CHAIN P1: OR of cell_pipe masked-slope hit-drop stickies (both
     -- slopes, all chips). Nonzero = physical edge misconfiguration.
-    s_stat7_src(15)           <= i_status.masked_slope_drop_any;
-    s_stat7_src(19 downto 16) <= std_logic_vector(i_status.rise_face_start_collapsed_count(3 downto 0));
-    s_stat7_src(23 downto 20) <= i_status.mono_violation_mask;
-    s_stat7_src(27 downto 24) <= std_logic_vector(i_status.fall_face_start_collapsed_count(3 downto 0));
-    s_stat7_src(31 downto 28) <= i_status.init_cfg_coalesced_mask;
+    s_stat7_src(c_STAT7_MASKED_SLOPE_DROP) <= i_status.masked_slope_drop_any;
+    s_stat7_src(c_STAT7_FS_COLL_RISE_HI downto c_STAT7_FS_COLL_RISE_LO)
+        <= std_logic_vector(i_status.rise_face_start_collapsed_count(3 downto 0));
+    s_stat7_src(c_STAT7_MONO_MASK_HI downto c_STAT7_MONO_MASK_LO)
+        <= i_status.mono_violation_mask;
+    s_stat7_src(c_STAT7_FS_COLL_FALL_HI downto c_STAT7_FS_COLL_FALL_LO)
+        <= std_logic_vector(i_status.fall_face_start_collapsed_count(3 downto 0));
+    s_stat7_src(c_STAT7_INIT_COALESCE_HI downto c_STAT7_INIT_COALESCE_LO)
+        <= i_status.init_cfg_coalesced_mask;
+
+    -- synthesis translate_off
+    -- Fail before CDC can conceal unresolved record fields as zeros and let
+    -- exact-zero status checks pass vacuously.
+    p_assert_status_known : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '1' then
+                assert not is_x(s_stat_src)
+                    report "tdc_gpx_csr_pipeline: STAT5 source contains X/U"
+                    severity failure;
+                assert not is_x(s_stat6_src)
+                    report "tdc_gpx_csr_pipeline: STAT6 source contains X/U"
+                    severity failure;
+                assert not is_x(s_stat7_src)
+                    report "tdc_gpx_csr_pipeline: STAT7 source contains X/U"
+                    severity failure;
+            end if;
+        end if;
+    end process p_assert_status_known;
+    -- synthesis translate_on
 
     -- =========================================================================
     -- [4] STAT CDC: i_axis_aclk → s_axi_aclk (1 live register)

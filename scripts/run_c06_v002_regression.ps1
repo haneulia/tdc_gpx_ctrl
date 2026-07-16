@@ -32,7 +32,7 @@ function Assert-SimLog {
         [string]$Log,
         [string]$PassPattern
     )
-    if (Select-String -Path $Log -Pattern "Failure:|ERROR:|\bfailed\b" -CaseSensitive:$false -Quiet) {
+    if (Select-String -Path $Log -Pattern "Failure:|Fatal:|assertion error|ERROR:|\bfailed\b" -CaseSensitive:$false -Quiet) {
         throw "Simulation log contains failure/error marker: $Log"
     }
     if (-not (Select-String -Path $Log -Pattern $PassPattern -Quiet)) {
@@ -116,7 +116,9 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
-    "$Hdl/tb_tdc_gpx_status_agg_c06_fix.vhd"
+    "$Hdl/tb_tdc_gpx_status_agg_c06_fix.vhd",
+    "$Hdl/tb_tdc_gpx_cell_pipe_lane_mask.vhd",
+    "$Hdl/tb_tdc_gpx_top_int_masked_slope_stat.vhd"
 )
 
 $vhdlLines = @()
@@ -158,6 +160,11 @@ try {
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_status_agg_snap", "-runall", "-log", "xsim_c06_v002_status_agg_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_status_agg_$Stamp.log" "ALL STATUS_AGG C06 SCENARIOS PASSED"
 
+    Invoke-Xelab "tb_c06_v002_lane_mask_snap" "xelab_c06_v002_lane_mask_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_cell_pipe_lane_mask"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_lane_mask_snap", "-runall", "-log", "xsim_c06_v002_lane_mask_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_lane_mask_$Stamp.log" "TB_LANE_MASK ALL PASS"
+
     foreach ($w in @(32, 64, 128)) {
         $snap = "tb_c06_v002_top_int_w${w}_snap"
         Invoke-Xelab $snap "xelab_c06_v002_top_int_w${w}_$Stamp.log" `
@@ -181,6 +188,11 @@ try {
         "xil_defaultlib.tb_tdc_gpx_top_int" @("G_TDATA_WIDTH=64", "G_BP_TREADY_GAP=17")
     Invoke-Checked "$Vivado/xsim.bat" @($bpSnap, "-runall", "-log", "xsim_c06_v002_top_int_w64_bp_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_top_int_w64_bp_$Stamp.log" "bounded output backpressure preserved beats/tlast - PASS"
+
+    Invoke-Xelab "tb_c06_v002_masked_slope_stat_snap" "xelab_c06_v002_masked_slope_stat_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_top_int_masked_slope_stat"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_masked_slope_stat_snap", "-runall", "-log", "xsim_c06_v002_masked_slope_stat_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_masked_slope_stat_$Stamp.log" "masked-slope sticky soft-clear lifecycle - PASS"
 }
 finally {
     Pop-Location

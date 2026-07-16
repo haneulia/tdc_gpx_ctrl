@@ -46,14 +46,14 @@ shot_start 때문에 **반대-slope cell_builder 8개 중 4개가 매 shot 마�
 
 | 파일 | 변경 |
 |---|---|
-| `tdc_gpx_cell_pipe.vhd` | `i_rise_chip_mask` / `i_fall_chip_mask` 입력 추가 (default all-ones = 레거시 호환). shot_start 를 (chip, slope) 로 AND 게이트. demux 로드: drain_done 은 enabled slope 에만 전달(스킵은 무해), masked slope 로 향한 **hit** beat 는 소비-드롭 + `o_masked_slope_drop_rise/fall` sticky (물리 에지 misconfig 가시성). reset/global abort 에서 sticky clear |
-| `tdc_gpx_top.vhd` | `s_face_rise_mask` / `s_face_fall_mask` (C08 slope topology 산출과 동일 소스) 를 cell_pipe 에 배선. sticky 는 CSR 슬롯 미할당으로 현재 open (STAT map 개정 시 status_agg 연결 예정) |
+| `tdc_gpx_cell_pipe.vhd` | `i_rise_chip_mask` / `i_fall_chip_mask` 입력 추가 (default all-ones = 레거시 호환). shot_start 를 (chip, slope) 로 AND 게이트. demux 로드: drain_done 은 enabled slope 에만 전달(스킵은 무해), masked slope 로 향한 **hit** beat 는 소비-드롭 + `o_masked_slope_drop_rise/fall` sticky (물리 에지 misconfig 가시성). abort/cmd_stop에서는 보존하고 `i_sticky_clear`/hard reset에서 clear |
+| `tdc_gpx_top.vhd` | `s_face_rise_mask` / `s_face_fall_mask`를 cell_pipe에 배선. sticky는 OR 축약하여 `STAT7[15] masked_slope_drop_any`로 노출 |
 
 설계 성질:
 - `SHARED_DUAL_EDGE` / 레거시 인스턴스(mask 미배선): all-ones default 로
   기존 동작과 동일 분기 → 무회귀
-- masked slope 의 holding register 는 로드되지 않으므로 demux ready 식은
-  변경 불필요 (항상 free 취급)
+- masked slope는 destination state를 보호할 필요가 없으므로 demux ready가
+  해당 builder의 stale/backpressure 상태를 기다리지 않고 즉시 소비
 - drain_done 의 "both ready" 요구는 enabled slope 에만 실효
 
 ## 4. 검증
@@ -67,6 +67,7 @@ shot_start 때문에 **반대-slope cell_builder 8개 중 4개가 매 shot 마�
 | L (legacy 1111) | 8개 lane 전부 slice/shot 방출 확인 = 수정 전 churn 메커니즘 증거 + default 호환성 (게이팅 코드가 all-ones 에서 구코드와 동일 분기) | PASS |
 | D (dedicated 0011/1100, 3 shots) | 정상 lane: shot 당 1 tlast·16 beats ×3. wrong-slope lane: **0 beats**. shot_dropped 무발생, sticky 청정 | PASS |
 | M (masked-slope hit) | chip0 fall hit → 소비(무정지) + `masked_drop_fall(0)` sticky, chip0 rise slice 정상 완료, fall lane 0 beats | PASS |
+| C (sticky lifecycle) | masked hit set → abort 후 유지 → `i_sticky_clear` 후 0 → 정상 다음 run에서 0 유지 | PASS |
 
 log: session archive `260716221500_lane_mask_p1_fix/logs/simulate/xsim_lane_mask.log`
 
@@ -97,8 +98,8 @@ output_stage 분석 단계에서 실패했다 (P1 과 무관한 스크립트 유
 
 ## 5. 남은 항목
 
-1. `o_masked_slope_drop_rise/fall` 의 CSR 노출: STAT map 빈 슬롯 확보 시
-   status_agg 경유로 연결 (현재 top 에서 open, TB 관측만 가능)
+1. `o_masked_slope_drop_rise/fall`은 `STAT7[15]` OR 지표로 노출 완료.
+   Per-chip 해상도는 STAT 확장 시 후속.
 2. face_assembler `shot_flush_drop` 는 의미 회복: 이후 이 sticky 가 서면
    진짜 boundary drift (P0 계열) 신호로 해석 가능
 3. C08 HTML 시뮬레이터의 dedicated 모델에 wrong-slope idle 반영 여부 확인

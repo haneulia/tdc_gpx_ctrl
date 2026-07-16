@@ -811,6 +811,7 @@ begin
             i_abort                 => s_pipeline_abort,       -- global (legacy)
             i_abort_rise            => s_pipeline_abort_rise,  -- #22 Sprint 2
             i_abort_fall            => s_pipeline_abort_fall,  -- #22 Sprint 2
+            i_sticky_clear          => s_err_soft_clear,
             i_face_stops_per_chip   => s_face_stops_per_chip_r,
             -- Round 11 item 2: use face snapshot (latched at packet_start)
             -- instead of live s_cfg, so cell_builder's beat-per-cell lookup

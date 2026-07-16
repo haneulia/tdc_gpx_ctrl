@@ -23,6 +23,10 @@
 --     stall) and flagged in o_masked_slope_drop_*; the chip's own lane
 --     still completes its slice.
 --
+--   Scenario C (sticky lifecycle):
+--     The masked-slope evidence survives abort/cmd_stop, clears only on the
+--     explicit diagnostic soft-clear, and stays clear through a nominal run.
+--
 -- Standard: VHDL-2008
 -- =============================================================================
 
@@ -57,6 +61,8 @@ architecture sim of tb_tdc_gpx_cell_pipe_lane_mask is
     signal shot_start : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
     signal rise_mask  : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
     signal fall_mask  : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+    signal abort      : std_logic := '0';
+    signal sticky_clear : std_logic := '0';
     signal face_stops : unsigned(3 downto 0) := to_unsigned(C_STOPS, 4);
     signal max_hits   : unsigned(2 downto 0) := to_unsigned(C_MAX_HITS, 3);
 
@@ -99,7 +105,8 @@ begin
             i_shot_start_per_chip => shot_start,
             i_rise_chip_mask      => rise_mask,
             i_fall_chip_mask      => fall_mask,
-            i_abort               => '0',
+            i_abort               => abort,
+            i_sticky_clear        => sticky_clear,
             i_face_stops_per_chip => face_stops,
             i_max_hits_cfg        => max_hits,
             i_max_range_5ns_ticks => (others => '0'),
@@ -359,6 +366,37 @@ begin
                 severity note;
             report "*** LANE_MASK SCENARIO M FAIL ***" severity failure;
         end if;
+
+        -- =====================================================================
+        -- SCENARIO C: sticky lifecycle across abort and explicit soft clear.
+        -- =====================================================================
+        report "===== LANE_MASK SCENARIO C: sticky lifecycle =====" severity note;
+        abort <= '1';
+        wait until rising_edge(clk);
+        abort <= '0';
+        wait until rising_edge(clk);
+
+        assert masked_drop_fall(0) = '1'
+            report "LANE_MASK C: abort erased post-run masked-slope evidence"
+            severity failure;
+
+        sticky_clear <= '1';
+        wait until rising_edge(clk);
+        sticky_clear <= '0';
+        wait until rising_edge(clk);
+
+        assert masked_drop_rise = "0000" and masked_drop_fall = "0000"
+            report "LANE_MASK C: explicit sticky clear did not clear both masks"
+            severity failure;
+
+        run_shot;
+        wait for 4 us;
+        wait until rising_edge(clk);
+        assert masked_drop_rise = "0000" and masked_drop_fall = "0000"
+            report "LANE_MASK C: nominal run re-contaminated masked-slope history"
+            severity failure;
+        report "*** LANE_MASK SCENARIO C PASS (abort retain, soft clear, clean next run) ***"
+            severity note;
 
         report "*** TB_LANE_MASK ALL PASS ***" severity note;
         done <= true;

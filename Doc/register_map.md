@@ -14,7 +14,7 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
 | Offset | Name       | Fields                                                |
 |:------:|------------|-------------------------------------------------------|
 | 0x00   | MAIN_CTRL  | `[3:0] active_chip_mask`, `[4] packet_scope`, `[6:5] hit_store_mode`, `[9:7] dist_scale`, `[10] drain_mode`, `[11] pipeline_en`, `[14:12] n_faces`, `[18:15] stops_per_chip`, `[22:19] n_drain_cap`, `[27:23] stopdis_override`, `[31:28] COMMAND` |
-| 0x04   | RANGE_COLS | `[15:0] max_range_clks`, `[31:16] cols_per_face`      |
+| 0x04   | RANGE_COLS | `[15:0] max_range_5ns_ticks`, `[31:16] cols_per_face` |
 | 0x08   | AUX_CMD    | `[0] force_reinit` (rising edge), `[1] err_soft_clear` (rising edge), `[31:2] reserved` |
 | 0x0C–0x1C | reserved  | —                                                  |
 
@@ -31,8 +31,13 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
 - `[1] err_soft_clear` — SW writes 1→0 to acknowledge per-run error
   history (SOFT-CLEAR category stickies: `err_chip_mask`, `err_cause`,
   `err_reg_overflow`, `chip_reg req_overflow`, `stop_id_error_mask`,
-  etc.). Does NOT clear HISTORICAL-category stickies.
+  `masked_slope_drop_any`, etc.). Does NOT clear HISTORICAL-category stickies.
 - Both are rising-edge detected in the i_axis_aclk domain.
+
+`max_range_5ns_ticks` is always encoded in the 200 MHz reference timebase:
+one tick is 5 ns regardless of `g_TDC_CLK_MHZ` or `g_AXIS_CLK_MHZ`. RTL uses
+ceiling conversion into each local clock domain, so the represented physical
+window is never shortened.
 
 ### Status registers (R/O)
 
@@ -41,11 +46,19 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
 | 0x40   | HW_VERSION   | `[31:0]` compile-time constant (default `0x00010000`) |
 | 0x44   | HW_CONFIG    | Packed generics: `[3:0] N_CHIPS`, `[7:4] MAX_STOPS_PER_CHIP`, `[11:8] MAX_HITS_PER_STOP`, `[16:12] HIT_SLOT_DATA_WIDTH`, `[24:17] TDATA_WIDTH`, `[27:25] CELL_FMT` |
 | 0x48   | MAX_ROWS     | `c_MAX_ROWS_PER_FACE`                                 |
-| 0x4C   | CELL_SIZE    | `c_CELL_SIZE_BYTES`                                   |
-| 0x50   | MAX_HSIZE    | `MAX_ROWS × beats_per_cell × (TDATA/8) + hdr prefix`  |
+| 0x4C   | CELL_SIZE    | Maximum canonical serialized cell size: `20 B` (`max_hits=7`) |
+| 0x50   | MAX_HSIZE    | Conservative full-mask packed maximum: `688 B` = `48 + align16(32 × 20)` |
 | 0x54   | **STATUS**   | See STATUS (STAT5) layout below                       |
 | 0x58   | **STATUS_EXT** | See STATUS_EXT (STAT6) layout below — Round 5/6/7   |
 | 0x5C   | **STATUS_EXT2** | See STATUS_EXT2 (STAT7) layout below — Round 11 Cat C |
+
+Address contract: only `0x40..0x5C` is the published status window. The
+generated IP's native `0x20..0x3C` status placement is hidden by the wrapper,
+and `0x60..0x7F` remains reserved. Writes are accepted only for `0x00..0x1C`.
+`CELL_SIZE` and `MAX_HSIZE` are compile-time capacity maxima; the actual
+slope-specific runtime line sizes are exported by
+`o_vdma_hsize_bytes_rise/fall` and may be smaller (for example `368 B` for
+16 cells at `max_hits=7`).
 
 ### STATUS (STAT5 @ 0x54) bit layout
 
@@ -73,17 +86,22 @@ Clear semantic: `chip_error_mask` tracks live status; the sticky masks
 | `[2]`    | `reg_zero_mask`           | sticky    | cmd_arb zero-mask request   |
 | `[3]`    | `shot_flush_drop_rise`    | sticky    | rise face_assembler shot_start flush on non-empty FIFO |
 | `[4]`    | `shot_flush_drop_fall`    | sticky    | fall face_assembler shot_start flush on non-empty FIFO |
-| `[7:5]`  | reserved                  | —         | —                           |
-| `[15:8]` | `shot_overrun_count_rise` | wrap cnt  | rise face_assembler blank-fill count (8-bit) |
-| `[23:16]`| `shot_overrun_count_fall` | wrap cnt  | fall face_assembler blank-fill count (8-bit) |
+| `[5]`    | `rise_hdr_drain_timeout`  | sticky    | rise header drain watchdog escape |
+| `[6]`    | `fall_hdr_drain_timeout`  | sticky    | fall header drain watchdog escape |
+| `[7]`    | `err_frame_wait_escape`   | sticky    | err_handler frame-done wait escape |
+| `[11:8]` | `shot_overrun_count_rise[3:0]` | wrap cnt | rise blank-fill count low nibble |
+| `[15:12]`| `shot_flush_drop_mask`     | sticky    | per-chip OR of rise/fall non-empty shot flush |
+| `[19:16]`| `shot_overrun_count_fall[3:0]` | wrap cnt | fall blank-fill count low nibble |
+| `[23:20]`| `cmd_collision_mask`       | sticky    | per-chip PH_IDLE command collision |
 | `[27:24]`| `err_reg_overflow_mask`   | sticky    | per-chip chip_reg 3rd-pulse queue overflow |
 | `[31:28]`| `run_drain_complete_mask` | sticky    | per-chip chip_run internal drain-complete (Round 8: cleared on next shot_start) |
 
 Clear semantic notes:
 - `err_read_timeout`, `reg_rejected`, `reg_zero_mask`, `err_reg_overflow_mask`: cleared on `i_rst_n` or `i_err_soft_clear` pulse
   (Round 7 B-5 threaded soft_clear through chip_reg).
-- `shot_flush_drop_*`: cleared only on `i_rst_n` (no soft_clear path yet).
-- `shot_overrun_count_*`: 8-bit wrapping counter; treat as liveness /
+- `shot_flush_drop_*`, `shot_flush_drop_mask`, and header drain timeout:
+  HISTORICAL evidence, cleared only on `i_rst_n`.
+- `shot_overrun_count_*`: the CSR exposes the low 4-bit wrapping value; treat as liveness /
   rough event density, NOT an exact event tally (Round 7 B-3 — fast-
   fire events can collapse under in-flight STAT6 handshake).
 - `run_drain_complete_mask[i]`: set when chip[i]'s drain completes;
@@ -97,15 +115,22 @@ Clear semantic notes:
 | `[3:0]`  | `reg_timeout_mask`              | sticky | cmd_arb per-chip reg transaction timeout |
 | `[7:4]`  | `stop_id_error_mask`            | sticky | cell_builder per-chip stop_id out-of-range (rise OR fall) |
 | `[10:8]` | `run_timeout_cause_last`        | latched | chip_run last 3-bit cause: 001=raw_busy, 010=ef1_rsp, 011=ef2_rsp, 100=burst_rsp, 101=flush_rsp, 110=overrun_flush, 111=capture_stop_fallback |
-| `[15:11]`| reserved                        | —      | — |
-| `[23:16]`| `rise_face_start_collapsed`     | wrap   | header_inserter rise non-IDLE face_start coalesce count |
-| `[31:24]`| `fall_face_start_collapsed`     | wrap   | header_inserter fall non-IDLE face_start coalesce count |
+| `[14:11]`| `quarantine_escape_mask`        | sticky | per-chip cell_builder quarantine hard-cap escape |
+| `[15]`   | `masked_slope_drop_any`         | sticky | any hit addressed a disabled chip/slope lane |
+| `[19:16]`| `rise_face_start_collapsed[3:0]`| wrap   | rise non-IDLE face_start coalesce low nibble |
+| `[23:20]`| `mono_violation_mask`           | sticky | stop-count monotonic violation per chip |
+| `[27:24]`| `fall_face_start_collapsed[3:0]`| wrap   | fall non-IDLE face_start coalesce low nibble |
+| `[31:28]`| `init_cfg_coalesced_mask`       | sticky | chip_init cfg-write coalesce per chip |
 
 Clear semantics:
 - `reg_timeout_mask`: cleared on normal transaction completion OR on i_err_soft_clear (via cmd_arb's own reset path).
 - `stop_id_error_mask`: cleared on i_rst_n or i_err_soft_clear (top-level sticky aggregate).
+- `masked_slope_drop_any`: survives cmd_stop/abort for post-run read and
+  clears on i_rst_n or `i_err_soft_clear`.
+- `quarantine_escape_mask`, `mono_violation_mask`, and
+  `init_cfg_coalesced_mask`: HISTORICAL, hard-reset clear.
 - `run_timeout_cause_last`: latches the most-recent cause on any chip's run_timeout pulse; never auto-cleared.
-- Face_start collapsed counters: wrap 8-bit; not an exact event tally.
+- Face_start collapsed counters: CSR exposes each low nibble; not an exact event tally.
 
 ### STATUS_EXT counter semantics (read/observe caveats)
 
@@ -113,7 +138,7 @@ STAT6 crosses clock domains via `xpm_cdc_handshake` (32-bit payload).
 The handshake auto-retriggers on any source change, so SW sees:
 - Every change in the pipeline-wide bits `[7:0]` → visible within one
   handshake latency (~8 dest cycles).
-- Counters `[23:8]` — if multiple increments fall inside one in-flight
+- Counter fields — if multiple increments fall inside one in-flight
   handshake, they collapse to the final value. SW should treat counters
   as "≥ N events" indicators, not strict counts.
 
@@ -129,6 +154,12 @@ The handshake auto-retriggers on any source change, so SW sees:
 | 0x14–0x50 | CFG_IMAGE[0..15] | 16 × 32-bit TDC-GPX chip register mirror |
 | 0x54   | SCAN_TIMEOUT | `[15:0] max_scan_clks`, `[18:16] max_hits_cfg` |
 | others | reserved / unused (ctl0, ctl2, ctl22–31 owned by csr_pipeline) |
+
+`max_scan_clks` is an AXIS-domain cycle count, not the 5 ns reference-tick
+field above. A value of zero disables the programmable deadline but is not an
+infinite wait: `face_assembler` still forces blank completion at the 16-bit
+hard cap (`0xFFFF`), approximately 1.31 ms / 655 us / 524 us / 437 us /
+328 us at 50 / 100 / 125 / 150 / 200 MHz respectively.
 
 ### Status registers
 

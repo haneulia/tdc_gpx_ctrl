@@ -54,6 +54,9 @@ entity tdc_gpx_cell_pipe is
         -- existing instantiations keep compiling.
         i_abort_rise            : in  std_logic := '0';
         i_abort_fall            : in  std_logic := '0';
+        -- Clear diagnostic history after SW has read it. Abort/cmd_stop
+        -- preserves history so post-run STAT7 remains meaningful.
+        i_sticky_clear          : in  std_logic := '0';
         i_face_stops_per_chip   : in  unsigned(3 downto 0);
         i_max_hits_cfg          : in  unsigned(2 downto 0);
         -- Physical max-range window from CSR in fixed 5 ns reference ticks.
@@ -101,9 +104,8 @@ entity tdc_gpx_cell_pipe is
         o_cell_rise_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_cell_fall_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
         -- CHAIN P1: sticky per chip -- a hit beat addressed a masked slope
-        -- and was dropped at the slope demux. Cleared only by i_rst_n
-        -- (survives abort/cmd_stop so SW can read it post-run, matching
-        -- the quarantine_escape precedent).
+        -- and was dropped at the slope demux. Survives abort/cmd_stop for
+        -- post-run read; cleared by i_rst_n or i_sticky_clear.
         o_masked_slope_drop_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
         o_masked_slope_drop_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
     );
@@ -231,6 +233,8 @@ begin
     gen_demux_ready : for i in 0 to c_N_CHIPS - 1 generate
         signal s_rise_free : std_logic;
         signal s_fall_free : std_logic;
+        signal s_rise_accept : std_logic;
+        signal s_fall_accept : std_logic;
     begin
         s_rise_free <= '1' when s_abort_rise = '1'
                               or s_rise_valid_r(i) = '0'
@@ -239,29 +243,41 @@ begin
                               or s_fall_valid_r(i) = '0'
                               or s_fall_tready(i) = '1' else '0';
 
+        -- A masked lane has no destination state to protect. Its hit is a
+        -- consume-and-flag operation, and a broadcast drain simply skips it.
+        s_rise_accept <= '1' when i_rise_chip_mask(i) = '0' else s_rise_free;
+        s_fall_accept <= '1' when i_fall_chip_mask(i) = '0' else s_fall_free;
+
         s_evt_skid_tready(i) <= '1' when s_evt_skid_tvalid(i) = '0'
-                       else s_rise_free and s_fall_free when s_evt_skid_tuser(i)(7) = '1'
-                       else s_rise_free when s_evt_skid_tuser(i)(0) = '1'
-                       else s_fall_free;
+                       else s_rise_accept and s_fall_accept when s_evt_skid_tuser(i)(7) = '1'
+                       else s_rise_accept when s_evt_skid_tuser(i)(0) = '1'
+                       else s_fall_accept;
     end generate gen_demux_ready;
 
     p_slope_demux : process(i_clk)
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' or i_abort = '1' then
+            if i_rst_n = '0' then
                 s_rise_valid_r <= (others => '0');
                 s_fall_valid_r <= (others => '0');
-                -- Stickies survive i_abort on purpose: cmd_stop at end of a
-                -- run raises the global abort, and SW reads STAT7 after
-                -- stopping — clearing here would erase the evidence before
-                -- it is ever readable (matches the quarantine_escape
-                -- precedent: cleared only by full i_rst_n).
-                if i_rst_n = '0' then
+                -- Hard reset starts a clean diagnostic epoch.
+                s_masked_drop_rise_r <= (others => '0');
+                s_masked_drop_fall_r <= (others => '0');
+            else
+                -- CTL2[1] starts a fresh diagnostic epoch. A simultaneous
+                -- clear wins over a newly consumed masked hit.
+                if i_sticky_clear = '1' then
                     s_masked_drop_rise_r <= (others => '0');
                     s_masked_drop_fall_r <= (others => '0');
                 end if;
-            else
-                for i in 0 to c_N_CHIPS - 1 loop
+
+                if i_abort = '1' then
+                    -- Abort clears in-flight demux state but preserves sticky
+                    -- history unless i_sticky_clear is also asserted.
+                    s_rise_valid_r <= (others => '0');
+                    s_fall_valid_r <= (others => '0');
+                else
+                    for i in 0 to c_N_CHIPS - 1 loop
                     -- Clear valid on downstream handshake or matching slope abort.
                     if s_abort_rise = '1' then
                         s_rise_valid_r(i) <= '0';
@@ -295,7 +311,9 @@ begin
                             end if;
                         elsif s_evt_skid_tuser(i)(0) = '1' then
                             if i_rise_chip_mask(i) = '0' then
-                                s_masked_drop_rise_r(i) <= '1';
+                                if i_sticky_clear = '0' then
+                                    s_masked_drop_rise_r(i) <= '1';
+                                end if;
                             elsif s_abort_rise = '0' then
                                 s_rise_valid_r(i) <= '1';
                                 s_rise_tdata_r(i) <= s_evt_skid_tdata(i);
@@ -303,7 +321,9 @@ begin
                             end if;
                         else
                             if i_fall_chip_mask(i) = '0' then
-                                s_masked_drop_fall_r(i) <= '1';
+                                if i_sticky_clear = '0' then
+                                    s_masked_drop_fall_r(i) <= '1';
+                                end if;
                             elsif s_abort_fall = '0' then
                                 s_fall_valid_r(i) <= '1';
                                 s_fall_tdata_r(i) <= s_evt_skid_tdata(i);
@@ -311,7 +331,8 @@ begin
                             end if;
                         end if;
                     end if;
-                end loop;
+                    end loop;
+                end if;
             end if;
         end if;
     end process p_slope_demux;
