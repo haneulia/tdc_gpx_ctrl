@@ -113,9 +113,22 @@ entity tb_tdc_gpx_top_int is
         -- 0 = stall both rise/fall lanes, 1 = stall rise lane only,
         -- 2 = stall fall lane only. Used by C06 lane-imbalance stress.
         G_BP_LANE_MODE    : natural := 0;
+        -- CHAIN-P0-01 shot-boundary stall. When >0, both output lanes'
+        -- tready are held low from the first output beat attempt after
+        -- shot 1 until this many clocks AFTER the next shot_start pulse,
+        -- so the previous line's tail is provably buffered across a
+        -- mid-face shot boundary (the window the output-FIFO flush guard
+        -- protects). Mutually exclusive with G_BP_TREADY_GAP.
+        G_BP_SHOT_STALL_CLKS : natural := 0;
         -- 0 = no recovery. 1 = normal run -> soft_reset -> normal run.
         -- 2 = normal run -> force_reinit -> normal run.
-        G_RECOVERY_MODE   : natural := 0
+        G_RECOVERY_MODE   : natural := 0;
+        -- CHAIN P1: expect STAT7[15] (masked_slope_drop_any) to be set at
+        -- end of run. Use with a chip-model slope mask that deliberately
+        -- mismatches the DUT slope topology (e.g. G_CHIP_SLOPE_MASK="1111"
+        -- with DEDICATED_2X2, so chips 2/3 emit rising hits into their
+        -- masked rise lane). false = STAT7 read stays untouched.
+        G_EXPECT_MASKED_SLOPE_DROP : boolean := false
     );
 end entity tb_tdc_gpx_top_int;
 
@@ -441,6 +454,10 @@ architecture sim of tb_tdc_gpx_top_int is
     signal mon_rise_last_cycle  : natural := 0;
     signal mon_fall_last_cycle  : natural := 0;
     signal mon_bp_stall_cycles  : natural := 0;
+    -- CHAIN-P0-01: set when a shot_start pulse was observed while the
+    -- shot-boundary stall window held tready low (source marker that the
+    -- hazard window was actually exercised).
+    signal mon_shot_stall_overlap : boolean := false;
     signal mon_irq_cnt          : natural := 0;
     signal mon_irq_pipe_cnt     : natural := 0;
     signal mon_rise_metadata_count : natural := 0;
@@ -538,12 +555,56 @@ begin
 
     p_bp : process(clk)
         variable v_cnt : natural := 0;
+        -- CHAIN-P0-01 shot-boundary stall state
+        variable v_shot_cnt : natural := 0;     -- lc_start_tdc pulses seen
+        variable v_stall_on : boolean := false; -- window active
+        variable v_stall_done : boolean := false; -- single window per sim
+        variable v_rel_cnt  : natural := 0;     -- post-shot-2 release count
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
                 v_cnt := 0;
+                v_shot_cnt   := 0;
+                v_stall_on   := false;
+                v_stall_done := false;
+                v_rel_cnt    := 0;
                 m_rise_tready <= '1';
                 m_fall_tready <= '1';
+            elsif G_BP_SHOT_STALL_CLKS > 0 then
+                if lc_start_tdc = '1' then
+                    v_shot_cnt := v_shot_cnt + 1;
+                    if v_stall_on then
+                        mon_shot_stall_overlap <= true;
+                    end if;
+                end if;
+
+                -- Arm on the first output beat attempt after shot 1: the
+                -- line is now in flight and will be caught in the FIFOs.
+                if not v_stall_on and not v_stall_done
+                   and v_shot_cnt = 1
+                   and (m_rise_tvalid = '1' or m_fall_tvalid = '1') then
+                    v_stall_on := true;
+                end if;
+
+                -- Release G_BP_SHOT_STALL_CLKS after the second shot pulse,
+                -- i.e. well past shot_start_gated and the (guarded) FIFO
+                -- reset pulse inside the DUT.
+                if v_stall_on and v_shot_cnt >= 2 then
+                    v_rel_cnt := v_rel_cnt + 1;
+                    if v_rel_cnt >= G_BP_SHOT_STALL_CLKS then
+                        v_stall_on   := false;
+                        v_stall_done := true;
+                    end if;
+                end if;
+
+                if v_stall_on then
+                    m_rise_tready <= '0';
+                    m_fall_tready <= '0';
+                    mon_bp_stall_cycles <= mon_bp_stall_cycles + 1;
+                else
+                    m_rise_tready <= '1';
+                    m_fall_tready <= '1';
+                end if;
             elsif G_BP_TREADY_GAP > 0 then
                 v_cnt := v_cnt + 1;
                 if v_cnt < G_BP_TREADY_GAP then
@@ -1071,19 +1132,30 @@ begin
 
         ----------------------------------------------------------------
         -- Pipeline status readback checkpoint.
-        -- STAT5 is expected to be clean/idle. STAT6 is logged without exact
-        -- compare because run_drain_complete_mask is a valid non-zero result.
-        -- STAT7 is expected to stay zero in the nominal recovery scenario.
+        -- STAT6 is logged without exact compare because
+        -- run_drain_complete_mask is a valid non-zero result.
+        --
+        -- LATENT-BUG FIX (2026-07-17): STAT5/7 expectations are now
+        -- per-call parameters. The old fixed all-zero expectations only
+        -- ever "passed" because the pipeline CSR STAT reads decoded
+        -- outside the generated IP's register window (and the
+        -- t_tdc_status record had a 'U' source), so every read returned
+        -- zero vacuously. With live reads: after a run that was stopped
+        -- with stop_tdc only (no CMD_STOP), face_seq legitimately sits in
+        -- ST_WAIT_SHOT and STAT5[0] busy = '1'.
         ----------------------------------------------------------------
-        procedure read_pipeline_status(tag : string) is
+        procedure read_pipeline_status(
+            tag          : string;
+            stat5_expect : std_logic_vector(31 downto 0) := x"00000000";
+            stat7_expect : std_logic_vector(31 downto 0) := x"00000000") is
         begin
             wait_clk(64);
             pl("C06_MARKER T7_STATUS_READ tag=" & tag
                & " cycle=" & integer'image(sim_cycle)
                & " time=" & time'image(now));
-            pipe_rd(C_PIPE_STATUS, x"00000000", '1', '1');
+            pipe_rd(C_PIPE_STATUS, stat5_expect, '1', '1');
             pipe_rd(C_PIPE_STATUS_EXT, x"00000000", '0', '0');
-            pipe_rd(C_PIPE_STATUS_EXT2, x"00000000", '1', '1');
+            pipe_rd(C_PIPE_STATUS_EXT2, stat7_expect, '1', '1');
         end procedure;
 
         ----------------------------------------------------------------
@@ -1381,6 +1453,9 @@ begin
         assert G_RECOVERY_MODE <= 2
             report "tb_tdc_gpx_top_int: G_RECOVERY_MODE must be 0..2"
             severity failure;
+        assert not (G_BP_TREADY_GAP > 0 and G_BP_SHOT_STALL_CLKS > 0)
+            report "tb_tdc_gpx_top_int: G_BP_TREADY_GAP and G_BP_SHOT_STALL_CLKS are mutually exclusive"
+            severity failure;
         assert G_BP_LANE_MODE <= 2
             report "tb_tdc_gpx_top_int: G_BP_LANE_MODE must be 0..2"
             severity failure;
@@ -1452,14 +1527,21 @@ begin
         start_measurement_run(1);
         run_all_shots(1);
         stop_measurement_run(1);
-        read_pipeline_status("after-run1");
+        -- stop_tdc-only stop leaves face_seq armed in ST_WAIT_SHOT, so the
+        -- honest STAT5 expectation is busy='1'. STAT7 carries the
+        -- masked-slope sticky when the wrong-slope scenario is active.
+        if G_EXPECT_MASKED_SLOPE_DROP then
+            read_pipeline_status("after-run1", x"00000001", x"00008000");
+        else
+            read_pipeline_status("after-run1", x"00000001");
+        end if;
 
         if G_RECOVERY_MODE > 0 then
             issue_recovery(G_RECOVERY_MODE);
             start_measurement_run(2);
             run_all_shots(2);
             stop_measurement_run(2);
-            read_pipeline_status("after-recovery-run");
+            read_pipeline_status("after-recovery-run", x"00000001");
         end if;
 
         ----------------------------------------------------------------
@@ -1567,6 +1649,25 @@ begin
                 report "tb_tdc_gpx_top_int: backpressure mode did not create stall cycles"
                 severity error;
             report "tb_tdc_gpx_top_int: bounded output backpressure preserved beats/tlast - PASS"
+                severity note;
+        end if;
+        if G_BP_SHOT_STALL_CLKS > 0 then
+            assert mon_bp_stall_cycles > 0
+                report "tb_tdc_gpx_top_int: shot-boundary stall mode did not create stall cycles"
+                severity error;
+            assert mon_shot_stall_overlap
+                report "tb_tdc_gpx_top_int: stall window did not overlap a shot_start "
+                       & "(hazard window not exercised - test premise broken)"
+                severity error;
+            report "tb_tdc_gpx_top_int: shot-boundary stall preserved beats/tlast - PASS"
+                severity note;
+        end if;
+        if G_EXPECT_MASKED_SLOPE_DROP then
+            -- CHAIN P1: wrong-slope hits must surface as STAT7[15] with all
+            -- other STAT7 stickies clean (exact compare).
+            wait_clk(64);
+            pipe_rd(C_PIPE_STATUS_EXT2, x"00008000", '1', '1');
+            report "tb_tdc_gpx_top_int: masked-slope drop surfaced in STAT7[15] - PASS"
                 severity note;
         end if;
         if G_RECOVERY_MODE = 1 then
