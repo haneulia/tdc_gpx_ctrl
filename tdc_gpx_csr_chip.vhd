@@ -345,10 +345,13 @@ architecture rtl of tdc_gpx_csr_chip is
     -- =========================================================================
     -- CDC-idle flag (s_axi_aclk domain)
     -- =========================================================================
-    signal s_cdc_all_idle_src : std_logic := '1';
+    signal s_cdc_all_idle_src_r : std_logic := '1';
 
     -- Local 2-FF sync of CDC idle to i_axis_aclk (for reg command gating)
     signal s_cdc_all_idle_ff  : std_logic_vector(1 downto 0) := "11";
+
+    attribute ASYNC_REG : string;
+    attribute ASYNC_REG of s_cdc_all_idle_ff : signal is "TRUE";
 
     -- =========================================================================
     -- Reg access edge detect (i_axis_aclk domain)
@@ -748,14 +751,24 @@ begin
     --   Output directly to csr_pipeline via o_cdc_idle.
     --   Note: STAT CDCs (i_axis->s_axi direction) are NOT included.
     -- =========================================================================
-    s_cdc_all_idle_src <= '1' when s_src_send_ctl1  = '0'
-                                and s_src_send_ctl3  = '0'
-                                and s_src_send_ctl4  = '0'
-                                and s_src_send_ctl21 = '0'
-                                and s_src_send_img = (s_src_send_img'range => '0')
-                          else '0';
+    p_cdc_idle_src : process(s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' then
+                s_cdc_all_idle_src_r <= '1';
+            elsif s_src_send_ctl1  = '0'
+              and s_src_send_ctl3  = '0'
+              and s_src_send_ctl4  = '0'
+              and s_src_send_ctl21 = '0'
+              and s_src_send_img = (s_src_send_img'range => '0') then
+                s_cdc_all_idle_src_r <= '1';
+            else
+                s_cdc_all_idle_src_r <= '0';
+            end if;
+        end if;
+    end process p_cdc_idle_src;
 
-    o_cdc_idle <= s_cdc_all_idle_src;
+    o_cdc_idle <= s_cdc_all_idle_src_r;
 
     -- Local 2-FF sync to i_axis_aclk for reg command gating
     p_cdc_idle_sync : process(i_axis_aclk)
@@ -764,7 +777,7 @@ begin
             if i_axis_aresetn = '0' then
                 s_cdc_all_idle_ff <= "11";
             else
-                s_cdc_all_idle_ff(0) <= s_cdc_all_idle_src;
+                s_cdc_all_idle_ff(0) <= s_cdc_all_idle_src_r;
                 s_cdc_all_idle_ff(1) <= s_cdc_all_idle_ff(0);
             end if;
         end if;

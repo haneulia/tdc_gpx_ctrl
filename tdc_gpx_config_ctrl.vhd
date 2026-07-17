@@ -513,8 +513,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     type t_collision_vec_arr is array(0 to c_N_CHIPS - 1) of std_logic_vector(3 downto 0);
     signal s_cmd_collision_vec_per : t_collision_vec_arr;
     -- Aggregated across chips: [0]=any-chip-start-collision, [1]=cfg_write,
-    -- [2]=reg_read, [3]=reg_write. OR-across-chip combinational reduction.
-    signal s_cmd_collision_vec_comb   : std_logic_vector(3 downto 0);
+    -- [2]=reg_read, [3]=reg_write. The OR reduction is registered in the
+    -- TDC source domain before the per-bit synchronizer.
+    signal s_cmd_collision_vec_src_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_collision_vec_meta_r : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_collision_vec_axi_r  : std_logic_vector(3 downto 0) := (others => '0');
 
@@ -597,7 +598,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     -- CDC signals: TDC -> AXI-Stream domain (status)
     -- =========================================================================
-    -- Per-chip level status (xpm_cdc_single)
+    -- Per-chip level and sticky status. One-cycle event signals are declared
+    -- separately below and cross through xpm_cdc_pulse.
     signal s_chip_busy_axi         : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_drain_timeout_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_sequence_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -925,7 +927,7 @@ begin
                 s_err_rw_ambiguous_reg_axi_r  <= s_err_rw_ambiguous_reg_meta_r;
                 s_err_stopdis_mid_shot_meta_r <= s_err_stopdis_mid_shot;
                 s_err_stopdis_mid_shot_axi_r  <= s_err_stopdis_mid_shot_meta_r;
-                s_cmd_collision_vec_meta_r    <= s_cmd_collision_vec_comb;
+                s_cmd_collision_vec_meta_r    <= s_cmd_collision_vec_src_r;
                 s_cmd_collision_vec_axi_r     <= s_cmd_collision_vec_meta_r;
                 s_run_timeout_cause_arr_meta_r <= s_run_timeout_cause_packed;
                 s_run_timeout_cause_arr_axi_r  <= s_run_timeout_cause_arr_meta_r;
@@ -955,11 +957,19 @@ begin
     o_err_rw_ambiguous_arb    <= s_err_rw_ambiguous_arb;  -- AXI-Stream domain, no CDC needed
     o_err_rw_ambiguous_reg    <= s_err_rw_ambiguous_reg_axi_r;
     o_err_stopdis_mid_shot_mask <= s_err_stopdis_mid_shot_axi_r;
-    -- Round 12 #20: aggregate collision vec across chips (OR-reduction)
-    -- then feed through CDC.
-    s_cmd_collision_vec_comb <=
-        s_cmd_collision_vec_per(0) or s_cmd_collision_vec_per(1) or
-        s_cmd_collision_vec_per(2) or s_cmd_collision_vec_per(3);
+    -- Register the OR reduction in the TDC source domain before the 2-FF CDC.
+    p_cmd_collision_vec_src : process(i_tdc_clk)
+    begin
+        if rising_edge(i_tdc_clk) then
+            if s_tdc_aresetn = '0' then
+                s_cmd_collision_vec_src_r <= (others => '0');
+            else
+                s_cmd_collision_vec_src_r <=
+                    s_cmd_collision_vec_per(0) or s_cmd_collision_vec_per(1) or
+                    s_cmd_collision_vec_per(2) or s_cmd_collision_vec_per(3);
+            end if;
+        end if;
+    end process p_cmd_collision_vec_src;
     o_err_cmd_collision_vec <= s_cmd_collision_vec_axi_r;
     -- Round 12 #15: distinct cause masks.
     o_err_raw_drop_mask     <= s_err_raw_drop_axi;
@@ -1644,7 +1654,7 @@ begin
 
         -- Level signals: xpm_cdc_single (1-bit, 2-FF synchronizer)
         u_cdc_busy : xpm_cdc_single
-            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 1)
             port map (
                 src_clk  => i_tdc_clk,
                 src_in   => s_chip_busy(i),
@@ -1652,22 +1662,26 @@ begin
                 dest_out => s_chip_busy_axi(i)
             );
 
-        u_cdc_drain_timeout : xpm_cdc_single
-            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+        u_cdc_drain_timeout : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
             port map (
-                src_clk  => i_tdc_clk,
-                src_in   => s_err_drain_timeout(i),
-                dest_clk => i_axis_aclk,
-                dest_out => s_err_drain_timeout_axi(i)
+                src_clk    => i_tdc_clk,
+                src_rst    => '0',
+                src_pulse  => s_err_drain_timeout(i),
+                dest_clk   => i_axis_aclk,
+                dest_rst   => '0',
+                dest_pulse => s_err_drain_timeout_axi(i)
             );
 
-        u_cdc_seq_err : xpm_cdc_single
-            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+        u_cdc_seq_err : xpm_cdc_pulse
+            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
             port map (
-                src_clk  => i_tdc_clk,
-                src_in   => s_err_sequence(i),
-                dest_clk => i_axis_aclk,
-                dest_out => s_err_sequence_axi(i)
+                src_clk    => i_tdc_clk,
+                src_rst    => '0',
+                src_pulse  => s_err_sequence(i),
+                dest_clk   => i_axis_aclk,
+                dest_rst   => '0',
+                dest_pulse => s_err_sequence_axi(i)
             );
 
         u_cdc_rsp_mismatch : xpm_cdc_single
@@ -1680,7 +1694,7 @@ begin
             );
 
         u_cdc_raw_overflow : xpm_cdc_single
-            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 0)
+            generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 1)
             port map (
                 src_clk  => i_tdc_clk,
                 src_in   => s_err_raw_overflow(i),

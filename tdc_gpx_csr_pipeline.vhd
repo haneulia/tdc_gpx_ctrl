@@ -268,8 +268,11 @@ architecture rtl of tdc_gpx_csr_pipeline is
     signal s_start_pending_r     : std_logic := '0';
 
     -- CDC-idle flag: '1' when local + chip CSR handshakes are quiescent.
-    signal s_cdc_local_idle_src : std_logic := '1';
-    signal s_cdc_all_idle_ff   : std_logic_vector(1 downto 0) := "11";
+    signal s_cdc_all_idle_src_r : std_logic := '1';
+    signal s_cdc_all_idle_ff    : std_logic_vector(1 downto 0) := "11";
+
+    attribute ASYNC_REG : string;
+    attribute ASYNC_REG of s_cdc_all_idle_ff : signal is "TRUE";
 
     -- laser_ctrl cols_per_face latch (i_axis_aclk domain)
     signal s_lsr_cols_r  : unsigned(15 downto 0) := (others => '0');
@@ -660,23 +663,25 @@ begin
     begin
         if rising_edge(s_axi_aclk) then
             if s_axi_aresetn = '0' then
-                s_cdc_local_idle_src <= '1';
-            elsif s_src_send_ctl = (s_src_send_ctl'range => '0') then
-                s_cdc_local_idle_src <= '1';
+                s_cdc_all_idle_src_r <= '1';
+            elsif s_src_send_ctl = (s_src_send_ctl'range => '0')
+              and i_chip_csr_cdc_idle = '1' then
+                s_cdc_all_idle_src_r <= '1';
             else
-                s_cdc_local_idle_src <= '0';
+                s_cdc_all_idle_src_r <= '0';
             end if;
         end if;
     end process p_cdc_idle_src;
 
-    -- Combine local idle + chip CSR idle, sync to i_axis_aclk
+    -- The combined idle level is registered in the AXI-Lite source domain
+    -- before the two-stage synchronizer to avoid combinational CDC glitches.
     p_cdc_idle_sync : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
                 s_cdc_all_idle_ff <= "11";
             else
-                s_cdc_all_idle_ff(0) <= s_cdc_local_idle_src and i_chip_csr_cdc_idle;
+                s_cdc_all_idle_ff(0) <= s_cdc_all_idle_src_r;
                 s_cdc_all_idle_ff(1) <= s_cdc_all_idle_ff(0);
             end if;
         end if;
