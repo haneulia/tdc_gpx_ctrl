@@ -124,6 +124,20 @@ if {$do_impl} {
         place_design -directive Explore
         phys_opt_design -directive AggressiveExplore
         route_design -directive AggressiveExplore -tns_cleanup
+
+        # Post-route physical optimization uses actual routed delay rather
+        # than pre-route estimates. Run it only for a remaining setup miss so
+        # configurations already closed by the first route keep their result.
+        set worst_setup_paths [get_timing_paths -setup -max_paths 1 -nworst 1]
+        if {[llength $worst_setup_paths] != 0} {
+            set first_route_wns [get_property SLACK [lindex $worst_setup_paths 0]]
+            puts "OOC_SIGNOFF_FIRST_ROUTE_WNS=$first_route_wns"
+            if {$first_route_wns < 0.0} {
+                phys_opt_design -directive AggressiveExplore
+                route_design -directive AggressiveExplore -tns_cleanup
+                puts "OOC_SIGNOFF_POST_ROUTE_PHYS_OPT_DONE"
+            }
+        }
     } else {
         opt_design
         place_design

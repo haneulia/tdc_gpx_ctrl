@@ -44,7 +44,8 @@ $Log = "$OutDir/vivado.log"
 function Assert-StageClosed {
     param(
         [string]$Prefix,
-        [string]$Stage
+        [string]$Stage,
+        [bool]$RequireTiming = $true
     )
 
     $timing = "$OutDir/${Prefix}_timing_summary.rpt"
@@ -57,13 +58,17 @@ function Assert-StageClosed {
         }
     }
 
-    if (-not (Select-String -LiteralPath $timing `
-            -Pattern "All user specified timing constraints are met." `
-            -SimpleMatch -Quiet)) {
+    $timingMet = Select-String -LiteralPath $timing `
+        -Pattern "All user specified timing constraints are met." `
+        -SimpleMatch -Quiet
+    $hasViolatedPath = Select-String -LiteralPath $timing `
+        -Pattern 'Slack \(VIOLATED\)' -Quiet
+
+    if ($RequireTiming -and (-not $timingMet -or $hasViolatedPath)) {
         throw "$Stage timing constraints are not met: $timing"
     }
-    if (Select-String -LiteralPath $timing -Pattern 'Slack \(VIOLATED\)' -Quiet) {
-        throw "$Stage timing report contains a violated path: $timing"
+    if (-not $RequireTiming -and (-not $timingMet -or $hasViolatedPath)) {
+        Write-Warning "$Stage timing is advisory for an implementation run; post-route timing remains the hard gate: $timing"
     }
     if (-not (Select-String -LiteralPath $checkTiming `
             -Pattern "checking no_clock (0)" -SimpleMatch -Quiet)) {
@@ -120,7 +125,9 @@ if ($LASTEXITCODE -ne 0) {
 if (-not (Select-String -Path $Log -Pattern "OOC_SIGNOFF_SYNTH_PASS" -SimpleMatch -Quiet)) {
     throw "Vivado log is missing OOC_SIGNOFF_SYNTH_PASS: $Log"
 }
-Assert-StageClosed -Prefix "post_synth" -Stage "Post-synthesis"
+$RequireSynthTiming = -not $Implement.IsPresent
+Assert-StageClosed -Prefix "post_synth" -Stage "Post-synthesis" `
+    -RequireTiming $RequireSynthTiming
 
 if ($Implement -and -not (Select-String -Path $Log -Pattern "OOC_SIGNOFF_IMPL_PASS" -SimpleMatch -Quiet)) {
     throw "Vivado log is missing OOC_SIGNOFF_IMPL_PASS: $Log"
