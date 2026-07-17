@@ -66,7 +66,7 @@ entity tdc_gpx_chip_run is
         g_RECOVERY_CLKS     : positive := 8;
         g_ALU_PULSE_CLKS    : positive := 4;
         -- Drain/flush watchdog headroom above max_range_tdc_clks.
-        -- The cap used by the 7 s_wait_cnt_r timeouts is computed at
+        -- The cap used by the shared registered wait-timeout detector is computed at
         -- shot_start as (i_max_range_tdc_clks + g_DRAIN_MARGIN_CLKS), saturating
         -- at x"FFFF". At the fastest supported clock, 256 clocks @ 200 MHz
         -- is about 1.28 us; slower TDC clocks provide a longer physical margin.
@@ -235,6 +235,7 @@ architecture rtl of tdc_gpx_chip_run is
     -- Phase B: latched once per shot on the ST_ARMED→ST_CAPTURE edge.
     -- Init = x"FFFF" so pre-first-shot behavior matches the legacy cap.
     signal s_wait_cap_r        : unsigned(15 downto 0) := x"FFFF";
+    signal s_wait_expired_r    : std_logic := '0';
     signal s_req_valid_r       : std_logic := '0';
     signal s_req_rw_r          : std_logic := '0';
     signal s_req_addr_r        : std_logic_vector(3 downto 0) := (others => '0');
@@ -310,6 +311,23 @@ begin
             end if;
         end if;
     end process;
+
+    -- Share the seven watchdog comparisons through one registered boundary.
+    -- A timeout is therefore acted on one TDC clock after the counter reaches
+    -- its cap. This removes the wide comparator from every FSM output-control
+    -- cone while preserving the shot-bounded timeout contract.
+    p_wait_expired : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_wait_expired_r <= '0';
+            elsif s_wait_cnt_r = s_wait_cap_r then
+                s_wait_expired_r <= '1';
+            else
+                s_wait_expired_r <= '0';
+            end if;
+        end if;
+    end process p_wait_expired;
 
     p_fsm : process(i_clk)
         variable v_cap             : unsigned(7 downto 0);
@@ -414,8 +432,8 @@ begin
                             -- Phase B: shot-bounded watchdog cap snapshot.
                             -- Must be shot_start (not cmd_start) so a mid-shot
                             -- SW max_range update cannot change this shot's
-                            -- timeout horizon. The cap is used by all 7
-                            -- s_wait_cnt_r comparisons in the drain/flush path.
+                            -- timeout horizon. One registered detector shares
+                            -- the cap comparison across the drain/flush path.
                             s_wait_cap_r         <= fn_timeout_cap(
                                                        i_max_range_tdc_clks,
                                                        g_DRAIN_MARGIN_CLKS);
@@ -455,7 +473,7 @@ begin
                             -- Fallback watchdog: irflag never arrived after
                             -- cmd_stop (chip malfunction). Fall back to the
                             -- original immediate-purge path so we don't hang.
-                            if s_wait_cnt_r = s_wait_cap_r then
+                            if s_wait_expired_r = '1' then
                                 s_range_active_r     <= '0';
                                 s_raw_valid_r        <= '0';
                                 s_drain_cnt_ififo1_r <= (others => '0');
@@ -641,7 +659,7 @@ begin
                       else
                         -- raw_busy watchdog: abort drain if stalled too long
                         s_wait_cnt_r <= s_wait_cnt_r + 1;
-                        if s_wait_cnt_r = s_wait_cap_r then
+                        if s_wait_expired_r = '1' then
                             s_oen_permanent_r <= '0';
                             s_range_active_r  <= '0';
                             s_drain_done_r    <= '1';
@@ -725,7 +743,7 @@ begin
                         else
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = s_wait_cap_r then
+                            if s_wait_expired_r = '1' then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
                                 s_range_active_r  <= '0';
@@ -769,7 +787,7 @@ begin
                         else
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = s_wait_cap_r then
+                            if s_wait_expired_r = '1' then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
                                 s_range_active_r  <= '0';
@@ -828,7 +846,7 @@ begin
                         else
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = s_wait_cap_r then
+                            if s_wait_expired_r = '1' then
                                 s_req_burst_r     <= '0';
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
@@ -885,7 +903,7 @@ begin
                             s_wait_cnt_r <= (others => '0');
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r    <= ST_DRAIN_SETTLE;
-                        elsif s_wait_cnt_r = s_wait_cap_r then
+                        elsif s_wait_expired_r = '1' then
                             -- Bus hung during flush: force completion
                             s_oen_permanent_r <= '0';
                             s_range_active_r  <= '0';
@@ -969,7 +987,7 @@ begin
                             s_state_r    <= ST_DRAIN_SETTLE;
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
-                            if s_wait_cnt_r = s_wait_cap_r then
+                            if s_wait_expired_r = '1' then
                                 -- Overrun flush timeout: force to drain settle
                                 s_oen_permanent_r <= '0';
                                 s_purge_mode_r    <= '1';

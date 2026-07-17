@@ -57,6 +57,16 @@ architecture rtl of tdc_gpx_line_packer is
     signal s_line_word_mod4_r   : natural range 0 to 3 := 0;
     signal s_line_end_pending_r : std_logic := '0';
 
+    -- One-entry input stage separates cell-beat decoding from the wide queue
+    -- write controls. It can be consumed and refilled in the same cycle, so
+    -- the accepted-beat initiation interval remains one clock.
+    signal s_stage_data_r       : std_logic_vector(g_TDATA_WIDTH - 1 downto 0)
+                                  := (others => '0');
+    signal s_stage_word_count_r : natural range 1 to c_WORDS_PER_BEAT := 1;
+    signal s_stage_last_r       : std_logic := '0';
+    signal s_stage_valid_r      : std_logic := '0';
+    signal s_stage_pop          : std_logic;
+
     -- Face-stable packing geometry. max_hits is converted once at face start
     -- instead of feeding every queue write-enable decision on every beat.
     signal s_hit_words_r : natural range 1 to 4 := 4;
@@ -100,20 +110,29 @@ begin
         report "tdc_gpx_line_packer: line alignment must contain whole output beats"
         severity failure;
 
-    -- Reserve room for one full input beat plus up to three 32-bit line-pad
-    -- words. This conservative ready rule keeps the queue arithmetic bounded.
+    -- Reserve room for one full staged beat plus up to three 32-bit line-pad
+    -- words. The stage may be consumed and replaced on the same edge. A staged
+    -- final beat blocks replacement until its line has fully drained.
+    s_stage_pop <= '1'
+        when s_stage_valid_r = '1'
+         and s_line_end_pending_r = '0'
+         and s_queue_count_r <= c_QUEUE_WORDS - (c_WORDS_PER_BEAT + 3)
+        else '0';
+
     o_s_axis_tready <= '1'
         when s_line_end_pending_r = '0'
-         and s_queue_count_r <= c_QUEUE_WORDS - (c_WORDS_PER_BEAT + 3)
+         and (s_stage_valid_r = '0'
+              or (s_stage_pop = '1' and s_stage_last_r = '0'))
         else '0';
 
     o_m_axis_tdata  <= s_out_tdata_r;
     o_m_axis_tvalid <= s_out_tvalid_r;
     o_m_axis_tlast  <= s_out_tlast_r;
     o_idle <= '1' when s_queue_count_r = 0
-                       and s_line_end_pending_r = '0'
-                       and s_out_tvalid_r = '0'
-              else '0';
+                        and s_line_end_pending_r = '0'
+                        and s_stage_valid_r = '0'
+                        and s_out_tvalid_r = '0'
+               else '0';
 
     p_cfg_latch : process(i_clk)
         variable v_max_hits : natural range 1 to c_MAX_HITS_PER_STOP;
@@ -142,19 +161,70 @@ begin
         end if;
     end process p_cfg_latch;
 
-    p_pack : process(i_clk)
-        variable v_queue       : t_word_queue;
-        variable v_count       : natural range 0 to c_QUEUE_WORDS;
-        variable v_beat_idx    : natural range 0 to 7;
-        variable v_mod4        : natural range 0 to 3;
-        variable v_end_pending : std_logic;
-        variable v_out_free    : boolean;
-        variable v_out_data    : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+    p_input_stage : process(i_clk)
         variable v_hit_words   : natural range 1 to 4;
         variable v_hit_beats   : natural range 1 to 4;
         variable v_first_word  : natural range 0 to 12;
         variable v_remaining   : natural range 0 to 4;
         variable v_valid_words : natural range 1 to 4;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' then
+                s_stage_data_r       <= (others => '0');
+                s_stage_word_count_r <= 1;
+                s_stage_last_r       <= '0';
+                s_stage_valid_r      <= '0';
+                s_cell_beat_idx_r    <= 0;
+            else
+                if s_stage_pop = '1' then
+                    s_stage_valid_r <= '0';
+                end if;
+
+                if i_s_axis_tvalid = '1' and o_s_axis_tready = '1' then
+                    v_hit_words := s_hit_words_r;
+                    v_hit_beats := s_hit_beats_r;
+
+                    if s_cell_beat_idx_r < v_hit_beats then
+                        v_first_word := s_cell_beat_idx_r * c_WORDS_PER_BEAT;
+                        if v_first_word < v_hit_words then
+                            v_remaining := v_hit_words - v_first_word;
+                        else
+                            v_remaining := 0;
+                        end if;
+                        v_valid_words := fn_min(c_WORDS_PER_BEAT, v_remaining);
+                    else
+                        -- Metadata always occupies the lower 32-bit word of
+                        -- the final input beat for a cell.
+                        v_valid_words := 1;
+                    end if;
+
+                    s_stage_data_r       <= i_s_axis_tdata;
+                    s_stage_word_count_r <= v_valid_words;
+                    s_stage_last_r       <= i_s_axis_tlast;
+                    s_stage_valid_r      <= '1';
+
+                    if i_s_axis_tlast = '1' then
+                        assert s_cell_beat_idx_r = v_hit_beats
+                            report "tdc_gpx_line_packer: line ended away from a cell metadata beat"
+                            severity warning;
+                        s_cell_beat_idx_r <= 0;
+                    elsif s_cell_beat_idx_r = v_hit_beats then
+                        s_cell_beat_idx_r <= 0;
+                    else
+                        s_cell_beat_idx_r <= s_cell_beat_idx_r + 1;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_input_stage;
+
+    p_pack : process(i_clk)
+        variable v_queue       : t_word_queue;
+        variable v_count       : natural range 0 to c_QUEUE_WORDS;
+        variable v_mod4        : natural range 0 to 3;
+        variable v_end_pending : std_logic;
+        variable v_out_free    : boolean;
+        variable v_out_data    : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         variable v_new_mod4    : natural range 0 to 3;
         variable v_pad_words   : natural range 0 to 3;
     begin
@@ -162,7 +232,6 @@ begin
             if i_rst_n = '0' or i_abort = '1' then
                 s_queue_r            <= (others => (others => '0'));
                 s_queue_count_r      <= 0;
-                s_cell_beat_idx_r    <= 0;
                 s_line_word_mod4_r   <= 0;
                 s_line_end_pending_r <= '0';
                 s_out_tdata_r        <= (others => '0');
@@ -171,7 +240,6 @@ begin
             else
                 v_queue       := s_queue_r;
                 v_count       := s_queue_count_r;
-                v_beat_idx    := s_cell_beat_idx_r;
                 v_mod4        := s_line_word_mod4_r;
                 v_end_pending := s_line_end_pending_r;
                 v_out_free    := s_out_tvalid_r = '0' or i_m_axis_tready = '1';
@@ -205,37 +273,17 @@ begin
                     end if;
                 end if;
 
-                if i_s_axis_tvalid = '1' and o_s_axis_tready = '1' then
-                    v_hit_words := s_hit_words_r;
-                    v_hit_beats := s_hit_beats_r;
-
-                    if v_beat_idx < v_hit_beats then
-                        v_first_word := v_beat_idx * c_WORDS_PER_BEAT;
-                        if v_first_word < v_hit_words then
-                            v_remaining := v_hit_words - v_first_word;
-                        else
-                            v_remaining := 0;
-                        end if;
-                        v_valid_words := fn_min(c_WORDS_PER_BEAT, v_remaining);
-                    else
-                        -- Metadata always occupies the lower 32-bit word of
-                        -- the final input beat for a cell.
-                        v_valid_words := 1;
-                    end if;
-
+                if s_stage_pop = '1' then
                     for lane in 0 to c_WORDS_PER_BEAT - 1 loop
-                        if lane < v_valid_words then
+                        if lane < s_stage_word_count_r then
                             v_queue(v_count + lane) :=
-                                i_s_axis_tdata(32 * lane + 31 downto 32 * lane);
+                                s_stage_data_r(32 * lane + 31 downto 32 * lane);
                         end if;
                     end loop;
-                    v_count    := v_count + v_valid_words;
-                    v_new_mod4 := (v_mod4 + v_valid_words) mod 4;
+                    v_count    := v_count + s_stage_word_count_r;
+                    v_new_mod4 := (v_mod4 + s_stage_word_count_r) mod 4;
 
-                    if i_s_axis_tlast = '1' then
-                        assert v_beat_idx = v_hit_beats
-                            report "tdc_gpx_line_packer: line ended away from a cell metadata beat"
-                            severity warning;
+                    if s_stage_last_r = '1' then
                         v_pad_words := (4 - v_new_mod4) mod 4;
                         for pad in 0 to 2 loop
                             if pad < v_pad_words then
@@ -244,21 +292,14 @@ begin
                         end loop;
                         v_count       := v_count + v_pad_words;
                         v_mod4        := 0;
-                        v_beat_idx    := 0;
                         v_end_pending := '1';
                     else
                         v_mod4 := v_new_mod4;
-                        if v_beat_idx = v_hit_beats then
-                            v_beat_idx := 0;
-                        else
-                            v_beat_idx := v_beat_idx + 1;
-                        end if;
                     end if;
                 end if;
 
                 s_queue_r            <= v_queue;
                 s_queue_count_r      <= v_count;
-                s_cell_beat_idx_r    <= v_beat_idx;
                 s_line_word_mod4_r   <= v_mod4;
                 s_line_end_pending_r <= v_end_pending;
             end if;
