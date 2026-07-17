@@ -28,4 +28,7 @@ tmp/
 
 # Structured Vivado/xsim archives. Keep the policy README, ignore sessions.
 /sim_results/vivado_xsim/sessions/
+
+# Reproducible OOC synthesis/implementation sessions. Keep summaries in Git.
+/signoff_results/sessions/
 /sim_work/
