@@ -17,16 +17,16 @@ if ($gitChanges.Count -ne 0) {
 $gitHead = (git -C $Hdl rev-parse HEAD).Trim()
 
 $cases = @(
-    [pscustomobject]@{ Label = "matrix_clk50_equal_dedicated_async";  Width = 32;  Axis = 50;  Tdc = 50;  Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_clk100_equal_shared_async";    Width = 64;  Axis = 100; Tdc = 100; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_clk125_equal_dedicated_async"; Width = 128; Axis = 125; Tdc = 125; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_clk150_equal_shared_async";    Width = 32;  Axis = 150; Tdc = 150; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w32_200_dedicated_async";      Width = 32;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w64_200_dedicated_async";      Width = 64;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_async";     Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w128_200_shared_async";        Width = 128; Axis = 200; Tdc = 200; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w128_50_200_shared_async";     Width = 128; Axis = 50;  Tdc = 200; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_sync";      Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "SYNC" }
+    [pscustomobject]@{ Label = "matrix_clk50_equal_dedicated_async";  Width = 32;  Axis = 50;  Tdc = 50;  Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_clk100_equal_shared_async";    Width = 64;  Axis = 100; Tdc = 100; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_clk125_equal_dedicated_async"; Width = 128; Axis = 125; Tdc = 125; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_clk150_equal_shared_async";    Width = 32;  Axis = 150; Tdc = 150; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_w32_200_dedicated_async";      Width = 32;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w64_200_dedicated_async";      Width = 64;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_async";     Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w128_200_shared_async";        Width = 128; Axis = 200; Tdc = 200; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w128_50_200_shared_async";     Width = 128; Axis = 50;  Tdc = 200; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_sync";      Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "SYNC";  Implement = $true;  ImplStrategy = "TIMING_EXPLORE" }
 )
 
 function Get-IntraClockWns {
@@ -62,7 +62,9 @@ $results = @()
 
 foreach ($case in $cases) {
     $safeSlope = $case.Slope.ToLowerInvariant()
-    $sessionName = "${Stamp}_$($case.Label)_w$($case.Width)_a$($case.Axis)_t$($case.Tdc)_${safeSlope}_synth"
+    $stageSuffix = if ($case.Implement) { "impl" } else { "synth" }
+    $reportPrefix = if ($case.Implement) { "post_route" } else { "post_synth" }
+    $sessionName = "${Stamp}_$($case.Label)_w$($case.Width)_a$($case.Axis)_t$($case.Tdc)_${safeSlope}_${stageSuffix}"
     $session = "$Hdl/signoff_results/sessions/$sessionName"
 
     Write-Host "=== OOC matrix: $($case.Label) ==="
@@ -76,8 +78,8 @@ foreach ($case in $cases) {
             "tdc_mhz=$($case.Tdc)"
             "slope_mode=$($case.Slope)"
             "stream_mode=$($case.Stream)"
-            "impl_strategy=DEFAULT"
-            "implement=False"
+            "impl_strategy=$($case.ImplStrategy)"
+            "implement=$($case.Implement)"
         )
         foreach ($property in $expectedProperties) {
             if ($properties -notcontains $property) {
@@ -87,20 +89,26 @@ foreach ($case in $cases) {
         Write-Host "Reusing verified immutable session: $session"
     }
     else {
-        & $Runner `
-            -Width $case.Width `
-            -AxisMhz $case.Axis `
-            -TdcMhz $case.Tdc `
-            -SlopeMode $case.Slope `
-            -StreamMode $case.Stream `
-            -Label $case.Label `
-            -Stamp $Stamp
+        $runnerArgs = @{
+            Width        = $case.Width
+            AxisMhz      = $case.Axis
+            TdcMhz       = $case.Tdc
+            SlopeMode    = $case.Slope
+            StreamMode   = $case.Stream
+            ImplStrategy = $case.ImplStrategy
+            Label        = $case.Label
+            Stamp        = $Stamp
+        }
+        if ($case.Implement) {
+            $runnerArgs.Implement = $true
+        }
+        & $Runner @runnerArgs
     }
 
-    $timing = "$session/post_synth_timing_summary.rpt"
-    $utilReport = "$session/post_synth_utilization_hier.rpt"
-    $checkTiming = "$session/post_synth_check_timing.rpt"
-    $cdcData = "$session/post_synth_cdc_data.rpt"
+    $timing = "$session/${reportPrefix}_timing_summary.rpt"
+    $utilReport = "$session/${reportPrefix}_utilization_hier.rpt"
+    $checkTiming = "$session/${reportPrefix}_check_timing.rpt"
+    $cdcData = "$session/${reportPrefix}_cdc_data.rpt"
 
     if (-not (Select-String -LiteralPath $timing -Pattern "All user specified timing constraints are met." -SimpleMatch -Quiet)) {
         throw "Timing constraints are not met: $timing"
@@ -125,6 +133,8 @@ foreach ($case in $cases) {
         TdcMhz         = $case.Tdc
         SlopeMode      = $case.Slope
         StreamMode     = $case.Stream
+        SignoffStage   = $reportPrefix
+        ImplStrategy   = $case.ImplStrategy
         AxiWnsNs       = Get-IntraClockWns $timing "axi_clk"
         AxisWnsNs      = Get-IntraClockWns $timing "axis_clk"
         TdcWnsNs       = Get-IntraClockWns $timing "tdc_clk"
@@ -142,5 +152,5 @@ foreach ($case in $cases) {
     $results | Export-Csv -LiteralPath $SummaryPath -NoTypeInformation -Encoding ASCII
 }
 
-$results | Format-Table Label, Width, AxisMhz, TdcMhz, SlopeMode, StreamMode, AxisWnsNs, TdcWnsNs, TotalLut, Ff, CellBuilders -AutoSize
+$results | Format-Table Label, Width, AxisMhz, TdcMhz, SlopeMode, StreamMode, SignoffStage, AxisWnsNs, TdcWnsNs, TotalLut, Ff, CellBuilders -AutoSize
 Write-Host "Representative OOC matrix PASS: $SummaryPath"
