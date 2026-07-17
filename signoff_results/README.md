@@ -26,4 +26,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_ooc_signoff.ps1 
 
 The OOC constraints cover the three input clocks and internal reg-to-reg
 timing. Board pin constraints, I/O delays, clock generation, and top-level
-false-path policy remain the responsibility of the parent FPGA design.
+false-path policy remain the responsibility of the parent FPGA design. Vivado
+is run with `synth_design -mode out_of_context`, so top-level I/O buffers and
+pin-count DRCs are not part of these IP-level results.

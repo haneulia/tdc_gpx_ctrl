@@ -77,6 +77,7 @@ set generics [list \
 synth_design \
     -top tdc_gpx_top \
     -part $part_name \
+    -mode out_of_context \
     -flatten_hierarchy rebuilt \
     -generic $generics
 
