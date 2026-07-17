@@ -38,6 +38,47 @@ $Session = "${Stamp}_${Label}_w${Width}_a${AxisMhz}_t${TdcMhz}_${SafeSlope}_${Mo
 $OutDir = "$Hdl/signoff_results/sessions/$Session"
 $Log = "$OutDir/vivado.log"
 
+function Assert-StageClosed {
+    param(
+        [string]$Prefix,
+        [string]$Stage
+    )
+
+    $timing = "$OutDir/${Prefix}_timing_summary.rpt"
+    $checkTiming = "$OutDir/${Prefix}_check_timing.rpt"
+    $cdcData = "$OutDir/${Prefix}_cdc_data.rpt"
+
+    foreach ($report in @($timing, $checkTiming, $cdcData)) {
+        if (-not (Test-Path -LiteralPath $report)) {
+            throw "$Stage report is missing: $report"
+        }
+    }
+
+    if (-not (Select-String -LiteralPath $timing `
+            -Pattern "All user specified timing constraints are met." `
+            -SimpleMatch -Quiet)) {
+        throw "$Stage timing constraints are not met: $timing"
+    }
+    if (Select-String -LiteralPath $timing -Pattern 'Slack \(VIOLATED\)' -Quiet) {
+        throw "$Stage timing report contains a violated path: $timing"
+    }
+    if (-not (Select-String -LiteralPath $checkTiming `
+            -Pattern "checking no_clock (0)" -SimpleMatch -Quiet)) {
+        throw "$Stage has registers without a clock: $checkTiming"
+    }
+    if (-not (Select-String -LiteralPath $checkTiming `
+            -Pattern "checking unconstrained_internal_endpoints (0)" `
+            -SimpleMatch -Quiet)) {
+        throw "$Stage has unconstrained internal endpoints: $checkTiming"
+    }
+
+    $unsafeCdcRows = @(Select-String -LiteralPath $cdcData `
+        -Pattern '^\s*CDC-(4|10)\s')
+    if ($unsafeCdcRows.Count -ne 0) {
+        throw "$Stage contains unsafe data CDC rows (CDC-4/CDC-10): $cdcData"
+    }
+}
+
 $GitHead = (git -C $Hdl rev-parse HEAD).Trim()
 $GitChanges = @(git -C $Hdl status --porcelain --untracked-files=normal)
 $GitState = if ($GitChanges.Count -eq 0) { "clean" } else { "dirty" }
@@ -75,8 +116,13 @@ if ($LASTEXITCODE -ne 0) {
 if (-not (Select-String -Path $Log -Pattern "OOC_SIGNOFF_SYNTH_PASS" -SimpleMatch -Quiet)) {
     throw "Vivado log is missing OOC_SIGNOFF_SYNTH_PASS: $Log"
 }
+Assert-StageClosed -Prefix "post_synth" -Stage "Post-synthesis"
+
 if ($Implement -and -not (Select-String -Path $Log -Pattern "OOC_SIGNOFF_IMPL_PASS" -SimpleMatch -Quiet)) {
     throw "Vivado log is missing OOC_SIGNOFF_IMPL_PASS: $Log"
+}
+if ($Implement) {
+    Assert-StageClosed -Prefix "post_route" -Stage "Post-route"
 }
 
 Write-Host "OOC sign-off PASS: $OutDir"
