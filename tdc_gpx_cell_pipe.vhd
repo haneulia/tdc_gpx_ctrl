@@ -191,12 +191,15 @@ architecture rtl of tdc_gpx_cell_pipe is
     signal s_abort_rise  : std_logic;
     signal s_abort_fall  : std_logic;
 
-    -- The demux valid bits and slope abort nets terminate in the distributed
-    -- cell-buffer write-enable cones. Bound their physical fan-out so Vivado
-    -- can replicate the existing sources near each builder without adding an
-    -- RTL pipeline stage or changing the AXI-Stream/abort cycle contract.
+    -- The demux valid/metadata registers and slope abort nets terminate in
+    -- distributed cell-buffer write-enable cones. Bound their physical
+    -- fan-out so Vivado can replicate the existing sources near each builder
+    -- without adding an RTL pipeline stage or changing the AXI-Stream/abort
+    -- cycle contract.
     attribute MAX_FANOUT of s_rise_valid_r : signal is 16;
     attribute MAX_FANOUT of s_fall_valid_r : signal is 16;
+    attribute MAX_FANOUT of s_rise_tuser_r : signal is 16;
+    attribute MAX_FANOUT of s_fall_tuser_r : signal is 16;
     attribute MAX_FANOUT of s_abort_rise   : signal is 32;
     attribute MAX_FANOUT of s_abort_fall   : signal is 32;
 

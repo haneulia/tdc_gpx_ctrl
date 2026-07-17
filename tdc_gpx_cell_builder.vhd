@@ -18,9 +18,10 @@
 --
 --   Two independent processes share the dual buffer:
 --
---   p_collect (ST_C_IDLE / ST_C_ACTIVE):
+--   p_collect (ST_C_IDLE / ST_C_INIT_0/1 / ST_C_ACTIVE):
 --     Owns ALL buffer state transitions (no multi-driver on s_buf_state_r).
---     On shot_start: finds BUF_FREE buffer, transitions to BUF_COLLECT.
+--     On shot_start: assigns a BUF_FREE buffer, snapshots its configuration,
+--       then clears it in one local INIT cycle before accepting event beats.
 --     On ififo1_done: BUF_COLLECT -> BUF_SHARED, signals p_output to start.
 --     On final_done: sets buf_full flag (stops 4-7 ready).
 --     On s_output_done_r: BUF_SHARED -> BUF_FREE, auto-starts next if queued.
@@ -148,7 +149,7 @@ entity tdc_gpx_cell_builder is
         o_s_axis_tready     : out std_logic;
 
         -- Control (from chip_ctrl)
-        i_shot_start        : in  std_logic;   -- new shot: clear cell buffers
+        i_shot_start        : in  std_logic;   -- new shot: allocate buffer, then local INIT
         i_abort             : in  std_logic;   -- abort: free all buffers, return to idle
         -- drain_done is received via i_s_axis_tuser(7) control beat
 
@@ -307,7 +308,14 @@ architecture rtl of tdc_gpx_cell_builder is
     --   upstream. Exits on the drain_done marker (tuser[7]='1' and tuser[6]=
     --   '1') or on i_abort. Any i_shot_start arriving here is latched into
     --   s_shot_pending_r and picked up by ST_C_IDLE.
-    type t_collect_state is (ST_C_IDLE, ST_C_ACTIVE, ST_C_DROP, ST_C_QUARANTINE);
+    type t_collect_state is (
+        ST_C_IDLE,
+        ST_C_INIT_0,
+        ST_C_INIT_1,
+        ST_C_ACTIVE,
+        ST_C_DROP,
+        ST_C_QUARANTINE
+    );
     signal s_cstate_r     : t_collect_state := ST_C_IDLE;
     signal s_wr_buf_r     : std_logic := '0';
 
@@ -599,7 +607,8 @@ begin
                     -- Round 13 follow-up (audit 4번): abort drops any pending
                     -- faulted tags — the shots they pointed to are gone.
                     s_buf_faulted_r <= (others => '0');
-                    -- Do NOT clear cell_buf (unnecessary, will be cleared on next shot_start)
+                    -- Do NOT clear cell_buf here; the next local INIT state
+                    -- clears the selected buffer before tready is re-enabled.
                 else
                     -- ---------------------------------------------------------
                     -- Handle output completion: BUF_SHARED -> BUF_FREE
@@ -642,7 +651,6 @@ begin
                                 if s_buf_state_r(0) = BUF_FREE then
                                     s_wr_buf_r        <= '0';
                                     s_buf_state_r(0)  <= BUF_COLLECT;
-                                    s_cell_buf_r(0)   <= (others => c_CELL_INIT);
                                     -- Phase B: per-buffer max_range snapshot on
                                     -- BUF_FREE -> BUF_COLLECT transition. Used by
                                     -- the output side's WAIT_IFIFO2 cap when this
@@ -650,15 +658,14 @@ begin
                                     s_buf_max_range_r(0) <= i_max_range_axis_clks;
                                     s_buf_max_hits_r(0)  <= s_cfg_max_hits_eff_u;
                                     s_buf_stops_r(0)     <= i_stops_per_chip;
-                                    s_cstate_r        <= ST_C_ACTIVE;
+                                    s_cstate_r        <= ST_C_INIT_0;
                                 elsif s_buf_state_r(1) = BUF_FREE then
                                     s_wr_buf_r        <= '1';
                                     s_buf_state_r(1)  <= BUF_COLLECT;
-                                    s_cell_buf_r(1)   <= (others => c_CELL_INIT);
                                     s_buf_max_range_r(1) <= i_max_range_axis_clks;
                                     s_buf_max_hits_r(1)  <= s_cfg_max_hits_eff_u;
                                     s_buf_stops_r(1)     <= i_stops_per_chip;
-                                    s_cstate_r        <= ST_C_ACTIVE;
+                                    s_cstate_r        <= ST_C_INIT_1;
                                 else
                                     -- No free buffer: enter DROP to actually absorb
                                     -- the upcoming shot's beats (tready='1'). Staying
@@ -676,6 +683,24 @@ begin
                                                              i_max_range_axis_clks,
                                                              g_QUARANTINE_MARGIN_CLKS);
                                 end if;
+                            end if;
+
+                        -- Buffer initialization is an explicit local phase.
+                        -- tready stays low in these states, so a first event
+                        -- already waiting in the upstream skid cannot enter
+                        -- until the selected buffer has been cleared.
+                        when ST_C_INIT_0 =>
+                            s_cell_buf_r(0) <= (others => c_CELL_INIT);
+                            s_cstate_r      <= ST_C_ACTIVE;
+                            if i_shot_start = '1' then
+                                s_shot_pending_r <= '1';
+                            end if;
+
+                        when ST_C_INIT_1 =>
+                            s_cell_buf_r(1) <= (others => c_CELL_INIT);
+                            s_cstate_r      <= ST_C_ACTIVE;
+                            if i_shot_start = '1' then
+                                s_shot_pending_r <= '1';
                             end if;
 
                         when ST_C_ACTIVE =>
@@ -799,14 +824,19 @@ begin
                                 -- Find the OTHER buffer
                                 if v_wr = 0 then v_other := 1; else v_other := 0; end if;
                                 if s_buf_state_r(v_other) = BUF_FREE then
-                                    s_wr_buf_r <= not s_wr_buf_r;
                                     s_buf_state_r(v_other) <= BUF_COLLECT;
-                                    s_cell_buf_r(v_other)  <= (others => c_CELL_INIT);
                                     -- Phase B: per-buffer max_range snapshot
                                     -- for the OTHER buffer being newly allocated.
                                     s_buf_max_range_r(v_other) <= i_max_range_axis_clks;
                                     s_buf_max_hits_r(v_other)  <= s_cfg_max_hits_eff_u;
                                     s_buf_stops_r(v_other)     <= i_stops_per_chip;
+                                    if v_other = 0 then
+                                        s_wr_buf_r <= '0';
+                                        s_cstate_r <= ST_C_INIT_0;
+                                    else
+                                        s_wr_buf_r <= '1';
+                                        s_cstate_r <= ST_C_INIT_1;
+                                    end if;
                                 else
                                     -- No free buffer: enter drop mode to prevent shot mixing.
                                     -- All incoming data for this shot is silently discarded.
