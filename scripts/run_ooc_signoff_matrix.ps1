@@ -14,6 +14,7 @@ $gitChanges = @(git -C $Hdl status --porcelain --untracked-files=normal)
 if ($gitChanges.Count -ne 0) {
     throw "Representative sign-off matrix requires a clean Git worktree."
 }
+$gitHead = (git -C $Hdl rev-parse HEAD).Trim()
 
 $cases = @(
     [pscustomobject]@{ Label = "matrix_clk50_split_async"; Width = 32;  Axis = 50;  Tdc = 200; Stream = "ASYNC" },
@@ -56,18 +57,29 @@ New-Item -ItemType Directory -Force -Path $MatrixDir | Out-Null
 $results = @()
 
 foreach ($case in $cases) {
-    Write-Host "=== OOC matrix: $($case.Label) ==="
-    & $Runner `
-        -Width $case.Width `
-        -AxisMhz $case.Axis `
-        -TdcMhz $case.Tdc `
-        -SlopeMode "DEDICATED_2X2" `
-        -StreamMode $case.Stream `
-        -Label $case.Label `
-        -Stamp $Stamp
-
     $sessionName = "${Stamp}_$($case.Label)_w$($case.Width)_a$($case.Axis)_t$($case.Tdc)_dedicated_2x2_synth"
     $session = "$Hdl/signoff_results/sessions/$sessionName"
+
+    Write-Host "=== OOC matrix: $($case.Label) ==="
+    if (Test-Path -LiteralPath $session) {
+        $properties = Get-Content -LiteralPath "$session/session.properties"
+        if ($properties -notcontains "git_head=$gitHead" -or
+            $properties -notcontains "git_state=clean") {
+            throw "Existing matrix session does not match the current clean commit: $session"
+        }
+        Write-Host "Reusing verified immutable session: $session"
+    }
+    else {
+        & $Runner `
+            -Width $case.Width `
+            -AxisMhz $case.Axis `
+            -TdcMhz $case.Tdc `
+            -SlopeMode "DEDICATED_2X2" `
+            -StreamMode $case.Stream `
+            -Label $case.Label `
+            -Stamp $Stamp
+    }
+
     $timing = "$session/post_synth_timing_summary.rpt"
     $utilReport = "$session/post_synth_utilization_hier.rpt"
     $checkTiming = "$session/post_synth_check_timing.rpt"

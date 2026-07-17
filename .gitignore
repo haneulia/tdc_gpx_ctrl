@@ -31,4 +31,5 @@ tmp/
 
 # Reproducible OOC synthesis/implementation sessions. Keep summaries in Git.
 /signoff_results/sessions/
+/signoff_results/matrices/
 /sim_work/
