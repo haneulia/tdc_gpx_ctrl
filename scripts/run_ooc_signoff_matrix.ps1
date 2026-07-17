@@ -17,12 +17,16 @@ if ($gitChanges.Count -ne 0) {
 $gitHead = (git -C $Hdl rev-parse HEAD).Trim()
 
 $cases = @(
-    [pscustomobject]@{ Label = "matrix_clk50_split_async"; Width = 32;  Axis = 50;  Tdc = 200; Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_clk125_150_async"; Width = 32;  Axis = 125; Tdc = 150; Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w32_200_async"; Width = 32;  Axis = 200; Tdc = 200; Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w64_200_async"; Width = 64;  Axis = 200; Tdc = 200; Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w128_200_async"; Width = 128; Axis = 200; Tdc = 200; Stream = "ASYNC" },
-    [pscustomobject]@{ Label = "matrix_w128_200_sync";  Width = 128; Axis = 200; Tdc = 200; Stream = "SYNC" }
+    [pscustomobject]@{ Label = "matrix_clk50_equal_dedicated_async";  Width = 32;  Axis = 50;  Tdc = 50;  Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_clk100_equal_shared_async";    Width = 64;  Axis = 100; Tdc = 100; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_clk125_equal_dedicated_async"; Width = 128; Axis = 125; Tdc = 125; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_clk150_equal_shared_async";    Width = 32;  Axis = 150; Tdc = 150; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_w32_200_dedicated_async";      Width = 32;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_w64_200_dedicated_async";      Width = 64;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_async";     Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_w128_200_shared_async";        Width = 128; Axis = 200; Tdc = 200; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_w128_50_200_shared_async";     Width = 128; Axis = 50;  Tdc = 200; Slope = "SHARED_DUAL_EDGE";   Stream = "ASYNC" },
+    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_sync";      Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";      Stream = "SYNC" }
 )
 
 function Get-IntraClockWns {
@@ -57,15 +61,28 @@ New-Item -ItemType Directory -Force -Path $MatrixDir | Out-Null
 $results = @()
 
 foreach ($case in $cases) {
-    $sessionName = "${Stamp}_$($case.Label)_w$($case.Width)_a$($case.Axis)_t$($case.Tdc)_dedicated_2x2_synth"
+    $safeSlope = $case.Slope.ToLowerInvariant()
+    $sessionName = "${Stamp}_$($case.Label)_w$($case.Width)_a$($case.Axis)_t$($case.Tdc)_${safeSlope}_synth"
     $session = "$Hdl/signoff_results/sessions/$sessionName"
 
     Write-Host "=== OOC matrix: $($case.Label) ==="
     if (Test-Path -LiteralPath $session) {
         $properties = Get-Content -LiteralPath "$session/session.properties"
-        if ($properties -notcontains "git_head=$gitHead" -or
-            $properties -notcontains "git_state=clean") {
-            throw "Existing matrix session does not match the current clean commit: $session"
+        $expectedProperties = @(
+            "git_head=$gitHead"
+            "git_state=clean"
+            "width=$($case.Width)"
+            "axis_mhz=$($case.Axis)"
+            "tdc_mhz=$($case.Tdc)"
+            "slope_mode=$($case.Slope)"
+            "stream_mode=$($case.Stream)"
+            "impl_strategy=DEFAULT"
+            "implement=False"
+        )
+        foreach ($property in $expectedProperties) {
+            if ($properties -notcontains $property) {
+                throw "Existing matrix session property mismatch '$property': $session"
+            }
         }
         Write-Host "Reusing verified immutable session: $session"
     }
@@ -74,7 +91,7 @@ foreach ($case in $cases) {
             -Width $case.Width `
             -AxisMhz $case.Axis `
             -TdcMhz $case.Tdc `
-            -SlopeMode "DEDICATED_2X2" `
+            -SlopeMode $case.Slope `
             -StreamMode $case.Stream `
             -Label $case.Label `
             -Stamp $Stamp
@@ -91,17 +108,22 @@ foreach ($case in $cases) {
     if (-not (Select-String -LiteralPath $checkTiming -Pattern "checking unconstrained_internal_endpoints (0)" -SimpleMatch -Quiet)) {
         throw "Unconstrained internal endpoints found: $checkTiming"
     }
+    if (-not (Select-String -LiteralPath $checkTiming -Pattern "checking no_clock (0)" -SimpleMatch -Quiet)) {
+        throw "Registers without clocks found: $checkTiming"
+    }
 
     $util = Get-Utilization $utilReport
     $builderCount = @(Select-String -LiteralPath $utilReport -Pattern 'u_cell_bld_(rise|fall)').Count
-    $cdc4Count = @(Select-String -LiteralPath $cdcData -Pattern '^CDC-4\s').Count
-    $cdc10Count = @(Select-String -LiteralPath $cdcData -Pattern '^CDC-10\s').Count
+    $cdc4Count = @(Select-String -LiteralPath $cdcData -Pattern '^\s*CDC-4\s').Count
+    $cdc10Count = @(Select-String -LiteralPath $cdcData -Pattern '^\s*CDC-10\s').Count
 
     $results += [pscustomobject]@{
+        GitHead        = $gitHead
         Label          = $case.Label
         Width          = $case.Width
         AxisMhz        = $case.Axis
         TdcMhz         = $case.Tdc
+        SlopeMode      = $case.Slope
         StreamMode     = $case.Stream
         AxiWnsNs       = Get-IntraClockWns $timing "axi_clk"
         AxisWnsNs      = Get-IntraClockWns $timing "axis_clk"
@@ -120,5 +142,5 @@ foreach ($case in $cases) {
     $results | Export-Csv -LiteralPath $SummaryPath -NoTypeInformation -Encoding ASCII
 }
 
-$results | Format-Table Label, Width, AxisMhz, TdcMhz, StreamMode, AxisWnsNs, TdcWnsNs, TotalLut, Ff, CellBuilders -AutoSize
+$results | Format-Table Label, Width, AxisMhz, TdcMhz, SlopeMode, StreamMode, AxisWnsNs, TdcWnsNs, TotalLut, Ff, CellBuilders -AutoSize
 Write-Host "Representative OOC matrix PASS: $SummaryPath"
