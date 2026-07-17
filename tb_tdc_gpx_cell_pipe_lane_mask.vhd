@@ -37,6 +37,9 @@ use ieee.numeric_std.all;
 use work.tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_cell_pipe_lane_mask is
+    generic (
+        G_STATIC_MODE : string := "SHARED_DUAL_EDGE"
+    );
 end entity;
 
 architecture sim of tb_tdc_gpx_cell_pipe_lane_mask is
@@ -92,8 +95,9 @@ begin
 
     u_dut : entity work.tdc_gpx_cell_pipe
         generic map (
-            g_OUTPUT_WIDTH => OUTPUT_WIDTH,
-            g_AXIS_CLK_MHZ => 200
+            g_OUTPUT_WIDTH    => OUTPUT_WIDTH,
+            g_AXIS_CLK_MHZ    => 200,
+            g_SLOPE_CHIP_MODE => G_STATIC_MODE
         )
         port map (
             i_clk                 => clk,
@@ -259,16 +263,36 @@ begin
                    & " tlast=" & integer'image(tlast_rise(i))
                    & " / fall beats=" & integer'image(beat_fall(i))
                    & " tlast=" & integer'image(tlast_fall(i)) severity note;
-            if tlast_rise(i) /= 1 or tlast_fall(i) /= 1
-               or beat_rise(i) /= C_SLICE_BEATS
-               or beat_fall(i) /= C_SLICE_BEATS then
-                v_ok := false;
+            if G_STATIC_MODE = "SHARED_DUAL_EDGE" then
+                if tlast_rise(i) /= 1 or tlast_fall(i) /= 1
+                   or beat_rise(i) /= C_SLICE_BEATS
+                   or beat_fall(i) /= C_SLICE_BEATS then
+                    v_ok := false;
+                end if;
+            elsif i < 2 then
+                if tlast_rise(i) /= 1 or tlast_fall(i) /= 0
+                   or beat_rise(i) /= C_SLICE_BEATS
+                   or beat_fall(i) /= 0 then
+                    v_ok := false;
+                end if;
+            else
+                if tlast_rise(i) /= 0 or tlast_fall(i) /= 1
+                   or beat_rise(i) /= 0
+                   or beat_fall(i) /= C_SLICE_BEATS then
+                    v_ok := false;
+                end if;
             end if;
         end loop;
         if v_ok and masked_drop_rise = "0000" and masked_drop_fall = "0000" then
-            report "*** LANE_MASK SCENARIO L PASS (legacy: all 8 lanes emit"
-                   & " a slice per shot; wrong-slope churn confirmed) ***"
-                severity note;
+            if G_STATIC_MODE = "SHARED_DUAL_EDGE" then
+                report "*** LANE_MASK SCENARIO L PASS (shared: all 8 lanes emit"
+                       & " a slice per shot; legacy compatibility confirmed) ***"
+                    severity note;
+            else
+                report "*** LANE_MASK SCENARIO L PASS (dedicated: runtime all-ones"
+                       & " cannot resurrect the 4 statically absent lanes) ***"
+                    severity note;
+            end if;
         else
             report "*** LANE_MASK SCENARIO L FAIL ***" severity failure;
         end if;
@@ -398,7 +422,7 @@ begin
         report "*** LANE_MASK SCENARIO C PASS (abort retain, soft clear, clean next run) ***"
             severity note;
 
-        report "*** TB_LANE_MASK ALL PASS ***" severity note;
+        report "*** TB_LANE_MASK ALL PASS: " & G_STATIC_MODE & " ***" severity note;
         done <= true;
         wait for 10 * CLK_PERIOD;
         std.env.finish;

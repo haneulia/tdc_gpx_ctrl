@@ -19,7 +19,11 @@ use work.tdc_gpx_pkg.all;
 entity tdc_gpx_cell_pipe is
     generic (
         g_OUTPUT_WIDTH : natural := 32;  -- 32, 64, or 128
-        g_AXIS_CLK_MHZ : positive := 150
+        g_AXIS_CLK_MHZ : positive := 150;
+        -- Compile-time physical edge topology. The default preserves the
+        -- direct-instantiation legacy behavior used by cell-pipe unit tests.
+        -- Top-level integration passes its board topology explicitly.
+        g_SLOPE_CHIP_MODE : string := "SHARED_DUAL_EDGE"
     );
     port (
         -- Clock / Reset
@@ -122,6 +126,27 @@ architecture rtl of tdc_gpx_cell_pipe is
     type t_out_tdata_array is array(0 to c_N_CHIPS-1)
         of std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
 
+    function fn_static_slope_mask(
+        mode    : string;
+        is_rise : boolean
+    ) return std_logic_vector is
+        variable v_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
+    begin
+        if mode = "SHARED_DUAL_EDGE" then
+            v_mask := (others => '1');
+        elsif is_rise then
+            v_mask := "0011";
+        else
+            v_mask := "1100";
+        end if;
+        return v_mask;
+    end function;
+
+    constant c_STATIC_RISE_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
+        fn_static_slope_mask(g_SLOPE_CHIP_MODE, true);
+    constant c_STATIC_FALL_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
+        fn_static_slope_mask(g_SLOPE_CHIP_MODE, false);
+
     ---------------------------------------------------------------------------
     -- Input skid output (Cluster 2 -> Cluster 3 boundary)
     ---------------------------------------------------------------------------
@@ -169,6 +194,8 @@ architecture rtl of tdc_gpx_cell_pipe is
     -- hit-drop stickies (written by p_slope_demux, single driver).
     signal s_shot_start_rise    : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal s_shot_start_fall    : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_effective_rise_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_effective_fall_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal s_masked_drop_rise_r : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
     signal s_masked_drop_fall_r : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
 
@@ -180,6 +207,11 @@ begin
 
     assert fn_range_clk_mhz_supported(g_AXIS_CLK_MHZ)
         report "tdc_gpx_cell_pipe: g_AXIS_CLK_MHZ must be 50, 100, 125, 150, or 200"
+        severity failure;
+
+    assert g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
+        or g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
+        report "tdc_gpx_cell_pipe: g_SLOPE_CHIP_MODE must be DEDICATED_2X2 or SHARED_DUAL_EDGE"
         severity failure;
 
     s_max_range_axis_clks <= fn_range_5ns_ticks_to_clks(
@@ -199,10 +231,13 @@ begin
     s_abort_rise <= i_abort or i_abort_rise;
     s_abort_fall <= i_abort or i_abort_fall;
 
-    -- CHAIN P1: a builder only opens a shot for its own lane. Masks are
-    -- face-snapshot values (stable at the registered shot_start pulse).
-    s_shot_start_rise <= i_shot_start_per_chip and i_rise_chip_mask;
-    s_shot_start_fall <= i_shot_start_per_chip and i_fall_chip_mask;
+    -- The compile-time mask removes physically impossible builders in
+    -- DEDICATED_2X2. Runtime masks still select active chips per face and
+    -- retain consume-and-flag diagnostics for wrong-slope input beats.
+    s_effective_rise_mask <= i_rise_chip_mask and c_STATIC_RISE_MASK;
+    s_effective_fall_mask <= i_fall_chip_mask and c_STATIC_FALL_MASK;
+    s_shot_start_rise <= i_shot_start_per_chip and s_effective_rise_mask;
+    s_shot_start_fall <= i_shot_start_per_chip and s_effective_fall_mask;
 
     o_masked_slope_drop_rise <= s_masked_drop_rise_r;
     o_masked_slope_drop_fall <= s_masked_drop_fall_r;
@@ -245,8 +280,8 @@ begin
 
         -- A masked lane has no destination state to protect. Its hit is a
         -- consume-and-flag operation, and a broadcast drain simply skips it.
-        s_rise_accept <= '1' when i_rise_chip_mask(i) = '0' else s_rise_free;
-        s_fall_accept <= '1' when i_fall_chip_mask(i) = '0' else s_fall_free;
+        s_rise_accept <= '1' when s_effective_rise_mask(i) = '0' else s_rise_free;
+        s_fall_accept <= '1' when s_effective_fall_mask(i) = '0' else s_fall_free;
 
         s_evt_skid_tready(i) <= '1' when s_evt_skid_tvalid(i) = '0'
                        else s_rise_accept and s_fall_accept when s_evt_skid_tuser(i)(7) = '1'
@@ -299,18 +334,18 @@ begin
                     -- (it indicates a physical edge misconfiguration).
                     if s_evt_skid_tvalid(i) = '1' and s_evt_skid_tready(i) = '1' then
                         if s_evt_skid_tuser(i)(7) = '1' then
-                            if s_abort_rise = '0' and i_rise_chip_mask(i) = '1' then
+                            if s_abort_rise = '0' and s_effective_rise_mask(i) = '1' then
                                 s_rise_valid_r(i) <= '1';
                                 s_rise_tdata_r(i) <= s_evt_skid_tdata(i);
                                 s_rise_tuser_r(i) <= s_evt_skid_tuser(i);
                             end if;
-                            if s_abort_fall = '0' and i_fall_chip_mask(i) = '1' then
+                            if s_abort_fall = '0' and s_effective_fall_mask(i) = '1' then
                                 s_fall_valid_r(i) <= '1';
                                 s_fall_tdata_r(i) <= s_evt_skid_tdata(i);
                                 s_fall_tuser_r(i) <= s_evt_skid_tuser(i);
                             end if;
                         elsif s_evt_skid_tuser(i)(0) = '1' then
-                            if i_rise_chip_mask(i) = '0' then
+                            if s_effective_rise_mask(i) = '0' then
                                 if i_sticky_clear = '0' then
                                     s_masked_drop_rise_r(i) <= '1';
                                 end if;
@@ -320,7 +355,7 @@ begin
                                 s_rise_tuser_r(i) <= s_evt_skid_tuser(i);
                             end if;
                         else
-                            if i_fall_chip_mask(i) = '0' then
+                            if s_effective_fall_mask(i) = '0' then
                                 if i_sticky_clear = '0' then
                                     s_masked_drop_fall_r(i) <= '1';
                                 end if;
@@ -380,67 +415,95 @@ begin
         end process p_drop_assert;
         -- synthesis translate_on
 
-        -- Rising-slope cell builder
-        u_cell_bld_rise : entity work.tdc_gpx_cell_builder
-            generic map (
-                g_CHIP_ID     => i,
-                g_TDATA_WIDTH => g_OUTPUT_WIDTH
-            )
-            port map (
-                i_clk               => i_clk,
-                i_rst_n             => i_rst_n,
-                i_s_axis_tvalid     => s_rise_valid_r(i),
-                i_s_axis_tdata      => s_rise_tdata_r(i),
-                i_s_axis_tuser      => s_rise_tuser_r(i),
-                o_s_axis_tready     => s_rise_tready(i),
-                i_shot_start        => s_shot_start_rise(i),
-                i_abort             => s_abort_rise,
-                i_stops_per_chip    => i_face_stops_per_chip,
-                i_max_hits_cfg      => i_max_hits_cfg,
-                i_max_range_axis_clks => s_max_range_axis_clks,
-                o_m_axis_tdata      => s_cell_rise_tdata(i),
-                o_m_axis_tvalid     => o_cell_rise_tvalid(i),
-                o_m_axis_tlast      => o_cell_rise_tlast(i),
-                o_m_axis_tuser      => s_cell_rise_tuser_int(i),  -- P1 rework
-                i_m_axis_tready     => i_cell_rise_tready(i),
-                o_slice_done        => open,
-                o_hit_dropped_any   => o_hit_dropped(i),
-                o_shot_dropped      => o_shot_dropped(i),
-                o_slice_timeout     => o_slice_timeout(i),
-                o_stop_id_error     => o_stop_id_error(i),
-                o_quarantine_escape_sticky => o_quarantine_escape_rise(i)
-            );
+        gen_rise_builder : if c_STATIC_RISE_MASK(i) = '1' generate
+            u_cell_bld_rise : entity work.tdc_gpx_cell_builder
+                generic map (
+                    g_CHIP_ID     => i,
+                    g_TDATA_WIDTH => g_OUTPUT_WIDTH
+                )
+                port map (
+                    i_clk               => i_clk,
+                    i_rst_n             => i_rst_n,
+                    i_s_axis_tvalid     => s_rise_valid_r(i),
+                    i_s_axis_tdata      => s_rise_tdata_r(i),
+                    i_s_axis_tuser      => s_rise_tuser_r(i),
+                    o_s_axis_tready     => s_rise_tready(i),
+                    i_shot_start        => s_shot_start_rise(i),
+                    i_abort             => s_abort_rise,
+                    i_stops_per_chip    => i_face_stops_per_chip,
+                    i_max_hits_cfg      => i_max_hits_cfg,
+                    i_max_range_axis_clks => s_max_range_axis_clks,
+                    o_m_axis_tdata      => s_cell_rise_tdata(i),
+                    o_m_axis_tvalid     => o_cell_rise_tvalid(i),
+                    o_m_axis_tlast      => o_cell_rise_tlast(i),
+                    o_m_axis_tuser      => s_cell_rise_tuser_int(i),
+                    i_m_axis_tready     => i_cell_rise_tready(i),
+                    o_slice_done        => open,
+                    o_hit_dropped_any   => o_hit_dropped(i),
+                    o_shot_dropped      => o_shot_dropped(i),
+                    o_slice_timeout     => o_slice_timeout(i),
+                    o_stop_id_error     => o_stop_id_error(i),
+                    o_quarantine_escape_sticky => o_quarantine_escape_rise(i)
+                );
+        end generate gen_rise_builder;
 
-        -- Falling-slope cell builder
-        u_cell_bld_fall : entity work.tdc_gpx_cell_builder
-            generic map (
-                g_CHIP_ID     => i,
-                g_TDATA_WIDTH => g_OUTPUT_WIDTH
-            )
-            port map (
-                i_clk               => i_clk,
-                i_rst_n             => i_rst_n,
-                i_s_axis_tvalid     => s_fall_valid_r(i),
-                i_s_axis_tdata      => s_fall_tdata_r(i),
-                i_s_axis_tuser      => s_fall_tuser_r(i),
-                o_s_axis_tready     => s_fall_tready(i),
-                i_shot_start        => s_shot_start_fall(i),
-                i_abort             => s_abort_fall,
-                i_stops_per_chip    => i_face_stops_per_chip,
-                i_max_hits_cfg      => i_max_hits_cfg,
-                i_max_range_axis_clks => s_max_range_axis_clks,
-                o_m_axis_tdata      => s_cell_fall_tdata(i),
-                o_m_axis_tvalid     => o_cell_fall_tvalid(i),
-                o_m_axis_tlast      => o_cell_fall_tlast(i),
-                o_m_axis_tuser      => s_cell_fall_tuser_int(i),  -- P1 rework
-                i_m_axis_tready     => i_cell_fall_tready(i),
-                o_slice_done        => open,
-                o_hit_dropped_any   => o_hit_fall_dropped(i),
-                o_shot_dropped      => o_shot_fall_dropped(i),
-                o_slice_timeout     => o_slice_fall_timeout(i),
-                o_stop_id_error     => o_stop_id_fall_error(i),
-                o_quarantine_escape_sticky => o_quarantine_escape_fall(i)
-            );
+        gen_no_rise_builder : if c_STATIC_RISE_MASK(i) = '0' generate
+            s_rise_tready(i) <= '1';
+            s_cell_rise_tdata(i) <= (others => '0');
+            o_cell_rise_tvalid(i) <= '0';
+            o_cell_rise_tlast(i) <= '0';
+            s_cell_rise_tuser_int(i) <= (others => '0');
+            o_hit_dropped(i) <= '0';
+            o_shot_dropped(i) <= '0';
+            o_slice_timeout(i) <= '0';
+            o_stop_id_error(i) <= '0';
+            o_quarantine_escape_rise(i) <= '0';
+        end generate gen_no_rise_builder;
+
+        gen_fall_builder : if c_STATIC_FALL_MASK(i) = '1' generate
+            u_cell_bld_fall : entity work.tdc_gpx_cell_builder
+                generic map (
+                    g_CHIP_ID     => i,
+                    g_TDATA_WIDTH => g_OUTPUT_WIDTH
+                )
+                port map (
+                    i_clk               => i_clk,
+                    i_rst_n             => i_rst_n,
+                    i_s_axis_tvalid     => s_fall_valid_r(i),
+                    i_s_axis_tdata      => s_fall_tdata_r(i),
+                    i_s_axis_tuser      => s_fall_tuser_r(i),
+                    o_s_axis_tready     => s_fall_tready(i),
+                    i_shot_start        => s_shot_start_fall(i),
+                    i_abort             => s_abort_fall,
+                    i_stops_per_chip    => i_face_stops_per_chip,
+                    i_max_hits_cfg      => i_max_hits_cfg,
+                    i_max_range_axis_clks => s_max_range_axis_clks,
+                    o_m_axis_tdata      => s_cell_fall_tdata(i),
+                    o_m_axis_tvalid     => o_cell_fall_tvalid(i),
+                    o_m_axis_tlast      => o_cell_fall_tlast(i),
+                    o_m_axis_tuser      => s_cell_fall_tuser_int(i),
+                    i_m_axis_tready     => i_cell_fall_tready(i),
+                    o_slice_done        => open,
+                    o_hit_dropped_any   => o_hit_fall_dropped(i),
+                    o_shot_dropped      => o_shot_fall_dropped(i),
+                    o_slice_timeout     => o_slice_fall_timeout(i),
+                    o_stop_id_error     => o_stop_id_fall_error(i),
+                    o_quarantine_escape_sticky => o_quarantine_escape_fall(i)
+                );
+        end generate gen_fall_builder;
+
+        gen_no_fall_builder : if c_STATIC_FALL_MASK(i) = '0' generate
+            s_fall_tready(i) <= '1';
+            s_cell_fall_tdata(i) <= (others => '0');
+            o_cell_fall_tvalid(i) <= '0';
+            o_cell_fall_tlast(i) <= '0';
+            s_cell_fall_tuser_int(i) <= (others => '0');
+            o_hit_fall_dropped(i) <= '0';
+            o_shot_fall_dropped(i) <= '0';
+            o_slice_fall_timeout(i) <= '0';
+            o_stop_id_fall_error(i) <= '0';
+            o_quarantine_escape_fall(i) <= '0';
+        end generate gen_no_fall_builder;
 
     end generate gen_chip;
 

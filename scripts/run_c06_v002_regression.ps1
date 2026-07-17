@@ -121,6 +121,7 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
     "$Hdl/tb_tdc_gpx_status_agg_c06_fix.vhd",
     "$Hdl/tb_tdc_gpx_cell_pipe_lane_mask.vhd",
+    "$Hdl/tb_tdc_gpx_cell_pipe_lane_mask_dedicated.vhd",
     "$Hdl/tb_tdc_gpx_reg_rsp_cdc.vhd",
     "$Hdl/tb_tdc_gpx_top_int_masked_slope_stat.vhd"
 )
@@ -168,6 +169,11 @@ try {
         "xil_defaultlib.tb_tdc_gpx_cell_pipe_lane_mask"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_lane_mask_snap", "-runall", "-log", "xsim_c06_v002_lane_mask_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_lane_mask_$Stamp.log" "TB_LANE_MASK ALL PASS"
+
+    Invoke-Xelab "tb_c06_v002_lane_mask_dedicated_snap" "xelab_c06_v002_lane_mask_dedicated_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_cell_pipe_lane_mask_dedicated"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_lane_mask_dedicated_snap", "-runall", "-log", "xsim_c06_v002_lane_mask_dedicated_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_lane_mask_dedicated_$Stamp.log" "TB_LANE_MASK ALL PASS: DEDICATED_2X2"
 
     Invoke-Xelab "tb_c06_v002_reg_rsp_cdc_snap" "xelab_c06_v002_reg_rsp_cdc_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_reg_rsp_cdc"

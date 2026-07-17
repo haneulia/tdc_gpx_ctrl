@@ -788,8 +788,9 @@ begin
     -- =========================================================================
     u_cell_pipe : entity work.tdc_gpx_cell_pipe
         generic map (
-            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
-            g_AXIS_CLK_MHZ => g_AXIS_CLK_MHZ
+            g_OUTPUT_WIDTH    => g_OUTPUT_WIDTH,
+            g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
+            g_SLOPE_CHIP_MODE => g_SLOPE_CHIP_MODE
         )
         port map (
             i_clk                   => i_axis_aclk,
@@ -803,9 +804,9 @@ begin
             i_shot_start_per_chip   => s_shot_start_per_chip,
             -- CHAIN P1: slope lane masks (same source as output_stage's
             -- face_rise/fall_mask). In DEDICATED_2X2 this keeps the
-            -- wrong-slope cell_builders idle so they stop emitting blank
-            -- slices into never-read face_assembler input FIFOs (which
-            -- polluted shot_flush_drop every shot).
+            -- wrong-slope builders are absent at elaboration, while these
+            -- runtime masks retain active-chip selection and wrong-slope
+            -- hit diagnostics.
             i_rise_chip_mask        => s_face_rise_mask,
             i_fall_chip_mask        => s_face_fall_mask,
             i_abort                 => s_pipeline_abort,       -- global (legacy)
