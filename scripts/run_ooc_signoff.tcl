@@ -5,8 +5,8 @@
 # written below HDL/signoff_results/sessions by the PowerShell wrapper.
 # =============================================================================
 
-if {$argc != 7} {
-    error "usage: run_ooc_signoff.tcl OUT_DIR WIDTH AXIS_MHZ TDC_MHZ SLOPE_MODE STREAM_MODE DO_IMPL"
+if {$argc != 8} {
+    error "usage: run_ooc_signoff.tcl OUT_DIR WIDTH AXIS_MHZ TDC_MHZ SLOPE_MODE STREAM_MODE DO_IMPL IMPL_STRATEGY"
 }
 
 set out_dir    [file normalize [lindex $argv 0]]
@@ -16,6 +16,11 @@ set tdc_mhz    [lindex $argv 3]
 set slope_mode [lindex $argv 4]
 set stream_mode [lindex $argv 5]
 set do_impl    [expr {[lindex $argv 6] eq "1"}]
+set impl_strategy [lindex $argv 7]
+
+if {$impl_strategy ni {DEFAULT TIMING_EXPLORE}} {
+    error "unsupported implementation strategy: $impl_strategy"
+}
 
 set project_file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/tdc_gpx_ctrl.xpr"
 set part_name   "xc7z020clg484-2"
@@ -23,7 +28,7 @@ set project_dir [file dirname $project_file]
 set gen_ip_dir  [file join $project_dir tdc_gpx_ctrl.gen sources_1 ip]
 file mkdir $out_dir
 
-puts "OOC_SIGNOFF_CONFIG width=$width axis_mhz=$axis_mhz tdc_mhz=$tdc_mhz slope=$slope_mode stream=$stream_mode impl=$do_impl"
+puts "OOC_SIGNOFF_CONFIG width=$width axis_mhz=$axis_mhz tdc_mhz=$tdc_mhz slope=$slope_mode stream=$stream_mode impl=$do_impl strategy=$impl_strategy"
 
 set axis_period [expr {1000.0 / double($axis_mhz)}]
 set tdc_period  [expr {1000.0 / double($tdc_mhz)}]
@@ -114,10 +119,17 @@ write_checkpoint -force [file join $out_dir post_synth.dcp]
 puts "OOC_SIGNOFF_SYNTH_PASS"
 
 if {$do_impl} {
-    opt_design
-    place_design
-    phys_opt_design
-    route_design
+    if {$impl_strategy eq "TIMING_EXPLORE"} {
+        opt_design -directive ExploreWithRemap
+        place_design -directive Explore
+        phys_opt_design -directive AggressiveExplore
+        route_design -directive AggressiveExplore -tns_cleanup
+    } else {
+        opt_design
+        place_design
+        phys_opt_design
+        route_design
+    }
 
     check_timing -verbose -file [file join $out_dir post_route_check_timing.rpt]
     report_utilization -hierarchical -hierarchical_depth 6 \

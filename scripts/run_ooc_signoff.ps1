@@ -15,6 +15,9 @@ param(
     [ValidateSet("ASYNC", "SYNC")]
     [string]$StreamMode = "ASYNC",
 
+    [ValidateSet("DEFAULT", "TIMING_EXPLORE")]
+    [string]$ImplStrategy = "DEFAULT",
+
     [string]$Label = "baseline",
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [switch]$Implement,
@@ -102,13 +105,14 @@ New-Item -ItemType Directory -Path $OutDir | Out-Null
     "tdc_mhz=$TdcMhz"
     "slope_mode=$SlopeMode"
     "stream_mode=$StreamMode"
+    "impl_strategy=$ImplStrategy"
     "implement=$($Implement.IsPresent)"
 ) | Set-Content -Encoding ASCII "$OutDir/session.properties"
 
 $DoImpl = if ($Implement) { "1" } else { "0" }
 & $Vivado -mode batch -nojournal -log $Log `
     -source "$Hdl/scripts/run_ooc_signoff.tcl" `
-    -tclargs $OutDir $Width $AxisMhz $TdcMhz $SlopeMode $StreamMode $DoImpl
+    -tclargs $OutDir $Width $AxisMhz $TdcMhz $SlopeMode $StreamMode $DoImpl $ImplStrategy
 
 if ($LASTEXITCODE -ne 0) {
     throw "Vivado OOC sign-off failed with exit code $LASTEXITCODE. See $Log"
