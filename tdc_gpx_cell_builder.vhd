@@ -201,6 +201,8 @@ end entity tdc_gpx_cell_builder;
 
 architecture rtl of tdc_gpx_cell_builder is
 
+    signal s_abort_local_r : std_logic := '0';
+
     -- =========================================================================
     -- Phase B: per-watchdog timeout cap helper.
     -- Same saturating-sum pattern as chip_run: returns x"FFFF" when the
@@ -469,6 +471,21 @@ architecture rtl of tdc_gpx_cell_builder is
 
 begin
 
+    -- Register command abort at the builder boundary. The global demux and
+    -- downstream output stages still abort immediately; this local copy frees
+    -- cell ownership one AXIS clock later, after any coincident beat has been
+    -- invalidated. The register localizes the large distributed-buffer CE cone.
+    p_abort_local : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_abort_local_r <= '0';
+            else
+                s_abort_local_r <= i_abort;
+            end if;
+        end if;
+    end process p_abort_local;
+
     assert fn_output_width_supported(g_TDATA_WIDTH)
         report "tdc_gpx_cell_builder: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
         severity failure;
@@ -544,7 +561,7 @@ begin
                 -- ---------------------------------------------------------
                 -- Abort: free all buffers, return to idle
                 -- ---------------------------------------------------------
-                if i_abort = '1' then
+                if s_abort_local_r = '1' then
                     s_buf_state_r <= (others => BUF_FREE);
                     s_buf_full_r  <= "00";
                     s_cstate_r    <= ST_C_IDLE;
@@ -944,7 +961,7 @@ begin
                 -- ---------------------------------------------------------
                 -- Abort: return to idle, clear tvalid
                 -- ---------------------------------------------------------
-                if i_abort = '1' then
+                if s_abort_local_r = '1' then
                     s_ostate_r <= ST_O_IDLE;
                     s_tvalid_r <= '0';
                     s_tlast_r  <= '0';

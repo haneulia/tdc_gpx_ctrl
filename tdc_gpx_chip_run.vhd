@@ -7,9 +7,10 @@
 --   Handles the complete measurement cycle: armed → capture → drain → ALU.
 --   Extracted from tdc_gpx_chip_ctrl to reduce FSM complexity.
 --
--- FSM States (13):
+-- FSM States (15):
 --   ST_OFF → (start) → ST_ARMED → ST_CAPTURE → ST_DRAIN_LATCH →
---   ST_DRAIN_CHECK → ST_DRAIN_EF1/EF2/BURST/FLUSH → ST_DRAIN_SETTLE →
+--   ST_DRAIN_CHECK → ST_DRAIN_EF1/EF2/BURST_PLAN/BURST_ARM/BURST/FLUSH
+--                  → ST_DRAIN_SETTLE →
 --   ST_ALU_PULSE → ST_ALU_RECOVERY → (done/armed)
 --   ST_OVERRUN_FLUSH (overrun recovery path)
 --
@@ -192,6 +193,8 @@ architecture rtl of tdc_gpx_chip_run is
         ST_DRAIN_CHECK,
         ST_DRAIN_EF1,
         ST_DRAIN_EF2,
+        ST_DRAIN_BURST_PLAN,
+        ST_DRAIN_BURST_ARM,
         ST_DRAIN_BURST,
         ST_DRAIN_FLUSH,
         ST_DRAIN_SETTLE,
@@ -370,6 +373,7 @@ begin
                     case s_state_r is
                         when ST_DRAIN_LATCH | ST_DRAIN_CHECK
                            | ST_DRAIN_EF1   | ST_DRAIN_EF2
+                           | ST_DRAIN_BURST_PLAN | ST_DRAIN_BURST_ARM
                            | ST_DRAIN_BURST | ST_DRAIN_FLUSH
                            | ST_DRAIN_SETTLE
                            | ST_ALU_PULSE   | ST_ALU_RECOVERY
@@ -572,17 +576,8 @@ begin
                               and i_ef1_sync = '0' and i_lf1_sync = '1'
                               and v_ififo1_can_read
                               and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2 then
-                            if s_fill_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r then
-                                s_burst_remaining_r <= s_fill_r - 1;
-                            else
-                                s_burst_remaining_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r - 1;
-                            end if;
-                            s_req_valid_r <= '1';
-                            s_req_burst_r <= '1';
-                            s_req_rw_r    <= '0';
-                            s_req_addr_r  <= c_TDC_REG8_IFIFO1;
                             s_ififo_id_r  <= '0';
-                            s_state_r     <= ST_DRAIN_BURST;
+                            s_state_r     <= ST_DRAIN_BURST_PLAN;
 
                         -- Burst IFIFO2
                         elsif s_purge_mode_r = '0'
@@ -591,17 +586,8 @@ begin
                               and i_ef2_sync = '0' and i_lf2_sync = '1'
                               and v_ififo2_can_read
                               and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2 then
-                            if s_fill_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r then
-                                s_burst_remaining_r <= s_fill_r - 1;
-                            else
-                                s_burst_remaining_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r - 1;
-                            end if;
-                            s_req_valid_r <= '1';
-                            s_req_burst_r <= '1';
-                            s_req_rw_r    <= '0';
-                            s_req_addr_r  <= c_TDC_REG9_IFIFO2;
                             s_ififo_id_r  <= '1';
-                            s_state_r     <= ST_DRAIN_BURST;
+                            s_state_r     <= ST_DRAIN_BURST_PLAN;
 
                         -- EF single IFIFO1
                         elsif v_ififo1_can_read then
@@ -665,6 +651,38 @@ begin
                             s_state_r         <= ST_ALU_PULSE;
                         end if;
                       end if; -- i_raw_busy = '0'
+
+                    when ST_DRAIN_BURST_PLAN =>
+                        -- Stage 1: capture the words still available in the
+                        -- selected IFIFO. The CHECK predicates guarantee at
+                        -- least two words, so unsigned subtraction cannot wrap.
+                        if s_ififo_id_r = '0' then
+                            s_burst_remaining_r <=
+                                s_expected_ififo1_r - s_drain_cnt_ififo1_r;
+                        else
+                            s_burst_remaining_r <=
+                                s_expected_ififo2_r - s_drain_cnt_ififo2_r;
+                        end if;
+                        s_state_r <= ST_DRAIN_BURST_ARM;
+
+                    when ST_DRAIN_BURST_ARM =>
+                        -- Stage 2: cap by LFILL and convert total words to the
+                        -- existing "responses after first request" countdown.
+                        -- Reusing s_burst_remaining_r avoids another counter.
+                        if s_fill_r < s_burst_remaining_r then
+                            s_burst_remaining_r <= s_fill_r - 1;
+                        else
+                            s_burst_remaining_r <= s_burst_remaining_r - 1;
+                        end if;
+                        s_req_valid_r <= '1';
+                        s_req_burst_r <= '1';
+                        s_req_rw_r    <= '0';
+                        if s_ififo_id_r = '0' then
+                            s_req_addr_r <= c_TDC_REG8_IFIFO1;
+                        else
+                            s_req_addr_r <= c_TDC_REG9_IFIFO2;
+                        end if;
+                        s_state_r <= ST_DRAIN_BURST;
 
                     when ST_DRAIN_EF1 =>
                         if i_bus_rsp_valid = '1' then
@@ -983,7 +1001,8 @@ begin
                    and s_state_r /= ST_ARMED then
                     case s_state_r is
                         when ST_CAPTURE | ST_DRAIN_LATCH
-                           | ST_DRAIN_CHECK | ST_DRAIN_SETTLE =>
+                           | ST_DRAIN_CHECK | ST_DRAIN_BURST_PLAN
+                           | ST_DRAIN_BURST_ARM | ST_DRAIN_SETTLE =>
                             s_req_valid_r        <= '0';
                             s_req_burst_r        <= '0';
                             s_raw_valid_r        <= '0';
