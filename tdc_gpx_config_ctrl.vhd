@@ -300,6 +300,27 @@ end entity tdc_gpx_config_ctrl;
 
 architecture rtl of tdc_gpx_config_ctrl is
 
+    -- Reduce a wide payload comparison to one registered flag per 32-bit
+    -- chunk. The source send FSM only sees the small flag vector, keeping
+    -- wide CSR/image decode away from its clock-enable path at 200 MHz.
+    function fn_chunk_diff(
+        i_lhs : std_logic_vector;
+        i_rhs : std_logic_vector
+    ) return std_logic_vector is
+        constant c_CHUNKS : positive := (i_lhs'length + 31) / 32;
+        variable v_diff   : std_logic_vector(c_CHUNKS - 1 downto 0) := (others => '0');
+    begin
+        assert i_lhs'length = i_rhs'length
+            report "fn_chunk_diff operands must have equal width"
+            severity failure;
+        for bit_idx in 0 to i_lhs'length - 1 loop
+            if i_lhs(i_lhs'low + bit_idx) /= i_rhs(i_rhs'low + bit_idx) then
+                v_diff(bit_idx / 32) := '1';
+            end if;
+        end loop;
+        return v_diff;
+    end function;
+
     attribute KEEP_HIERARCHY : string;
     attribute KEEP_HIERARCHY of rtl : architecture is "yes";
 
@@ -675,7 +696,12 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cfg_src_send_r   : std_logic := '0';
     signal s_cfg_src_rcv      : std_logic;
     signal s_cfg_dst_req      : std_logic;
+    -- Register the live packed bundle before change detection. This removes
+    -- a 138-bit compare from the live CSR decode path and gives 200 MHz AXIS
+    -- timing a clean register boundary.
+    signal s_cfg_sample_r     : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0) := (others => '1');
     signal s_cfg_d1_r         : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0) := (others => '1');
+    signal s_cfg_diff_r       : std_logic_vector((c_TDC_CFG_BITS + 31) / 32 - 1 downto 0) := (others => '0');
 
     -- cfg_image is an array of 8 × 32-bit words = 256 bits.
     constant c_CFG_IMAGE_BITS : natural := 8 * 32;
@@ -684,7 +710,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cfg_image_src_send_r : std_logic := '0';
     signal s_cfg_image_src_rcv    : std_logic;
     signal s_cfg_image_dst_req    : std_logic;
+    signal s_cfg_image_sample_r   : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0) := (others => '1');
     signal s_cfg_image_d1_r       : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0) := (others => '1');
+    signal s_cfg_image_diff_r     : std_logic_vector((c_CFG_IMAGE_BITS + 31) / 32 - 1 downto 0) := (others => '0');
 
     -- ASYNC_REG already declared above (Round 12 A3 sync signals).
 
@@ -1366,7 +1394,9 @@ begin
         )
         port map (
             src_clk  => i_axis_aclk,
-            src_in   => s_cfg_src_packed,
+            -- Hold the exact detected snapshot stable for the complete
+            -- request/acknowledge interval, even if live CSR fields change.
+            src_in   => s_cfg_d1_r,
             src_send => s_cfg_src_send_r,
             src_rcv  => s_cfg_src_rcv,
             dest_clk => i_tdc_clk,
@@ -1386,7 +1416,7 @@ begin
         )
         port map (
             src_clk  => i_axis_aclk,
-            src_in   => s_cfg_image_src_packed,
+            src_in   => s_cfg_image_d1_r,
             src_send => s_cfg_image_src_send_r,
             src_rcv  => s_cfg_image_src_rcv,
             dest_clk => i_tdc_clk,
@@ -1401,11 +1431,15 @@ begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
                 s_cfg_src_send_r <= '0';
+                s_cfg_sample_r   <= (others => '1');
                 s_cfg_d1_r       <= (others => '1');
+                s_cfg_diff_r     <= (others => '0');
             else
-                if s_cfg_src_send_r = '0' and s_cfg_src_packed /= s_cfg_d1_r then
+                s_cfg_sample_r <= s_cfg_src_packed;
+                s_cfg_diff_r   <= fn_chunk_diff(s_cfg_sample_r, s_cfg_d1_r);
+                if s_cfg_src_send_r = '0' and s_cfg_diff_r /= (s_cfg_diff_r'range => '0') then
                     s_cfg_src_send_r <= '1';
-                    s_cfg_d1_r       <= s_cfg_src_packed;
+                    s_cfg_d1_r       <= s_cfg_sample_r;
                 elsif s_cfg_src_rcv = '1' then
                     s_cfg_src_send_r <= '0';
                 end if;
@@ -1418,12 +1452,16 @@ begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
                 s_cfg_image_src_send_r <= '0';
+                s_cfg_image_sample_r   <= (others => '1');
                 s_cfg_image_d1_r       <= (others => '1');
+                s_cfg_image_diff_r     <= (others => '0');
             else
+                s_cfg_image_sample_r <= s_cfg_image_src_packed;
+                s_cfg_image_diff_r   <= fn_chunk_diff(s_cfg_image_sample_r, s_cfg_image_d1_r);
                 if s_cfg_image_src_send_r = '0'
-                    and s_cfg_image_src_packed /= s_cfg_image_d1_r then
+                    and s_cfg_image_diff_r /= (s_cfg_image_diff_r'range => '0') then
                     s_cfg_image_src_send_r <= '1';
-                    s_cfg_image_d1_r       <= s_cfg_image_src_packed;
+                    s_cfg_image_d1_r       <= s_cfg_image_sample_r;
                 elsif s_cfg_image_src_rcv = '1' then
                     s_cfg_image_src_send_r <= '0';
                 end if;
@@ -1458,7 +1496,7 @@ begin
         )
         port map (
             src_clk  => i_axis_aclk,
-            src_in   => s_cmd_reg_src_packed,
+            src_in   => s_cmd_reg_d1_r,
             src_send => s_cmd_reg_src_send_r,
             src_rcv  => s_cmd_reg_src_rcv,
             dest_clk => i_tdc_clk,
@@ -1510,7 +1548,7 @@ begin
         )
         port map (
             src_clk  => i_axis_aclk,
-            src_in   => s_expected_src_packed,
+            src_in   => s_exp_d1_r,
             src_send => s_exp_src_send_r,
             src_rcv  => s_exp_src_rcv,
             dest_clk => i_tdc_clk,

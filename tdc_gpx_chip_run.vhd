@@ -285,8 +285,10 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_drain_cnt_ififo2_r : unsigned(7 downto 0) := (others => '0');
 
     signal s_fill_r            : unsigned(7 downto 0) := (others => '0');
-    signal s_burst_cnt_r       : unsigned(7 downto 0) := (others => '0');
-    signal s_burst_limit_r     : unsigned(7 downto 0) := (others => '0');
+    -- Number of responses still needed before the current burst closes.
+    -- This replaces the count/limit pair: (count + 1 >= limit) is exactly
+    -- equivalent to (remaining <= 1), with a much smaller timing cone.
+    signal s_burst_remaining_r : unsigned(7 downto 0) := (others => '0');
 
     signal s_range_active_r    : std_logic := '0';
     signal s_purge_mode_r      : std_logic := '0';
@@ -342,6 +344,7 @@ begin
                 s_expected_valid_r  <= '0';
                 s_drain_cnt_ififo1_r <= (others => '0');
                 s_drain_cnt_ififo2_r <= (others => '0');
+                s_burst_remaining_r <= (others => '0');
                 s_range_active_r    <= '0';
                 s_purge_mode_r      <= '0';
                 s_stop_pending_r    <= '0';
@@ -570,11 +573,10 @@ begin
                               and v_ififo1_can_read
                               and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2 then
                             if s_fill_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r then
-                                s_burst_limit_r <= s_fill_r - 1;
+                                s_burst_remaining_r <= s_fill_r - 1;
                             else
-                                s_burst_limit_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r - 1;
+                                s_burst_remaining_r <= s_expected_ififo1_r - s_drain_cnt_ififo1_r - 1;
                             end if;
-                            s_burst_cnt_r <= (others => '0');
                             s_req_valid_r <= '1';
                             s_req_burst_r <= '1';
                             s_req_rw_r    <= '0';
@@ -590,11 +592,10 @@ begin
                               and v_ififo2_can_read
                               and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2 then
                             if s_fill_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r then
-                                s_burst_limit_r <= s_fill_r - 1;
+                                s_burst_remaining_r <= s_fill_r - 1;
                             else
-                                s_burst_limit_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r - 1;
+                                s_burst_remaining_r <= s_expected_ififo2_r - s_drain_cnt_ififo2_r - 1;
                             end if;
-                            s_burst_cnt_r <= (others => '0');
                             s_req_valid_r <= '1';
                             s_req_burst_r <= '1';
                             s_req_rw_r    <= '0';
@@ -766,7 +767,9 @@ begin
                         if i_bus_rsp_valid = '1' then
                             s_raw_word_r  <= i_bus_rsp_rdata;
                             s_raw_valid_r <= '1';
-                            s_burst_cnt_r <= s_burst_cnt_r + 1;
+                            if s_burst_remaining_r /= 0 then
+                                s_burst_remaining_r <= s_burst_remaining_r - 1;
+                            end if;
                             s_wait_cnt_r  <= (others => '0');
                             s_pending_stuck_cnt_r <= (others => '0');
                             if s_ififo_id_r = '0' then
@@ -774,7 +777,7 @@ begin
                             else
                                 s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
                             end if;
-                            if (s_burst_cnt_r + 1) >= s_burst_limit_r then
+                            if s_burst_remaining_r(7 downto 1) = 0 then
                                 s_req_burst_r <= '0';
                                 s_req_valid_r <= '0';
                                 s_state_r     <= ST_DRAIN_FLUSH;
@@ -785,7 +788,7 @@ begin
                             -- final planned burst beat. This prevents bus_phy
                             -- from launching one extra IFIFO read while the
                             -- final response waits one cycle in the skid.
-                            if (s_burst_cnt_r + 1) >= s_burst_limit_r then
+                            if s_burst_remaining_r(7 downto 1) = 0 then
                                 s_req_burst_r <= '0';
                                 s_req_valid_r <= '0';
                             end if;
