@@ -226,6 +226,31 @@ architecture rtl of tdc_gpx_cell_builder is
         end if;
     end function;
 
+    -- Store one hit into a statically selected cell. Keeping the cell target
+    -- static at each call site prevents one selected hit_count from driving
+    -- the write-enable mux for every cell in both ping-pong buffers.
+    procedure pr_store_hit(
+        signal io_cell       : inout t_cell;
+        signal o_drop_pulse  : out std_logic;
+        constant i_max_hits  : in unsigned(3 downto 0);
+        constant i_hit       : in std_logic_vector(c_HIT_SLOT_DATA_WIDTH downto 0);
+        constant i_slope     : in std_logic
+    ) is
+        variable v_seq : natural range 0 to c_MAX_HITS_PER_STOP - 1;
+    begin
+        if io_cell.hit_count_actual < i_max_hits then
+            v_seq := to_integer(io_cell.hit_count_actual(2 downto 0));
+            io_cell.hit_slot(v_seq)    <= unsigned(i_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+            io_cell.hit_msb_vec(v_seq) <= i_hit(c_HIT_SLOT_DATA_WIDTH);
+            io_cell.hit_valid(v_seq)   <= '1';
+            io_cell.slope_vec(v_seq)   <= i_slope;
+            io_cell.hit_count_actual   <= io_cell.hit_count_actual + 1;
+        else
+            io_cell.hit_dropped <= '1';
+            o_drop_pulse        <= '1';
+        end if;
+    end procedure;
+
     -- =========================================================================
     -- Ping-pong dual cell buffer (register-based, 2 x MAX_STOPS entries)
     -- p_collect writes to buffer[wr_buf], p_output reads from buffer[rd_buf].
@@ -478,7 +503,7 @@ begin
         variable v_other    : natural range 0 to 1;
         variable v_done_buf : natural range 0 to 1;
         variable v_stop  : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
-        variable v_seq   : natural range 0 to c_MAX_HITS_PER_STOP - 1;
+        variable v_hit_key : std_logic_vector(3 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -644,20 +669,31 @@ begin
                                     -- hit_dropped is reserved for hit-count overflow; this
                                     -- path is a routing / config error.
                                     s_stop_id_error_r <= '1';
-                                -- Round 9 #8: treat i_max_hits_cfg=000 as 7 in
-                                -- the store path, matching the output-format
-                                -- convention at line 673 (`others => 7`).
-                                elsif s_cell_buf_r(v_wr)(v_stop).hit_count_actual <
-                                      s_max_hits_eff_u then
-                                    v_seq := to_integer(s_cell_buf_r(v_wr)(v_stop).hit_count_actual(2 downto 0));
-                                    s_cell_buf_r(v_wr)(v_stop).hit_slot(v_seq)    <= unsigned(i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
-                                    s_cell_buf_r(v_wr)(v_stop).hit_msb_vec(v_seq) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH);
-                                    s_cell_buf_r(v_wr)(v_stop).hit_valid(v_seq)   <= '1';
-                                    s_cell_buf_r(v_wr)(v_stop).slope_vec(v_seq)   <= i_s_axis_tuser(0);
-                                    s_cell_buf_r(v_wr)(v_stop).hit_count_actual <= s_cell_buf_r(v_wr)(v_stop).hit_count_actual + 1;
                                 else
-                                    s_cell_buf_r(v_wr)(v_stop).hit_dropped <= '1';
-                                    s_hit_dropped_r <= '1';
+                                    -- Round 9 #8: i_max_hits_cfg=000 aliases
+                                    -- to 7 through s_max_hits_eff_u. Dispatch
+                                    -- to a static cell target so each cell's
+                                    -- count controls only its own slot writes.
+                                    v_hit_key := s_wr_buf_r & i_s_axis_tuser(5 downto 3);
+                                    case v_hit_key is
+                                        when "0000" => pr_store_hit(s_cell_buf_r(0)(0), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0001" => pr_store_hit(s_cell_buf_r(0)(1), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0010" => pr_store_hit(s_cell_buf_r(0)(2), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0011" => pr_store_hit(s_cell_buf_r(0)(3), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0100" => pr_store_hit(s_cell_buf_r(0)(4), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0101" => pr_store_hit(s_cell_buf_r(0)(5), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0110" => pr_store_hit(s_cell_buf_r(0)(6), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0111" => pr_store_hit(s_cell_buf_r(0)(7), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1000" => pr_store_hit(s_cell_buf_r(1)(0), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1001" => pr_store_hit(s_cell_buf_r(1)(1), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1010" => pr_store_hit(s_cell_buf_r(1)(2), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1011" => pr_store_hit(s_cell_buf_r(1)(3), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1100" => pr_store_hit(s_cell_buf_r(1)(4), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1101" => pr_store_hit(s_cell_buf_r(1)(5), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1110" => pr_store_hit(s_cell_buf_r(1)(6), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1111" => pr_store_hit(s_cell_buf_r(1)(7), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when others => null;
+                                    end case;
                                 end if;
                             end if;
 

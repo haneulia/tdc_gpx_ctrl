@@ -33,3 +33,4 @@ tmp/
 /signoff_results/sessions/
 /signoff_results/matrices/
 /sim_work/
+/clockInfo.txt
