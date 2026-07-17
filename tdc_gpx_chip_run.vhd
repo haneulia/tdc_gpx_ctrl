@@ -7,9 +7,10 @@
 --   Handles the complete measurement cycle: armed → capture → drain → ALU.
 --   Extracted from tdc_gpx_chip_ctrl to reduce FSM complexity.
 --
--- FSM States (15):
+-- FSM States (16):
 --   ST_OFF → (start) → ST_ARMED → ST_CAPTURE → ST_DRAIN_LATCH →
---   ST_DRAIN_CHECK → ST_DRAIN_EF1/EF2/BURST_PLAN/BURST_ARM/BURST/FLUSH
+--   ST_DRAIN_CHECK → ST_DRAIN_DECIDE →
+--   ST_DRAIN_EF1/EF2/BURST_PLAN/BURST_ARM/BURST/FLUSH
 --                  → ST_DRAIN_SETTLE →
 --   ST_ALU_PULSE → ST_ALU_RECOVERY → (done/armed)
 --   ST_OVERRUN_FLUSH (overrun recovery path)
@@ -191,6 +192,7 @@ architecture rtl of tdc_gpx_chip_run is
         ST_CAPTURE,
         ST_DRAIN_LATCH,
         ST_DRAIN_CHECK,
+        ST_DRAIN_DECIDE,
         ST_DRAIN_EF1,
         ST_DRAIN_EF2,
         ST_DRAIN_BURST_PLAN,
@@ -287,6 +289,13 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_expected_valid_r  : std_logic := '0';
     signal s_drain_cnt_ififo1_r : unsigned(7 downto 0) := (others => '0');
     signal s_drain_cnt_ififo2_r : unsigned(7 downto 0) := (others => '0');
+    signal s_eval_ififo1_done_r     : std_logic := '0';
+    signal s_eval_ififo2_done_r     : std_logic := '0';
+    signal s_eval_ififo1_can_read_r : std_logic := '0';
+    signal s_eval_ififo2_can_read_r : std_logic := '0';
+    signal s_eval_ififo1_burst_r    : std_logic := '0';
+    signal s_eval_ififo2_burst_r    : std_logic := '0';
+    signal s_eval_drain_mismatch_r  : std_logic := '0';
 
     signal s_fill_r            : unsigned(7 downto 0) := (others => '0');
     -- Number of responses still needed before the current burst closes.
@@ -337,6 +346,8 @@ begin
         variable v_ififo2_done     : boolean;
         variable v_ififo1_can_read : boolean;
         variable v_ififo2_can_read : boolean;
+        variable v_ififo1_burst    : boolean;
+        variable v_ififo2_burst    : boolean;
         variable v_ififo1_zero_conflict : boolean;
         variable v_ififo2_zero_conflict : boolean;
         variable v_drain_mismatch  : boolean;
@@ -365,6 +376,13 @@ begin
                 s_expected_valid_r  <= '0';
                 s_drain_cnt_ififo1_r <= (others => '0');
                 s_drain_cnt_ififo2_r <= (others => '0');
+                s_eval_ififo1_done_r     <= '0';
+                s_eval_ififo2_done_r     <= '0';
+                s_eval_ififo1_can_read_r <= '0';
+                s_eval_ififo2_can_read_r <= '0';
+                s_eval_ififo1_burst_r    <= '0';
+                s_eval_ififo2_burst_r    <= '0';
+                s_eval_drain_mismatch_r  <= '0';
                 s_burst_remaining_r <= (others => '0');
                 s_range_active_r    <= '0';
                 s_purge_mode_r      <= '0';
@@ -389,7 +407,7 @@ begin
                 -- `when others => null`).
                 if i_cmd_stop = '1' then
                     case s_state_r is
-                        when ST_DRAIN_LATCH | ST_DRAIN_CHECK
+                        when ST_DRAIN_LATCH | ST_DRAIN_CHECK | ST_DRAIN_DECIDE
                            | ST_DRAIN_EF1   | ST_DRAIN_EF2
                            | ST_DRAIN_BURST_PLAN | ST_DRAIN_BURST_ARM
                            | ST_DRAIN_BURST | ST_DRAIN_FLUSH
@@ -561,8 +579,77 @@ begin
                                  or v_ififo1_zero_conflict
                                  or v_ififo2_zero_conflict);
 
+                        v_ififo1_burst := s_purge_mode_r = '0'
+                            and i_drain_mode = '1'
+                            and s_fill_r >= 2
+                            and i_ef1_sync = '0' and i_lf1_sync = '1'
+                            and v_ififo1_can_read
+                            and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2;
+                        v_ififo2_burst := s_purge_mode_r = '0'
+                            and i_drain_mode = '1'
+                            and s_fill_r >= 2
+                            and i_ef2_sync = '0' and i_lf2_sync = '1'
+                            and v_ififo2_can_read
+                            and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2;
+
+                        -- Register only compact predicates here. The following
+                        -- DECIDE state drives requests and state controls from
+                        -- these one-bit values, cutting the drain counters and
+                        -- expected-count arithmetic out of those timing cones.
+                        if v_ififo1_done then
+                            s_eval_ififo1_done_r <= '1';
+                        else
+                            s_eval_ififo1_done_r <= '0';
+                        end if;
+                        if v_ififo2_done then
+                            s_eval_ififo2_done_r <= '1';
+                        else
+                            s_eval_ififo2_done_r <= '0';
+                        end if;
+                        if v_ififo1_can_read then
+                            s_eval_ififo1_can_read_r <= '1';
+                        else
+                            s_eval_ififo1_can_read_r <= '0';
+                        end if;
+                        if v_ififo2_can_read then
+                            s_eval_ififo2_can_read_r <= '1';
+                        else
+                            s_eval_ififo2_can_read_r <= '0';
+                        end if;
+                        if v_ififo1_burst then
+                            s_eval_ififo1_burst_r <= '1';
+                        else
+                            s_eval_ififo1_burst_r <= '0';
+                        end if;
+                        if v_ififo2_burst then
+                            s_eval_ififo2_burst_r <= '1';
+                        else
+                            s_eval_ififo2_burst_r <= '0';
+                        end if;
+                        if v_drain_mismatch then
+                            s_eval_drain_mismatch_r <= '1';
+                        else
+                            s_eval_drain_mismatch_r <= '0';
+                        end if;
+                        s_state_r <= ST_DRAIN_DECIDE;
+                      else
+                        -- raw_busy watchdog: abort drain if stalled too long
+                        s_wait_cnt_r <= s_wait_cnt_r + 1;
+                        if s_wait_expired_r = '1' then
+                            s_oen_permanent_r <= '0';
+                            s_range_active_r  <= '0';
+                            s_drain_done_r    <= '1';
+                            s_ififo_id_r      <= '1';
+                            s_timeout_r       <= '1';
+                            s_timeout_cause_r <= "001";  -- raw_busy
+                            s_state_r         <= ST_ALU_PULSE;
+                        end if;
+                      end if; -- i_raw_busy = '0'
+
+                    when ST_DRAIN_DECIDE =>
                         -- Early IFIFO1 done beat
-                        if v_ififo1_done and not v_ififo2_done
+                        if s_eval_ififo1_done_r = '1'
+                           and s_eval_ififo2_done_r = '0'
                            and s_ififo1_done_sent_r = '0'
                            and s_purge_mode_r = '0' then
                             s_ififo1_done_beat_r <= '1';
@@ -571,14 +658,15 @@ begin
                         end if;
 
                         -- Completion
-                        if v_ififo1_done and v_ififo2_done then
+                        if s_eval_ififo1_done_r = '1'
+                           and s_eval_ififo2_done_r = '1' then
                             s_oen_permanent_r <= '0';
                             s_range_active_r  <= '0';
                             s_wait_cnt_r      <= (others => '0');
                             if s_purge_mode_r = '1' then
                                 s_purge_mode_r <= '0';
                             end if;
-                            if v_drain_mismatch then
+                            if s_eval_drain_mismatch_r = '1' then
                                 s_err_drain_mismatch_r <= '1';
                                 s_drain_done_faulted_r <= '1';
                             end if;
@@ -588,27 +676,17 @@ begin
                             s_state_r      <= ST_ALU_PULSE;
 
                         -- Burst IFIFO1
-                        elsif s_purge_mode_r = '0'
-                              and i_drain_mode = '1'
-                              and s_fill_r >= 2
-                              and i_ef1_sync = '0' and i_lf1_sync = '1'
-                              and v_ififo1_can_read
-                              and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2 then
+                        elsif s_eval_ififo1_burst_r = '1' then
                             s_ififo_id_r  <= '0';
                             s_state_r     <= ST_DRAIN_BURST_PLAN;
 
                         -- Burst IFIFO2
-                        elsif s_purge_mode_r = '0'
-                              and i_drain_mode = '1'
-                              and s_fill_r >= 2
-                              and i_ef2_sync = '0' and i_lf2_sync = '1'
-                              and v_ififo2_can_read
-                              and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2 then
+                        elsif s_eval_ififo2_burst_r = '1' then
                             s_ififo_id_r  <= '1';
                             s_state_r     <= ST_DRAIN_BURST_PLAN;
 
                         -- EF single IFIFO1
-                        elsif v_ififo1_can_read then
+                        elsif s_eval_ififo1_can_read_r = '1' then
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '0';
                             s_req_addr_r  <= c_TDC_REG8_IFIFO1;
@@ -616,7 +694,7 @@ begin
                             s_state_r     <= ST_DRAIN_EF1;
 
                         -- EF single IFIFO2
-                        elsif v_ififo2_can_read then
+                        elsif s_eval_ififo2_can_read_r = '1' then
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '0';
                             s_req_addr_r  <= c_TDC_REG9_IFIFO2;
@@ -639,7 +717,7 @@ begin
                             -- something went wrong upstream — flag it.
                             -- Purge-mode bypasses the check (it doesn't
                             -- track against expected counts).
-                            if v_drain_mismatch then
+                            if s_eval_drain_mismatch_r = '1' then
                                 s_err_drain_mismatch_r <= '1';
                                 -- Round 13 axis 1a: co-assert "faulted"
                                 -- pulse so SW can distinguish a clean
@@ -656,19 +734,6 @@ begin
                             s_ififo_id_r   <= '1';
                             s_state_r      <= ST_ALU_PULSE;
                         end if;
-                      else
-                        -- raw_busy watchdog: abort drain if stalled too long
-                        s_wait_cnt_r <= s_wait_cnt_r + 1;
-                        if s_wait_expired_r = '1' then
-                            s_oen_permanent_r <= '0';
-                            s_range_active_r  <= '0';
-                            s_drain_done_r    <= '1';
-                            s_ififo_id_r      <= '1';
-                            s_timeout_r       <= '1';
-                            s_timeout_cause_r <= "001";  -- raw_busy
-                            s_state_r         <= ST_ALU_PULSE;
-                        end if;
-                      end if; -- i_raw_busy = '0'
 
                     when ST_DRAIN_BURST_PLAN =>
                         -- Stage 1: capture the words still available in the
@@ -1009,7 +1074,7 @@ begin
                 --     counter. Preserve that beat (do NOT clear s_raw_valid_r)
                 --     so drain accounting stays consistent. Only the state
                 --     transitions to ST_OVERRUN_FLUSH.
-                --   * ST_CAPTURE/LATCH/CHECK/SETTLE: no request is outstanding
+                --   * ST_CAPTURE/LATCH/CHECK/DECIDE/SETTLE: no request is outstanding
                 --     in these states, so any fire here would be stale. Keep
                 --     the defensive clear of s_raw_valid_r.
                 -- Round 6 B2: the s_err_overrun_drop_r sticky + o_err_overrun
@@ -1019,7 +1084,8 @@ begin
                    and s_state_r /= ST_ARMED then
                     case s_state_r is
                         when ST_CAPTURE | ST_DRAIN_LATCH
-                           | ST_DRAIN_CHECK | ST_DRAIN_BURST_PLAN
+                           | ST_DRAIN_CHECK | ST_DRAIN_DECIDE
+                           | ST_DRAIN_BURST_PLAN
                            | ST_DRAIN_BURST_ARM | ST_DRAIN_SETTLE =>
                             s_req_valid_r        <= '0';
                             s_req_burst_r        <= '0';

@@ -270,6 +270,13 @@ architecture rtl of tdc_gpx_cell_builder is
     type t_buf_range_array is array (0 to 1) of unsigned(15 downto 0);
     signal s_buf_max_range_r : t_buf_range_array := (others => (others => '0'));
 
+    -- max_hits is part of the same per-shot buffer contract. Snapshot the
+    -- canonical 1..7 value when a buffer is allocated so collect and output
+    -- cannot observe different face settings while ping-ponging.
+    type t_buf_max_hits_array is array (0 to 1) of unsigned(3 downto 0);
+    signal s_buf_max_hits_r : t_buf_max_hits_array :=
+        (others => to_unsigned(c_MAX_HITS_PER_STOP, 4));
+
     function fn_buf_idx(sel : std_logic) return natural is
     begin
         if sel = '1' then return 1; else return 0; end if;
@@ -350,7 +357,7 @@ architecture rtl of tdc_gpx_cell_builder is
     constant c_G_META_BEAT_IDX   : natural := fn_meta_beat_idx(g_TDATA_WIDTH);
     constant c_G_BEATS_PER_CELL  : natural := fn_beats_per_cell(g_TDATA_WIDTH);
 
-    -- Runtime beats/cell: latched from i_max_hits_cfg at output start.
+    -- Runtime beats/cell: latched from the read buffer's max_hits snapshot.
     -- fn_cell_beat still uses compile-time constants for slot packing;
     -- the runtime limit only controls HOW MANY beats are emitted.
     signal s_rt_last_beat_r : unsigned(2 downto 0) := to_unsigned(c_G_BEATS_PER_CELL - 1, 3);
@@ -400,7 +407,7 @@ architecture rtl of tdc_gpx_cell_builder is
     -- SW setting; canonical spec is 1..7. To keep the collect path (hit
     -- storage limit) and the output path (beat count formatting, fn_
     -- cell_beat) consistent, both use this effective value. 000→7.
-    signal s_max_hits_eff_u  : unsigned(3 downto 0);
+    signal s_cfg_max_hits_eff_u : unsigned(3 downto 0);
 
     -- =========================================================================
     -- Cell-to-beat mux (combinational, used inside p_output)
@@ -492,8 +499,8 @@ begin
 
     -- Round 9 #8: effective max_hits_cfg (000 aliased to 7 so collect and
     -- output paths agree on the slot count).
-    s_max_hits_eff_u <= "0111" when i_max_hits_cfg = "000"
-                        else ('0' & i_max_hits_cfg);
+    s_cfg_max_hits_eff_u <= "0111" when i_max_hits_cfg = "000"
+                            else ('0' & i_max_hits_cfg);
 
     -- AXI-Stream slave: accept during collect, drop, quarantine, or during
     -- the Round 12 B6 post-escape absorb window. QUARANTINE continues to
@@ -539,6 +546,8 @@ begin
                 -- Init to 0 == "disabled" so fn_timeout_cap returns x"FFFF"
                 -- until an actual shot allocation populates a real value.
                 s_buf_max_range_r  <= (others => (others => '0'));
+                s_buf_max_hits_r   <=
+                    (others => to_unsigned(c_MAX_HITS_PER_STOP, 4));
                 s_drop_max_range_r <= (others => '0');
                 s_drop_cap_r       <= (others => '0');
                 s_shot_pending_r <= '0';
@@ -624,12 +633,14 @@ begin
                                     -- the output side's WAIT_IFIFO2 cap when this
                                     -- buffer is later read.
                                     s_buf_max_range_r(0) <= i_max_range_axis_clks;
+                                    s_buf_max_hits_r(0)  <= s_cfg_max_hits_eff_u;
                                     s_cstate_r        <= ST_C_ACTIVE;
                                 elsif s_buf_state_r(1) = BUF_FREE then
                                     s_wr_buf_r        <= '1';
                                     s_buf_state_r(1)  <= BUF_COLLECT;
                                     s_cell_buf_r(1)   <= (others => c_CELL_INIT);
                                     s_buf_max_range_r(1) <= i_max_range_axis_clks;
+                                    s_buf_max_hits_r(1)  <= s_cfg_max_hits_eff_u;
                                     s_cstate_r        <= ST_C_ACTIVE;
                                 else
                                     -- No free buffer: enter DROP to actually absorb
@@ -688,27 +699,27 @@ begin
                                     s_stop_id_error_r <= '1';
                                 else
                                     -- Round 9 #8: i_max_hits_cfg=000 aliases
-                                    -- to 7 through s_max_hits_eff_u. Dispatch
+                                    -- to 7 in the per-buffer snapshot. Dispatch
                                     -- to a static cell target so each cell's
                                     -- count controls only its own slot writes.
                                     v_hit_key := s_wr_buf_r & i_s_axis_tuser(5 downto 3);
                                     case v_hit_key is
-                                        when "0000" => pr_store_hit(s_cell_buf_r(0)(0), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0001" => pr_store_hit(s_cell_buf_r(0)(1), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0010" => pr_store_hit(s_cell_buf_r(0)(2), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0011" => pr_store_hit(s_cell_buf_r(0)(3), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0100" => pr_store_hit(s_cell_buf_r(0)(4), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0101" => pr_store_hit(s_cell_buf_r(0)(5), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0110" => pr_store_hit(s_cell_buf_r(0)(6), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0111" => pr_store_hit(s_cell_buf_r(0)(7), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1000" => pr_store_hit(s_cell_buf_r(1)(0), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1001" => pr_store_hit(s_cell_buf_r(1)(1), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1010" => pr_store_hit(s_cell_buf_r(1)(2), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1011" => pr_store_hit(s_cell_buf_r(1)(3), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1100" => pr_store_hit(s_cell_buf_r(1)(4), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1101" => pr_store_hit(s_cell_buf_r(1)(5), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1110" => pr_store_hit(s_cell_buf_r(1)(6), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1111" => pr_store_hit(s_cell_buf_r(1)(7), s_hit_dropped_r, s_max_hits_eff_u, i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0000" => pr_store_hit(s_cell_buf_r(0)(0), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0001" => pr_store_hit(s_cell_buf_r(0)(1), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0010" => pr_store_hit(s_cell_buf_r(0)(2), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0011" => pr_store_hit(s_cell_buf_r(0)(3), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0100" => pr_store_hit(s_cell_buf_r(0)(4), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0101" => pr_store_hit(s_cell_buf_r(0)(5), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0110" => pr_store_hit(s_cell_buf_r(0)(6), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0111" => pr_store_hit(s_cell_buf_r(0)(7), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1000" => pr_store_hit(s_cell_buf_r(1)(0), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1001" => pr_store_hit(s_cell_buf_r(1)(1), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1010" => pr_store_hit(s_cell_buf_r(1)(2), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1011" => pr_store_hit(s_cell_buf_r(1)(3), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1100" => pr_store_hit(s_cell_buf_r(1)(4), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1101" => pr_store_hit(s_cell_buf_r(1)(5), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1110" => pr_store_hit(s_cell_buf_r(1)(6), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1111" => pr_store_hit(s_cell_buf_r(1)(7), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
                                         when others => null;
                                     end case;
                                 end if;
@@ -777,6 +788,7 @@ begin
                                     -- Phase B: per-buffer max_range snapshot
                                     -- for the OTHER buffer being newly allocated.
                                     s_buf_max_range_r(v_other) <= i_max_range_axis_clks;
+                                    s_buf_max_hits_r(v_other)  <= s_cfg_max_hits_eff_u;
                                 else
                                     -- No free buffer: enter drop mode to prevent shot mixing.
                                     -- All incoming data for this shot is silently discarded.
@@ -996,7 +1008,7 @@ begin
                                     s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
                                 end if;
                                 -- Runtime beats/cell lookup (elaboration-safe)
-                                case i_max_hits_cfg is
+                                case s_buf_max_hits_r(v_rd)(2 downto 0) is
                                     when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
                                     when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
                                     when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
