@@ -191,9 +191,11 @@ begin
                         v_valid_words := 1;
                     end if;
 
-                    for lane in 0 to v_valid_words - 1 loop
-                        v_queue(v_count + lane) :=
-                            i_s_axis_tdata(32 * lane + 31 downto 32 * lane);
+                    for lane in 0 to c_WORDS_PER_BEAT - 1 loop
+                        if lane < v_valid_words then
+                            v_queue(v_count + lane) :=
+                                i_s_axis_tdata(32 * lane + 31 downto 32 * lane);
+                        end if;
                     end loop;
                     v_count    := v_count + v_valid_words;
                     v_new_mod4 := (v_mod4 + v_valid_words) mod 4;
@@ -203,11 +205,11 @@ begin
                             report "tdc_gpx_line_packer: line ended away from a cell metadata beat"
                             severity warning;
                         v_pad_words := (4 - v_new_mod4) mod 4;
-                        if v_pad_words > 0 then
-                            for pad in 0 to v_pad_words - 1 loop
+                        for pad in 0 to 2 loop
+                            if pad < v_pad_words then
                                 v_queue(v_count + pad) := (others => '0');
-                            end loop;
-                        end if;
+                            end if;
+                        end loop;
                         v_count       := v_count + v_pad_words;
                         v_mod4        := 0;
                         v_beat_idx    := 0;
