@@ -11,7 +11,8 @@
 --   [2] config_ctrl     : Cluster 1 - Chip CSR + cmd_arb + stop_cfg_decode +
 --                         bus_phy x4 + chip_ctrl x4 + skid buffers
 --   [3] decode_pipe     : Cluster 2 - decoder_i_mode + raw_event_builder + skids
---   [4] cell_pipe       : Cluster 3 - slope demux + cell_builder x8
+--   [4] cell_pipe       : Cluster 3 - slope demux + topology-selected
+--                         cell_builder x4 (dedicated) or x8 (shared)
 --   [5] output_stage    : Cluster 4 - face_asm x2 + sync_fifo x2 + header x2
 --   [6] face_seq        : Face/shot sequencer
 --   [7] status_agg      : Status aggregation + timestamp + error counter

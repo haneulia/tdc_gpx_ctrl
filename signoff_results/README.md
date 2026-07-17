@@ -24,6 +24,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_ooc_signoff.ps1 
   -Label timing_corner -Implement
 ```
 
+Run the representative clock/width/stream synthesis matrix:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_ooc_signoff_matrix.ps1 `
+  -Stamp 260717160500
+```
+
+The matrix covers the slowest split clock, both non-power-of-two range-tick
+conversions, all three output widths at the 200 MHz timing boundary, and the
+equal-clock SYNC bypass. Its CSV summary is written under
+`signoff_results/matrices/`.
+
 The OOC constraints cover the three input clocks and internal reg-to-reg
 timing. Board pin constraints, I/O delays, clock generation, and top-level
 false-path policy remain the responsibility of the parent FPGA design. Vivado

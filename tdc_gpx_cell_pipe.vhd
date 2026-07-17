@@ -3,7 +3,7 @@
 --
 -- Cluster 3: Cell pipeline wrapper.
 -- Splits incoming event stream by slope (registered demux), then feeds
--- four rising and four falling cell_builder instances.
+-- four dedicated or eight shared-dual-edge cell_builder instances.
 --
 -- Architecture rules:
 --   - KEEP_HIERARCHY = "yes"
