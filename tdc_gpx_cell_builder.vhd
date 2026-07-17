@@ -152,7 +152,7 @@ entity tdc_gpx_cell_builder is
         i_abort             : in  std_logic;   -- abort: free all buffers, return to idle
         -- drain_done is received via i_s_axis_tuser(7) control beat
 
-        -- Configuration (latched at packet_start)
+        -- Configuration (snapshotted per ping-pong buffer at shot_start)
         i_stops_per_chip    : in  unsigned(3 downto 0);
         i_max_hits_cfg      : in  unsigned(2 downto 0);   -- 1~7, runtime MAX_HITS
 
@@ -276,6 +276,13 @@ architecture rtl of tdc_gpx_cell_builder is
     type t_buf_max_hits_array is array (0 to 1) of unsigned(3 downto 0);
     signal s_buf_max_hits_r : t_buf_max_hits_array :=
         (others => to_unsigned(c_MAX_HITS_PER_STOP, 4));
+
+    -- stops_per_chip determines both the collect-side stop-id bound and the
+    -- output-side TLAST position. Keep those decisions on the same per-shot
+    -- snapshot and localize the wide cell-buffer write-enable fanout.
+    type t_buf_stops_array is array (0 to 1) of unsigned(3 downto 0);
+    signal s_buf_stops_r : t_buf_stops_array :=
+        (others => to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
 
     function fn_buf_idx(sel : std_logic) return natural is
     begin
@@ -548,6 +555,8 @@ begin
                 s_buf_max_range_r  <= (others => (others => '0'));
                 s_buf_max_hits_r   <=
                     (others => to_unsigned(c_MAX_HITS_PER_STOP, 4));
+                s_buf_stops_r      <=
+                    (others => to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
                 s_drop_max_range_r <= (others => '0');
                 s_drop_cap_r       <= (others => '0');
                 s_shot_pending_r <= '0';
@@ -634,6 +643,7 @@ begin
                                     -- buffer is later read.
                                     s_buf_max_range_r(0) <= i_max_range_axis_clks;
                                     s_buf_max_hits_r(0)  <= s_cfg_max_hits_eff_u;
+                                    s_buf_stops_r(0)     <= i_stops_per_chip;
                                     s_cstate_r        <= ST_C_ACTIVE;
                                 elsif s_buf_state_r(1) = BUF_FREE then
                                     s_wr_buf_r        <= '1';
@@ -641,6 +651,7 @@ begin
                                     s_cell_buf_r(1)   <= (others => c_CELL_INIT);
                                     s_buf_max_range_r(1) <= i_max_range_axis_clks;
                                     s_buf_max_hits_r(1)  <= s_cfg_max_hits_eff_u;
+                                    s_buf_stops_r(1)     <= i_stops_per_chip;
                                     s_cstate_r        <= ST_C_ACTIVE;
                                 else
                                     -- No free buffer: enter DROP to actually absorb
@@ -683,14 +694,14 @@ begin
                                 -- synthesis translate_on
 
                                 -- Runtime stop_id bounds check
-                                if ('0' & unsigned(i_s_axis_tuser(5 downto 3))) >= i_stops_per_chip then
+                                if ('0' & unsigned(i_s_axis_tuser(5 downto 3))) >= s_buf_stops_r(v_wr) then
                                     -- Out-of-range stop_id: discard (distinct from hit overflow)
                                     -- synthesis translate_off
                                     assert false
                                         report "cell_builder: stop_id " &
                                                integer'image(to_integer(unsigned(i_s_axis_tuser(5 downto 3)))) &
                                                " >= stops_per_chip " &
-                                               integer'image(to_integer(i_stops_per_chip))
+                                               integer'image(to_integer(s_buf_stops_r(v_wr)))
                                         severity warning;
                                     -- synthesis translate_on
                                     -- Round 11 C: distinct cause — stop_id out-of-range.
@@ -789,6 +800,7 @@ begin
                                     -- for the OTHER buffer being newly allocated.
                                     s_buf_max_range_r(v_other) <= i_max_range_axis_clks;
                                     s_buf_max_hits_r(v_other)  <= s_cfg_max_hits_eff_u;
+                                    s_buf_stops_r(v_other)     <= i_stops_per_chip;
                                 else
                                     -- No free buffer: enter drop mode to prevent shot mixing.
                                     -- All incoming data for this shot is silently discarded.
@@ -1002,8 +1014,8 @@ begin
                                 s_ififo2_cap_r  <= fn_timeout_cap(
                                                       s_buf_max_range_r(v_rd),
                                                       g_IFIFO2_MARGIN_CLKS);
-                                if i_stops_per_chip >= 2 then
-                                    s_last_stop_r <= i_stops_per_chip(2 downto 0) - 1;
+                                if s_buf_stops_r(v_rd) >= 2 then
+                                    s_last_stop_r <= s_buf_stops_r(v_rd)(2 downto 0) - 1;
                                 else
                                     s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
                                 end if;

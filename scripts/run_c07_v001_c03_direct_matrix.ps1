@@ -149,6 +149,18 @@ try {
         )
     Invoke-Checked "$Vivado/xsim.bat" @($dropSnap, "-runall", "-log", $dropLog)
     Assert-SimLog $dropLog "PASS: C07 C03 drop/quarantine width=64 max_hits=3"
+
+    $stopsSnap = "tb_c07_v001_c03_stops_snapshot_w64_mh3_snap"
+    $stopsLog = "xsim_c07_v001_c03_stops_snapshot_w64_mh3_$Stamp.log"
+    Invoke-Xelab $stopsSnap "xelab_c07_v001_c03_stops_snapshot_w64_mh3_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_cell_builder_c07_direct" `
+        @(
+            "G_TDATA_WIDTH=64",
+            "G_MAX_HITS=3",
+            "G_SCENARIO=4"
+        )
+    Invoke-Checked "$Vivado/xsim.bat" @($stopsSnap, "-runall", "-log", $stopsLog)
+    Assert-SimLog $stopsLog "PASS: C07 C03 stops_per_chip buffer snapshot width=64 max_hits=3"
 }
 finally {
     Pop-Location

@@ -8,6 +8,7 @@
 --   G_SCENARIO=1 : IFIFO2 wait timeout emits a faulted synthetic EOS
 --   G_SCENARIO=2 : dual-buffer next-shot collection while prior output stalls
 --   G_SCENARIO=3 : no-free-buffer drop, DROP->QUARANTINE, clean final-drain exit
+--   G_SCENARIO=4 : per-buffer stops_per_chip snapshot remains atomic
 --
 -- Standard: VHDL-2008
 --------------------------------------------------------------------------------
@@ -64,6 +65,7 @@ architecture sim of tb_tdc_gpx_cell_builder_c07_direct is
     signal s_shot_drop_count : natural := 0;
     signal s_timeout_count   : natural := 0;
     signal s_tlast_count     : natural := 0;
+    signal s_stop_error_count : natural := 0;
 
 begin
 
@@ -108,6 +110,7 @@ begin
                 s_shot_drop_count <= 0;
                 s_timeout_count   <= 0;
                 s_tlast_count     <= 0;
+                s_stop_error_count <= 0;
             else
                 if s_shot_dropped = '1' then
                     s_shot_drop_count <= s_shot_drop_count + 1;
@@ -117,6 +120,9 @@ begin
                 end if;
                 if s_m_tvalid = '1' and s_m_tready = '1' and s_m_tlast = '1' then
                     s_tlast_count <= s_tlast_count + 1;
+                end if;
+                if s_stop_id_error = '1' then
+                    s_stop_error_count <= s_stop_error_count + 1;
                 end if;
             end if;
         end if;
@@ -240,6 +246,18 @@ begin
             end loop;
         end procedure;
 
+        procedure send_hits_at_stop(
+            base     : natural;
+            count    : natural;
+            shot_seq : natural;
+            stop_id  : natural
+        ) is
+        begin
+            for i in 0 to count - 1 loop
+                send_evt(fn_hit(base, i), fn_tuser_data('1', stop_id, '0', i, shot_seq));
+            end loop;
+        end procedure;
+
         procedure check_data_beat(base : natural; beat_idx : natural; count : natural) is
             variable v_slot_idx : natural;
             variable v_got      : unsigned(15 downto 0);
@@ -324,6 +342,62 @@ begin
             end loop;
             assert v_beat = c_BEATS_PER_CELL_G
                 report "FAIL: output beat count mismatch in " & label_text
+                severity failure;
+        end procedure;
+
+        procedure expect_two_stop_slice(
+            base       : natural;
+            count      : natural;
+            label_text : string
+        ) is
+            variable v_timeout   : natural := 0;
+            variable v_beat      : natural := 0;
+            variable v_cell      : natural;
+            variable v_cell_beat : natural;
+            variable v_seen      : boolean := false;
+        begin
+            while not v_seen loop
+                wait_cycles(1);
+                if s_m_tvalid = '1' and s_m_tready = '1' then
+                    v_cell      := v_beat / c_BEATS_PER_CELL_G;
+                    v_cell_beat := v_beat mod c_BEATS_PER_CELL_G;
+                    assert v_cell < 2
+                        report "FAIL: extra cell in " & label_text
+                        severity failure;
+
+                    if v_cell_beat < c_BEATS_PER_CELL_G - 1 then
+                        if v_cell = 0 then
+                            check_data_beat(0, v_cell_beat, 0);
+                        else
+                            check_data_beat(base, v_cell_beat, count);
+                        end if;
+                        assert s_m_tlast = '0'
+                            report "FAIL: early tlast in " & label_text
+                            severity failure;
+                    elsif v_cell = 0 then
+                        check_meta_beat(0);
+                        assert s_m_tlast = '0'
+                            report "FAIL: stop 0 ended two-stop slice in " & label_text
+                            severity failure;
+                    else
+                        check_meta_beat(count);
+                        assert s_m_tlast = '1'
+                            report "FAIL: stop 1 missing tlast in " & label_text
+                            severity failure;
+                        assert s_m_tuser(0) = '0'
+                            report "FAIL: stops snapshot slice has faulted tuser"
+                            severity failure;
+                        v_seen := true;
+                    end if;
+                    v_beat := v_beat + 1;
+                end if;
+                v_timeout := v_timeout + 1;
+                assert v_timeout < 2000
+                    report "FAIL: output timeout in " & label_text
+                    severity failure;
+            end loop;
+            assert v_beat = 2 * c_BEATS_PER_CELL_G
+                report "FAIL: two-stop beat count mismatch in " & label_text
                 severity failure;
         end procedure;
 
@@ -498,6 +572,29 @@ begin
                 severity note;
         end procedure;
 
+        procedure scenario_stops_snapshot is
+        begin
+            reset_dut;
+            s_stops    <= to_unsigned(2, 4);
+            s_max_hits <= to_unsigned(G_MAX_HITS, 3);
+            wait_cycles(2);
+            pulse_shot;
+
+            -- Change the live input after allocation. Stop 1 must still be
+            -- accepted and the resulting slice must retain two cells.
+            s_stops <= to_unsigned(1, 4);
+            wait_cycles(2);
+            send_hits_at_stop(16#5000#, G_MAX_HITS, 5, 1);
+            send_evt((others => '0'), fn_tuser_drain('0', '0'));
+            expect_two_stop_slice(16#5000#, G_MAX_HITS, "stops snapshot");
+            assert s_stop_error_count = 0
+                report "FAIL: snapshotted stop 1 was rejected after live config changed"
+                severity failure;
+            report "PASS: C07 C03 stops_per_chip buffer snapshot width=" &
+                   integer'image(G_TDATA_WIDTH) & " max_hits=" & integer'image(G_MAX_HITS)
+                severity note;
+        end procedure;
+
     begin
         assert fn_output_width_supported(G_TDATA_WIDTH)
             report "FAIL: unsupported G_TDATA_WIDTH"
@@ -515,6 +612,8 @@ begin
                 scenario_dual_buffer;
             when 3 =>
                 scenario_drop_quarantine;
+            when 4 =>
+                scenario_stops_snapshot;
             when others =>
                 assert false
                     report "FAIL: unsupported G_SCENARIO"
