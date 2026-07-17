@@ -19,13 +19,12 @@
 --     - StopDis override (INTENTIONALLY LIVE for debug)
 --     - Range counter (err_drain_timeout) and sequence error detection
 --     - AXI-Stream raw word output (passthrough from chip_run)
---     - 2-deep raw hold/skid absorbing 1-cycle-late busy backpressure
+--     - 8-entry circular raw FIFO with explicit data/control credits
 --
 -- Raw beat overflow diagnostics (Round 2 #5/#6, updated Round 6 B2):
 --   s_err_raw_overflow_r (sticky) captures "some raw/control beat was
 --   dropped for diagnostic reasons":
---     - chip_ctrl raw FIFO (3-slot array, Round 5 #3/#4) all slots full
---       → new beat silently lost
+--     - chip_ctrl raw FIFO exhausted its protocol credits
 --     - PH_RESP_DRAIN hard cap (15 cycles) hit while bus still busy/pending
 --       (s_err_drain_cap_r, OR'd into o_err_raw_overflow)
 --   Round 5 #5 removed the overrun-drop path; the matching OR fold and
@@ -326,48 +325,39 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- on overrun (Round 5 #5), so the previously-OR-folded sticky was dead.
 
     -- =========================================================================
-    -- Raw AXI-Stream N-deep holding FIFO (slot 0 = output, slot N-1 = tail)
-    -- Slot 0 drives the output; new beats enqueue at the first empty slot.
-    -- Provides (N-1) cycles of backpressure absorption so chip_run's burst
-    -- response path is insensitive to short downstream stalls.
+    -- Raw AXI-Stream circular FIFO contract.
     --
-    -- Depth sizing (Round 5 #3/#4):
-    --   Backpressure to chip_run (s_raw_hold_busy) is registered → 1-cycle
-    --   late. chip_run can still emit 1 more beat after busy deasserts while
-    --   the registered value is stale. For raw beats alone, depth=2 would be
-    --   enough. But control beats (drain_done, ififo1_done) share the same
-    --   path and can be inserted by ST_DRAIN_CHECK between bus responses,
-    --   creating a worst-case 3-beat burst. Depth=3 absorbs this cleanly so
-    --   no control beat is ever dropped by the raw-path buffer.
-    -- =========================================================================
-    -- Round 9 #7: bumped 3 → 6 so a worst-case control + burst beat cluster
-    -- (raw + raw + control + raw + raw + control) never drops a beat even
-    -- when downstream backpressure holds tready low across the full cluster.
-    -- The 3-slot version (Round 5 #3) covered the normal case but the
-    -- control/data-sharing concern remained when the raw burst is long.
-    -- C02 fire-count ownership update:
-    --   chip_run no longer waits for a blind expected-count settle guard at
-    --   ST_DRAIN_LATCH. Valid drains can therefore reach this FIFO earlier
-    --   and overlap bounded downstream stalls that the old guard delayed
-    --   past. Depth=8 preserves the 3-slot control reserve while absorbing
-    --   that earlier initial data burst without reintroducing timing slack.
+    -- A shot emits at most two semantic control beats: IFIFO1-done and final
+    -- drain-done. Those two slots are never available to data. Source busy is
+    -- registered at occupancy 4; two additional data slots absorb the raw
+    -- valid/response-skid reaction latency before the source stops. Thus:
+    --
+    --   8 total = 4 backlog + 2 backpressure reaction + 2 control reserve
+    --
+    -- The old shift-register implementation scanned every valid bit, shifted
+    -- all entries on dequeue, and searched/compacted again for control-beat
+    -- eviction. Besides being difficult to prove, it asserted source busy
+    -- only at full even though data was rejected at occupancy 5. The circular
+    -- FIFO below uses one read pointer, one write pointer, and one count.
     constant c_RAW_FIFO_DEPTH : natural := 8;
+    constant c_RAW_CONTROL_RESERVE : natural := 2;
+    constant c_RAW_BP_REACTION     : natural := 2;
+    constant c_RAW_DATA_LIMIT      : natural :=
+        c_RAW_FIFO_DEPTH - c_RAW_CONTROL_RESERVE;
+    constant c_RAW_BUSY_LEVEL      : natural :=
+        c_RAW_DATA_LIMIT - c_RAW_BP_REACTION;
 
-    type t_raw_entry is record
-        valid : std_logic;
-        tdata : t_raw_axis_tdata;
-        tuser : t_raw_axis_tuser;
-        drain : std_logic;
-    end record;
-    constant c_RAW_ENTRY_EMPTY : t_raw_entry := (
-        valid => '0',
-        tdata => (others => '0'),
-        tuser => (others => '0'),
-        drain => '0'
-    );
-    type t_raw_fifo is array (0 to c_RAW_FIFO_DEPTH - 1) of t_raw_entry;
-    signal s_raw_fifo_r    : t_raw_fifo := (others => c_RAW_ENTRY_EMPTY);
-    signal s_raw_hold_busy : std_logic;  -- backpressure to chip_run (all slots full)
+    type t_raw_fifo_mem is array (0 to c_RAW_FIFO_DEPTH - 1)
+        of std_logic_vector(c_RAW_AXIS_PACK_WIDTH - 1 downto 0);
+    signal s_raw_fifo_mem       : t_raw_fifo_mem;
+    signal s_raw_rd_ptr_r       : natural range 0 to c_RAW_FIFO_DEPTH - 1 := 0;
+    signal s_raw_wr_ptr_r       : natural range 0 to c_RAW_FIFO_DEPTH - 1 := 0;
+    signal s_raw_count_r        : natural range 0 to c_RAW_FIFO_DEPTH := 0;
+    signal s_raw_head           : std_logic_vector(c_RAW_AXIS_PACK_WIDTH - 1 downto 0);
+    signal s_raw_hold_busy      : std_logic := '0';
+
+    attribute ram_style : string;
+    attribute ram_style of s_raw_fifo_mem : signal is "distributed";
 
     -- =========================================================================
     -- Sub-FSM signals: chip_reg
@@ -428,13 +418,10 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_drain_to_fired_r : std_logic := '0';
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
-    signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: raw hold+skid both full, beat dropped
-    -- Round 12 A2: distinct control-beat drop sticky. Fires only when a
-    -- control beat (drain_done / ififo1_done) was dropped — which with
-    -- the 2-slot reserve below should only be possible if chip_run
-    -- emits 5+ consecutive control beats without the downstream draining.
-    -- If this ever fires, the separate-FIFO refactor (architectural,
-    -- not done here) is required because the workload has changed.
+    signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: FIFO credit violation
+    -- A control drop requires more than the two control beats permitted by
+    -- one shot while the FIFO cannot drain. It is retained as a protocol-
+    -- violation diagnostic, not as a normal congestion response.
     signal s_err_raw_ctrl_drop_r  : std_logic := '0';
     signal s_err_drain_mismatch   : std_logic;  -- Round 12 A4: from chip_run
     signal s_err_reg_rw_ambiguous : std_logic;  -- Round 12 A5: from chip_reg
@@ -1136,176 +1123,134 @@ begin
     o_puresn         <= s_init_puresn;
     o_alutrigger     <= s_run_alutrigger;
 
-    -- AXI-Stream raw word: N-deep shift-register FIFO with tready handshake.
-    -- Slot 0 drives the output; on accept, all valid entries shift down one
-    -- slot. New beats from chip_run enqueue at the first empty slot.
-    -- Same-cycle consume + enqueue is lossless because Step 1 (consume) feeds
-    -- Step 2 (enqueue) through a variable snapshot.
+    -- AXI-Stream raw word FIFO. Pop is applied before push in the variable
+    -- count snapshot, so a full FIFO can still sustain one pop + one push in
+    -- the same cycle. Memory contents are not reset; count=0 defines empty.
     p_raw_fifo : process(i_clk)
-        variable v_new  : t_raw_entry;
-        variable v_fifo : t_raw_fifo;
-        variable v_placed : boolean;
-        variable v_free : natural range 0 to c_RAW_FIFO_DEPTH;
+        variable v_rd_ptr  : natural range 0 to c_RAW_FIFO_DEPTH - 1;
+        variable v_wr_ptr  : natural range 0 to c_RAW_FIFO_DEPTH - 1;
+        variable v_count   : natural range 0 to c_RAW_FIFO_DEPTH;
+        variable v_push    : boolean;
+        variable v_control : boolean;
+        variable v_accept  : boolean;
+        variable v_tdata   : t_raw_axis_tdata;
+        variable v_tuser   : t_raw_axis_tuser;
     begin
         if rising_edge(i_clk) then
             if s_sub_rst_n = '0' then
-                s_raw_fifo_r <= (others => c_RAW_ENTRY_EMPTY);
+                s_raw_rd_ptr_r <= 0;
+                s_raw_wr_ptr_r <= 0;
+                s_raw_count_r  <= 0;
+                s_raw_hold_busy <= '0';
                 s_err_raw_overflow_r <= '0';
                 s_err_raw_ctrl_drop_r <= '0';
             else
-                -- Round 6 B2: previously OR-folded chip_run's
-                -- s_err_overrun_drop here; that sticky has been removed
-                -- because Round 5 #5 eliminated the overrun drop.
+                v_rd_ptr := s_raw_rd_ptr_r;
+                v_wr_ptr := s_raw_wr_ptr_r;
+                v_count  := s_raw_count_r;
 
-                -- Capture new beat from chip_run (at most one per cycle)
-                v_new := c_RAW_ENTRY_EMPTY;
-                if s_run_raw_valid = '1' then
-                    v_new.valid := '1';
-                    v_new.tdata(g_BUS_DATA_WIDTH - 1 downto 0) := s_run_raw_word;
-                    v_new.tuser := "0000000" & s_run_ififo_id;
-                elsif s_run_drain_done = '1' or s_run_ififo1_beat = '1' then
-                    v_new.valid := '1';
-                    -- Round 13 follow-up (audit 4번): tuser(5) carries the
-                    -- drain_done_faulted flag forward so downstream cell_
-                    -- builder / face_assembler can mark the shot as degraded
-                    -- rather than treating it as a clean completion.
-                    -- Only the FINAL drain_done beat carries the flag; the
-                    -- intermediate IFIFO1-done beat always reports '0'.
-                    -- C02: control-beat identity is semantic, not the
-                    -- previous raw-data IFIFO id. IFIFO1-done must carry
-                    -- tuser(0)=0; final drain_done must carry tuser(0)=1.
-                    v_new.tuser := '1' & '0' &
-                                   (s_drain_done_faulted and s_run_drain_done) &
-                                   "0000" & s_run_drain_done;
-                    v_new.drain := s_run_drain_done;
-                end if;
-
-                -- Snapshot current fifo into a variable so Step 1 feeds Step 2.
-                v_fifo := s_raw_fifo_r;
-
-                -- Step 1: consume slot 0 on downstream accept, shift all down.
-                if v_fifo(0).valid = '1' and i_m_raw_axis_tready = '1' then
-                    for i in 0 to c_RAW_FIFO_DEPTH - 2 loop
-                        v_fifo(i) := v_fifo(i + 1);
-                    end loop;
-                    v_fifo(c_RAW_FIFO_DEPTH - 1) := c_RAW_ENTRY_EMPTY;
-                end if;
-
-                -- Step 2: enqueue new beat at the first empty slot (from head).
-                -- Round 11 item 6: reserve one slot for control beats.
-                -- tuser(7)='1' marks a control beat (drain_done / ififo1_beat);
-                -- tuser(7)='0' is a data beat (raw hit word).
-                --
-                -- Old policy (pre-item-6): any beat (data OR control) could use
-                -- any free slot, and the LAST free slot could be consumed by
-                -- data. A control beat arriving right after could then find
-                -- the FIFO full and get dropped — losing a completion /
-                -- drain boundary marker, which is far more damaging than a
-                -- single data beat loss.
-                --
-                -- New policy: data beats only enqueue if 2+ slots are free,
-                -- so one slot always remains reservable for a control beat.
-                -- Control beats enqueue into any free slot. The overflow
-                -- sticky now fires for data beats at a lower threshold, but
-                -- control beats are preserved as long as the FIFO is not
-                -- completely saturated with earlier control beats.
-                if v_new.valid = '1' then
-                    v_placed := false;
-
-                    v_free := 0;
-                    for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
-                        if v_fifo(i).valid = '0' then
-                            v_free := v_free + 1;
-                        end if;
-                    end loop;
-
-                    -- Round 13 axis 4: reserve strengthened further.
-                    -- History: Round 11 item 6 reserve=1; Round 12 A2 reserve=2;
-                    -- Round 13 reserve=3 (data capacity 6−3 = 3).
-                    -- Round 13 follow-up (audit 2번): added a DATA-SACRIFICE
-                    -- fallback so control beats NEVER drop while any data
-                    -- beat exists in the FIFO. If the FIFO has filled with
-                    -- earlier control beats only (workload-impossible but
-                    -- structurally possible), the ctrl_drop sticky still
-                    -- fires as a last-resort observability path.
-                    if v_new.tuser(7) = '1' then
-                        -- Control beat: enqueue if any slot is free.
-                        if v_free >= 1 then
-                            for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
-                                if not v_placed and v_fifo(i).valid = '0' then
-                                    v_fifo(i) := v_new;
-                                    v_placed := true;
-                                end if;
-                            end loop;
-                        else
-                            -- FIFO full: evict the OLDEST data beat (lowest
-                            -- index with tuser(7)='0') and shift the tail
-                            -- down so the control beat lands at the tail.
-                            -- This preserves the relative order of all
-                            -- remaining beats (both data and control). The
-                            -- sacrificed data beat is counted via the
-                            -- raw_overflow sticky (data-drop cause).
-                            for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
-                                if not v_placed and v_fifo(i).valid = '1'
-                                   and v_fifo(i).tuser(7) = '0' then
-                                    for j in i to c_RAW_FIFO_DEPTH - 2 loop
-                                        v_fifo(j) := v_fifo(j + 1);
-                                    end loop;
-                                    v_fifo(c_RAW_FIFO_DEPTH - 1) := v_new;
-                                    v_placed := true;
-                                    s_err_raw_overflow_r <= '1';
-                                    -- synthesis translate_off
-                                    assert false
-                                        report "chip_ctrl: data beat EVICTED to preserve control beat"
-                                        severity warning;
-                                    -- synthesis translate_on
-                                end if;
-                            end loop;
-                        end if;
+                if v_count > 0 and i_m_raw_axis_tready = '1' then
+                    if v_rd_ptr = c_RAW_FIFO_DEPTH - 1 then
+                        v_rd_ptr := 0;
                     else
-                        -- Data beat: enqueue only if 4+ slots are free, so
-                        -- three remain reserved for future control beats.
-                        if v_free >= 4 then
-                            for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
-                                if not v_placed and v_fifo(i).valid = '0' then
-                                    v_fifo(i) := v_new;
-                                    v_placed := true;
-                                end if;
-                            end loop;
-                        end if;
+                        v_rd_ptr := v_rd_ptr + 1;
+                    end if;
+                    v_count := v_count - 1;
+                end if;
+
+                -- Control beats have priority under an impossible overlap.
+                -- chip_run's state machine normally makes all three sources
+                -- mutually exclusive; the assertion protects that contract.
+                v_push    := false;
+                v_control := false;
+                v_tdata   := (others => '0');
+                v_tuser   := (others => '0');
+
+                if s_run_drain_done = '1' then
+                    v_push      := true;
+                    v_control   := true;
+                    v_tuser(7)  := '1';
+                    v_tuser(5)  := s_drain_done_faulted;
+                    v_tuser(0)  := '1';
+                elsif s_run_ififo1_beat = '1' then
+                    v_push      := true;
+                    v_control   := true;
+                    v_tuser(7)  := '1';
+                    v_tuser(0)  := '0';
+                elsif s_run_raw_valid = '1' then
+                    v_push := true;
+                    v_tdata(g_BUS_DATA_WIDTH - 1 downto 0) := s_run_raw_word;
+                    v_tuser(0) := s_run_ififo_id;
+                end if;
+
+                -- synthesis translate_off
+                assert not (s_run_raw_valid = '1'
+                            and (s_run_drain_done = '1'
+                                 or s_run_ififo1_beat = '1'))
+                    report "chip_ctrl: raw data/control sources overlapped"
+                    severity error;
+                assert not (s_run_drain_done = '1'
+                            and s_run_ififo1_beat = '1')
+                    report "chip_ctrl: both raw control sources overlapped"
+                    severity error;
+                -- synthesis translate_on
+
+                if v_push then
+                    if v_control then
+                        v_accept := v_count < c_RAW_FIFO_DEPTH;
+                    else
+                        v_accept := v_count < c_RAW_DATA_LIMIT;
                     end if;
 
-                    if not v_placed then
+                    if v_accept then
+                        s_raw_fifo_mem(v_wr_ptr) <= v_tdata & v_tuser;
+                        if v_wr_ptr = c_RAW_FIFO_DEPTH - 1 then
+                            v_wr_ptr := 0;
+                        else
+                            v_wr_ptr := v_wr_ptr + 1;
+                        end if;
+                        v_count := v_count + 1;
+                    else
                         s_err_raw_overflow_r <= '1';
-                        -- Round 12 A2: control vs data drop distinction.
-                        -- With the data-sacrifice fallback above, a
-                        -- control-beat drop here means the FIFO is 100%
-                        -- control beats — workload-impossible but still
-                        -- surfaced for structural observability.
-                        if v_new.tuser(7) = '1' then
+                        if v_control then
                             s_err_raw_ctrl_drop_r <= '1';
                         end if;
                         -- synthesis translate_off
                         assert false
-                            report "chip_ctrl: raw beat DROPPED (kind=" &
-                                   std_logic'image(v_new.tuser(7)) &
-                                   ", drain=" &
-                                   std_logic'image(v_new.drain) &
-                                   ", free=" &
-                                   integer'image(v_free) & ")"
+                            report "chip_ctrl: raw FIFO credit violation (control="
+                                   & boolean'image(v_control)
+                                   & ", occupancy=" & integer'image(v_count)
+                                   & ")"
                             severity error;
                         -- synthesis translate_on
                     end if;
                 end if;
 
-                s_raw_fifo_r <= v_fifo;
+                s_raw_rd_ptr_r <= v_rd_ptr;
+                s_raw_wr_ptr_r <= v_wr_ptr;
+                s_raw_count_r  <= v_count;
+
+                -- Registered source throttle. At level 4, two data credits
+                -- remain for response-skid/reaction latency and two slots are
+                -- still reserved exclusively for the shot's control beats.
+                if i_m_raw_axis_tready = '0'
+                   and v_count >= c_RAW_BUSY_LEVEL then
+                    s_raw_hold_busy <= '1';
+                else
+                    s_raw_hold_busy <= '0';
+                end if;
             end if;
         end if;
     end process p_raw_fifo;
 
-    o_m_raw_axis_tvalid <= s_raw_fifo_r(0).valid;
-    o_m_raw_axis_tdata  <= s_raw_fifo_r(0).tdata;
-    o_m_raw_axis_tuser  <= s_raw_fifo_r(0).tuser;
+    s_raw_head <= s_raw_fifo_mem(s_raw_rd_ptr_r);
+
+    o_m_raw_axis_tvalid <= '1' when s_raw_count_r > 0 else '0';
+    o_m_raw_axis_tdata  <= s_raw_head(c_RAW_AXIS_PACK_WIDTH - 1
+                                      downto c_RAW_AXIS_TUSER_WIDTH)
+                           when s_raw_count_r > 0 else (others => '0');
+    o_m_raw_axis_tuser  <= s_raw_head(c_RAW_AXIS_TUSER_WIDTH - 1 downto 0)
+                           when s_raw_count_r > 0 else (others => '0');
 
     -- o_drain_done semantic (#27):
     --   Pulses when the final drain-done control beat HANDSHAKES to
@@ -1316,8 +1261,11 @@ begin
     --   Upstream modules (face_seq, err_handler, status_agg) consuming this
     --   pulse must interpret it as "chip_run's drain_done beat was accepted
     --   by the raw-path consumer", not as "chip_run exited the drain state".
-    o_drain_done        <= s_raw_fifo_r(0).drain and s_raw_fifo_r(0).valid
-                           and i_m_raw_axis_tready;
+    o_drain_done <= '1' when s_raw_count_r > 0
+                            and i_m_raw_axis_tready = '1'
+                            and s_raw_head(7) = '1'
+                            and s_raw_head(0) = '1'
+                    else '0';
 
     -- o_run_drain_complete (Round 5 #11):
     --   Pulses for 1 cycle on the rising edge of chip_run's internal drain
@@ -1337,24 +1285,6 @@ begin
     end process p_run_drain_edge;
 
     o_run_drain_complete <= s_run_drain_done and (not s_run_drain_done_prev_r);
-
-    -- Backpressure: registered for 200MHz timing closure.
-    -- 1-cycle late busy is safe because depth > 1 slots absorb the delay.
-    p_raw_busy_reg : process(i_clk)
-        variable v_all_full : std_logic;
-    begin
-        if rising_edge(i_clk) then
-            if s_sub_rst_n = '0' then
-                s_raw_hold_busy <= '0';
-            else
-                v_all_full := '1';
-                for i in 0 to c_RAW_FIFO_DEPTH - 1 loop
-                    v_all_full := v_all_full and s_raw_fifo_r(i).valid;
-                end loop;
-                s_raw_hold_busy <= v_all_full and (not i_m_raw_axis_tready);
-            end if;
-        end if;
-    end process;
 
     o_shot_seq       <= s_run_shot_seq;
     -- Busy includes PH_RESP_DRAIN and PH_INIT to prevent premature dispatch
@@ -1380,8 +1310,7 @@ begin
     -- raw_overflow aggregates multiple "integrity compromised" events so SW
     -- only needs to observe one flag per chip. Individual cause codes can be
     -- split into dedicated ports later if needed:
-    --   s_err_raw_overflow_r -> raw hold/skid full (beat dropped)
-    --                         OR chip_run overrun override dropped response
+    --   s_err_raw_overflow_r -> raw FIFO credit violation (beat dropped)
     --   s_err_drain_cap_r    -> PH_RESP_DRAIN hard cap hit while bus busy
     o_err_raw_overflow  <= s_err_raw_overflow_r or s_err_drain_cap_r;
     -- Round 12 #15: distinct cause outputs.

@@ -88,6 +88,7 @@ $vhdl2008Files = @(
     "$Hdl/px_utility_pkg.vhd",
     "$Hdl/tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_cfg_pkg.vhd",
+    "$Hdl/tb_tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_bus_phy.vhd",
     "$Hdl/tdc_gpx_skid_buffer.vhd",
     "$Hdl/tdc_gpx_sync_fifo.vhd",
@@ -115,6 +116,7 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_status_agg.vhd",
     "$Hdl/tdc_gpx_top.vhd",
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
+    "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
     "$Hdl/tb_tdc_gpx_status_agg_c06_fix.vhd",
@@ -171,6 +173,11 @@ try {
         "xil_defaultlib.tb_tdc_gpx_reg_rsp_cdc"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_reg_rsp_cdc_snap", "-runall", "-log", "xsim_c06_v002_reg_rsp_cdc_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_reg_rsp_cdc_$Stamp.log" "REG_RSP_CDC 200-to-50 MHz atomic transfer - PASS"
+
+    Invoke-Xelab "tb_c06_v002_chip_ctrl_snap" "xelab_c06_v002_chip_ctrl_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_chip_ctrl"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_chip_ctrl_snap", "-runall", "-log", "xsim_c06_v002_chip_ctrl_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_chip_ctrl_$Stamp.log" "ALL TESTS PASSED"
 
     foreach ($w in @(32, 64, 128)) {
         $snap = "tb_c06_v002_top_int_w${w}_snap"

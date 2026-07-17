@@ -28,6 +28,7 @@
 --   [10] Consecutive 2+ shots
 --   [16a] No-backpressure first-data latency measurement
 --   [16b] Bounded raw AXI backpressure with T1a/T1b split timing
+--   [16c] Raw FIFO reserve-threshold backpressure (no data/control loss)
 --   [17] Stale expected-count mismatch -> faulted drain_done, no empty read
 --   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
@@ -228,6 +229,9 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_raw_final_done_ctrl_cnt : natural := 0;
     signal s_raw_faulted_ctrl_cnt : natural := 0;
     signal s_raw_tuser_err_cnt  : natural := 0;
+    signal s_raw_order_err_cnt  : natural := 0;
+    signal s_raw_order_check_en : std_logic := '0';
+    signal s_raw_order_reset    : std_logic := '0';
     signal s_empty_read_cnt     : natural := 0;
     signal s_clk_cnt            : natural := 0;
     signal s_force_empty_read_req : std_logic := '0';
@@ -560,10 +564,20 @@ begin
     p_raw_monitor : process(s_clk)
         variable v_clk_cnt : natural := 0;
         variable v_tuser_err_inc : natural := 0;
+        variable v_order_err_inc : natural := 0;
+        variable v_order_ififo1_idx : natural := 0;
+        variable v_order_ififo2_idx : natural := 0;
     begin
         if rising_edge(s_clk) then
             v_clk_cnt := v_clk_cnt + 1;
             v_tuser_err_inc := 0;
+            v_order_err_inc := 0;
+
+            if s_raw_order_reset = '1' then
+                v_order_ififo1_idx := 0;
+                v_order_ififo2_idx := 0;
+                s_raw_order_err_cnt <= 0;
+            end if;
 
             if s_raw_axis_tvalid = '1' and s_raw_axis_tready = '1' then
                 s_raw_word_cnt <= s_raw_word_cnt + 1;
@@ -588,6 +602,24 @@ begin
                             severity error;
                     end if;
 
+                    if s_raw_order_check_en = '1' then
+                        if s_raw_axis_tuser(0) = '0' then
+                            if v_order_ififo1_idx /= c_IFIFO_NOMINAL_WORDS
+                               or v_order_ififo2_idx /= 0 then
+                                v_order_err_inc := v_order_err_inc + 1;
+                                assert false
+                                    report "TB raw order: IFIFO1-done control out of order"
+                                    severity error;
+                            end if;
+                        elsif v_order_ififo1_idx /= c_IFIFO_NOMINAL_WORDS
+                              or v_order_ififo2_idx /= c_IFIFO_NOMINAL_WORDS then
+                            v_order_err_inc := v_order_err_inc + 1;
+                            assert false
+                                report "TB raw order: final control out of order"
+                                severity error;
+                        end if;
+                    end if;
+
                     pr_info("  @" & nat_img(v_clk_cnt)
                             & " raw_ctrl ififo=" & sl_chr(s_raw_axis_tuser(0))
                             & " faulted=" & sl_chr(s_raw_axis_tuser(5)));
@@ -606,6 +638,33 @@ begin
                             severity error;
                     end if;
 
+                    if s_raw_order_check_en = '1' then
+                        if s_raw_axis_tuser(0) = '0' then
+                            if v_order_ififo1_idx >= c_IFIFO_NOMINAL_WORDS
+                               or s_raw_axis_tdata(c_DATA_W - 1 downto 0)
+                                  /= fn_imode_word(v_order_ififo1_idx) then
+                                v_order_err_inc := v_order_err_inc + 1;
+                                assert false
+                                    report "TB raw order: IFIFO1 payload mismatch at index "
+                                           & integer'image(v_order_ififo1_idx)
+                                    severity error;
+                            end if;
+                            v_order_ififo1_idx := v_order_ififo1_idx + 1;
+                        else
+                            if v_order_ififo1_idx /= c_IFIFO_NOMINAL_WORDS
+                               or v_order_ififo2_idx >= c_IFIFO_NOMINAL_WORDS
+                               or s_raw_axis_tdata(c_DATA_W - 1 downto 0)
+                                  /= fn_imode_word(v_order_ififo2_idx) then
+                                v_order_err_inc := v_order_err_inc + 1;
+                                assert false
+                                    report "TB raw order: IFIFO2 payload mismatch at index "
+                                           & integer'image(v_order_ififo2_idx)
+                                    severity error;
+                            end if;
+                            v_order_ififo2_idx := v_order_ififo2_idx + 1;
+                        end if;
+                    end if;
+
                     pr_info("  @" & nat_img(v_clk_cnt)
                             & " raw_word=0x" & hex_img(s_raw_axis_tdata(c_DATA_W - 1 downto 0))
                             & " ififo=" & sl_chr(s_raw_axis_tuser(0)));
@@ -621,6 +680,10 @@ begin
 
             if v_tuser_err_inc /= 0 then
                 s_raw_tuser_err_cnt <= s_raw_tuser_err_cnt + v_tuser_err_inc;
+            end if;
+
+            if s_raw_order_reset = '0' and v_order_err_inc /= 0 then
+                s_raw_order_err_cnt <= s_raw_order_err_cnt + v_order_err_inc;
             end if;
 
             if s_drain_done = '1' then
@@ -2159,6 +2222,83 @@ begin
             end if;
         end if;
 
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+
+        -- =============================================================
+        -- [16c] Reserve-threshold raw AXI backpressure
+        -- =============================================================
+        -- [16b] proves a short bounded stall. This scenario deliberately
+        -- holds tready low long enough to reach the FIFO's source-busy
+        -- threshold. chip_ctrl must stop accepting GPX responses, retain all
+        -- data already in flight, and later emit both control beats in order.
+        pr_info("[16c] Raw FIFO reserve-threshold backpressure");
+
+        s_cfg.drain_mode  <= '1';
+        s_cfg.n_drain_cap <= (others => '0');
+        s_raw_axis_tready <= '0';
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
+        wait_clk(5);
+
+        pulse(s_shot_start);
+        wait_clk(5);
+
+        v_raw_data_snap   := s_raw_data_cnt;
+        v_empty_read_snap := s_empty_read_cnt;
+        v_found           := false;
+        s_raw_order_reset <= '1';
+        wait_clk(1);
+        s_raw_order_reset <= '0';
+        s_raw_order_check_en <= '1';
+        s_irflag_pin      <= '1';
+
+        for i in 0 to c_TIMEOUT loop
+            if i = 80 then
+                s_raw_axis_tready <= '1';
+            end if;
+
+            wait_clk(1);
+            wait for 0 ns;
+
+            if s_drain_done = '1' then
+                v_found := true;
+                exit;
+            end if;
+        end loop;
+
+        s_raw_axis_tready <= '1';
+
+        if not v_found then
+            pr_fail("[16c] drain_done timeout after reserve-threshold stall",
+                    v_fail);
+        else
+            v_drain_words := s_raw_data_cnt - v_raw_data_snap;
+            if v_drain_words = c_IFIFO_NOMINAL_TOTAL
+               and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[16c] all " & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " data words preserved across threshold stall");
+            else
+                pr_fail("[16c] expected "
+                        & nat_img(c_IFIFO_NOMINAL_TOTAL)
+                        & " data words/no empty reads, got "
+                        & nat_img(v_drain_words), v_fail);
+            end if;
+
+            if s_err_raw_drop = '0' and s_err_raw_ctrl_drop = '0'
+               and s_err_raw_overflow = '0' then
+                pr_pass("[16c] source backpressure prevented data/control drop");
+            else
+                pr_fail("[16c] raw drop set at reserve threshold", v_fail);
+            end if;
+
+            if s_raw_order_err_cnt = 0 then
+                pr_pass("[16c] payload and IFIFO/control order preserved");
+            else
+                pr_fail("[16c] payload/control order mismatch", v_fail);
+            end if;
+        end if;
+
+        s_raw_order_check_en <= '0';
         s_irflag_pin <= '0';
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
