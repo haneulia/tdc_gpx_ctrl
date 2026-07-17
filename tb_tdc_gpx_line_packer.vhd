@@ -32,6 +32,7 @@ architecture sim of tb_tdc_gpx_line_packer is
     signal clk     : std_logic := '0';
     signal rst_n   : std_logic := '0';
     signal sim_done : boolean := false;
+    signal cfg_latch : std_logic := '0';
 
     signal s_tdata  : std_logic_vector(G_WIDTH - 1 downto 0) := (others => '0');
     signal s_tvalid : std_logic := '0';
@@ -77,6 +78,7 @@ begin
             i_rst_n         => rst_n,
             i_abort         => '0',
             i_max_hits_cfg  => to_unsigned(C_MAX_HITS, 3),
+            i_cfg_latch     => cfg_latch,
             i_s_axis_tdata  => s_tdata,
             i_s_axis_tvalid => s_tvalid,
             i_s_axis_tlast  => s_tlast,
@@ -130,6 +132,10 @@ begin
         wait for 5 * C_CLK_PERIOD;
         wait until rising_edge(clk);
         rst_n <= '1';
+        wait until rising_edge(clk);
+        cfg_latch <= '1';
+        wait until rising_edge(clk);
+        cfg_latch <= '0';
         wait until rising_edge(clk);
 
         for cell_idx in 0 to C_CELLS - 1 loop

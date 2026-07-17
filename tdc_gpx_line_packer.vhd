@@ -26,6 +26,7 @@ entity tdc_gpx_line_packer is
         i_rst_n        : in  std_logic;
         i_abort        : in  std_logic;
         i_max_hits_cfg : in  unsigned(2 downto 0);
+        i_cfg_latch    : in  std_logic;
 
         i_s_axis_tdata  : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
         i_s_axis_tvalid : in  std_logic;
@@ -55,6 +56,13 @@ architecture rtl of tdc_gpx_line_packer is
     signal s_cell_beat_idx_r    : natural range 0 to 7 := 0;
     signal s_line_word_mod4_r   : natural range 0 to 3 := 0;
     signal s_line_end_pending_r : std_logic := '0';
+
+    -- Face-stable packing geometry. max_hits is converted once at face start
+    -- instead of feeding every queue write-enable decision on every beat.
+    signal s_hit_words_r : natural range 1 to 4 := 4;
+    signal s_hit_beats_r : natural range 1 to 4 :=
+        fn_ceil_div(c_MAX_HITS_PER_STOP,
+                    g_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH);
 
     signal s_out_tdata_r : std_logic_vector(g_TDATA_WIDTH - 1 downto 0)
                            := (others => '0');
@@ -107,6 +115,33 @@ begin
                        and s_out_tvalid_r = '0'
               else '0';
 
+    p_cfg_latch : process(i_clk)
+        variable v_max_hits : natural range 1 to c_MAX_HITS_PER_STOP;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_hit_words_r <= fn_ceil_div(c_MAX_HITS_PER_STOP, 2);
+                s_hit_beats_r <= fn_ceil_div(
+                    c_MAX_HITS_PER_STOP,
+                    g_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH);
+            elsif i_cfg_latch = '1' and o_idle = '1' then
+                v_max_hits := fn_effective_max_hits(i_max_hits_cfg);
+                s_hit_words_r <= fn_ceil_div(v_max_hits, 2);
+                s_hit_beats_r <= fn_ceil_div(
+                    v_max_hits,
+                    g_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH);
+            end if;
+
+            -- synthesis translate_off
+            if i_cfg_latch = '1' then
+                assert o_idle = '1'
+                    report "tdc_gpx_line_packer: face config changed while active"
+                    severity warning;
+            end if;
+            -- synthesis translate_on
+        end if;
+    end process p_cfg_latch;
+
     p_pack : process(i_clk)
         variable v_queue       : t_word_queue;
         variable v_count       : natural range 0 to c_QUEUE_WORDS;
@@ -115,7 +150,6 @@ begin
         variable v_end_pending : std_logic;
         variable v_out_free    : boolean;
         variable v_out_data    : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
-        variable v_max_hits    : natural range 1 to c_MAX_HITS_PER_STOP;
         variable v_hit_words   : natural range 1 to 4;
         variable v_hit_beats   : natural range 1 to 4;
         variable v_first_word  : natural range 0 to 12;
@@ -172,10 +206,8 @@ begin
                 end if;
 
                 if i_s_axis_tvalid = '1' and o_s_axis_tready = '1' then
-                    v_max_hits  := fn_effective_max_hits(i_max_hits_cfg);
-                    v_hit_words := fn_ceil_div(v_max_hits, 2);
-                    v_hit_beats := fn_ceil_div(
-                        v_max_hits, g_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH);
+                    v_hit_words := s_hit_words_r;
+                    v_hit_beats := s_hit_beats_r;
 
                     if v_beat_idx < v_hit_beats then
                         v_first_word := v_beat_idx * c_WORDS_PER_BEAT;

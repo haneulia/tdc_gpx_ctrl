@@ -729,6 +729,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_src_send_r : std_logic := '0';
     signal s_cmd_reg_src_rcv    : std_logic;
     signal s_cmd_reg_dst_req    : std_logic;
+    signal s_cmd_reg_sample_r   : std_logic_vector(31 downto 0) := (others => '1');
+    signal s_cmd_reg_diff_r     : std_logic := '0';
     signal s_cmd_reg_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
 
     -- Round 14 OP-C02-03: expected-count tuple transfer.
@@ -1510,11 +1512,24 @@ begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
                 s_cmd_reg_src_send_r <= '0';
+                s_cmd_reg_sample_r   <= (others => '1');
+                s_cmd_reg_diff_r     <= '0';
                 s_cmd_reg_d1_r       <= (others => '1');
             else
-                if s_cmd_reg_src_send_r = '0' and s_cmd_reg_src_packed /= s_cmd_reg_d1_r then
+                -- Register the live mux output before comparing or launching
+                -- the handshake. This keeps err-handler/control mux logic off
+                -- the 32 payload-register write enables and guarantees src_in
+                -- remains an atomic, stable snapshot until acknowledgement.
+                s_cmd_reg_sample_r <= s_cmd_reg_src_packed;
+                if s_cmd_reg_sample_r /= s_cmd_reg_d1_r then
+                    s_cmd_reg_diff_r <= '1';
+                else
+                    s_cmd_reg_diff_r <= '0';
+                end if;
+
+                if s_cmd_reg_src_send_r = '0' and s_cmd_reg_diff_r = '1' then
                     s_cmd_reg_src_send_r <= '1';
-                    s_cmd_reg_d1_r       <= s_cmd_reg_src_packed;
+                    s_cmd_reg_d1_r       <= s_cmd_reg_sample_r;
                 elsif s_cmd_reg_src_rcv = '1' then
                     s_cmd_reg_src_send_r <= '0';
                 end if;

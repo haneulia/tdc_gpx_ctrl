@@ -119,6 +119,7 @@ architecture rtl of tdc_gpx_cell_pipe is
 
     attribute KEEP_HIERARCHY : string;
     attribute KEEP_HIERARCHY of rtl : architecture is "yes";
+    attribute MAX_FANOUT : integer;
 
     ---------------------------------------------------------------------------
     -- Internal tdata array type (maps to individual output ports)
@@ -189,6 +190,15 @@ architecture rtl of tdc_gpx_cell_pipe is
     -- upstream wiring starts driving them (Sprint 3).
     signal s_abort_rise  : std_logic;
     signal s_abort_fall  : std_logic;
+
+    -- The demux valid bits and slope abort nets terminate in the distributed
+    -- cell-buffer write-enable cones. Bound their physical fan-out so Vivado
+    -- can replicate the existing sources near each builder without adding an
+    -- RTL pipeline stage or changing the AXI-Stream/abort cycle contract.
+    attribute MAX_FANOUT of s_rise_valid_r : signal is 16;
+    attribute MAX_FANOUT of s_fall_valid_r : signal is 16;
+    attribute MAX_FANOUT of s_abort_rise   : signal is 32;
+    attribute MAX_FANOUT of s_abort_fall   : signal is 32;
 
     -- CHAIN P1: lane-gated shot_start per (chip, slope) and masked-slope
     -- hit-drop stickies (written by p_slope_demux, single driver).
