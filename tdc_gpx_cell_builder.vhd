@@ -311,6 +311,12 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_cstate_r     : t_collect_state := ST_C_IDLE;
     signal s_wr_buf_r     : std_logic := '0';
 
+    -- The write-buffer owner feeds the static 16-way cell dispatch. Ask
+    -- synthesis to replicate this local register so its CE cones stay near
+    -- their target cells instead of becoming one long routed fanout tree.
+    attribute MAX_FANOUT : integer;
+    attribute MAX_FANOUT of s_wr_buf_r : signal is 32;
+
     -- Pending shot_start: set when shot_start arrives but cannot be consumed
     -- this cycle (DROP state, or simultaneous with drain_done in ACTIVE).
     -- Processed on the next cycle where the blocking condition clears.
