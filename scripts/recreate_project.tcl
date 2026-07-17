@@ -55,6 +55,7 @@ set rtl_files {
     tdc_gpx_csr_chip.vhd
     tdc_gpx_csr_pipeline.vhd
     tdc_gpx_stop_cfg_decode.vhd
+    tdc_gpx_reg_rsp_cdc.vhd
     tdc_gpx_config_ctrl.vhd
     tdc_gpx_decoder_i_mode.vhd
     tdc_gpx_raw_event_builder.vhd
@@ -122,6 +123,7 @@ set tb_files {
     tb_tdc_gpx_bus_phy.vhd
     tb_tdc_gpx_chip_ctrl.vhd
     tb_tdc_gpx_config_ctrl.vhd
+    tb_tdc_gpx_reg_rsp_cdc.vhd
     tb_tdc_gpx_decode_pipe.vhd
     tb_tdc_gpx_cell_pipe.vhd
     tb_tdc_gpx_downstream.vhd

@@ -334,6 +334,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_rdata   : t_slv28_array;
     signal s_cmd_reg_rvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_done    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_reg_rsp_pending_tdc : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_read_g  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_write_g : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_chip_address    : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -612,11 +613,13 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_err_reg_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_drain_complete_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_errflag_sync_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    -- Per-chip pulse status (xpm_cdc_pulse)
+    -- Per-chip atomic register-response outputs and independent timeout pulse.
     signal s_cmd_reg_done_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_cmd_reg_rvalid_axi    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_rvalid_held_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_run_timeout_axi       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    -- Per-chip multi-bit status (xpm_cdc_gray for shot_seq, snapshot for rdata)
+    -- Per-chip multi-bit status (xpm_cdc_gray for shot_seq, atomic handshake
+    -- for register response data).
     signal s_chip_shot_seq_axi     : t_shot_seq_array;
     signal s_chip_shot_seq_axi_slv : t_slv16_array;  -- intermediate for xpm_cdc_gray output
     signal s_cmd_reg_rdata_axi     : t_slv28_array;
@@ -830,6 +833,7 @@ begin
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_axi;
     o_err_raw_overflow  <= s_err_raw_overflow_axi;
     o_run_timeout       <= s_run_timeout_axi;
+
     -- Round 11 C: most-recent timeout cause across all chips. Latched on any
     -- run_timeout pulse so SW always sees the latest non-stale value. TDC
     -- domain; consumers are quasi-static so a 2-FF sync at consumer side is
@@ -1136,7 +1140,7 @@ begin
             i_reg11_data_2       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(2),
             i_reg11_data_3       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(3),
             i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
-            i_cmd_reg_rvalid    => s_cmd_reg_rvalid_axi,
+            i_cmd_reg_rvalid    => s_cmd_reg_rvalid_held_axi,
             i_reg_outstanding    => s_reg_outstanding,
             i_frame_done         => s_frame_done_both,
             i_shot_start         => i_shot_start_gated,
@@ -1533,20 +1537,6 @@ begin
     end process p_exp_send;
 
     -- =========================================================================
-    -- CDC Stage 2c: TDC -> AXI-Stream rdata snapshot
-    -- rdata is stable when rvalid is asserted; rvalid is CDC'd via
-    -- xpm_cdc_pulse, so rdata has settled by the time rvalid_axi arrives.
-    -- =========================================================================
-    p_axi_rdata_snapshot : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            for k in 0 to c_N_CHIPS - 1 loop
-                s_cmd_reg_rdata_axi(k) <= s_cmd_reg_rdata(k);
-            end loop;
-        end if;
-    end process p_axi_rdata_snapshot;
-
-    -- =========================================================================
     -- [4-19] Per-chip pipeline (generate x4)
     --   bus_phy + sk_brsp + chip_ctrl + sk_raw + per-chip CDC
     -- =========================================================================
@@ -1653,11 +1643,13 @@ begin
         -- =================================================================
 
         -- Level signals: xpm_cdc_single (1-bit, 2-FF synchronizer)
+        -- Keep cmd_arb from dispatching another operation to this chip until
+        -- the prior atomic response has completed its round-trip handshake.
         u_cdc_busy : xpm_cdc_single
             generic map (DEST_SYNC_FF => 2, SRC_INPUT_REG => 1)
             port map (
                 src_clk  => i_tdc_clk,
-                src_in   => s_chip_busy(i),
+                src_in   => s_chip_busy(i) or s_reg_rsp_pending_tdc(i),
                 dest_clk => i_axis_aclk,
                 dest_out => s_chip_busy_axi(i)
             );
@@ -1770,27 +1762,29 @@ begin
                 dest_out => s_errflag_sync_axi(i)
             );
 
-        -- Pulse signals: xpm_cdc_pulse (TDC -> AXI-Stream)
-        u_cdc_reg_done : xpm_cdc_pulse
-            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
+        -- Completion, read qualifier, and data are one atomic transaction.
+        -- This replaces the former independent done/rvalid pulse crossings
+        -- and continuously sampled 28-bit destination snapshot.
+        u_cdc_reg_rsp : entity work.tdc_gpx_reg_rsp_cdc
+            generic map (
+                g_DATA_WIDTH => c_TDC_BUS_WIDTH,
+                g_SYNC_FF    => 4
+            )
             port map (
-                src_clk    => i_tdc_clk,
-                src_rst    => '0',
-                src_pulse  => s_cmd_reg_done(i),
-                dest_clk   => i_axis_aclk,
-                dest_rst   => '0',
-                dest_pulse => s_cmd_reg_done_axi(i)
-            );
-
-        u_cdc_reg_rvalid : xpm_cdc_pulse
-            generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
-            port map (
-                src_clk    => i_tdc_clk,
-                src_rst    => '0',
-                src_pulse  => s_cmd_reg_rvalid(i),
-                dest_clk   => i_axis_aclk,
-                dest_rst   => '0',
-                dest_pulse => s_cmd_reg_rvalid_axi(i)
+                i_src_clk     => i_tdc_clk,
+                i_src_rst_n   => s_tdc_aresetn,
+                i_src_done    => s_cmd_reg_done(i),
+                i_src_rvalid  => s_cmd_reg_rvalid(i),
+                i_src_rdata   => s_cmd_reg_rdata(i),
+                o_src_pending => s_reg_rsp_pending_tdc(i),
+                i_dst_clk     => i_axis_aclk,
+                i_dst_rst_n   => i_axis_aresetn,
+                i_dst_clear   => s_cmd_reg_done_pulse or i_cmd_stop
+                                 or i_cmd_soft_reset or i_err_soft_clear,
+                o_dst_done    => s_cmd_reg_done_axi(i),
+                o_dst_rvalid  => s_cmd_reg_rvalid_axi(i),
+                o_dst_rvalid_held => s_cmd_reg_rvalid_held_axi(i),
+                o_dst_rdata   => s_cmd_reg_rdata_axi(i)
             );
 
         u_cdc_run_timeout : xpm_cdc_pulse

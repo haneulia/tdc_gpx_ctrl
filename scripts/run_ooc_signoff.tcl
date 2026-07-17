@@ -46,6 +46,8 @@ read_vhdl -vhdl2008 -library xil_defaultlib \
     [file join [file dirname [info script]] .. tdc_gpx_sync_fifo.vhd]
 read_vhdl -vhdl2008 -library xil_defaultlib \
     [file join [file dirname [info script]] .. tdc_gpx_line_packer.vhd]
+read_vhdl -vhdl2008 -library xil_defaultlib \
+    [file join [file dirname [info script]] .. tdc_gpx_reg_rsp_cdc.vhd]
 
 # The source .xpr has no OOC DCPs for the two custom CSR IPs. Read their
 # generated implementation sources so a successful run cannot hide black boxes.

@@ -822,7 +822,8 @@ begin
     -- =========================================================================
     -- [10] Per-chip reg read data latch (i_axis_aclk domain)
     --   i_cmd_reg_rvalid(i) -> latch i_cmd_reg_rdata_i -> feeds STAT(i) CDC
-    --   For write operations, rvalid fires but rdata=0, so STAT[27:0]=0.
+    --   For write operations, done fires but rvalid remains low, so STAT is
+    --   left unchanged.
     --   STAT[31:28] = addr_done (always present).
     -- =========================================================================
     p_reg_rdata_latch : process(i_axis_aclk)
