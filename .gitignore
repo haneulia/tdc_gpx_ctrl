@@ -34,3 +34,7 @@ tmp/
 /signoff_results/matrices/
 /sim_work/
 /clockInfo.txt
+
+# Reproducible parent-reference Vivado projects and generated reports.
+/parent_ref/build/
+/parent_ref/results/
