@@ -288,7 +288,12 @@ architecture rtl of tdc_gpx_cell_builder is
     attribute ram_style of s_hit_payload6_r : signal is "distributed";
 
     -- Update one statically selected count/drop cell and return the sequence
-    -- bank that must receive the accepted payload in this same clock cycle.
+    -- bank that receives this payload in the same clock cycle. Payload writes
+    -- are limited only by the physical seven-slot store, while the configured
+    -- max_hits controls the visible count/drop metadata. Overflow hits below
+    -- the physical limit therefore overwrite one inactive shadow slot. This
+    -- keeps max_hits out of the distributed-RAM write-enable timing cone; the
+    -- serializer masks every slot at or above hit_count_actual.
     procedure pr_accept_hit(
         signal io_cell        : inout t_cell_meta_store;
         signal o_drop_pulse   : out std_logic;
@@ -297,11 +302,15 @@ architecture rtl of tdc_gpx_cell_builder is
         variable o_store_seq  : out natural
     ) is
     begin
-        o_store_hit := false;
-        o_store_seq := 0;
+        if io_cell.hit_count_actual < to_unsigned(c_MAX_HITS_PER_STOP, 4) then
+            o_store_seq := to_integer(io_cell.hit_count_actual(2 downto 0));
+            o_store_hit := true;
+        else
+            o_store_seq := 0;
+            o_store_hit := false;
+        end if;
+
         if io_cell.hit_count_actual < i_max_hits then
-            o_store_seq                := to_integer(io_cell.hit_count_actual(2 downto 0));
-            o_store_hit                := true;
             io_cell.hit_count_actual   <= io_cell.hit_count_actual + 1;
         else
             io_cell.hit_dropped <= '1';
