@@ -100,11 +100,13 @@
 --   Examples @64b: max_hits=7->3, max_hits=3->2, max_hits=1->2
 --
 -- Signal ownership (no multi-driver):
---   p_collect WRITES: s_cell_buf_r, s_buf_state_r, s_buf_full_r, s_wr_buf_r,
+--   p_collect WRITES: s_cell_meta_r, s_hit_payload*_r, s_buf_state_r,
+--                     s_buf_full_r, s_wr_buf_r,
 --                     s_cstate_r, s_output_req_r, s_rd_buf_idx_r
 --   p_output  WRITES: s_cell_sel_r, s_ostate_r, s_tdata_r, s_tvalid_r,
 --                     s_tlast_r, s_output_done_r, etc.
---   p_output  READS:  s_cell_buf_r, s_buf_full_r, s_output_req_r,
+--   p_output  READS:  s_cell_meta_r, s_hit_payload*_r, s_buf_full_r,
+--                     s_output_req_r,
 --                     s_rd_buf_idx_r (no write conflict)
 --   p_collect READS:  s_ostate_r, s_output_done_r (no write conflict)
 --
@@ -233,39 +235,73 @@ architecture rtl of tdc_gpx_cell_builder is
         end if;
     end function;
 
-    -- Internal storage keeps only fields that cannot be reconstructed at
-    -- serialization time. This avoids carrying intentionally unused members
-    -- of the package-level t_cell record through synthesis.
-    type t_cell_store is record
+    -- One-cell serializer view. Persistent payload and metadata are stored
+    -- separately below, then combined into this staging record before output.
+    type t_cell_view is record
         hit_slot         : t_hit_slot_array;
         hit_msb_vec      : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
         hit_count_actual : unsigned(3 downto 0);
         hit_dropped      : std_logic;
     end record;
 
-    constant c_CELL_STORE_INIT : t_cell_store := (
+    constant c_CELL_VIEW_INIT : t_cell_view := (
         hit_slot         => (others => (others => '0')),
         hit_msb_vec      => (others => '0'),
         hit_count_actual => (others => '0'),
         hit_dropped      => '0'
     );
 
-    -- Store one hit into a statically selected cell. Count/drop state is
-    -- cleared at shot INIT; each accepted sequence slot overwrites its stale
-    -- payload. Keeping the target static prevents one selected hit_count from
-    -- driving the write-enable mux for every cell in both ping-pong buffers.
-    procedure pr_store_hit(
-        signal io_cell       : inout t_cell_store;
-        signal o_drop_pulse  : out std_logic;
-        constant i_max_hits  : in unsigned(3 downto 0);
-        constant i_hit       : in std_logic_vector(c_HIT_SLOT_DATA_WIDTH downto 0)
+    -- Narrow per-cell state stays in FFs. The 17-bit payload is held in seven
+    -- addressed resetless banks so one sequence bank, not one cell record,
+    -- owns each write enable.
+    type t_cell_meta_store is record
+        hit_count_actual : unsigned(3 downto 0);
+        hit_dropped      : std_logic;
+    end record;
+
+    constant c_CELL_META_INIT : t_cell_meta_store := (
+        hit_count_actual => (others => '0'),
+        hit_dropped      => '0'
+    );
+
+    constant c_CELL_ADDR_COUNT : natural := 2 * c_MAX_STOPS_PER_CHIP;
+    subtype t_hit_payload_word is
+        std_logic_vector(c_HIT_SLOT_DATA_WIDTH downto 0);
+    type t_hit_payload_mem is array (0 to c_CELL_ADDR_COUNT - 1)
+        of t_hit_payload_word;
+
+    signal s_hit_payload0_r : t_hit_payload_mem;
+    signal s_hit_payload1_r : t_hit_payload_mem;
+    signal s_hit_payload2_r : t_hit_payload_mem;
+    signal s_hit_payload3_r : t_hit_payload_mem;
+    signal s_hit_payload4_r : t_hit_payload_mem;
+    signal s_hit_payload5_r : t_hit_payload_mem;
+    signal s_hit_payload6_r : t_hit_payload_mem;
+
+    attribute ram_style : string;
+    attribute ram_style of s_hit_payload0_r : signal is "distributed";
+    attribute ram_style of s_hit_payload1_r : signal is "distributed";
+    attribute ram_style of s_hit_payload2_r : signal is "distributed";
+    attribute ram_style of s_hit_payload3_r : signal is "distributed";
+    attribute ram_style of s_hit_payload4_r : signal is "distributed";
+    attribute ram_style of s_hit_payload5_r : signal is "distributed";
+    attribute ram_style of s_hit_payload6_r : signal is "distributed";
+
+    -- Update one statically selected count/drop cell and return the sequence
+    -- bank that must receive the accepted payload in this same clock cycle.
+    procedure pr_accept_hit(
+        signal io_cell        : inout t_cell_meta_store;
+        signal o_drop_pulse   : out std_logic;
+        constant i_max_hits   : in unsigned(3 downto 0);
+        variable o_store_hit  : out boolean;
+        variable o_store_seq  : out natural
     ) is
-        variable v_seq : natural range 0 to c_MAX_HITS_PER_STOP - 1;
     begin
+        o_store_hit := false;
+        o_store_seq := 0;
         if io_cell.hit_count_actual < i_max_hits then
-            v_seq := to_integer(io_cell.hit_count_actual(2 downto 0));
-            io_cell.hit_slot(v_seq)    <= unsigned(i_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
-            io_cell.hit_msb_vec(v_seq) <= i_hit(c_HIT_SLOT_DATA_WIDTH);
+            o_store_seq                := to_integer(io_cell.hit_count_actual(2 downto 0));
+            o_store_hit                := true;
             io_cell.hit_count_actual   <= io_cell.hit_count_actual + 1;
         else
             io_cell.hit_dropped <= '1';
@@ -273,18 +309,50 @@ architecture rtl of tdc_gpx_cell_builder is
         end if;
     end procedure;
 
+    function fn_cell_view(
+        meta : t_cell_meta_store;
+        hit0 : t_hit_payload_word;
+        hit1 : t_hit_payload_word;
+        hit2 : t_hit_payload_word;
+        hit3 : t_hit_payload_word;
+        hit4 : t_hit_payload_word;
+        hit5 : t_hit_payload_word;
+        hit6 : t_hit_payload_word
+    ) return t_cell_view is
+        variable v_cell : t_cell_view := c_CELL_VIEW_INIT;
+    begin
+        v_cell.hit_slot(0) := unsigned(hit0(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+        v_cell.hit_slot(1) := unsigned(hit1(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+        v_cell.hit_slot(2) := unsigned(hit2(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+        v_cell.hit_slot(3) := unsigned(hit3(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+        v_cell.hit_slot(4) := unsigned(hit4(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+        v_cell.hit_slot(5) := unsigned(hit5(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+        v_cell.hit_slot(6) := unsigned(hit6(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+        v_cell.hit_msb_vec := hit6(c_HIT_SLOT_DATA_WIDTH) &
+                              hit5(c_HIT_SLOT_DATA_WIDTH) &
+                              hit4(c_HIT_SLOT_DATA_WIDTH) &
+                              hit3(c_HIT_SLOT_DATA_WIDTH) &
+                              hit2(c_HIT_SLOT_DATA_WIDTH) &
+                              hit1(c_HIT_SLOT_DATA_WIDTH) &
+                              hit0(c_HIT_SLOT_DATA_WIDTH);
+        v_cell.hit_count_actual := meta.hit_count_actual;
+        v_cell.hit_dropped      := meta.hit_dropped;
+        return v_cell;
+    end function;
+
     -- =========================================================================
-    -- Ping-pong dual cell buffer (2 x MAX_STOPS entries).
-    -- p_collect writes to buffer[wr_buf], p_output reads from buffer[rd_buf].
-    -- Only hit_count_actual/hit_dropped are reset and cleared per shot. Slots
-    -- and MSBs retain physical stale values until overwritten; the
-    -- serializer masks every sequence index at or above hit_count_actual.
+    -- Ping-pong metadata store (2 x MAX_STOPS entries). Payload address is
+    -- buffer & stop, shared by the seven independent sequence banks above.
+    -- Only hit_count_actual/hit_dropped are reset and cleared per shot. Bank
+    -- words retain physical stale values until overwritten; the serializer
+    -- masks every sequence index at or above hit_count_actual.
     -- hit_valid, slope_vec, and error_fill are derived output fields, not
     -- stored state. g_SLOPE_VALUE supplies the per-builder slope vector.
     -- =========================================================================
-    type t_cell_array is array (0 to c_MAX_STOPS_PER_CHIP - 1) of t_cell_store;
-    type t_dual_cell_buf is array (0 to 1) of t_cell_array;
-    signal s_cell_buf_r : t_dual_cell_buf;
+    type t_cell_meta_array is array (0 to c_MAX_STOPS_PER_CHIP - 1)
+        of t_cell_meta_store;
+    type t_dual_cell_meta is array (0 to 1) of t_cell_meta_array;
+    signal s_cell_meta_r : t_dual_cell_meta;
 
     -- Per-buffer snapshot of i_max_range_axis_clks, captured when the
     -- buffer transitions to BUF_COLLECT (i.e. when a new shot is assigned
@@ -389,7 +457,7 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_rd_buf_r     : std_logic := '0';       -- latched read buffer index
 
     -- Pipeline register: selected cell for output serialization
-    signal s_cell_sel_r  : t_cell_store := c_CELL_STORE_INIT;
+    signal s_cell_sel_r  : t_cell_view := c_CELL_VIEW_INIT;
 
     -- Output serializer counters
     signal s_stop_idx_r  : unsigned(2 downto 0) := (others => '0');
@@ -496,7 +564,7 @@ architecture rtl of tdc_gpx_cell_builder is
     end function;
 
     function fn_cell_beat(
-        cell          : t_cell_store;
+        cell          : t_cell_view;
         beat_idx      : unsigned(2 downto 0);
         last_beat_idx : unsigned(2 downto 0)
     ) return std_logic_vector is
@@ -583,23 +651,26 @@ begin
 
     -- =========================================================================
     -- p_collect: write hits into write-buffer, manage buffer ownership FSM
-    -- Owns: s_cell_buf_r, s_buf_state_r, s_buf_full_r, s_wr_buf_r,
-    --       s_cstate_r, s_output_req_r, s_rd_buf_idx_r, s_hit_dropped_r
+    -- Owns: s_cell_meta_r, s_hit_payload*_r, s_buf_state_r, s_buf_full_r,
+    --       s_wr_buf_r, s_cstate_r, s_output_req_r, s_rd_buf_idx_r,
+    --       s_hit_dropped_r
     -- Reads (no write): s_ostate_r, s_output_done_r
     -- =========================================================================
     p_collect : process(i_clk)
         variable v_wr       : natural range 0 to 1;
         variable v_other    : natural range 0 to 1;
         variable v_done_buf : natural range 0 to 1;
-        variable v_stop  : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
-        variable v_hit_key : std_logic_vector(3 downto 0);
+        variable v_stop          : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
+        variable v_hit_key       : std_logic_vector(3 downto 0);
+        variable v_payload_addr  : natural range 0 to c_CELL_ADDR_COUNT - 1;
+        variable v_payload_seq   : natural range 0 to c_MAX_HITS_PER_STOP - 1;
+        variable v_store_payload : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 for b in 0 to 1 loop
                     for st in 0 to c_MAX_STOPS_PER_CHIP - 1 loop
-                        s_cell_buf_r(b)(st).hit_count_actual <= (others => '0');
-                        s_cell_buf_r(b)(st).hit_dropped      <= '0';
+                        s_cell_meta_r(b)(st) <= c_CELL_META_INIT;
                     end loop;
                 end loop;
                 s_buf_state_r   <= (others => BUF_FREE);
@@ -741,8 +812,7 @@ begin
                         -- until the selected buffer state has been cleared.
                         when ST_C_INIT_0 =>
                             for st in 0 to c_MAX_STOPS_PER_CHIP - 1 loop
-                                s_cell_buf_r(0)(st).hit_count_actual <= (others => '0');
-                                s_cell_buf_r(0)(st).hit_dropped      <= '0';
+                                s_cell_meta_r(0)(st) <= c_CELL_META_INIT;
                             end loop;
                             s_cstate_r      <= ST_C_ACTIVE;
                             if i_shot_start = '1' then
@@ -751,8 +821,7 @@ begin
 
                         when ST_C_INIT_1 =>
                             for st in 0 to c_MAX_STOPS_PER_CHIP - 1 loop
-                                s_cell_buf_r(1)(st).hit_count_actual <= (others => '0');
-                                s_cell_buf_r(1)(st).hit_dropped      <= '0';
+                                s_cell_meta_r(1)(st) <= c_CELL_META_INIT;
                             end loop;
                             s_cstate_r      <= ST_C_ACTIVE;
                             if i_shot_start = '1' then
@@ -801,28 +870,45 @@ begin
                                 else
                                     -- Round 9 #8: i_max_hits_cfg=000 aliases
                                     -- to 7 in the per-buffer snapshot. Dispatch
-                                    -- to a static cell target so each cell's
-                                    -- count controls only its own slot writes.
+                                    -- count/drop to a static cell target, then
+                                    -- write the accepted raw hit into one of
+                                    -- seven addressed sequence banks.
                                     v_hit_key := s_wr_buf_r & i_s_axis_tuser(5 downto 3);
+                                    v_store_payload := false;
+                                    v_payload_seq   := 0;
                                     case v_hit_key is
-                                        when "0000" => pr_store_hit(s_cell_buf_r(0)(0), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "0001" => pr_store_hit(s_cell_buf_r(0)(1), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "0010" => pr_store_hit(s_cell_buf_r(0)(2), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "0011" => pr_store_hit(s_cell_buf_r(0)(3), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "0100" => pr_store_hit(s_cell_buf_r(0)(4), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "0101" => pr_store_hit(s_cell_buf_r(0)(5), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "0110" => pr_store_hit(s_cell_buf_r(0)(6), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "0111" => pr_store_hit(s_cell_buf_r(0)(7), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1000" => pr_store_hit(s_cell_buf_r(1)(0), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1001" => pr_store_hit(s_cell_buf_r(1)(1), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1010" => pr_store_hit(s_cell_buf_r(1)(2), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1011" => pr_store_hit(s_cell_buf_r(1)(3), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1100" => pr_store_hit(s_cell_buf_r(1)(4), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1101" => pr_store_hit(s_cell_buf_r(1)(5), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1110" => pr_store_hit(s_cell_buf_r(1)(6), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
-                                        when "1111" => pr_store_hit(s_cell_buf_r(1)(7), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0));
+                                        when "0000" => pr_accept_hit(s_cell_meta_r(0)(0), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "0001" => pr_accept_hit(s_cell_meta_r(0)(1), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "0010" => pr_accept_hit(s_cell_meta_r(0)(2), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "0011" => pr_accept_hit(s_cell_meta_r(0)(3), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "0100" => pr_accept_hit(s_cell_meta_r(0)(4), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "0101" => pr_accept_hit(s_cell_meta_r(0)(5), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "0110" => pr_accept_hit(s_cell_meta_r(0)(6), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "0111" => pr_accept_hit(s_cell_meta_r(0)(7), s_hit_dropped_r, s_buf_max_hits_r(0), v_store_payload, v_payload_seq);
+                                        when "1000" => pr_accept_hit(s_cell_meta_r(1)(0), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
+                                        when "1001" => pr_accept_hit(s_cell_meta_r(1)(1), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
+                                        when "1010" => pr_accept_hit(s_cell_meta_r(1)(2), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
+                                        when "1011" => pr_accept_hit(s_cell_meta_r(1)(3), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
+                                        when "1100" => pr_accept_hit(s_cell_meta_r(1)(4), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
+                                        when "1101" => pr_accept_hit(s_cell_meta_r(1)(5), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
+                                        when "1110" => pr_accept_hit(s_cell_meta_r(1)(6), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
+                                        when "1111" => pr_accept_hit(s_cell_meta_r(1)(7), s_hit_dropped_r, s_buf_max_hits_r(1), v_store_payload, v_payload_seq);
                                         when others => null;
                                     end case;
+
+                                    if v_store_payload then
+                                        v_payload_addr := to_integer(unsigned(v_hit_key));
+                                        case v_payload_seq is
+                                            when 0 => s_hit_payload0_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when 1 => s_hit_payload1_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when 2 => s_hit_payload2_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when 3 => s_hit_payload3_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when 4 => s_hit_payload4_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when 5 => s_hit_payload5_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when 6 => s_hit_payload6_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when others => null;
+                                        end case;
+                                    end if;
                                 end if;
                             end if;
 
@@ -1046,19 +1132,20 @@ begin
     -- p_output: serialize read-buffer cells to AXI-Stream master
     -- Owns: s_ostate_r, s_rd_buf_r, s_cell_sel_r, s_stop_idx_r, s_beat_idx_r,
     --       s_last_stop_r, s_tdata_r, s_tvalid_r, s_tlast_r, s_output_done_r
-    -- Reads (no write): s_cell_buf_r, s_buf_full_r, s_output_req_r,
-    --       s_rd_buf_idx_r
+    -- Reads (no write): s_cell_meta_r, s_hit_payload*_r, s_buf_full_r,
+    --       s_output_req_r, s_rd_buf_idx_r
     -- =========================================================================
     p_output : process(i_clk)
         variable v_rd       : natural range 0 to 1;
         variable v_nxt_stop : unsigned(2 downto 0);
         variable v_nxt_beat : unsigned(2 downto 0);
+        variable v_cell_addr : natural range 0 to c_CELL_ADDR_COUNT - 1;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 s_ostate_r    <= ST_O_IDLE;
                 s_rd_buf_r    <= '0';
-                s_cell_sel_r  <= c_CELL_STORE_INIT;
+                s_cell_sel_r  <= c_CELL_VIEW_INIT;
                 s_stop_idx_r  <= (others => '0');
                 s_beat_idx_r  <= (others => '0');
                 s_last_stop_r <= (others => '0');
@@ -1098,7 +1185,16 @@ begin
                                 -- Latch read buffer, load first cell
                                 s_rd_buf_r    <= s_rd_buf_idx_r;
                                 v_rd          := fn_buf_idx(s_rd_buf_idx_r);
-                                s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
+                                v_cell_addr   := v_rd * c_MAX_STOPS_PER_CHIP;
+                                s_cell_sel_r  <= fn_cell_view(
+                                    s_cell_meta_r(v_rd)(0),
+                                    s_hit_payload0_r(v_cell_addr),
+                                    s_hit_payload1_r(v_cell_addr),
+                                    s_hit_payload2_r(v_cell_addr),
+                                    s_hit_payload3_r(v_cell_addr),
+                                    s_hit_payload4_r(v_cell_addr),
+                                    s_hit_payload5_r(v_cell_addr),
+                                    s_hit_payload6_r(v_cell_addr));
                                 s_stop_idx_r    <= (others => '0');
                                 s_beat_idx_r    <= (others => '0');
                                 -- Phase B: snapshot the WAIT_IFIFO2 cap from
@@ -1169,7 +1265,17 @@ begin
                                         -- Normal cell boundary: load next cell
                                         s_stop_idx_r <= v_nxt_stop;
                                         s_beat_idx_r <= (others => '0');
-                                        s_cell_sel_r <= s_cell_buf_r(v_rd)(to_integer(v_nxt_stop));
+                                        v_cell_addr := v_rd * c_MAX_STOPS_PER_CHIP +
+                                                       to_integer(v_nxt_stop);
+                                        s_cell_sel_r <= fn_cell_view(
+                                            s_cell_meta_r(v_rd)(to_integer(v_nxt_stop)),
+                                            s_hit_payload0_r(v_cell_addr),
+                                            s_hit_payload1_r(v_cell_addr),
+                                            s_hit_payload2_r(v_cell_addr),
+                                            s_hit_payload3_r(v_cell_addr),
+                                            s_hit_payload4_r(v_cell_addr),
+                                            s_hit_payload5_r(v_cell_addr),
+                                            s_hit_payload6_r(v_cell_addr));
                                         s_tvalid_r   <= '0';
                                         s_tlast_r    <= '0';
                                         s_tuser_r    <= (others => '0');
@@ -1211,7 +1317,16 @@ begin
                                 v_rd := fn_buf_idx(s_rd_buf_r);
                                 s_stop_idx_r    <= "100";    -- stop 4
                                 s_beat_idx_r    <= (others => '0');
-                                s_cell_sel_r    <= s_cell_buf_r(v_rd)(4);
+                                v_cell_addr     := v_rd * c_MAX_STOPS_PER_CHIP + 4;
+                                s_cell_sel_r    <= fn_cell_view(
+                                    s_cell_meta_r(v_rd)(4),
+                                    s_hit_payload0_r(v_cell_addr),
+                                    s_hit_payload1_r(v_cell_addr),
+                                    s_hit_payload2_r(v_cell_addr),
+                                    s_hit_payload3_r(v_cell_addr),
+                                    s_hit_payload4_r(v_cell_addr),
+                                    s_hit_payload5_r(v_cell_addr),
+                                    s_hit_payload6_r(v_cell_addr));
                                 s_out_timeout_r <= (others => '0');
                                 s_ostate_r      <= ST_O_LOAD;
                             elsif s_out_timeout_r = s_ififo2_cap_r then
