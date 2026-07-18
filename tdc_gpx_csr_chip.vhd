@@ -41,8 +41,8 @@
 --   Total: 10 CDC instances
 --
 -- CDC idle flag:
---   Idle when all 5 CTL handshakes are inactive and the packed cfg_image
---   source matches its last accepted snapshot.
+--   Idle when all 5 CTL handshakes are inactive and no cfg_image CSR write
+--   or committed snapshot is pending.
 --   Output as o_cdc_idle (s_axi_aclk domain) for csr_pipeline to use.
 --   Note: STAT CDCs (i_axis->s_axi direction) are NOT included in idle flag.
 --
@@ -330,11 +330,14 @@ architecture rtl of tdc_gpx_csr_chip is
     -- cfg_image CDC handshake (CTL5~20, one coherent 512-bit snapshot)
     signal s_img_src_packed : std_logic_vector(C_CFG_IMAGE_BITS - 1 downto 0);
     signal s_img_dst_packed : std_logic_vector(C_CFG_IMAGE_BITS - 1 downto 0) := (others => '0');
-    signal s_img_hold_r     : std_logic_vector(C_CFG_IMAGE_BITS - 1 downto 0) := (others => '1');
+    signal s_img_hold_r     : std_logic_vector(C_CFG_IMAGE_BITS - 1 downto 0) := (others => '0');
     signal s_src_send_img   : std_logic := '0';
     signal s_src_rcv_img    : std_logic;
     signal s_dest_req_img   : std_logic;
     signal s_img_wait_ack_low_r : std_logic := '0';
+    signal s_img_write_inflight_r : std_logic := '0';
+    signal s_img_snapshot_pending_r : std_logic := '1';
+    signal s_img_aw_hs : std_logic;
 
     -- =========================================================================
     -- Per-chip STAT registers (i_axis_aclk domain) and CDC outputs
@@ -643,17 +646,23 @@ begin
     -- =========================================================================
     -- [6] cfg_image CDC: s_axi_aclk -> i_axis_aclk (CTL5~20, packed)
     --
-    -- One source snapshot replaces 16 independent handshakes. The held
-    -- payload is not changed while src_send is active, which satisfies the
-    -- XPM source-data stability contract even when software writes another
-    -- image register before the current transfer is acknowledged. A changed
-    -- live image is sent in the next transaction after acknowledgement and
-    -- after src_rcv returns low, as required for a new handshake edge.
+    -- One source snapshot replaces 16 independent handshakes. AXI AW/B state
+    -- marks image writes without a continuous 512-bit equality comparator.
+    -- The held payload is not changed while src_send is active, which
+    -- satisfies the XPM source-data stability contract. Writes committed
+    -- during a transfer are coalesced into the next snapshot after src_rcv
+    -- returns low, as required for a new handshake edge.
     -- =========================================================================
     gen_img_pack : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
         s_img_src_packed(32 * (i + 1) - 1 downto 32 * i) <= s_img_src(i);
         s_img_out(i) <= s_img_dst_packed(32 * (i + 1) - 1 downto 32 * i);
     end generate gen_img_pack;
+
+    s_img_aw_hs <= '1'
+        when s_axi_awvalid = '1' and s_axi_awready = '1'
+         and unsigned(s_axi_awaddr) >= to_unsigned(c_ADDR_CFG_IMAGE_BASE, c_CSR_ADDR_WIDTH)
+         and unsigned(s_axi_awaddr) <= to_unsigned(c_ADDR_CFG_IMAGE_END, c_CSR_ADDR_WIDTH)
+        else '0';
 
     u_cdc_img : xpm_cdc_handshake
         generic map (
@@ -680,8 +689,10 @@ begin
         if rising_edge(s_axi_aclk) then
             if s_axi_aresetn = '0' then
                 s_src_send_img       <= '0';
-                s_img_hold_r         <= (others => '1');
+                s_img_hold_r         <= (others => '0');
                 s_img_wait_ack_low_r <= '0';
+                s_img_write_inflight_r <= '0';
+                s_img_snapshot_pending_r <= '1';
             elsif s_src_send_img = '1' then
                 if s_src_rcv_img = '1' then
                     s_src_send_img       <= '0';
@@ -690,16 +701,30 @@ begin
             elsif s_img_wait_ack_low_r = '1' then
                 if s_src_rcv_img = '0' then
                     s_img_wait_ack_low_r <= '0';
-                    if s_img_src_packed /= s_img_hold_r then
+                    if s_img_snapshot_pending_r = '1' then
                         s_img_hold_r   <= s_img_src_packed;
                         s_src_send_img <= '1';
+                        s_img_snapshot_pending_r <= '0';
                     end if;
                 end if;
             else
-                if s_img_src_packed /= s_img_hold_r then
+                if s_img_snapshot_pending_r = '1' then
                     s_img_hold_r   <= s_img_src_packed;
                     s_src_send_img <= '1';
+                    s_img_snapshot_pending_r <= '0';
                 end if;
+            end if;
+
+            -- The generated CSR bank accepts one AXI-Lite write at a time.
+            -- AW identifies an image transaction; BVALID is observed one or
+            -- more clocks after the register data is committed, so the packed
+            -- source is stable before the sender captures it.
+            if s_img_aw_hs = '1' then
+                s_img_write_inflight_r <= '1';
+            end if;
+            if s_img_write_inflight_r = '1' and s_axi_bvalid = '1' then
+                s_img_write_inflight_r <= '0';
+                s_img_snapshot_pending_r <= '1';
             end if;
         end if;
     end process p_send_img;
@@ -774,8 +799,8 @@ begin
 
     -- =========================================================================
     -- [8] CDC-idle flag: all CTL handshakes quiescent (s_axi_aclk domain)
-    --   The image equality term covers the one-cycle gap between an ACK and
-    --   a required replay when software changed the image during transfer.
+    --   AW in-flight and committed-snapshot flags cover the complete interval
+    --   from an image write acceptance through delivery of its latest replay.
     --   Output directly to csr_pipeline via o_cdc_idle.
     --   Note: STAT CDCs (i_axis->s_axi direction) are NOT included.
     -- =========================================================================
@@ -789,7 +814,9 @@ begin
               and s_src_send_ctl4  = '0'
               and s_src_send_ctl21 = '0'
               and s_src_send_img   = '0'
-              and s_img_src_packed = s_img_hold_r then
+              and s_img_write_inflight_r = '0'
+              and s_img_snapshot_pending_r = '0'
+              and s_img_aw_hs = '0' then
                 s_cdc_all_idle_src_r <= '1';
             else
                 s_cdc_all_idle_src_r <= '0';
