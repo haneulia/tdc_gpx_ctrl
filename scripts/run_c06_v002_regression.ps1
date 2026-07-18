@@ -116,6 +116,7 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_status_agg.vhd",
     "$Hdl/tdc_gpx_top.vhd",
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
+    "$Hdl/tb_tdc_gpx_stop_cfg_decode.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
@@ -155,6 +156,11 @@ try {
         "xil_defaultlib.tb_tdc_gpx_range_ticks"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_range_ticks_snap", "-runall", "-log", "xsim_c06_v002_range_ticks_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_range_ticks_$Stamp.log" "5 ns range tick conversion matrix - PASS"
+
+    Invoke-Xelab "tb_c06_v002_stop_cfg_decode_snap" "xelab_c06_v002_stop_cfg_decode_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_stop_cfg_decode"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_stop_cfg_decode_snap", "-runall", "-log", "xsim_c06_v002_stop_cfg_decode_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_stop_cfg_decode_$Stamp.log" "tb_tdc_gpx_stop_cfg_decode: ALL TESTS PASSED"
 
     Invoke-Xelab "tb_c06_v002_face_seq_snap" "xelab_c06_v002_face_seq_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_face_seq"

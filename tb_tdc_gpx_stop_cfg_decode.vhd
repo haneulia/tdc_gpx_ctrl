@@ -146,40 +146,63 @@ begin
             report "mismatched fire_count did not flag orphan/ownership violation"
             severity failure;
 
-        -- Non-zero running total plus final marker remains count-known.
+        -- Two consecutive owned events prove one-cycle latency and II=1.
+        -- Event A enters the stage; expected outputs must still be zero.
         s_stop_evt_tdata <= (others => '0');
         s_stop_evt_tuser <= (others => '0');
-        s_stop_evt_tdata(3 downto 0) <= x"2";
+        s_stop_evt_tdata(3 downto 0) <= x"1";
         s_stop_evt_tuser(3 downto 0) <= x"1";
         s_stop_evt_tdata(7 downto 4) <= x"1";
-        s_stop_evt_tuser(7 downto 4) <= x"2";
+        s_stop_evt_tuser(7 downto 4) <= x"0";
         s_stop_evt_tvalid <= '1';
         s_fire_count_tvalid <= '1';
         s_fire_count_tlast  <= '0';
         s_fire_count_tdata  <= x"00000002";
         wait_clk(s_clk, 1);
-        s_stop_evt_tvalid <= '0';
-        s_fire_count_tvalid <= '0';
+        wait for 1 ps;
+
+        assert s_expected_ififo1(0) = 0 and s_expected_ififo2(0) = 0
+            report "owned event bypassed the registered stage"
+            severity failure;
+
+        -- Event B enters while event A commits.
+        s_stop_evt_tdata(3 downto 0) <= x"2";
+        s_stop_evt_tuser(3 downto 0) <= x"2";
+        s_stop_evt_tdata(7 downto 4) <= x"1";
+        s_stop_evt_tuser(7 downto 4) <= x"2";
         wait_clk(s_clk, 1);
+        wait for 1 ps;
 
-        assert s_expected_ififo1(0) = to_unsigned(3, 8)
-            report "IFIFO1 expected count decode failed"
+        assert s_expected_ififo1(0) = to_unsigned(2, 8)
+            report "event A IFIFO1 count did not commit at stage output"
             severity failure;
-        assert s_expected_ififo2(0) = to_unsigned(3, 8)
-            report "IFIFO2 expected count decode failed"
+        assert s_expected_ififo2(0) = to_unsigned(1, 8)
+            report "event A IFIFO2 count did not commit at stage output"
             severity failure;
 
+        -- The final beat immediately after event B must commit event B and
+        -- FINAL on the same edge, preserving the atomic expected-count tuple.
+        s_stop_evt_tvalid <= '0';
         s_fire_count_tvalid <= '1';
         s_fire_count_tlast  <= '1';
         s_fire_count_tdata  <= x"00000002";
         wait_clk(s_clk, 1);
+        wait for 1 ps;
+
+        assert s_expected_ififo1(0) = to_unsigned(4, 8)
+            report "event B IFIFO1 count was lost under II=1 traffic"
+            severity failure;
+        assert s_expected_ififo2(0) = to_unsigned(3, 8)
+            report "event B IFIFO2 count was lost under II=1 traffic"
+            severity failure;
+        assert s_expected_final_valid = '1'
+            report "final marker was not aligned with the last staged event"
+            severity failure;
+
         s_fire_count_tvalid <= '0';
         s_fire_count_tlast  <= '0';
         wait_clk(s_clk, 1);
 
-        assert s_expected_final_valid = '1'
-            report "non-zero final marker did not assert expected_final_valid"
-            severity failure;
         assert s_stop_evt_tready = '1'
             report "stop_evt ready contract should be always ready"
             severity failure;
