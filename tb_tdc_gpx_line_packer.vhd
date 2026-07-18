@@ -12,13 +12,14 @@ use work.tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_line_packer is
     generic (
-        G_WIDTH : natural := 32
+        G_WIDTH    : natural := 32;
+        G_MAX_HITS : natural range 1 to c_MAX_HITS_PER_STOP := 7
     );
 end entity tb_tdc_gpx_line_packer;
 
 architecture sim of tb_tdc_gpx_line_packer is
     constant C_CLK_PERIOD       : time := 10 ns;
-    constant C_MAX_HITS         : natural := 7;
+    constant C_MAX_HITS         : natural := G_MAX_HITS;
     constant C_CELLS            : natural := 3;
     constant C_WORDS_PER_BEAT   : natural := G_WIDTH / 32;
     constant C_HIT_WORDS        : natural := fn_ceil_div(C_MAX_HITS, 2);
@@ -165,6 +166,7 @@ begin
         wait until pack_idle = '1';
         wait for 2 * C_CLK_PERIOD;
         report "PASS: line_packer width=" & integer'image(G_WIDTH)
+             & " max_hits=" & integer'image(C_MAX_HITS)
              & " canonical words=" & integer'image(C_DATA_WORDS)
              & " aligned words=" & integer'image(C_ALIGNED_WORDS)
             severity note;

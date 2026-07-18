@@ -109,6 +109,8 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_decode_pipe.vhd",
     "$Hdl/tdc_gpx_face_assembler.vhd",
     "$Hdl/tdc_gpx_line_packer.vhd",
+    "$Hdl/tb_tdc_gpx_line_packer.vhd",
+    "$Hdl/tb_tdc_gpx_line_packer_widths.vhd",
     "$Hdl/tdc_gpx_header_inserter.vhd",
     "$Hdl/tdc_gpx_face_seq.vhd",
     "$Hdl/tdc_gpx_output_stage.vhd",
@@ -161,6 +163,23 @@ try {
         "xil_defaultlib.tb_tdc_gpx_stop_cfg_decode"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_stop_cfg_decode_snap", "-runall", "-log", "xsim_c06_v002_stop_cfg_decode_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_stop_cfg_decode_$Stamp.log" "tb_tdc_gpx_stop_cfg_decode: ALL TESTS PASSED"
+
+    $linePackerCases = @(
+        @{ Name = "w32_mh7";   Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w32" },
+        @{ Name = "w64_mh7";   Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w64" },
+        @{ Name = "w128_mh7";  Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w128" },
+        @{ Name = "w32_mh3";   Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w32_mh3" },
+        @{ Name = "w64_mh3";   Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w64_mh3" },
+        @{ Name = "w128_mh3";  Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w128_mh3" }
+    )
+    foreach ($lp in $linePackerCases) {
+        $snap = "tb_c06_v002_line_packer_$($lp.Name)_snap"
+        $xelabLog = "xelab_c06_v002_line_packer_$($lp.Name)_$Stamp.log"
+        $xsimLog = "xsim_c06_v002_line_packer_$($lp.Name)_$Stamp.log"
+        Invoke-Xelab $snap $xelabLog $lp.Top
+        Invoke-Checked "$Vivado/xsim.bat" @($snap, "-runall", "-log", $xsimLog)
+        Assert-SimLog $xsimLog "PASS: line_packer width="
+    }
 
     Invoke-Xelab "tb_c06_v002_face_seq_snap" "xelab_c06_v002_face_seq_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_face_seq"
