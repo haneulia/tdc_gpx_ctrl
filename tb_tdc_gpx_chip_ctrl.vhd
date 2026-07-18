@@ -32,6 +32,7 @@
 --   [17] Stale expected-count mismatch -> faulted drain_done, no empty read
 --   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
+--   [20] Forced pending response trips the secondary deadlock watchdog.
 --   Negative modes:
 --     g_NEGATIVE_MODE=1: force empty IFIFO read monitor and fail intentionally.
 --     g_NEGATIVE_MODE=2: force raw tuser monitor and fail intentionally.
@@ -133,10 +134,13 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_bus_busy_to_ctrl   : std_logic;
     signal s_bus_rsp_pending_to_ctrl : std_logic;
     signal s_force_resp_drain_stuck : std_logic := '0';
+    signal s_force_bus_rsp_pending  : std_logic := '0';
+    signal s_force_bus_rsp_hide     : std_logic := '0';
     signal s_tick_en            : std_logic;
 
     -- bus_phy → chip_ctrl AXI-Stream (response)
     signal s_brsp_axis_tvalid   : std_logic;
+    signal s_brsp_axis_tvalid_to_ctrl : std_logic;
     signal s_brsp_axis_tdata    : std_logic_vector(31 downto 0);
     signal s_brsp_axis_tkeep    : std_logic_vector(3 downto 0);
     signal s_brsp_axis_tuser    : std_logic_vector(7 downto 0);
@@ -194,6 +198,8 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_err_bus_fatal      : std_logic;
     signal s_drain_done_faulted : std_logic;
     signal s_err_force_reinit   : std_logic;
+    signal s_run_timeout        : std_logic;
+    signal s_run_timeout_cause  : std_logic_vector(2 downto 0);
     signal s_expected_ififo1    : unsigned(7 downto 0) := (others => '0');
     signal s_expected_ififo2    : unsigned(7 downto 0) := (others => '0');
     signal s_expected_final_valid : std_logic := '0';
@@ -290,7 +296,8 @@ begin
     -- DUT: chip_ctrl
     -- =========================================================================
     s_bus_busy_to_ctrl <= s_bus_busy or s_force_resp_drain_stuck;
-    s_bus_rsp_pending_to_ctrl <= s_bus_rsp_pending;
+    s_bus_rsp_pending_to_ctrl <= s_bus_rsp_pending or s_force_bus_rsp_pending;
+    s_brsp_axis_tvalid_to_ctrl <= s_brsp_axis_tvalid and not s_force_bus_rsp_hide;
 
     u_chip_ctrl : entity work.tdc_gpx_chip_ctrl
         generic map (
@@ -332,7 +339,7 @@ begin
             o_bus_req_burst     => s_bus_req_burst,
             o_bus_clk_div_snap  => open,
             o_bus_ticks_snap    => open,
-            i_s_axis_tvalid     => s_brsp_axis_tvalid,
+            i_s_axis_tvalid     => s_brsp_axis_tvalid_to_ctrl,
             i_s_axis_tdata      => s_brsp_axis_tdata,
             i_s_axis_tuser      => s_brsp_axis_tuser,
             o_s_axis_tready     => s_brsp_axis_tready,
@@ -361,8 +368,8 @@ begin
             o_err_raw_drop      => s_err_raw_drop,
             o_err_drain_cap     => s_err_drain_cap,
             o_err_reg_overflow  => open,
-            o_run_timeout       => open,
-            o_run_timeout_cause => open,
+            o_run_timeout       => s_run_timeout,
+            o_run_timeout_cause => s_run_timeout_cause,
             o_init_cfg_coalesced => open,
             o_err_cmd_collision => open,
             o_err_force_reinit  => s_err_force_reinit,
@@ -2450,6 +2457,71 @@ begin
         else
             pr_fail("[19] chip_ctrl did not return to idle after recovery",
                     v_fail);
+        end if;
+
+        -- =============================================================
+        -- [20] Forced pending response -> secondary deadlock watchdog
+        -- =============================================================
+        pr_info("[20] Forced pending response -> secondary watchdog timeout");
+
+        -- Start from a clean controller because [19] intentionally raised
+        -- the response-drain quarantine diagnostics.
+        pulse(s_cmd_soft_reset);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[20] soft-reset setup did not return to idle", v_fail);
+        end if;
+
+        s_cfg.drain_mode  <= '1';
+        s_cfg.n_drain_cap <= (others => '0');
+        s_raw_axis_tready <= '1';
+        fill_fifos_with_expected(1, 0, 1, 0);
+        wait_clk(5);
+
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        -- Hide the bus response from chip_ctrl while presenting a persistent
+        -- pending level. This isolates the wait-state secondary watchdog from
+        -- the shorter ST_DRAIN_CHECK raw-busy watchdog.
+        s_force_bus_rsp_pending <= '1';
+        s_force_bus_rsp_hide    <= '1';
+        s_irflag_pin <= '1';
+        v_t0_cycle := s_clk_cnt;
+
+        tb_wait_sig_value(s_clk, s_run_timeout, '1', 70000, v_found);
+        wait for 0 ns;
+        if not v_found then
+            pr_fail("[20] pending-response watchdog did not fire", v_fail);
+        elsif s_run_timeout_cause /= "001" then
+            pr_fail("[20] wrong pending-response timeout cause=0x"
+                    & hex_img(s_run_timeout_cause), v_fail);
+        elsif s_clk_cnt - v_t0_cycle < 65530
+           or s_clk_cnt - v_t0_cycle > 65750 then
+            pr_fail("[20] pending watchdog fired outside expected window: "
+                    & nat_img(s_clk_cnt - v_t0_cycle) & "clk", v_fail);
+        else
+            pr_pass("[20] pending watchdog fired with cause 001 after "
+                    & nat_img(s_clk_cnt - v_t0_cycle) & "clk");
+        end if;
+
+        s_force_bus_rsp_pending <= '0';
+        s_force_bus_rsp_hide    <= '0';
+        wait_drain_done(200, v_found);
+        if v_found then
+            pr_pass("[20] timeout completion reached raw drain_done output");
+        else
+            pr_fail("[20] timeout completion did not reach drain_done", v_fail);
+        end if;
+
+        s_irflag_pin <= '0';
+        pulse(s_cmd_stop);
+        wait_ctrl_idle(5000, v_found);
+        if v_found then
+            pr_pass("[20] controller recovered after releasing backpressure");
+        else
+            pr_fail("[20] controller did not recover after timeout", v_fail);
         end if;
 
         -- =============================================================

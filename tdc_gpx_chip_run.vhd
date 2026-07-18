@@ -382,6 +382,7 @@ architecture rtl of tdc_gpx_chip_run is
     -- FSM is in a wait-for-response drain state AND pending='1' AND no fire;
     -- it fires a timeout if downstream never drains.
     signal s_pending_stuck_cnt_r : unsigned(15 downto 0) := (others => '0');
+    signal s_pending_stuck_expired_r : std_logic := '0';
 
     signal s_raw_word_r        : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_raw_valid_r       : std_logic := '0';
@@ -440,6 +441,23 @@ begin
             end if;
         end if;
     end process p_wait_expired;
+
+    -- Register the wide watchdog comparison before it reaches FSM control.
+    -- The look-ahead threshold preserves the original timeout cycle: while
+    -- the FSM advances FF_FE -> FF_FF, this flag becomes visible and the next
+    -- cycle takes the same exit formerly selected by a direct FF_FF compare.
+    p_pending_stuck_expired : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_pending_stuck_expired_r <= '0';
+            elsif s_pending_stuck_cnt_r = x"FFFE" then
+                s_pending_stuck_expired_r <= '1';
+            else
+                s_pending_stuck_expired_r <= '0';
+            end if;
+        end if;
+    end process p_pending_stuck_expired;
 
     p_fsm : process(i_clk)
         variable v_eval : t_drain_eval;
@@ -796,7 +814,7 @@ begin
                             -- full 16-bit count, downstream has deadlocked —
                             -- force a safe drain exit so the coordinator can
                             -- recover the chip via soft_reset.
-                            if s_pending_stuck_cnt_r = x"FFFF" then
+                            if s_pending_stuck_expired_r = '1' then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
                                 s_range_active_r  <= '0';
@@ -840,7 +858,7 @@ begin
                             -- single read has reached the response path.
                             s_req_valid_r <= '0';
                             -- Round 9 #1 secondary watchdog (see ST_DRAIN_EF1)
-                            if s_pending_stuck_cnt_r = x"FFFF" then
+                            if s_pending_stuck_expired_r = '1' then
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
                                 s_range_active_r  <= '0';
@@ -898,7 +916,7 @@ begin
                                 s_req_valid_r <= '0';
                             end if;
                             -- Round 9 #1 secondary watchdog
-                            if s_pending_stuck_cnt_r = x"FFFF" then
+                            if s_pending_stuck_expired_r = '1' then
                                 s_req_burst_r     <= '0';
                                 s_req_valid_r     <= '0';
                                 s_oen_permanent_r <= '0';
@@ -950,7 +968,7 @@ begin
                             -- watchdog (separate from s_wait_cnt_r) forces an
                             -- exit if pending never releases, matching the
                             -- Round 9 #1 pattern for EF/BURST states.
-                            if s_pending_stuck_cnt_r = x"FFFF" then
+                            if s_pending_stuck_expired_r = '1' then
                                 s_oen_permanent_r <= '0';
                                 s_range_active_r  <= '0';
                                 s_drain_done_r    <= '1';
