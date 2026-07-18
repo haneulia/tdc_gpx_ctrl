@@ -432,7 +432,8 @@ begin
             u_cell_bld_rise : entity work.tdc_gpx_cell_builder
                 generic map (
                     g_CHIP_ID     => i,
-                    g_TDATA_WIDTH => g_OUTPUT_WIDTH
+                    g_TDATA_WIDTH => g_OUTPUT_WIDTH,
+                    g_SLOPE_VALUE => '1'
                 )
                 port map (
                     i_clk               => i_clk,
@@ -477,7 +478,8 @@ begin
             u_cell_bld_fall : entity work.tdc_gpx_cell_builder
                 generic map (
                     g_CHIP_ID     => i,
-                    g_TDATA_WIDTH => g_OUTPUT_WIDTH
+                    g_TDATA_WIDTH => g_OUTPUT_WIDTH,
+                    g_SLOPE_VALUE => '0'
                 )
                 port map (
                     i_clk               => i_clk,
