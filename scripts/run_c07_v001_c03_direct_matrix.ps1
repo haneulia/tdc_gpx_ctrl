@@ -173,6 +173,20 @@ try {
         )
     Invoke-Checked "$Vivado/xsim.bat" @($reuseSnap, "-runall", "-log", $reuseLog)
     Assert-SimLog $reuseLog "PASS: C07 C03 reused buffer invalidated stale payload width=64 max_hits=3"
+
+    foreach ($mh in @(3, 7)) {
+        $overflowSnap = "tb_c07_v001_c03_overflow_shadow_w64_mh${mh}_snap"
+        $overflowLog = "xsim_c07_v001_c03_overflow_shadow_w64_mh${mh}_$Stamp.log"
+        Invoke-Xelab $overflowSnap "xelab_c07_v001_c03_overflow_shadow_w64_mh${mh}_$Stamp.log" `
+            "xil_defaultlib.tb_tdc_gpx_cell_builder_c07_direct" `
+            @(
+                "G_TDATA_WIDTH=64",
+                "G_MAX_HITS=$mh",
+                "G_SCENARIO=6"
+            )
+        Invoke-Checked "$Vivado/xsim.bat" @($overflowSnap, "-runall", "-log", $overflowLog)
+        Assert-SimLog $overflowLog "PASS: C07 C03 overflow shadow mask width=64 max_hits=$mh injected=8"
+    }
 }
 finally {
     Pop-Location

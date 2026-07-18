@@ -10,6 +10,7 @@
 --   G_SCENARIO=3 : no-free-buffer drop, DROP->QUARANTINE, clean final-drain exit
 --   G_SCENARIO=4 : per-buffer stops_per_chip snapshot remains atomic
 --   G_SCENARIO=5 : reused buffer invalidates stale payload from the prior shot
+--   G_SCENARIO=6 : overflow shadow writes cannot escape the active-slot mask
 --
 -- Standard: VHDL-2008
 --------------------------------------------------------------------------------
@@ -67,6 +68,7 @@ architecture sim of tb_tdc_gpx_cell_builder_c07_direct is
     signal s_timeout_count   : natural := 0;
     signal s_tlast_count     : natural := 0;
     signal s_stop_error_count : natural := 0;
+    signal s_hit_drop_count   : natural := 0;
 
 begin
 
@@ -112,6 +114,7 @@ begin
                 s_timeout_count   <= 0;
                 s_tlast_count     <= 0;
                 s_stop_error_count <= 0;
+                s_hit_drop_count   <= 0;
             else
                 if s_shot_dropped = '1' then
                     s_shot_drop_count <= s_shot_drop_count + 1;
@@ -124,6 +127,9 @@ begin
                 end if;
                 if s_stop_id_error = '1' then
                     s_stop_error_count <= s_stop_error_count + 1;
+                end if;
+                if s_hit_dropped = '1' then
+                    s_hit_drop_count <= s_hit_drop_count + 1;
                 end if;
             end if;
         end if;
@@ -282,7 +288,10 @@ begin
             end loop;
         end procedure;
 
-        procedure check_meta_beat(count : natural) is
+        procedure check_meta_beat(
+            count            : natural;
+            expected_dropped : std_logic := '0'
+        ) is
             variable v_valid : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
             variable v_msb   : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
         begin
@@ -297,8 +306,8 @@ begin
             assert unsigned(s_m_tdata(15 downto 12)) = to_unsigned(count, 4)
                 report "FAIL: metadata hit_count mismatch"
                 severity failure;
-            assert s_m_tdata(11) = '0'
-                report "FAIL: metadata hit_dropped unexpectedly set"
+            assert s_m_tdata(11) = expected_dropped
+                report "FAIL: metadata hit_dropped mismatch"
                 severity failure;
             assert s_m_tdata(10) = '0'
                 report "FAIL: metadata error_fill unexpectedly set"
@@ -311,7 +320,12 @@ begin
                 severity failure;
         end procedure;
 
-        procedure expect_slice(base : natural; count : natural; label_text : string) is
+        procedure expect_slice(
+            base             : natural;
+            count            : natural;
+            label_text       : string;
+            expected_dropped : std_logic := '0'
+        ) is
             variable v_timeout : natural := 0;
             variable v_beat    : natural := 0;
             variable v_seen    : boolean := false;
@@ -325,7 +339,7 @@ begin
                             report "FAIL: early tlast in " & label_text
                             severity failure;
                     else
-                        check_meta_beat(count);
+                        check_meta_beat(count, expected_dropped);
                         assert s_m_tlast = '1'
                             report "FAIL: final metadata beat missing tlast in " & label_text
                             severity failure;
@@ -628,6 +642,33 @@ begin
                 severity note;
         end procedure;
 
+        procedure scenario_overflow_shadow_mask is
+            constant c_INJECTED_HITS : natural := c_MAX_HITS_PER_STOP + 1;
+        begin
+            reset_dut;
+            s_stops    <= to_unsigned(1, 4);
+            s_max_hits <= to_unsigned(G_MAX_HITS, 3);
+            wait_cycles(2);
+
+            pulse_shot;
+            send_hits(16#7600#, c_INJECTED_HITS, 0);
+            send_evt((others => '0'), fn_tuser_drain('0', '0'));
+            expect_slice(16#7600#, G_MAX_HITS, "overflow shadow mask", '1');
+
+            assert s_hit_drop_count = c_INJECTED_HITS - G_MAX_HITS
+                report "FAIL: overflow drop pulse count mismatch"
+                severity failure;
+            assert s_stop_error_count = 0 and s_shot_drop_count = 0 and
+                   s_timeout_count = 0
+                report "FAIL: overflow shadow mask raised unrelated status"
+                severity failure;
+            report "PASS: C07 C03 overflow shadow mask width=" &
+                   integer'image(G_TDATA_WIDTH) & " max_hits=" &
+                   integer'image(G_MAX_HITS) & " injected=" &
+                   integer'image(c_INJECTED_HITS)
+                severity note;
+        end procedure;
+
     begin
         assert fn_output_width_supported(G_TDATA_WIDTH)
             report "FAIL: unsupported G_TDATA_WIDTH"
@@ -649,6 +690,8 @@ begin
                 scenario_stops_snapshot;
             when 5 =>
                 scenario_reuse_invalidates_stale;
+            when 6 =>
+                scenario_overflow_shadow_mask;
             when others =>
                 assert false
                     report "FAIL: unsupported G_SCENARIO"
