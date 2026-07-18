@@ -233,6 +233,115 @@ architecture rtl of tdc_gpx_chip_run is
         end if;
     end function;
 
+    type t_drain_eval is record
+        ififo1_done     : std_logic;
+        ififo2_done     : std_logic;
+        ififo1_can_read : std_logic;
+        ififo2_can_read : std_logic;
+        ififo1_burst    : std_logic;
+        ififo2_burst    : std_logic;
+        drain_mismatch  : std_logic;
+    end record;
+
+    constant c_DRAIN_EVAL_ZERO : t_drain_eval := (
+        ififo1_done     => '0',
+        ififo2_done     => '0',
+        ififo1_can_read => '0',
+        ififo2_can_read => '0',
+        ififo1_burst    => '0',
+        ififo2_burst    => '0',
+        drain_mismatch  => '0'
+    );
+
+    -- Keep the wide count/cap arithmetic on the input side of the DECIDE
+    -- register boundary. CHECK uses this after the initial expected-count
+    -- snapshot; SETTLE reuses it to avoid one idle state per read burst.
+    function fn_drain_eval(
+        purge_mode       : std_logic;
+        drain_mode       : std_logic;
+        fill             : unsigned(7 downto 0);
+        ef1_sync          : std_logic;
+        ef2_sync          : std_logic;
+        lf1_sync          : std_logic;
+        lf2_sync          : std_logic;
+        n_drain_cap       : unsigned(3 downto 0);
+        expected_valid    : std_logic;
+        expected_ififo1   : unsigned(7 downto 0);
+        expected_ififo2   : unsigned(7 downto 0);
+        drain_cnt_ififo1  : unsigned(7 downto 0);
+        drain_cnt_ififo2  : unsigned(7 downto 0)
+    ) return t_drain_eval is
+        variable v_result               : t_drain_eval := c_DRAIN_EVAL_ZERO;
+        variable v_cap                  : unsigned(7 downto 0);
+        variable v_count_known          : boolean;
+        variable v_ififo1_done         : boolean;
+        variable v_ififo2_done         : boolean;
+        variable v_ififo1_can_read     : boolean;
+        variable v_ififo2_can_read     : boolean;
+        variable v_ififo1_zero_conflict : boolean;
+        variable v_ififo2_zero_conflict : boolean;
+    begin
+        v_cap := shift_left(resize(n_drain_cap, 8), 2);
+        v_count_known := purge_mode = '0' and expected_valid = '1';
+
+        v_ififo1_done := (ef1_sync = '1')
+            or (v_count_known and drain_cnt_ififo1 >= expected_ififo1)
+            or (purge_mode = '0' and n_drain_cap /= "0000"
+                and drain_cnt_ififo1 >= v_cap);
+        v_ififo2_done := (ef2_sync = '1')
+            or (v_count_known and drain_cnt_ififo2 >= expected_ififo2)
+            or (purge_mode = '0' and n_drain_cap /= "0000"
+                and drain_cnt_ififo2 >= v_cap);
+
+        v_ififo1_can_read := not v_ififo1_done
+            and ef1_sync = '0'
+            and ((not v_count_known)
+                 or drain_cnt_ififo1 < expected_ififo1);
+        v_ififo2_can_read := not v_ififo2_done
+            and ef2_sync = '0'
+            and ((not v_count_known)
+                 or drain_cnt_ififo2 < expected_ififo2);
+
+        v_ififo1_zero_conflict := v_count_known
+            and expected_ififo1 = 0 and ef1_sync = '0';
+        v_ififo2_zero_conflict := v_count_known
+            and expected_ififo2 = 0 and ef2_sync = '0';
+
+        if v_ififo1_done then
+            v_result.ififo1_done := '1';
+        end if;
+        if v_ififo2_done then
+            v_result.ififo2_done := '1';
+        end if;
+        if v_ififo1_can_read then
+            v_result.ififo1_can_read := '1';
+        end if;
+        if v_ififo2_can_read then
+            v_result.ififo2_can_read := '1';
+        end if;
+        if purge_mode = '0' and drain_mode = '1' and fill >= 2
+           and ef1_sync = '0' and lf1_sync = '1'
+           and v_ififo1_can_read
+           and expected_ififo1 >= drain_cnt_ififo1 + 2 then
+            v_result.ififo1_burst := '1';
+        end if;
+        if purge_mode = '0' and drain_mode = '1' and fill >= 2
+           and ef2_sync = '0' and lf2_sync = '1'
+           and v_ififo2_can_read
+           and expected_ififo2 >= drain_cnt_ififo2 + 2 then
+            v_result.ififo2_burst := '1';
+        end if;
+        if purge_mode = '0' and expected_valid = '1'
+           and ((drain_cnt_ififo1 /= expected_ififo1)
+                or (drain_cnt_ififo2 /= expected_ififo2)
+                or v_ififo1_zero_conflict
+                or v_ififo2_zero_conflict) then
+            v_result.drain_mismatch := '1';
+        end if;
+
+        return v_result;
+    end function;
+
     signal s_wait_cnt_r        : unsigned(15 downto 0) := (others => '0');
     -- Phase B: latched once per shot on the ST_ARMED→ST_CAPTURE edge.
     -- Init = x"FFFF" so pre-first-shot behavior matches the legacy cap.
@@ -289,13 +398,7 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_expected_valid_r  : std_logic := '0';
     signal s_drain_cnt_ififo1_r : unsigned(7 downto 0) := (others => '0');
     signal s_drain_cnt_ififo2_r : unsigned(7 downto 0) := (others => '0');
-    signal s_eval_ififo1_done_r     : std_logic := '0';
-    signal s_eval_ififo2_done_r     : std_logic := '0';
-    signal s_eval_ififo1_can_read_r : std_logic := '0';
-    signal s_eval_ififo2_can_read_r : std_logic := '0';
-    signal s_eval_ififo1_burst_r    : std_logic := '0';
-    signal s_eval_ififo2_burst_r    : std_logic := '0';
-    signal s_eval_drain_mismatch_r  : std_logic := '0';
+    signal s_eval_r : t_drain_eval := c_DRAIN_EVAL_ZERO;
 
     signal s_fill_r            : unsigned(7 downto 0) := (others => '0');
     -- Number of responses still needed before the current burst closes.
@@ -339,20 +442,24 @@ begin
     end process p_wait_expired;
 
     p_fsm : process(i_clk)
-        variable v_cap             : unsigned(7 downto 0);
-        variable v_ififo1_count_known : boolean;
-        variable v_ififo2_count_known : boolean;
-        variable v_ififo1_done     : boolean;
-        variable v_ififo2_done     : boolean;
-        variable v_ififo1_can_read : boolean;
-        variable v_ififo2_can_read : boolean;
-        variable v_ififo1_burst    : boolean;
-        variable v_ififo2_burst    : boolean;
-        variable v_ififo1_zero_conflict : boolean;
-        variable v_ififo2_zero_conflict : boolean;
-        variable v_drain_mismatch  : boolean;
+        variable v_eval : t_drain_eval;
     begin
         if rising_edge(i_clk) then
+            v_eval := fn_drain_eval(
+                purge_mode      => s_purge_mode_r,
+                drain_mode      => i_drain_mode,
+                fill            => s_fill_r,
+                ef1_sync        => i_ef1_sync,
+                ef2_sync        => i_ef2_sync,
+                lf1_sync        => i_lf1_sync,
+                lf2_sync        => i_lf2_sync,
+                n_drain_cap     => i_n_drain_cap,
+                expected_valid  => s_expected_valid_r,
+                expected_ififo1 => s_expected_ififo1_r,
+                expected_ififo2 => s_expected_ififo2_r,
+                drain_cnt_ififo1 => s_drain_cnt_ififo1_r,
+                drain_cnt_ififo2 => s_drain_cnt_ififo2_r
+            );
             if i_rst_n = '0' then
                 s_state_r           <= ST_OFF;
                 s_wait_cnt_r        <= (others => '0');
@@ -376,13 +483,7 @@ begin
                 s_expected_valid_r  <= '0';
                 s_drain_cnt_ififo1_r <= (others => '0');
                 s_drain_cnt_ififo2_r <= (others => '0');
-                s_eval_ififo1_done_r     <= '0';
-                s_eval_ififo2_done_r     <= '0';
-                s_eval_ififo1_can_read_r <= '0';
-                s_eval_ififo2_can_read_r <= '0';
-                s_eval_ififo1_burst_r    <= '0';
-                s_eval_ififo2_burst_r    <= '0';
-                s_eval_drain_mismatch_r  <= '0';
+                s_eval_r <= c_DRAIN_EVAL_ZERO;
                 s_burst_remaining_r <= (others => '0');
                 s_range_active_r    <= '0';
                 s_purge_mode_r      <= '0';
@@ -529,108 +630,11 @@ begin
                     when ST_DRAIN_CHECK =>
                       if i_raw_busy = '0' then
                         s_wait_cnt_r <= (others => '0');  -- clear raw_busy watchdog
-                        -- n_drain_cap × 4: each cap unit = 4 IFIFO words (burst quantum)
-                        v_cap := shift_left(resize(i_n_drain_cap, 8), 2);  -- ×4
-
-                        -- C02 count-known contract: expected_final_valid makes
-                        -- the count a hard drain bound. This lets expected=0
-                        -- mean "known zero" for zero-stop shots; without the
-                        -- final marker, zero keeps the legacy EF fallback.
-                        v_ififo1_count_known := s_purge_mode_r = '0'
-                            and s_expected_valid_r = '1';
-                        v_ififo2_count_known := s_purge_mode_r = '0'
-                            and s_expected_valid_r = '1';
-
-                        v_ififo1_done := (i_ef1_sync = '1')
-                            or (v_ififo1_count_known
-                                and s_drain_cnt_ififo1_r >= s_expected_ififo1_r)
-                            or (s_purge_mode_r = '0' and i_n_drain_cap /= "0000"
-                                and s_drain_cnt_ififo1_r >= v_cap);
-                        v_ififo2_done := (i_ef2_sync = '1')
-                            or (v_ififo2_count_known
-                                and s_drain_cnt_ififo2_r >= s_expected_ififo2_r)
-                            or (s_purge_mode_r = '0' and i_n_drain_cap /= "0000"
-                                and s_drain_cnt_ififo2_r >= v_cap);
-
-                        v_ififo1_can_read := not v_ififo1_done
-                            and (i_ef1_sync = '0')
-                            and ((not v_ififo1_count_known)
-                                 or s_drain_cnt_ififo1_r < s_expected_ififo1_r);
-                        v_ififo2_can_read := not v_ififo2_done
-                            and (i_ef2_sync = '0')
-                            and ((not v_ififo2_count_known)
-                                 or s_drain_cnt_ififo2_r < s_expected_ififo2_r);
-
-                        v_ififo1_zero_conflict := v_ififo1_count_known
-                            and s_expected_ififo1_r = 0
-                            and i_ef1_sync = '0';
-                        v_ififo2_zero_conflict := v_ififo2_count_known
-                            and s_expected_ififo2_r = 0
-                            and i_ef2_sync = '0';
-
-                        -- Expected-count mismatch is meaningful only after
-                        -- the upstream final marker. If EF reports data while
-                        -- final expected count is zero, do not read it, but
-                        -- flag the shot as suspect.
-                        v_drain_mismatch := s_purge_mode_r = '0'
-                            and s_expected_valid_r = '1'
-                            and ((s_drain_cnt_ififo1_r /= s_expected_ififo1_r)
-                                 or (s_drain_cnt_ififo2_r /= s_expected_ififo2_r)
-                                 or v_ififo1_zero_conflict
-                                 or v_ififo2_zero_conflict);
-
-                        v_ififo1_burst := s_purge_mode_r = '0'
-                            and i_drain_mode = '1'
-                            and s_fill_r >= 2
-                            and i_ef1_sync = '0' and i_lf1_sync = '1'
-                            and v_ififo1_can_read
-                            and s_expected_ififo1_r >= s_drain_cnt_ififo1_r + 2;
-                        v_ififo2_burst := s_purge_mode_r = '0'
-                            and i_drain_mode = '1'
-                            and s_fill_r >= 2
-                            and i_ef2_sync = '0' and i_lf2_sync = '1'
-                            and v_ififo2_can_read
-                            and s_expected_ififo2_r >= s_drain_cnt_ififo2_r + 2;
-
                         -- Register only compact predicates here. The following
                         -- DECIDE state drives requests and state controls from
                         -- these one-bit values, cutting the drain counters and
                         -- expected-count arithmetic out of those timing cones.
-                        if v_ififo1_done then
-                            s_eval_ififo1_done_r <= '1';
-                        else
-                            s_eval_ififo1_done_r <= '0';
-                        end if;
-                        if v_ififo2_done then
-                            s_eval_ififo2_done_r <= '1';
-                        else
-                            s_eval_ififo2_done_r <= '0';
-                        end if;
-                        if v_ififo1_can_read then
-                            s_eval_ififo1_can_read_r <= '1';
-                        else
-                            s_eval_ififo1_can_read_r <= '0';
-                        end if;
-                        if v_ififo2_can_read then
-                            s_eval_ififo2_can_read_r <= '1';
-                        else
-                            s_eval_ififo2_can_read_r <= '0';
-                        end if;
-                        if v_ififo1_burst then
-                            s_eval_ififo1_burst_r <= '1';
-                        else
-                            s_eval_ififo1_burst_r <= '0';
-                        end if;
-                        if v_ififo2_burst then
-                            s_eval_ififo2_burst_r <= '1';
-                        else
-                            s_eval_ififo2_burst_r <= '0';
-                        end if;
-                        if v_drain_mismatch then
-                            s_eval_drain_mismatch_r <= '1';
-                        else
-                            s_eval_drain_mismatch_r <= '0';
-                        end if;
+                        s_eval_r <= v_eval;
                         s_state_r <= ST_DRAIN_DECIDE;
                       else
                         -- raw_busy watchdog: abort drain if stalled too long
@@ -648,8 +652,8 @@ begin
 
                     when ST_DRAIN_DECIDE =>
                         -- Early IFIFO1 done beat
-                        if s_eval_ififo1_done_r = '1'
-                           and s_eval_ififo2_done_r = '0'
+                        if s_eval_r.ififo1_done = '1'
+                           and s_eval_r.ififo2_done = '0'
                            and s_ififo1_done_sent_r = '0'
                            and s_purge_mode_r = '0' then
                             s_ififo1_done_beat_r <= '1';
@@ -658,15 +662,15 @@ begin
                         end if;
 
                         -- Completion
-                        if s_eval_ififo1_done_r = '1'
-                           and s_eval_ififo2_done_r = '1' then
+                        if s_eval_r.ififo1_done = '1'
+                           and s_eval_r.ififo2_done = '1' then
                             s_oen_permanent_r <= '0';
                             s_range_active_r  <= '0';
                             s_wait_cnt_r      <= (others => '0');
                             if s_purge_mode_r = '1' then
                                 s_purge_mode_r <= '0';
                             end if;
-                            if s_eval_drain_mismatch_r = '1' then
+                            if s_eval_r.drain_mismatch = '1' then
                                 s_err_drain_mismatch_r <= '1';
                                 s_drain_done_faulted_r <= '1';
                             end if;
@@ -676,17 +680,17 @@ begin
                             s_state_r      <= ST_ALU_PULSE;
 
                         -- Burst IFIFO1
-                        elsif s_eval_ififo1_burst_r = '1' then
+                        elsif s_eval_r.ififo1_burst = '1' then
                             s_ififo_id_r  <= '0';
                             s_state_r     <= ST_DRAIN_BURST_PLAN;
 
                         -- Burst IFIFO2
-                        elsif s_eval_ififo2_burst_r = '1' then
+                        elsif s_eval_r.ififo2_burst = '1' then
                             s_ififo_id_r  <= '1';
                             s_state_r     <= ST_DRAIN_BURST_PLAN;
 
                         -- EF single IFIFO1
-                        elsif s_eval_ififo1_can_read_r = '1' then
+                        elsif s_eval_r.ififo1_can_read = '1' then
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '0';
                             s_req_addr_r  <= c_TDC_REG8_IFIFO1;
@@ -694,7 +698,7 @@ begin
                             s_state_r     <= ST_DRAIN_EF1;
 
                         -- EF single IFIFO2
-                        elsif s_eval_ififo2_can_read_r = '1' then
+                        elsif s_eval_r.ififo2_can_read = '1' then
                             s_req_valid_r <= '1';
                             s_req_rw_r    <= '0';
                             s_req_addr_r  <= c_TDC_REG9_IFIFO2;
@@ -717,7 +721,7 @@ begin
                             -- something went wrong upstream — flag it.
                             -- Purge-mode bypasses the check (it doesn't
                             -- track against expected counts).
-                            if s_eval_drain_mismatch_r = '1' then
+                            if s_eval_r.drain_mismatch = '1' then
                                 s_err_drain_mismatch_r <= '1';
                                 -- Round 13 axis 1a: co-assert "faulted"
                                 -- pulse so SW can distinguish a clean
@@ -982,7 +986,17 @@ begin
                     when ST_DRAIN_SETTLE =>
                         if s_wait_cnt_r = c_FLAG_SETTLE_LAST then
                             s_wait_cnt_r <= (others => '0');
-                            s_state_r    <= ST_DRAIN_CHECK;
+                            if i_raw_busy = '0' then
+                                -- The EF guard already consumed the wait
+                                -- interval. Capture the same registered
+                                -- predicates as CHECK and continue directly,
+                                -- avoiding one idle clock after every burst.
+                                s_eval_r <= v_eval;
+                                s_state_r <= ST_DRAIN_DECIDE;
+                            else
+                                -- CHECK owns the bounded raw-busy watchdog.
+                                s_state_r <= ST_DRAIN_CHECK;
+                            end if;
                         else
                             s_wait_cnt_r <= s_wait_cnt_r + 1;
                         end if;

@@ -234,11 +234,30 @@ architecture rtl of tdc_gpx_top is
         cell_slots : unsigned(15 downto 0);
         max_hits   : unsigned(2 downto 0)
     ) return unsigned is
+        variable v_slots          : natural;
+        variable v_payload_blocks : natural;
+        variable v_total_blocks   : natural;
     begin
-        return to_unsigned(
-            fn_vdma_line_bytes(to_integer(cell_slots),
-                               fn_effective_max_hits(max_hits)),
-            16);
+        v_slots := to_integer(cell_slots);
+
+        -- Canonical cell bytes are 8/12/16/20 for effective max_hits
+        -- 1..2/3..4/5..6/7. Compute directly in 16-byte line blocks to
+        -- avoid a general multiply followed by ceil-divide on this output
+        -- timing path.
+        case fn_effective_max_hits(max_hits) is
+            when 1 | 2 =>
+                v_payload_blocks := (v_slots + 1) / 2;
+            when 3 | 4 =>
+                v_payload_blocks := (3 * v_slots + 3) / 4;
+            when 5 | 6 =>
+                v_payload_blocks := v_slots;
+            when others =>
+                v_payload_blocks := (5 * v_slots + 3) / 4;
+        end case;
+
+        v_total_blocks := c_HDR_PREFIX_BYTES / c_VDMA_LINE_ALIGN_BYTES
+                        + v_payload_blocks;
+        return to_unsigned(v_total_blocks * c_VDMA_LINE_ALIGN_BYTES, 16);
     end function;
 
     -- =========================================================================
@@ -392,8 +411,13 @@ architecture rtl of tdc_gpx_top is
     signal s_face_cols_per_face_r   : unsigned(15 downto 0);
     signal s_cell_slots_rise        : unsigned(15 downto 0);
     signal s_cell_slots_fall        : unsigned(15 downto 0);
-    signal s_vdma_hsize_rise        : unsigned(15 downto 0);
-    signal s_vdma_hsize_fall        : unsigned(15 downto 0);
+    signal s_geometry_slots_rise_r  : unsigned(15 downto 0) := (others => '0');
+    signal s_geometry_slots_fall_r  : unsigned(15 downto 0) := (others => '0');
+    signal s_geometry_max_hits_r    : unsigned(2 downto 0)  := (others => '0');
+    signal s_geometry_vsize_r       : unsigned(15 downto 0) := (others => '0');
+    signal s_vdma_hsize_rise        : unsigned(15 downto 0) := (others => '0');
+    signal s_vdma_hsize_fall        : unsigned(15 downto 0) := (others => '0');
+    signal s_vdma_vsize             : unsigned(15 downto 0) := (others => '0');
     signal s_face_state_idle        : std_logic;
     signal s_face_closing           : std_logic;
     signal s_packet_start           : std_logic;
@@ -498,14 +522,39 @@ begin
                                              s_face_stops_per_chip_r);
     s_cell_slots_fall <= fn_lane_cell_slots(s_face_fall_mask,
                                              s_face_stops_per_chip_r);
-    s_vdma_hsize_rise <= fn_lane_hsize(s_cell_slots_rise,
-                                        s_cfg_face_r.max_hits_cfg);
-    s_vdma_hsize_fall <= fn_lane_hsize(s_cell_slots_fall,
-                                        s_cfg_face_r.max_hits_cfg);
+    -- Runtime VDMA geometry is observational/programming metadata, not part
+    -- of the stream datapath. Two short registered stages replace the former
+    -- long combinational max_hits x cell_slots x align path. Values settle two
+    -- AXIS clocks after a new Face snapshot and remain stable for that Face.
+    p_vdma_geometry : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0' then
+                s_geometry_slots_rise_r <= (others => '0');
+                s_geometry_slots_fall_r <= (others => '0');
+                s_geometry_max_hits_r   <= (others => '0');
+                s_geometry_vsize_r      <= (others => '0');
+                s_vdma_hsize_rise       <= (others => '0');
+                s_vdma_hsize_fall       <= (others => '0');
+                s_vdma_vsize            <= (others => '0');
+            else
+                s_geometry_slots_rise_r <= s_cell_slots_rise;
+                s_geometry_slots_fall_r <= s_cell_slots_fall;
+                s_geometry_max_hits_r   <= s_cfg_face_r.max_hits_cfg;
+                s_geometry_vsize_r      <= s_face_cols_per_face_r;
+
+                s_vdma_hsize_rise <= fn_lane_hsize(
+                    s_geometry_slots_rise_r, s_geometry_max_hits_r);
+                s_vdma_hsize_fall <= fn_lane_hsize(
+                    s_geometry_slots_fall_r, s_geometry_max_hits_r);
+                s_vdma_vsize <= s_geometry_vsize_r;
+            end if;
+        end if;
+    end process p_vdma_geometry;
 
     o_vdma_hsize_bytes_rise <= s_vdma_hsize_rise;
     o_vdma_hsize_bytes_fall <= s_vdma_hsize_fall;
-    o_vdma_vsize_lines      <= s_face_cols_per_face_r;
+    o_vdma_vsize_lines      <= s_vdma_vsize;
 
     -- C06 v004: force_reinit is a recovery boundary for the chip-control
     -- cluster and the face sequencer. Treat it like soft_reset for
