@@ -13,6 +13,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 use work.tdc_gpx_pkg.all;
+use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_parent_core is
     generic (
@@ -144,12 +145,36 @@ architecture rtl of tdc_gpx_parent_core is
     signal s_vdma_hsize_fall : unsigned(15 downto 0);
     signal s_vdma_vsize      : unsigned(15 downto 0);
 
+    -- Geometry is produced in the AXIS domain but consumed by PS software in
+    -- the control domain. Transfer all three fields as one atomic snapshot so
+    -- AXI GPIO can never expose a mixed HSIZE/VSIZE tuple during reconfigure.
+    signal s_geometry_axis : std_logic_vector(47 downto 0);
+    signal s_geometry_ctrl : std_logic_vector(47 downto 0);
+
     attribute DONT_TOUCH : string;
     attribute DONT_TOUCH of u_tdc_gpx : label is "true";
 begin
-    o_vdma_hsize_bytes_rise <= std_logic_vector(s_vdma_hsize_rise);
-    o_vdma_hsize_bytes_fall <= std_logic_vector(s_vdma_hsize_fall);
-    o_vdma_vsize_lines      <= std_logic_vector(s_vdma_vsize);
+    s_geometry_axis <= std_logic_vector(s_vdma_vsize)
+                     & std_logic_vector(s_vdma_hsize_fall)
+                     & std_logic_vector(s_vdma_hsize_rise);
+
+    o_vdma_hsize_bytes_rise <= s_geometry_ctrl(15 downto 0);
+    o_vdma_hsize_bytes_fall <= s_geometry_ctrl(31 downto 16);
+    o_vdma_vsize_lines      <= s_geometry_ctrl(47 downto 32);
+
+    u_geometry_cdc : entity work.tdc_gpx_atomic_snapshot_cdc
+        generic map (
+            g_WIDTH   => 48,
+            g_SYNC_FF => 4
+        )
+        port map (
+            i_src_clk     => i_axis_aclk,
+            i_src_resetn  => i_axis_aresetn,
+            i_src_data    => s_geometry_axis,
+            i_dest_clk    => i_ctrl_aclk,
+            i_dest_resetn => i_ctrl_aresetn,
+            o_dest_data   => s_geometry_ctrl
+        );
 
     u_tdc_gpx : entity work.tdc_gpx_top
         generic map (

@@ -33,6 +33,70 @@ set project_dir  $build_dir
 set part_name    xc7z020clg484-2
 set bd_name      tdc_gpx_parent
 
+set parent_manual_cdc_groups [list \
+    [list tdc_pin_status \
+        {^.*/u_config_ctrl/.*u_bus_phy/s_(ef1|ef2|lf1|lf2|irflag|errflag)_meta_r_reg/D$} 24 24] \
+    [list diagnostic_status \
+        {^.*/u_config_ctrl/s_(cmd_collision|cmd_collision_vec|drain_faulted_mask|err_bus_fatal|err_drain_mismatch|err_force_reinit|err_raw_ctrl_drop|err_rw_ambiguous_reg|err_stopdis_mid_shot|init_cfg_coalesced)_meta_r_reg\[[0-9]+\]/D$} 40 12] \
+    [list csr_idle \
+        {^.*/s_cdc_all_idle_ff_reg\[0\]/D$} 2 2] \
+    [list command_toggle \
+        {^.*/s_cmd_(soft_reset|force_reinit)_sync_tdc_r_reg\[0\]/D$} 2 2]]
+
+proc verify_parent_manual_cdc {stage report_path groups} {
+    set report [open $report_path w]
+    fconfigure $report -encoding ascii -translation lf
+    set detail_path [file join [file dirname $report_path] ${stage}_manual_cdc_detail.rpt]
+    set detail [open $detail_path w]
+    fconfigure $detail -encoding ascii -translation lf
+    set expected_total [expr {$stage eq "post_route" ? 40 : 68}]
+    set total 0
+
+    foreach spec $groups {
+        lassign $spec group pattern synth_count route_count
+        set expected_count [expr {$stage eq "post_route" ? $route_count : $synth_count}]
+        set pins [get_pins -quiet -hier -regexp $pattern]
+        set actual_count [llength $pins]
+        if {$actual_count != $expected_count} {
+            puts $report "FAIL stage=$stage group=$group expected=$expected_count actual=$actual_count"
+            close $detail
+            close $report
+            error "parent CDC group '$group' expected $expected_count first-stage pins, got $actual_count"
+        }
+
+        set cells [get_cells -quiet -of_objects $pins]
+        set async_count 0
+        foreach async_reg [get_property ASYNC_REG $cells] {
+            if {[string toupper $async_reg] in {1 TRUE}} {
+                incr async_count
+            }
+        }
+        if {[llength $cells] != $actual_count || $async_count != $actual_count} {
+            puts $report "FAIL stage=$stage group=$group cells=[llength $cells] async_reg_cells=$async_count"
+            close $detail
+            close $report
+            error "parent CDC group '$group' matched a non-ASYNC_REG first-stage pin"
+        }
+
+        incr total $actual_count
+        foreach pin $pins {
+            puts $detail "PIN stage=$stage group=$group name=$pin"
+        }
+        puts $report "PASS stage=$stage group=$group first_stage_pins=$actual_count async_reg_pins=$actual_count"
+    }
+
+    if {$total != $expected_total} {
+        puts $report "FAIL stage=$stage total_first_stage_pins=$total expected=$expected_total"
+        close $detail
+        close $report
+        error "parent CDC first-stage total expected $expected_total pins, got $total"
+    }
+    puts $report "PASS stage=$stage total_first_stage_pins=$total"
+    close $detail
+    close $report
+    puts "PARENT_CDC_CONSTRAINT stage=$stage first_stage_pins=$total"
+}
+
 set ip_repo_axil   C:/Projects/my_sp/lib/IP/my_axil_csr/ip_repo
 set ip_repo_axil32 C:/Projects/my_sp/lib/IP/my_axil_csr32/ip_repo
 
@@ -52,6 +116,7 @@ set rtl_files [list \
     px_utility_pkg.vhd \
     tdc_gpx_pkg.vhd \
     tdc_gpx_cfg_pkg.vhd \
+    tdc_gpx_atomic_snapshot_cdc.vhd \
     tdc_gpx_bus_phy.vhd \
     tdc_gpx_skid_buffer.vhd \
     tdc_gpx_sync_fifo.vhd \
@@ -94,6 +159,12 @@ add_files -fileset sources_1 -norecurse $parent_core
 # wrapper intentionally uses only VHDL-93 syntax; the production RTL beneath
 # it remains VHDL-2008.
 set_property file_type VHDL [get_files $parent_core]
+
+set parent_xdc [file join $parent_dir constraints tdc_gpx_parent_ref.xdc]
+if {![file exists $parent_xdc]} {
+    error "missing parent constraint: $parent_xdc"
+}
+add_files -fileset constrs_1 -norecurse $parent_xdc
 
 # Generate the two CSR IPs from their source repositories. The parent project
 # does not rely on generated products from the standalone tdc_gpx_ctrl.xpr.
@@ -427,14 +498,19 @@ if {$run_mode in {SYNTH IMPL}} {
     reset_run synth_1
     launch_runs synth_1 -jobs 8
     wait_on_run synth_1
-    if {[get_property STATUS [get_runs synth_1]] !~ "*Complete*"} {
-        error "parent reference synthesis failed"
+    set synth_status [get_property STATUS [get_runs synth_1]]
+    if {![string match "*Complete*" $synth_status]} {
+        error "parent reference synthesis failed: status=$synth_status"
     }
     open_run synth_1
+    verify_parent_manual_cdc post_synth \
+        [file join $result_dir post_synth_manual_cdc.rpt] \
+        $parent_manual_cdc_groups
     report_utilization -hierarchical -hierarchical_depth 6 \
         -file [file join $result_dir post_synth_utilization_hier.rpt]
     report_timing_summary -delay_type min_max -report_unconstrained \
         -max_paths 50 -file [file join $result_dir post_synth_timing_summary.rpt]
+    report_bus_skew -file [file join $result_dir post_synth_bus_skew.rpt]
     report_cdc -details -file [file join $result_dir post_synth_cdc.rpt]
     report_clock_interaction \
         -file [file join $result_dir post_synth_clock_interaction.rpt]
@@ -448,14 +524,19 @@ if {$run_mode eq "IMPL"} {
     set_property strategy Performance_Explore [get_runs impl_1]
     launch_runs impl_1 -to_step route_design -jobs 8
     wait_on_run impl_1
-    if {[get_property STATUS [get_runs impl_1]] !~ "*Complete*"} {
-        error "parent reference implementation failed"
+    set impl_status [get_property STATUS [get_runs impl_1]]
+    if {![string match "*Complete*" $impl_status]} {
+        error "parent reference implementation failed: status=$impl_status"
     }
     open_run impl_1
+    verify_parent_manual_cdc post_route \
+        [file join $result_dir post_route_manual_cdc.rpt] \
+        $parent_manual_cdc_groups
     report_utilization -hierarchical -hierarchical_depth 6 \
         -file [file join $result_dir post_route_utilization_hier.rpt]
     report_timing_summary -delay_type min_max -report_unconstrained \
         -max_paths 50 -file [file join $result_dir post_route_timing_summary.rpt]
+    report_bus_skew -file [file join $result_dir post_route_bus_skew.rpt]
     report_cdc -details -file [file join $result_dir post_route_cdc.rpt]
     report_clock_interaction \
         -file [file join $result_dir post_route_clock_interaction.rpt]
