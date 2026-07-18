@@ -100,9 +100,10 @@
 --   Examples @64b: max_hits=7->3, max_hits=3->2, max_hits=1->2
 --
 -- Signal ownership (no multi-driver):
---   p_collect WRITES: s_cell_meta_r, s_hit_payload*_r, s_buf_state_r,
---                     s_buf_full_r, s_wr_buf_r,
---                     s_cstate_r, s_output_req_r, s_rd_buf_idx_r
+--   p_collect WRITES: s_cell_meta_r, s_payload_wr_*, s_buf_state_r,
+--                     s_buf_full_r, s_wr_buf_r, s_cstate_r,
+--                     s_output_req_r, s_rd_buf_idx_r
+--   p_payload_write WRITES: s_hit_payload*_r
 --   p_output  WRITES: s_cell_sel_r, s_ostate_r, s_tdata_r, s_tvalid_r,
 --                     s_tlast_r, s_output_done_r, etc.
 --   p_output  READS:  s_cell_meta_r, s_hit_payload*_r, s_buf_full_r,
@@ -278,6 +279,14 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_hit_payload5_r : t_hit_payload_mem;
     signal s_hit_payload6_r : t_hit_payload_mem;
 
+    -- One-cycle, II=1 payload write pipeline. A registered one-hot bank bit
+    -- drives each distributed-RAM WE directly; address and data are aligned
+    -- in the same stage. Metadata still updates on the accepted input beat.
+    signal s_payload_wr_bank_r : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0) :=
+        (others => '0');
+    signal s_payload_wr_addr_r : unsigned(3 downto 0) := (others => '0');
+    signal s_payload_wr_data_r : t_hit_payload_word := (others => '0');
+
     attribute ram_style : string;
     attribute ram_style of s_hit_payload0_r : signal is "distributed";
     attribute ram_style of s_hit_payload1_r : signal is "distributed";
@@ -288,7 +297,7 @@ architecture rtl of tdc_gpx_cell_builder is
     attribute ram_style of s_hit_payload6_r : signal is "distributed";
 
     -- Update one statically selected count/drop cell and return the sequence
-    -- bank that receives this payload in the same clock cycle. Payload writes
+    -- bank selected for the registered payload-write stage. Payload writes
     -- are limited only by the physical seven-slot store, while the configured
     -- max_hits controls the visible count/drop metadata. Overflow hits below
     -- the physical limit therefore overwrite one inactive shadow slot. This
@@ -620,6 +629,40 @@ architecture rtl of tdc_gpx_cell_builder is
 
 begin
 
+    -- Resetless RAM write process preserves distributed-memory inference.
+    -- A final hit is committed here on the following drain-control cycle,
+    -- before p_output observes s_output_req_r and starts reading the slice.
+    -- A coincident reset/abort may commit one already accepted stale word;
+    -- the cleared metadata count masks that word before the buffer is reused.
+    p_payload_write : process(i_clk)
+        variable v_addr : natural range 0 to c_CELL_ADDR_COUNT - 1;
+    begin
+        if rising_edge(i_clk) then
+            v_addr := to_integer(s_payload_wr_addr_r);
+            if s_payload_wr_bank_r(0) = '1' then
+                s_hit_payload0_r(v_addr) <= s_payload_wr_data_r;
+            end if;
+            if s_payload_wr_bank_r(1) = '1' then
+                s_hit_payload1_r(v_addr) <= s_payload_wr_data_r;
+            end if;
+            if s_payload_wr_bank_r(2) = '1' then
+                s_hit_payload2_r(v_addr) <= s_payload_wr_data_r;
+            end if;
+            if s_payload_wr_bank_r(3) = '1' then
+                s_hit_payload3_r(v_addr) <= s_payload_wr_data_r;
+            end if;
+            if s_payload_wr_bank_r(4) = '1' then
+                s_hit_payload4_r(v_addr) <= s_payload_wr_data_r;
+            end if;
+            if s_payload_wr_bank_r(5) = '1' then
+                s_hit_payload5_r(v_addr) <= s_payload_wr_data_r;
+            end if;
+            if s_payload_wr_bank_r(6) = '1' then
+                s_hit_payload6_r(v_addr) <= s_payload_wr_data_r;
+            end if;
+        end if;
+    end process p_payload_write;
+
     -- Register command abort at the builder boundary. The global demux and
     -- downstream output stages still abort immediately; this local copy frees
     -- cell ownership one AXIS clock later, after any coincident beat has been
@@ -659,8 +702,8 @@ begin
                   else '0';
 
     -- =========================================================================
-    -- p_collect: write hits into write-buffer, manage buffer ownership FSM
-    -- Owns: s_cell_meta_r, s_hit_payload*_r, s_buf_state_r, s_buf_full_r,
+    -- p_collect: accept hits into the write pipeline, manage buffer ownership
+    -- Owns: s_cell_meta_r, s_payload_wr_*, s_buf_state_r, s_buf_full_r,
     --       s_wr_buf_r, s_cstate_r, s_output_req_r, s_rd_buf_idx_r,
     --       s_hit_dropped_r
     -- Reads (no write): s_ostate_r, s_output_done_r
@@ -671,7 +714,6 @@ begin
         variable v_done_buf : natural range 0 to 1;
         variable v_stop          : natural range 0 to c_MAX_STOPS_PER_CHIP - 1;
         variable v_hit_key       : std_logic_vector(3 downto 0);
-        variable v_payload_addr  : natural range 0 to c_CELL_ADDR_COUNT - 1;
         variable v_payload_seq   : natural range 0 to c_MAX_HITS_PER_STOP - 1;
         variable v_store_payload : boolean;
     begin
@@ -691,6 +733,9 @@ begin
                 s_hit_dropped_r  <= '0';
                 s_stop_id_error_r <= '0';
                 s_shot_dropped_r <= '0';
+                s_payload_wr_bank_r <= (others => '0');
+                s_payload_wr_addr_r <= (others => '0');
+                s_payload_wr_data_r <= (others => '0');
                 s_timeout_cnt_r  <= (others => '0');
                 -- Phase B: reset per-buffer snapshots and drop-side cap.
                 -- Init to 0 == "disabled" so fn_timeout_cap returns x"FFFF"
@@ -718,6 +763,7 @@ begin
                 s_hit_dropped_r  <= '0';
                 s_stop_id_error_r <= '0';
                 s_shot_dropped_r <= '0';
+                s_payload_wr_bank_r <= (others => '0');
 
                 -- ---------------------------------------------------------
                 -- Abort: free all buffers, return to idle
@@ -906,15 +952,16 @@ begin
                                     end case;
 
                                     if v_store_payload then
-                                        v_payload_addr := to_integer(unsigned(v_hit_key));
+                                        s_payload_wr_addr_r <= unsigned(v_hit_key);
+                                        s_payload_wr_data_r <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
                                         case v_payload_seq is
-                                            when 0 => s_hit_payload0_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
-                                            when 1 => s_hit_payload1_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
-                                            when 2 => s_hit_payload2_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
-                                            when 3 => s_hit_payload3_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
-                                            when 4 => s_hit_payload4_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
-                                            when 5 => s_hit_payload5_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
-                                            when 6 => s_hit_payload6_r(v_payload_addr) <= i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0);
+                                            when 0 => s_payload_wr_bank_r <= "0000001";
+                                            when 1 => s_payload_wr_bank_r <= "0000010";
+                                            when 2 => s_payload_wr_bank_r <= "0000100";
+                                            when 3 => s_payload_wr_bank_r <= "0001000";
+                                            when 4 => s_payload_wr_bank_r <= "0010000";
+                                            when 5 => s_payload_wr_bank_r <= "0100000";
+                                            when 6 => s_payload_wr_bank_r <= "1000000";
                                             when others => null;
                                         end case;
                                     end if;
