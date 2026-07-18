@@ -123,6 +123,7 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_cell_pipe_lane_mask.vhd",
     "$Hdl/tb_tdc_gpx_cell_pipe_lane_mask_dedicated.vhd",
     "$Hdl/tb_tdc_gpx_reg_rsp_cdc.vhd",
+    "$Hdl/tb_tdc_gpx_csr_chip_image_cdc.vhd",
     "$Hdl/tb_tdc_gpx_top_int_masked_slope_stat.vhd"
 )
 
@@ -179,6 +180,11 @@ try {
         "xil_defaultlib.tb_tdc_gpx_reg_rsp_cdc"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_reg_rsp_cdc_snap", "-runall", "-log", "xsim_c06_v002_reg_rsp_cdc_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_reg_rsp_cdc_$Stamp.log" "REG_RSP_CDC 200-to-50 MHz atomic transfer - PASS"
+
+    Invoke-Xelab "tb_c06_v002_csr_image_cdc_snap" "xelab_c06_v002_csr_image_cdc_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_csr_chip_image_cdc"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_csr_image_cdc_snap", "-runall", "-log", "xsim_c06_v002_csr_image_cdc_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_csr_image_cdc_$Stamp.log" "CFG_IMAGE_PACKED_CDC ALL PASS"
 
     Invoke-Xelab "tb_c06_v002_chip_ctrl_snap" "xelab_c06_v002_chip_ctrl_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_chip_ctrl"

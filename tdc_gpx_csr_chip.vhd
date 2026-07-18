@@ -34,14 +34,15 @@
 --   CTL1   : 1 x xpm_cdc_handshake (s_axi_aclk -> i_axis_aclk) — bus timing
 --   CTL3   : 1 x xpm_cdc_handshake — start_off1
 --   CTL4   : 1 x xpm_cdc_handshake — cfg_reg7
---   CTL5~20: 16 x xpm_cdc_handshake — cfg_image, per-register
+--   CTL5~20: 1 x 512-bit xpm_cdc_handshake — atomic cfg_image snapshot
 --   CTL21  : 1 x xpm_cdc_handshake — scan_timeout + max_hits
 --   STAT0~3: 4 x xpm_cdc_handshake (i_axis_aclk -> s_axi_aclk) — per-chip results
 --   IRQ    : 1 x xpm_cdc_pulse (i_axis_aclk -> s_axi_aclk) — done_pulse
---   Total: 25 CDC instances
+--   Total: 10 CDC instances
 --
 -- CDC idle flag:
---   NOR of all 20 src_send signals (ctl1, ctl3, ctl4, img x16, ctl21).
+--   Idle when all 5 CTL handshakes are inactive and the packed cfg_image
+--   source matches its last accepted snapshot.
 --   Output as o_cdc_idle (s_axi_aclk domain) for csr_pipeline to use.
 --   Note: STAT CDCs (i_axis->s_axi direction) are NOT included in idle flag.
 --
@@ -268,6 +269,7 @@ architecture rtl of tdc_gpx_csr_chip is
     -- Constants
     -- =========================================================================
     constant C_ZERO32 : std_logic_vector(31 downto 0) := (others => '0');
+    constant C_CFG_IMAGE_BITS : positive := c_CFG_IMAGE_N_REGS * 32;
 
     -- =========================================================================
     -- Internal types
@@ -325,11 +327,14 @@ architecture rtl of tdc_gpx_csr_chip is
     signal s_dest_req_ctl21 : std_logic;
     signal s_ctl21_d1       : std_logic_vector(31 downto 0) := (others => '1');
 
-    -- cfg_image CDC handshake (CTL5~20, per-register)
-    signal s_src_send_img   : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0) := (others => '0');
-    signal s_src_rcv_img    : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
-    signal s_dest_req_img   : std_logic_vector(c_CFG_IMAGE_N_REGS - 1 downto 0);
-    signal s_img_d1         : t_cdc_data_array(0 to c_CFG_IMAGE_N_REGS - 1) := (others => (others => '1'));
+    -- cfg_image CDC handshake (CTL5~20, one coherent 512-bit snapshot)
+    signal s_img_src_packed : std_logic_vector(C_CFG_IMAGE_BITS - 1 downto 0);
+    signal s_img_dst_packed : std_logic_vector(C_CFG_IMAGE_BITS - 1 downto 0) := (others => '0');
+    signal s_img_hold_r     : std_logic_vector(C_CFG_IMAGE_BITS - 1 downto 0) := (others => '1');
+    signal s_src_send_img   : std_logic := '0';
+    signal s_src_rcv_img    : std_logic;
+    signal s_dest_req_img   : std_logic;
+    signal s_img_wait_ack_low_r : std_logic := '0';
 
     -- =========================================================================
     -- Per-chip STAT registers (i_axis_aclk domain) and CDC outputs
@@ -636,46 +641,68 @@ begin
     end process p_send_ctl21;
 
     -- =========================================================================
-    -- [6] cfg_image CDC: s_axi_aclk -> i_axis_aclk (CTL5~20, per-register)
+    -- [6] cfg_image CDC: s_axi_aclk -> i_axis_aclk (CTL5~20, packed)
+    --
+    -- One source snapshot replaces 16 independent handshakes. The held
+    -- payload is not changed while src_send is active, which satisfies the
+    -- XPM source-data stability contract even when software writes another
+    -- image register before the current transfer is acknowledged. A changed
+    -- live image is sent in the next transaction after acknowledgement and
+    -- after src_rcv returns low, as required for a new handshake edge.
     -- =========================================================================
-    gen_img_cdc : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
-        u_cdc_img : xpm_cdc_handshake
-            generic map (
-                DEST_EXT_HSK   => 1,
-                DEST_SYNC_FF   => 4,
-                INIT_SYNC_FF   => 0,
-                SIM_ASSERT_CHK => 0,
-                SRC_SYNC_FF    => 4,
-                WIDTH          => 32
-            )
-            port map (
-                src_clk   => s_axi_aclk,
-                src_in    => s_img_src(i),
-                src_send  => s_src_send_img(i),
-                src_rcv   => s_src_rcv_img(i),
-                dest_clk  => i_axis_aclk,
-                dest_req  => s_dest_req_img(i),
-                dest_ack  => s_dest_req_img(i),
-                dest_out  => s_img_out(i)
-            );
+    gen_img_pack : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
+        s_img_src_packed(32 * (i + 1) - 1 downto 32 * i) <= s_img_src(i);
+        s_img_out(i) <= s_img_dst_packed(32 * (i + 1) - 1 downto 32 * i);
+    end generate gen_img_pack;
 
-        p_send_img : process(s_axi_aclk)
-        begin
-            if rising_edge(s_axi_aclk) then
-                if s_axi_aresetn = '0' then
-                    s_src_send_img(i) <= '0';
-                    s_img_d1(i)       <= (others => '1');
-                else
-                    if s_src_send_img(i) = '0' and s_img_src(i) /= s_img_d1(i) then
-                        s_src_send_img(i) <= '1';
-                        s_img_d1(i)       <= s_img_src(i);
-                    elsif s_src_rcv_img(i) = '1' then
-                        s_src_send_img(i) <= '0';
+    u_cdc_img : xpm_cdc_handshake
+        generic map (
+            DEST_EXT_HSK   => 1,
+            DEST_SYNC_FF   => 4,
+            INIT_SYNC_FF   => 0,
+            SIM_ASSERT_CHK => 0,
+            SRC_SYNC_FF    => 4,
+            WIDTH          => C_CFG_IMAGE_BITS
+        )
+        port map (
+            src_clk   => s_axi_aclk,
+            src_in    => s_img_hold_r,
+            src_send  => s_src_send_img,
+            src_rcv   => s_src_rcv_img,
+            dest_clk  => i_axis_aclk,
+            dest_req  => s_dest_req_img,
+            dest_ack  => s_dest_req_img,
+            dest_out  => s_img_dst_packed
+        );
+
+    p_send_img : process(s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' then
+                s_src_send_img       <= '0';
+                s_img_hold_r         <= (others => '1');
+                s_img_wait_ack_low_r <= '0';
+            elsif s_src_send_img = '1' then
+                if s_src_rcv_img = '1' then
+                    s_src_send_img       <= '0';
+                    s_img_wait_ack_low_r <= '1';
+                end if;
+            elsif s_img_wait_ack_low_r = '1' then
+                if s_src_rcv_img = '0' then
+                    s_img_wait_ack_low_r <= '0';
+                    if s_img_src_packed /= s_img_hold_r then
+                        s_img_hold_r   <= s_img_src_packed;
+                        s_src_send_img <= '1';
                     end if;
                 end if;
+            else
+                if s_img_src_packed /= s_img_hold_r then
+                    s_img_hold_r   <= s_img_src_packed;
+                    s_src_send_img <= '1';
+                end if;
             end if;
-        end process p_send_img;
-    end generate gen_img_cdc;
+        end if;
+    end process p_send_img;
 
     -- =========================================================================
     -- [7] Per-chip STAT CDC: i_axis_aclk -> s_axi_aclk (STAT0~3)
@@ -747,7 +774,8 @@ begin
 
     -- =========================================================================
     -- [8] CDC-idle flag: all CTL handshakes quiescent (s_axi_aclk domain)
-    --   NOR of ctl1, ctl3, ctl4, img x16, ctl21 src_send signals.
+    --   The image equality term covers the one-cycle gap between an ACK and
+    --   a required replay when software changed the image during transfer.
     --   Output directly to csr_pipeline via o_cdc_idle.
     --   Note: STAT CDCs (i_axis->s_axi direction) are NOT included.
     -- =========================================================================
@@ -760,7 +788,8 @@ begin
               and s_src_send_ctl3  = '0'
               and s_src_send_ctl4  = '0'
               and s_src_send_ctl21 = '0'
-              and s_src_send_img = (s_src_send_img'range => '0') then
+              and s_src_send_img   = '0'
+              and s_img_src_packed = s_img_hold_r then
                 s_cdc_all_idle_src_r <= '1';
             else
                 s_cdc_all_idle_src_r <= '0';
