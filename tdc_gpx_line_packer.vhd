@@ -53,8 +53,6 @@ architecture rtl of tdc_gpx_line_packer is
 
     signal s_queue_r            : t_word_queue := (others => (others => '0'));
     signal s_queue_count_r      : natural range 0 to c_QUEUE_WORDS := 0;
-    signal s_queue_rd_ptr_r     : natural range 0 to c_QUEUE_WORDS - 1 := 0;
-    signal s_queue_wr_ptr_r     : natural range 0 to c_QUEUE_WORDS - 1 := 0;
     signal s_cell_beat_idx_r    : natural range 0 to 7 := 0;
     signal s_line_word_mod4_r   : natural range 0 to 3 := 0;
     signal s_line_end_pending_r : std_logic := '0';
@@ -101,18 +99,6 @@ architecture rtl of tdc_gpx_line_packer is
         else
             return b;
         end if;
-    end function;
-
-    -- All offsets are smaller than c_QUEUE_WORDS, so one subtraction is
-    -- sufficient. Keeping wrap explicit avoids modulo hardware on the read
-    -- and write pointers.
-    function fn_queue_index(base : natural; offset : natural) return natural is
-        variable v_index : natural := base + offset;
-    begin
-        if v_index >= c_QUEUE_WORDS then
-            v_index := v_index - c_QUEUE_WORDS;
-        end if;
-        return v_index;
     end function;
 
 begin
@@ -235,8 +221,6 @@ begin
     p_pack : process(i_clk)
         variable v_queue       : t_word_queue;
         variable v_count       : natural range 0 to c_QUEUE_WORDS;
-        variable v_rd_ptr      : natural range 0 to c_QUEUE_WORDS - 1;
-        variable v_wr_ptr      : natural range 0 to c_QUEUE_WORDS - 1;
         variable v_mod4        : natural range 0 to 3;
         variable v_end_pending : std_logic;
         variable v_out_free    : boolean;
@@ -248,8 +232,6 @@ begin
             if i_rst_n = '0' or i_abort = '1' then
                 s_queue_r            <= (others => (others => '0'));
                 s_queue_count_r      <= 0;
-                s_queue_rd_ptr_r     <= 0;
-                s_queue_wr_ptr_r     <= 0;
                 s_line_word_mod4_r   <= 0;
                 s_line_end_pending_r <= '0';
                 s_out_tdata_r        <= (others => '0');
@@ -258,8 +240,6 @@ begin
             else
                 v_queue       := s_queue_r;
                 v_count       := s_queue_count_r;
-                v_rd_ptr      := s_queue_rd_ptr_r;
-                v_wr_ptr      := s_queue_wr_ptr_r;
                 v_mod4        := s_line_word_mod4_r;
                 v_end_pending := s_line_end_pending_r;
                 v_out_free    := s_out_tvalid_r = '0' or i_m_axis_tready = '1';
@@ -273,9 +253,15 @@ begin
                         v_out_data := (others => '0');
                         for lane in 0 to c_WORDS_PER_BEAT - 1 loop
                             v_out_data(32 * lane + 31 downto 32 * lane)
-                                := v_queue(fn_queue_index(v_rd_ptr, lane));
+                                := v_queue(lane);
                         end loop;
-                        v_rd_ptr := fn_queue_index(v_rd_ptr, c_WORDS_PER_BEAT);
+                        for idx in 0 to c_QUEUE_WORDS - c_WORDS_PER_BEAT - 1 loop
+                            v_queue(idx) := v_queue(idx + c_WORDS_PER_BEAT);
+                        end loop;
+                        for idx in c_QUEUE_WORDS - c_WORDS_PER_BEAT
+                                   to c_QUEUE_WORDS - 1 loop
+                            v_queue(idx) := (others => '0');
+                        end loop;
                         v_count := v_count - c_WORDS_PER_BEAT;
 
                         s_out_tdata_r  <= v_out_data;
@@ -290,11 +276,10 @@ begin
                 if s_stage_pop = '1' then
                     for lane in 0 to c_WORDS_PER_BEAT - 1 loop
                         if lane < s_stage_word_count_r then
-                            v_queue(fn_queue_index(v_wr_ptr, lane)) :=
+                            v_queue(v_count + lane) :=
                                 s_stage_data_r(32 * lane + 31 downto 32 * lane);
                         end if;
                     end loop;
-                    v_wr_ptr   := fn_queue_index(v_wr_ptr, s_stage_word_count_r);
                     v_count    := v_count + s_stage_word_count_r;
                     v_new_mod4 := (v_mod4 + s_stage_word_count_r) mod 4;
 
@@ -302,10 +287,9 @@ begin
                         v_pad_words := (4 - v_new_mod4) mod 4;
                         for pad in 0 to 2 loop
                             if pad < v_pad_words then
-                                v_queue(fn_queue_index(v_wr_ptr, pad)) := (others => '0');
+                                v_queue(v_count + pad) := (others => '0');
                             end if;
                         end loop;
-                        v_wr_ptr     := fn_queue_index(v_wr_ptr, v_pad_words);
                         v_count       := v_count + v_pad_words;
                         v_mod4        := 0;
                         v_end_pending := '1';
@@ -316,8 +300,6 @@ begin
 
                 s_queue_r            <= v_queue;
                 s_queue_count_r      <= v_count;
-                s_queue_rd_ptr_r     <= v_rd_ptr;
-                s_queue_wr_ptr_r     <= v_wr_ptr;
                 s_line_word_mod4_r   <= v_mod4;
                 s_line_end_pending_r <= v_end_pending;
             end if;
