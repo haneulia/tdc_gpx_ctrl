@@ -44,6 +44,7 @@ set rtl_files {
     tdc_gpx_cfg_pkg.vhd
     px_utility_pkg.vhd
     tb_tdc_gpx_pkg.vhd
+    tdc_gpx_atomic_snapshot_cdc.vhd
     tdc_gpx_skid_buffer.vhd
     tdc_gpx_bus_phy.vhd
     tdc_gpx_chip_init.vhd
@@ -120,6 +121,7 @@ generate_target {instantiation_template synthesis simulation} \
 # Simulation sources (TB)
 # -----------------------------------------------------------------------------
 set tb_files {
+    tb_tdc_gpx_atomic_snapshot_cdc.vhd
     tb_tdc_gpx_bus_phy.vhd
     tb_tdc_gpx_chip_ctrl.vhd
     tb_tdc_gpx_config_ctrl.vhd

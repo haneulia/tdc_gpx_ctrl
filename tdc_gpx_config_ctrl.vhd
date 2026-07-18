@@ -541,18 +541,15 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_collision_vec_meta_r : std_logic_vector(3 downto 0) := (others => '0');
     signal s_cmd_collision_vec_axi_r  : std_logic_vector(3 downto 0) := (others => '0');
 
-    -- Round 12 A3: 2-FF sync for TDC-domain status signals before crossing
-    -- to AXI-Stream domain. These are OR-accumulated stickies / latched
-    -- cause fields — per-bit metastability is the only concern (no
-    -- atomic-bundle requirement because bits are independent or the
-    -- latch source itself holds the value stable). ASYNC_REG attribute
-    -- marks both stages as a known synchronizer.
-    signal s_run_timeout_cause_meta_r  : std_logic_vector(2 downto 0) := (others => '0');
-    signal s_run_timeout_cause_axi_r   : std_logic_vector(2 downto 0) := (others => '0');
-    -- Round 12 #17: packed 12-bit per-chip cause (chip i at [3*i+2:3*i])
-    signal s_run_timeout_cause_packed   : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
-    signal s_run_timeout_cause_arr_meta_r : std_logic_vector(3 * c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_run_timeout_cause_arr_axi_r  : std_logic_vector(3 * c_N_CHIPS - 1 downto 0) := (others => '0');
+    -- Round 12 A3: per-bit 2-FF synchronizers protect independent sticky
+    -- masks. Encoded timeout causes use the atomic snapshot mailbox below.
+    -- Encoded causes cross as one atomic snapshot. A bitwise synchronizer can
+    -- transiently form a different 3-bit code that downstream CSR logic would
+    -- capture as a real diagnostic value.
+    constant c_RUN_CAUSE_CDC_BITS : positive := 3 * c_N_CHIPS + 3;
+    signal s_run_timeout_cause_packed : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
+    signal s_run_cause_src_packed : std_logic_vector(c_RUN_CAUSE_CDC_BITS - 1 downto 0);
+    signal s_run_cause_axi_packed : std_logic_vector(c_RUN_CAUSE_CDC_BITS - 1 downto 0);
 
     -- Round 13 axis 2: bus fatal CDC (TDC → AXI-Stream domain).
     signal s_err_bus_fatal_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
@@ -569,8 +566,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- ASYNC_REG attribute declaration (scoped to this section; the later
     -- declaration at the cfg CDC section is for a separate set of signals).
     attribute ASYNC_REG : string;
-    attribute ASYNC_REG of s_run_timeout_cause_meta_r  : signal is "TRUE";
-    attribute ASYNC_REG of s_run_timeout_cause_axi_r   : signal is "TRUE";
     attribute ASYNC_REG of s_init_cfg_coalesced_meta_r : signal is "TRUE";
     attribute ASYNC_REG of s_init_cfg_coalesced_axi_r  : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_collision_meta_r      : signal is "TRUE";
@@ -587,8 +582,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     attribute ASYNC_REG of s_err_stopdis_mid_shot_axi_r  : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_collision_vec_meta_r    : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_collision_vec_axi_r     : signal is "TRUE";
-    attribute ASYNC_REG of s_run_timeout_cause_arr_meta_r : signal is "TRUE";
-    attribute ASYNC_REG of s_run_timeout_cause_arr_axi_r  : signal is "TRUE";
     attribute ASYNC_REG of s_err_bus_fatal_meta_r         : signal is "TRUE";
     attribute ASYNC_REG of s_err_bus_fatal_axi_r          : signal is "TRUE";
     attribute ASYNC_REG of s_drain_faulted_mask_meta_r    : signal is "TRUE";
@@ -915,13 +908,12 @@ begin
             end if;
         end if;
     end process p_run_timeout_cause_latch;
-    -- Round 12 A3: 2-FF sync into AXI-Stream domain.
+    -- Per-bit 2-FF sync for independent sticky masks. Encoded timeout causes
+    -- use the atomic mailbox below.
     p_tdc_to_axi_status_sync : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
             if i_axis_aresetn = '0' then
-                s_run_timeout_cause_meta_r  <= (others => '0');
-                s_run_timeout_cause_axi_r   <= (others => '0');
                 s_init_cfg_coalesced_meta_r <= (others => '0');
                 s_init_cfg_coalesced_axi_r  <= (others => '0');
                 s_cmd_collision_meta_r      <= (others => '0');
@@ -938,15 +930,11 @@ begin
                 s_err_stopdis_mid_shot_axi_r  <= (others => '0');
                 s_cmd_collision_vec_meta_r    <= (others => '0');
                 s_cmd_collision_vec_axi_r     <= (others => '0');
-                s_run_timeout_cause_arr_meta_r <= (others => '0');
-                s_run_timeout_cause_arr_axi_r  <= (others => '0');
                 s_err_bus_fatal_meta_r         <= (others => '0');
                 s_err_bus_fatal_axi_r          <= (others => '0');
                 s_drain_faulted_mask_meta_r    <= (others => '0');
                 s_drain_faulted_mask_axi_r     <= (others => '0');
             else
-                s_run_timeout_cause_meta_r  <= s_run_timeout_cause_last_r;
-                s_run_timeout_cause_axi_r   <= s_run_timeout_cause_meta_r;
                 s_init_cfg_coalesced_meta_r <= s_init_cfg_coalesced;
                 s_init_cfg_coalesced_axi_r  <= s_init_cfg_coalesced_meta_r;
                 s_cmd_collision_meta_r      <= s_cmd_collision_mask;
@@ -963,8 +951,6 @@ begin
                 s_err_stopdis_mid_shot_axi_r  <= s_err_stopdis_mid_shot_meta_r;
                 s_cmd_collision_vec_meta_r    <= s_cmd_collision_vec_src_r;
                 s_cmd_collision_vec_axi_r     <= s_cmd_collision_vec_meta_r;
-                s_run_timeout_cause_arr_meta_r <= s_run_timeout_cause_packed;
-                s_run_timeout_cause_arr_axi_r  <= s_run_timeout_cause_arr_meta_r;
                 s_err_bus_fatal_meta_r         <= s_err_bus_fatal;
                 s_err_bus_fatal_axi_r          <= s_err_bus_fatal_meta_r;
                 s_drain_faulted_mask_meta_r    <= s_drain_faulted_mask_r;
@@ -973,16 +959,14 @@ begin
         end if;
     end process p_tdc_to_axi_status_sync;
 
-    o_run_timeout_cause <= s_run_timeout_cause_axi_r;
     o_reg_arb_timeout   <= s_reg_arb_timeout;
     o_err_active        <= s_err_active;
     -- Round 6 B1: surface per-chip stickies to top
     o_err_reg_overflow    <= s_err_reg_overflow_axi;
     o_run_drain_complete  <= s_run_drain_complete_axi;
-    -- Round 12 A3: all TDC-domain status signals now go through 2-FF sync
-    -- above (p_tdc_to_axi_status_sync) before being driven on AXI-Stream
-    -- domain outputs. Per-bit metastability protected; per-chip
-    -- independence makes atomic-bundle unnecessary.
+    -- These mask bits are independent sticky observations, so per-bit
+    -- metastability protection is sufficient and bundle atomicity is not
+    -- required.
     o_init_cfg_coalesced_mask <= s_init_cfg_coalesced_axi_r;
     o_cmd_collision_mask      <= s_cmd_collision_axi_r;
     o_err_force_reinit_mask   <= s_err_force_reinit_axi_r;
@@ -1008,11 +992,32 @@ begin
     -- Round 12 #15: distinct cause masks.
     o_err_raw_drop_mask     <= s_err_raw_drop_axi;
     o_err_drain_cap_mask    <= s_err_drain_cap_axi;
-    -- Round 12 #17: pack per-chip cause into one vector then feed CDC output.
+    -- Pack the encoded last/per-chip causes into one coherent CDC snapshot.
     gen_cause_pack : for i in 0 to c_N_CHIPS - 1 generate
         s_run_timeout_cause_packed(3*i + 2 downto 3*i) <= s_run_timeout_cause_per_chip_r(i);
     end generate;
-    o_run_timeout_cause_per_chip <= s_run_timeout_cause_arr_axi_r;
+
+    s_run_cause_src_packed(2 downto 0) <= s_run_timeout_cause_last_r;
+    s_run_cause_src_packed(c_RUN_CAUSE_CDC_BITS - 1 downto 3)
+        <= s_run_timeout_cause_packed;
+
+    u_cdc_run_cause : entity work.tdc_gpx_atomic_snapshot_cdc
+        generic map (
+            g_WIDTH   => c_RUN_CAUSE_CDC_BITS,
+            g_SYNC_FF => 4
+        )
+        port map (
+            i_src_clk     => i_tdc_clk,
+            i_src_resetn  => s_tdc_aresetn,
+            i_src_data    => s_run_cause_src_packed,
+            i_dest_clk    => i_axis_aclk,
+            i_dest_resetn => i_axis_aresetn,
+            o_dest_data   => s_run_cause_axi_packed
+        );
+
+    o_run_timeout_cause <= s_run_cause_axi_packed(2 downto 0);
+    o_run_timeout_cause_per_chip
+        <= s_run_cause_axi_packed(c_RUN_CAUSE_CDC_BITS - 1 downto 3);
     -- Round 13 axis 2: bus fatal mask.
     o_err_bus_fatal_mask     <= s_err_bus_fatal_axi_r;
     o_drain_faulted_mask     <= s_drain_faulted_mask_axi_r;

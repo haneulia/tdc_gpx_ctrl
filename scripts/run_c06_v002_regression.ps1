@@ -88,6 +88,7 @@ $vhdl2008Files = @(
     "$Hdl/px_utility_pkg.vhd",
     "$Hdl/tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_cfg_pkg.vhd",
+    "$Hdl/tdc_gpx_atomic_snapshot_cdc.vhd",
     "$Hdl/tb_tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_bus_phy.vhd",
     "$Hdl/tdc_gpx_skid_buffer.vhd",
@@ -117,6 +118,7 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_csr_pipeline.vhd",
     "$Hdl/tdc_gpx_status_agg.vhd",
     "$Hdl/tdc_gpx_top.vhd",
+    "$Hdl/tb_tdc_gpx_atomic_snapshot_cdc.vhd",
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
     "$Hdl/tb_tdc_gpx_stop_cfg_decode.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
@@ -153,6 +155,11 @@ try {
     }
     Invoke-Checked "$Vivado/xvlog.bat" @("--relax", "-prj", $vlogPrj, "-log", "xvlog_c06_v002_$Stamp.log")
     Invoke-Checked "$Vivado/xvhdl.bat" @("--relax", "-prj", $vhdlPrj, "-log", "xvhdl_c06_v002_$Stamp.log")
+
+    Invoke-Xelab "tb_c06_v002_atomic_snapshot_cdc_snap" "xelab_c06_v002_atomic_snapshot_cdc_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_atomic_snapshot_cdc"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_atomic_snapshot_cdc_snap", "-runall", "-log", "xsim_c06_v002_atomic_snapshot_cdc_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_atomic_snapshot_cdc_$Stamp.log" "ATOMIC_SNAPSHOT_CDC ASYNC/RETRIGGER/RESET PASS"
 
     Invoke-Xelab "tb_c06_v002_range_ticks_snap" "xelab_c06_v002_range_ticks_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_range_ticks"
