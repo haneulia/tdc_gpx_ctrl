@@ -161,6 +161,18 @@ try {
         )
     Invoke-Checked "$Vivado/xsim.bat" @($stopsSnap, "-runall", "-log", $stopsLog)
     Assert-SimLog $stopsLog "PASS: C07 C03 stops_per_chip buffer snapshot width=64 max_hits=3"
+
+    $reuseSnap = "tb_c07_v001_c03_reuse_stale_w64_mh3_snap"
+    $reuseLog = "xsim_c07_v001_c03_reuse_stale_w64_mh3_$Stamp.log"
+    Invoke-Xelab $reuseSnap "xelab_c07_v001_c03_reuse_stale_w64_mh3_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_cell_builder_c07_direct" `
+        @(
+            "G_TDATA_WIDTH=64",
+            "G_MAX_HITS=3",
+            "G_SCENARIO=5"
+        )
+    Invoke-Checked "$Vivado/xsim.bat" @($reuseSnap, "-runall", "-log", $reuseLog)
+    Assert-SimLog $reuseLog "PASS: C07 C03 reused buffer invalidated stale payload width=64 max_hits=3"
 }
 finally {
     Pop-Location

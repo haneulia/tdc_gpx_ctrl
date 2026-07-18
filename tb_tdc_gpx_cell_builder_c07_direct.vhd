@@ -9,6 +9,7 @@
 --   G_SCENARIO=2 : dual-buffer next-shot collection while prior output stalls
 --   G_SCENARIO=3 : no-free-buffer drop, DROP->QUARANTINE, clean final-drain exit
 --   G_SCENARIO=4 : per-buffer stops_per_chip snapshot remains atomic
+--   G_SCENARIO=5 : reused buffer invalidates stale payload from the prior shot
 --
 -- Standard: VHDL-2008
 --------------------------------------------------------------------------------
@@ -595,6 +596,38 @@ begin
                 severity note;
         end procedure;
 
+        procedure scenario_reuse_invalidates_stale is
+        begin
+            reset_dut;
+            s_stops    <= to_unsigned(1, 4);
+            s_max_hits <= to_unsigned(G_MAX_HITS, 3);
+            wait_cycles(2);
+
+            -- Buffer 0 keeps this payload physically after output completes.
+            pulse_shot;
+            send_hits(16#6000#, G_MAX_HITS, 6);
+            send_evt((others => '0'), fn_tuser_drain('0', '0'));
+            expect_slice(16#6000#, G_MAX_HITS, "reuse seed shot");
+            wait_cycles(2);
+
+            -- The allocator selects free buffer 0 again. Its validity INIT
+            -- must hide the old stop-0 payload while stop 1 receives new data.
+            s_stops <= to_unsigned(2, 4);
+            wait_cycles(1);
+            pulse_shot;
+            send_hits_at_stop(16#7000#, G_MAX_HITS, 7, 1);
+            send_evt((others => '0'), fn_tuser_drain('0', '0'));
+            expect_two_stop_slice(16#7000#, G_MAX_HITS, "reused-buffer stale guard");
+
+            assert s_hit_dropped = '0' and s_stop_error_count = 0 and
+                   s_shot_drop_count = 0 and s_timeout_count = 0
+                report "FAIL: reused-buffer stale guard raised an unexpected status"
+                severity failure;
+            report "PASS: C07 C03 reused buffer invalidated stale payload width=" &
+                   integer'image(G_TDATA_WIDTH) & " max_hits=" & integer'image(G_MAX_HITS)
+                severity note;
+        end procedure;
+
     begin
         assert fn_output_width_supported(G_TDATA_WIDTH)
             report "FAIL: unsupported G_TDATA_WIDTH"
@@ -614,6 +647,8 @@ begin
                 scenario_drop_quarantine;
             when 4 =>
                 scenario_stops_snapshot;
+            when 5 =>
+                scenario_reuse_invalidates_stale;
             when others =>
                 assert false
                     report "FAIL: unsupported G_SCENARIO"

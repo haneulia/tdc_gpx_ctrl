@@ -21,7 +21,8 @@
 --   p_collect (ST_C_IDLE / ST_C_INIT_0/1 / ST_C_ACTIVE):
 --     Owns ALL buffer state transitions (no multi-driver on s_buf_state_r).
 --     On shot_start: assigns a BUF_FREE buffer, snapshots its configuration,
---       then clears it in one local INIT cycle before accepting event beats.
+--       then invalidates its 8 cells in one local INIT cycle before accepting
+--       event beats. Cell payload is initialized lazily on its first hit.
 --     On ififo1_done: BUF_COLLECT -> BUF_SHARED, signals p_output to start.
 --     On final_done: sets buf_full flag (stops 4-7 ready).
 --     On s_output_done_r: BUF_SHARED -> BUF_FREE, auto-starts next if queued.
@@ -99,12 +100,13 @@
 --   Examples @64b: max_hits=7->3, max_hits=3->2, max_hits=1->2
 --
 -- Signal ownership (no multi-driver):
---   p_collect WRITES: s_cell_buf_r, s_buf_state_r, s_buf_full_r, s_wr_buf_r,
---                     s_cstate_r, s_output_req_r, s_rd_buf_idx_r
+--   p_collect WRITES: s_cell_buf_r, s_cell_valid_r, s_buf_state_r,
+--                     s_buf_full_r, s_wr_buf_r, s_cstate_r, s_output_req_r,
+--                     s_rd_buf_idx_r
 --   p_output  WRITES: s_cell_sel_r, s_ostate_r, s_tdata_r, s_tvalid_r,
 --                     s_tlast_r, s_output_done_r, etc.
---   p_output  READS:  s_cell_buf_r, s_buf_full_r, s_output_req_r,
---                     s_rd_buf_idx_r (no write conflict)
+--   p_output  READS:  s_cell_buf_r, s_cell_valid_r, s_buf_full_r,
+--                     s_output_req_r, s_rd_buf_idx_r (no write conflict)
 --   p_collect READS:  s_ostate_r, s_output_done_r (no write conflict)
 --
 -- All outputs are registered (module boundary = FF).
@@ -149,7 +151,7 @@ entity tdc_gpx_cell_builder is
         o_s_axis_tready     : out std_logic;
 
         -- Control (from chip_ctrl)
-        i_shot_start        : in  std_logic;   -- new shot: allocate buffer, then local INIT
+        i_shot_start        : in  std_logic;   -- new shot: allocate buffer, then validity INIT
         i_abort             : in  std_logic;   -- abort: free all buffers, return to idle
         -- drain_done is received via i_s_axis_tuser(7) control beat
 
@@ -229,38 +231,68 @@ architecture rtl of tdc_gpx_cell_builder is
         end if;
     end function;
 
-    -- Store one hit into a statically selected cell. Keeping the cell target
-    -- static at each call site prevents one selected hit_count from driving
-    -- the write-enable mux for every cell in both ping-pong buffers.
+    -- Store one hit into a statically selected cell. An invalid cell starts
+    -- from c_CELL_INIT, so the wide payload never needs a reset/shot clear.
+    -- Keeping the cell target static at each call site prevents one selected
+    -- hit_count from driving the write-enable mux for every cell in both
+    -- ping-pong buffers.
     procedure pr_store_hit(
         signal io_cell       : inout t_cell;
         signal o_drop_pulse  : out std_logic;
+        constant i_cell_valid : in std_logic;
         constant i_max_hits  : in unsigned(3 downto 0);
         constant i_hit       : in std_logic_vector(c_HIT_SLOT_DATA_WIDTH downto 0);
         constant i_slope     : in std_logic
     ) is
         variable v_seq : natural range 0 to c_MAX_HITS_PER_STOP - 1;
+        variable v_cell : t_cell;
     begin
-        if io_cell.hit_count_actual < i_max_hits then
-            v_seq := to_integer(io_cell.hit_count_actual(2 downto 0));
-            io_cell.hit_slot(v_seq)    <= unsigned(i_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
-            io_cell.hit_msb_vec(v_seq) <= i_hit(c_HIT_SLOT_DATA_WIDTH);
-            io_cell.hit_valid(v_seq)   <= '1';
-            io_cell.slope_vec(v_seq)   <= i_slope;
-            io_cell.hit_count_actual   <= io_cell.hit_count_actual + 1;
+        if i_cell_valid = '1' then
+            v_cell := io_cell;
         else
-            io_cell.hit_dropped <= '1';
-            o_drop_pulse        <= '1';
+            v_cell := c_CELL_INIT;
         end if;
+
+        if v_cell.hit_count_actual < i_max_hits then
+            v_seq := to_integer(v_cell.hit_count_actual(2 downto 0));
+            v_cell.hit_slot(v_seq)    := unsigned(i_hit(c_HIT_SLOT_DATA_WIDTH - 1 downto 0));
+            v_cell.hit_msb_vec(v_seq) := i_hit(c_HIT_SLOT_DATA_WIDTH);
+            v_cell.hit_valid(v_seq)   := '1';
+            v_cell.slope_vec(v_seq)   := i_slope;
+            v_cell.hit_count_actual   := v_cell.hit_count_actual + 1;
+        else
+            v_cell.hit_dropped := '1';
+            o_drop_pulse       <= '1';
+        end if;
+
+        io_cell <= v_cell;
     end procedure;
 
     -- =========================================================================
-    -- Ping-pong dual cell buffer (register-based, 2 x MAX_STOPS entries)
+    -- Ping-pong dual cell buffer (2 x MAX_STOPS entries)
     -- p_collect writes to buffer[wr_buf], p_output reads from buffer[rd_buf].
+    -- Payload has no reset or shot-wide clear. Per-cell validity supplies the
+    -- logical c_CELL_INIT value and leaves the payload eligible for memory
+    -- inference instead of forcing resettable FF storage.
     -- =========================================================================
     type t_cell_array is array (0 to c_MAX_STOPS_PER_CHIP - 1) of t_cell;
     type t_dual_cell_buf is array (0 to 1) of t_cell_array;
-    signal s_cell_buf_r : t_dual_cell_buf := (others => (others => c_CELL_INIT));
+    type t_cell_valid_array is array (0 to 1) of
+        std_logic_vector(c_MAX_STOPS_PER_CHIP - 1 downto 0);
+    signal s_cell_buf_r   : t_dual_cell_buf;
+    signal s_cell_valid_r : t_cell_valid_array := (others => (others => '0'));
+
+    function fn_cell_or_init(
+        cell  : t_cell;
+        valid : std_logic
+    ) return t_cell is
+    begin
+        if valid = '1' then
+            return cell;
+        else
+            return c_CELL_INIT;
+        end if;
+    end function;
 
     -- Per-buffer snapshot of i_max_range_axis_clks, captured when the
     -- buffer transitions to BUF_COLLECT (i.e. when a new shot is assigned
@@ -539,8 +571,9 @@ begin
 
     -- =========================================================================
     -- p_collect: write hits into write-buffer, manage buffer ownership FSM
-    -- Owns: s_cell_buf_r, s_buf_state_r, s_buf_full_r, s_wr_buf_r, s_cstate_r,
-    --       s_output_req_r, s_rd_buf_idx_r, s_hit_dropped_r
+    -- Owns: s_cell_buf_r, s_cell_valid_r, s_buf_state_r, s_buf_full_r,
+    --       s_wr_buf_r, s_cstate_r, s_output_req_r, s_rd_buf_idx_r,
+    --       s_hit_dropped_r
     -- Reads (no write): s_ostate_r, s_output_done_r
     -- =========================================================================
     p_collect : process(i_clk)
@@ -552,7 +585,7 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_cell_buf_r    <= (others => (others => c_CELL_INIT));
+                s_cell_valid_r  <= (others => (others => '0'));
                 s_buf_state_r   <= (others => BUF_FREE);
                 s_buf_full_r    <= "00";
                 s_cstate_r      <= ST_C_IDLE;
@@ -607,8 +640,8 @@ begin
                     -- Round 13 follow-up (audit 4번): abort drops any pending
                     -- faulted tags — the shots they pointed to are gone.
                     s_buf_faulted_r <= (others => '0');
-                    -- Do NOT clear cell_buf here; the next local INIT state
-                    -- clears the selected buffer before tready is re-enabled.
+                    -- Do NOT touch cell payload here; the next local INIT
+                    -- invalidates the selected buffer before tready is enabled.
                 else
                     -- ---------------------------------------------------------
                     -- Handle output completion: BUF_SHARED -> BUF_FREE
@@ -685,19 +718,20 @@ begin
                                 end if;
                             end if;
 
-                        -- Buffer initialization is an explicit local phase.
+                        -- Buffer validity initialization is an explicit local
+                        -- phase. Payload is initialized lazily on first hit.
                         -- tready stays low in these states, so a first event
                         -- already waiting in the upstream skid cannot enter
-                        -- until the selected buffer has been cleared.
+                        -- until the selected buffer has been invalidated.
                         when ST_C_INIT_0 =>
-                            s_cell_buf_r(0) <= (others => c_CELL_INIT);
+                            s_cell_valid_r(0) <= (others => '0');
                             s_cstate_r      <= ST_C_ACTIVE;
                             if i_shot_start = '1' then
                                 s_shot_pending_r <= '1';
                             end if;
 
                         when ST_C_INIT_1 =>
-                            s_cell_buf_r(1) <= (others => c_CELL_INIT);
+                            s_cell_valid_r(1) <= (others => '0');
                             s_cstate_r      <= ST_C_ACTIVE;
                             if i_shot_start = '1' then
                                 s_shot_pending_r <= '1';
@@ -746,24 +780,25 @@ begin
                                     -- count controls only its own slot writes.
                                     v_hit_key := s_wr_buf_r & i_s_axis_tuser(5 downto 3);
                                     case v_hit_key is
-                                        when "0000" => pr_store_hit(s_cell_buf_r(0)(0), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0001" => pr_store_hit(s_cell_buf_r(0)(1), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0010" => pr_store_hit(s_cell_buf_r(0)(2), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0011" => pr_store_hit(s_cell_buf_r(0)(3), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0100" => pr_store_hit(s_cell_buf_r(0)(4), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0101" => pr_store_hit(s_cell_buf_r(0)(5), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0110" => pr_store_hit(s_cell_buf_r(0)(6), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "0111" => pr_store_hit(s_cell_buf_r(0)(7), s_hit_dropped_r, s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1000" => pr_store_hit(s_cell_buf_r(1)(0), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1001" => pr_store_hit(s_cell_buf_r(1)(1), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1010" => pr_store_hit(s_cell_buf_r(1)(2), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1011" => pr_store_hit(s_cell_buf_r(1)(3), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1100" => pr_store_hit(s_cell_buf_r(1)(4), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1101" => pr_store_hit(s_cell_buf_r(1)(5), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1110" => pr_store_hit(s_cell_buf_r(1)(6), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
-                                        when "1111" => pr_store_hit(s_cell_buf_r(1)(7), s_hit_dropped_r, s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0000" => pr_store_hit(s_cell_buf_r(0)(0), s_hit_dropped_r, s_cell_valid_r(0)(0), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0001" => pr_store_hit(s_cell_buf_r(0)(1), s_hit_dropped_r, s_cell_valid_r(0)(1), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0010" => pr_store_hit(s_cell_buf_r(0)(2), s_hit_dropped_r, s_cell_valid_r(0)(2), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0011" => pr_store_hit(s_cell_buf_r(0)(3), s_hit_dropped_r, s_cell_valid_r(0)(3), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0100" => pr_store_hit(s_cell_buf_r(0)(4), s_hit_dropped_r, s_cell_valid_r(0)(4), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0101" => pr_store_hit(s_cell_buf_r(0)(5), s_hit_dropped_r, s_cell_valid_r(0)(5), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0110" => pr_store_hit(s_cell_buf_r(0)(6), s_hit_dropped_r, s_cell_valid_r(0)(6), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "0111" => pr_store_hit(s_cell_buf_r(0)(7), s_hit_dropped_r, s_cell_valid_r(0)(7), s_buf_max_hits_r(0), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1000" => pr_store_hit(s_cell_buf_r(1)(0), s_hit_dropped_r, s_cell_valid_r(1)(0), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1001" => pr_store_hit(s_cell_buf_r(1)(1), s_hit_dropped_r, s_cell_valid_r(1)(1), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1010" => pr_store_hit(s_cell_buf_r(1)(2), s_hit_dropped_r, s_cell_valid_r(1)(2), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1011" => pr_store_hit(s_cell_buf_r(1)(3), s_hit_dropped_r, s_cell_valid_r(1)(3), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1100" => pr_store_hit(s_cell_buf_r(1)(4), s_hit_dropped_r, s_cell_valid_r(1)(4), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1101" => pr_store_hit(s_cell_buf_r(1)(5), s_hit_dropped_r, s_cell_valid_r(1)(5), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1110" => pr_store_hit(s_cell_buf_r(1)(6), s_hit_dropped_r, s_cell_valid_r(1)(6), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
+                                        when "1111" => pr_store_hit(s_cell_buf_r(1)(7), s_hit_dropped_r, s_cell_valid_r(1)(7), s_buf_max_hits_r(1), i_s_axis_tdata(c_HIT_SLOT_DATA_WIDTH downto 0), i_s_axis_tuser(0));
                                         when others => null;
                                     end case;
+                                    s_cell_valid_r(v_wr)(v_stop) <= '1';
                                 end if;
                             end if;
 
@@ -987,8 +1022,8 @@ begin
     -- p_output: serialize read-buffer cells to AXI-Stream master
     -- Owns: s_ostate_r, s_rd_buf_r, s_cell_sel_r, s_stop_idx_r, s_beat_idx_r,
     --       s_last_stop_r, s_tdata_r, s_tvalid_r, s_tlast_r, s_output_done_r
-    -- Reads (no write): s_cell_buf_r, s_buf_full_r, s_output_req_r,
-    --       s_rd_buf_idx_r
+    -- Reads (no write): s_cell_buf_r, s_cell_valid_r, s_buf_full_r,
+    --       s_output_req_r, s_rd_buf_idx_r
     -- =========================================================================
     p_output : process(i_clk)
         variable v_rd       : natural range 0 to 1;
@@ -1039,7 +1074,9 @@ begin
                                 -- Latch read buffer, load first cell
                                 s_rd_buf_r    <= s_rd_buf_idx_r;
                                 v_rd          := fn_buf_idx(s_rd_buf_idx_r);
-                                s_cell_sel_r    <= s_cell_buf_r(v_rd)(0);
+                                s_cell_sel_r    <= fn_cell_or_init(
+                                                      s_cell_buf_r(v_rd)(0),
+                                                      s_cell_valid_r(v_rd)(0));
                                 s_stop_idx_r    <= (others => '0');
                                 s_beat_idx_r    <= (others => '0');
                                 -- Phase B: snapshot the WAIT_IFIFO2 cap from
@@ -1110,7 +1147,9 @@ begin
                                         -- Normal cell boundary: load next cell
                                         s_stop_idx_r <= v_nxt_stop;
                                         s_beat_idx_r <= (others => '0');
-                                        s_cell_sel_r <= s_cell_buf_r(v_rd)(to_integer(v_nxt_stop));
+                                        s_cell_sel_r <= fn_cell_or_init(
+                                                              s_cell_buf_r(v_rd)(to_integer(v_nxt_stop)),
+                                                              s_cell_valid_r(v_rd)(to_integer(v_nxt_stop)));
                                         s_tvalid_r   <= '0';
                                         s_tlast_r    <= '0';
                                         s_tuser_r    <= (others => '0');
@@ -1152,7 +1191,9 @@ begin
                                 v_rd := fn_buf_idx(s_rd_buf_r);
                                 s_stop_idx_r    <= "100";    -- stop 4
                                 s_beat_idx_r    <= (others => '0');
-                                s_cell_sel_r    <= s_cell_buf_r(v_rd)(4);
+                                s_cell_sel_r    <= fn_cell_or_init(
+                                                      s_cell_buf_r(v_rd)(4),
+                                                      s_cell_valid_r(v_rd)(4));
                                 s_out_timeout_r <= (others => '0');
                                 s_ostate_r      <= ST_O_LOAD;
                             elsif s_out_timeout_r = s_ififo2_cap_r then
