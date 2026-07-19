@@ -97,6 +97,21 @@ proc verify_parent_manual_cdc {stage report_path groups} {
     puts "PARENT_CDC_CONSTRAINT stage=$stage first_stage_pins=$total"
 }
 
+proc report_parent_control_sets {stage result_dir} {
+    set cfg_cells [get_cells -quiet -hier -filter {
+        NAME =~ */u_tdc_gpx/u_config_ctrl/*
+    }]
+    if {[llength $cfg_cells] == 0} {
+        error "parent control-set report found no u_config_ctrl leaf cells"
+    }
+
+    report_control_sets -hierarchical -hierarchical_depth 8 \
+        -file [file join $result_dir ${stage}_control_sets_hier.rpt]
+    report_control_sets -verbose -sort_by {clk clkEn set} -cells $cfg_cells \
+        -file [file join $result_dir ${stage}_config_ctrl_control_sets.rpt]
+    puts "PARENT_CONTROL_SETS stage=$stage cfg_cells=[llength $cfg_cells]"
+}
+
 set ip_repo_axil   C:/Projects/my_sp/lib/IP/my_axil_csr/ip_repo
 set ip_repo_axil32 C:/Projects/my_sp/lib/IP/my_axil_csr32/ip_repo
 
@@ -506,6 +521,7 @@ if {$run_mode in {SYNTH IMPL}} {
     verify_parent_manual_cdc post_synth \
         [file join $result_dir post_synth_manual_cdc.rpt] \
         $parent_manual_cdc_groups
+    report_parent_control_sets post_synth $result_dir
     report_utilization -hierarchical -hierarchical_depth 6 \
         -file [file join $result_dir post_synth_utilization_hier.rpt]
     report_timing_summary -delay_type min_max -report_unconstrained \
@@ -532,6 +548,7 @@ if {$run_mode eq "IMPL"} {
     verify_parent_manual_cdc post_route \
         [file join $result_dir post_route_manual_cdc.rpt] \
         $parent_manual_cdc_groups
+    report_parent_control_sets post_route $result_dir
     report_utilization -hierarchical -hierarchical_depth 6 \
         -file [file join $result_dir post_route_utilization_hier.rpt]
     report_timing_summary -delay_type min_max -report_unconstrained \
