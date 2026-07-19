@@ -57,23 +57,26 @@ or DRC rule IDs, incomplete routing, and a missing route checkpoint.
 
 The parent XDC does not use global asynchronous clock groups. Its only manual
 CDC exceptions target named first-stage synchronizer pins in four groups; the
-second synchronizer stage remains timed. The gate requires 68 pins after
-synthesis (`24/40/2/2`) and 40 surviving pins after implementation
-(`24/12/2/2`), all with `ASYNC_REG=TRUE`. The 28 optimized diagnostic pins are
-downstream-unobserved fields; any change to either stage-specific baseline is a
-sign-off failure.
+second synchronizer stage remains timed. The gate requires exactly 40 pins
+after both synthesis and implementation (`24/12/2/2`), all with
+`ASYNC_REG=TRUE`. The diagnostic group contains only the consumed
+`cmd_collision`, `err_bus_fatal`, and `init_cfg_coalesced` masks. There is no
+stage-specific allowance for downstream-unobserved diagnostic logic; any
+change to the fixed 40-pin baseline is a sign-off failure.
 
 ## Latest reference evidence
 
 | Item | Result |
 |---|---|
-| Session | `260719042200_ps_fclk_parent_ref` |
-| Production RTL | `ebd225b` |
-| Route timing | WNS `+0.280 ns`, WHS `+0.036 ns`, WPWS `+1.370 ns` |
-| FCLK0/FCLK1/FCLK2 WNS | `+1.614 / +0.512 / +0.280 ns` |
-| Bus skew | 38 constraints, minimum slack `+4.137 ns` |
-| CDC | 0 critical; 160 reviewed XPM FIFO `CDC-15` paths |
-| Routing | 40,691 fully routed nets, 0 routing errors |
+| Session | `260719_diagcollapse_impl_ps_fclk_parent_ref` |
+| Production RTL | `6210095` |
+| Sign-off gate | `1dca2b2` |
+| Route timing | WNS `+0.204 ns`, WHS `+0.035 ns`, WPWS `+1.370 ns` |
+| FCLK0/FCLK1/FCLK2 WNS | `+1.390 / +0.382 / +0.204 ns` |
+| Bus skew | 38 constraints, minimum slack `+3.953 ns` |
+| Manual CDC | 40 exact pins after synthesis and route |
+| CDC | 0 critical, `CDC-6=0`; 160 reviewed XPM FIFO `CDC-15` paths |
+| Routing | 40,724 fully routed nets, 0 routing errors |
 | Verdict | `REFERENCE_IMPL_PASS_WITH_BOARD_IO_OPEN` |
 
 The 48-bit rise-HSIZE/fall-HSIZE/VSIZE tuple crosses from FCLK1 to FCLK0 as one
