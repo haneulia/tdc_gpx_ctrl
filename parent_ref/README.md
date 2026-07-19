@@ -53,7 +53,11 @@ The sign-off gate checks all three FCLK domains independently, requires zero
 internal unconstrained endpoints, and verifies that inter-domain paths retain
 their XPM-owned max-delay constraints. It rejects `TIMING-24`, unsafe clock
 interactions, critical CDC findings, negative bus-skew slack, new methodology
-or DRC rule IDs, incomplete routing, and a missing route checkpoint.
+or DRC rule IDs, incomplete routing, and a missing route checkpoint. It also
+requires the generated hierarchical control-set reports and bounds design and
+`config_ctrl` control sets to `1217/435` after synthesis and `1184/422` after
+implementation. Crossing one of those ceilings requires an explicit
+complexity review and baseline update.
 
 The parent XDC does not use global asynchronous clock groups. Its only manual
 CDC exceptions target named first-stage synchronizer pins in four groups; the
@@ -68,15 +72,18 @@ change to the fixed 40-pin baseline is a sign-off failure.
 
 | Item | Result |
 |---|---|
-| Session | `260719_diagcollapse_impl_ps_fclk_parent_ref` |
-| Production RTL | `6210095` |
-| Sign-off gate | `1dca2b2` |
-| Route timing | WNS `+0.204 ns`, WHS `+0.035 ns`, WPWS `+1.370 ns` |
-| FCLK0/FCLK1/FCLK2 WNS | `+1.390 / +0.382 / +0.204 ns` |
-| Bus skew | 38 constraints, minimum slack `+3.953 ns` |
+| Session | `260719_cfgowner_impl_ps_fclk_parent_ref` |
+| Production RTL | `5864438` |
+| Control-set reporting | `ff82537` |
+| Sign-off gate | `21f0eff` |
+| Route utilization | 18,678 LUT, 26,065 FF |
+| Route control sets | 1,184 design, 422 `config_ctrl` |
+| Route timing | WNS `+0.305 ns`, WHS `+0.019 ns`, WPWS `+1.370 ns` |
+| FCLK0/FCLK1/FCLK2 WNS | `+1.503 / +0.453 / +0.305 ns` |
+| Bus skew | 38 constraints, minimum slack `+4.103 ns` |
 | Manual CDC | 40 exact pins after synthesis and route |
 | CDC | 0 critical, `CDC-6=0`; 160 reviewed XPM FIFO `CDC-15` paths |
-| Routing | 40,724 fully routed nets, 0 routing errors |
+| Routing | 38,863 fully routed nets, 0 routing errors |
 | Verdict | `REFERENCE_IMPL_PASS_WITH_BOARD_IO_OPEN` |
 
 The 48-bit rise-HSIZE/fall-HSIZE/VSIZE tuple crosses from FCLK1 to FCLK0 as one
