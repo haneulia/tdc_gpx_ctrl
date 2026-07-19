@@ -122,6 +122,7 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
     "$Hdl/tb_tdc_gpx_stop_cfg_decode.vhd",
     "$Hdl/tb_tdc_gpx_request_loss.vhd",
+    "$Hdl/tb_tdc_gpx_chip_init_cfg_owner.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
@@ -176,6 +177,11 @@ try {
         "xil_defaultlib.tb_tdc_gpx_request_loss"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_request_loss_snap", "-runall", "-log", "xsim_c06_v002_request_loss_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_request_loss_$Stamp.log" "REQUEST_LOSS_DIAGNOSTIC_COLLAPSE PASS"
+
+    Invoke-Xelab "tb_c06_v002_chip_init_cfg_owner_snap" "xelab_c06_v002_chip_init_cfg_owner_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_chip_init_cfg_owner"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_chip_init_cfg_owner_snap", "-runall", "-log", "xsim_c06_v002_chip_init_cfg_owner_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_chip_init_cfg_owner_$Stamp.log" "CHIP_INIT_COORDINATOR_CFG_OWNER PASS"
 
     $linePackerCases = @(
         @{ Name = "w32_mh7";   Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w32" },

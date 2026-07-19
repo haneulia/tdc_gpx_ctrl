@@ -23,6 +23,11 @@
 --   returns to ST_OFF, the pending cfg_write is auto-consumed so the SW
 --   pulse is not silently lost.
 --
+-- Configuration image ownership:
+--   The coordinator snapshots i_cfg_image before dispatch and holds it stable
+--   until this FSM and any deferred cfg_write complete. This block reads that
+--   snapshot directly; it does not replicate active/pending 512-bit images.
+--
 -- Timeout-exit safe state (Round 2 #8):
 --   ST_CFG_WR_WAIT and ST_MR_WAIT timeout exits drop s_stopdis_r <= '0'
 --   so the chip ends in the same post-init pin state as a normal
@@ -52,7 +57,9 @@ entity tdc_gpx_chip_init is
         -- Control from coordinator
         i_start          : in  std_logic;        -- begin powerup init sequence
         i_cfg_write_req  : in  std_logic;        -- runtime cfg_write (no master reset)
-        i_cfg_image      : in  t_cfg_image;      -- latched by coordinator at request time
+        -- Coordinator-owned snapshot. Must remain stable from request
+        -- acceptance until o_busy is low and no deferred request remains.
+        i_cfg_image      : in  t_cfg_image;
         o_done           : out std_logic;         -- 1-clk: init/cfg_write complete
         o_timeout        : out std_logic;         -- 1-clk: bus response timeout (done also fires)
 
@@ -101,7 +108,6 @@ architecture rtl of tdc_gpx_chip_init is
 
     signal s_wait_cnt_r      : unsigned(15 downto 0) := (others => '0');
     signal s_cfg_idx_r       : unsigned(3 downto 0)  := (others => '0');
-    signal s_cfg_image_snap_r : t_cfg_image := (others => (others => '0'));
     signal s_init_mode_r     : std_logic := '1';  -- '1' = powerup (full), '0' = runtime cfg_write
     -- Pending cfg_write: set when i_cfg_write_req arrives same cycle as i_start
     -- (start wins) or during busy. Processed automatically after the init
@@ -109,14 +115,6 @@ architecture rtl of tdc_gpx_chip_init is
     signal s_cfg_write_pending_r : std_logic := '0';
     -- Round 11 item 14: sticky for busy-window cfg_write coalesce events
     signal s_cfg_write_coalesced_r : std_logic := '0';
-    -- Round 9 #4: cfg_image snapshot at pending-latch time. Previously ST_OFF
-    -- re-sampled the live i_cfg_image when the deferred cfg_write finally ran,
-    -- so a cfg value updated between request time and deferred-run time would
-    -- be applied instead of the one SW requested. Now we capture the image
-    -- alongside the pending pulse so the deferred run uses the same snapshot
-    -- SW intended.
-    signal s_cfg_pending_image_r : t_cfg_image := (others => (others => '0'));
-
     signal s_req_valid_r     : std_logic := '0';
     signal s_req_rw_r        : std_logic := '0';
     signal s_req_addr_r      : std_logic_vector(3 downto 0) := (others => '0');
@@ -154,9 +152,7 @@ begin
                 s_done_r         <= '0';
                 s_timeout_out_r  <= '0';
                 s_init_mode_r    <= '1';
-                s_cfg_image_snap_r <= (others => (others => '0'));
                 s_cfg_write_pending_r <= '0';
-                s_cfg_pending_image_r <= (others => (others => '0'));
                 s_cfg_write_coalesced_r <= '0';
             else
                 s_done_r        <= '0';
@@ -168,35 +164,28 @@ begin
                         s_busy_r <= '0';
                         if i_start = '1' then
                             s_init_mode_r      <= '1';
-                            s_cfg_image_snap_r <= i_cfg_image;
                             s_rsp_timeout_r    <= (others => '0');  -- rearm watchdog
                             s_busy_r           <= '1';
                             -- If a cfg_write was requested the same cycle, queue
                             -- it so the SW pulse is not lost when init wins.
-                            -- Round 9 #4: also snapshot the cfg_image at
-                            -- pending-latch time so the deferred run uses the
-                            -- SW-intended image rather than whatever i_cfg_image
-                            -- happens to be when ST_OFF re-runs.
+                            -- The queued intent reuses the same coordinator
+                            -- snapshot after the full init completes.
                             if i_cfg_write_req = '1' then
                                 s_cfg_write_pending_r <= '1';
-                                s_cfg_pending_image_r <= i_cfg_image;
                             end if;
                             s_state_r          <= ST_POWERUP;
                         elsif i_cfg_write_req = '1' then
-                            -- Live cfg_write: use the live i_cfg_image
+                            -- Runtime cfg_write uses the coordinator snapshot.
                             s_cfg_write_pending_r <= '0';
                             s_init_mode_r      <= '0';
-                            s_cfg_image_snap_r <= i_cfg_image;
                             s_cfg_idx_r        <= (others => '0');
                             s_rsp_timeout_r    <= (others => '0');
                             s_busy_r           <= '1';
                             s_state_r          <= ST_STOPDIS_HIGH;
                         elsif s_cfg_write_pending_r = '1' then
-                            -- Round 9 #4: deferred cfg_write — use the snapshot
-                            -- captured at request time, not the current live image.
+                            -- Deferred cfg_write continues with the held image.
                             s_cfg_write_pending_r <= '0';
                             s_init_mode_r      <= '0';
-                            s_cfg_image_snap_r <= s_cfg_pending_image_r;
                             s_cfg_idx_r        <= (others => '0');
                             s_rsp_timeout_r    <= (others => '0');
                             s_busy_r           <= '1';
@@ -232,7 +221,7 @@ begin
                         s_req_valid_r <= '1';
                         s_req_rw_r    <= '1';
                         s_req_addr_r  <= std_logic_vector(to_unsigned(v_reg_num, 4));
-                        v_wr_data     := s_cfg_image_snap_r(v_reg_num)(g_BUS_DATA_WIDTH - 1 downto 0);
+                        v_wr_data     := i_cfg_image(v_reg_num)(g_BUS_DATA_WIDTH - 1 downto 0);
                         -- Safety: force Reg14[4]=0 to block 16-bit mode.
                         -- TDC-GPX 16-bit mode has CSN malfunction bug and requires
                         -- workaround sequences not implemented in this RTL.
@@ -275,7 +264,7 @@ begin
                         end if;
 
                     when ST_MASTER_RESET =>
-                        v_wr_data     := s_cfg_image_snap_r(4)(g_BUS_DATA_WIDTH - 1 downto 0);
+                        v_wr_data     := i_cfg_image(4)(g_BUS_DATA_WIDTH - 1 downto 0);
                         v_wr_data(22) := '1';
                         s_req_valid_r <= '1';
                         s_req_rw_r    <= '1';
@@ -318,21 +307,16 @@ begin
 
                 end case;
 
-                -- Busy-state cfg_write_req absorb (Round 5 #14 + Round 9 #4):
+                -- Busy-state cfg_write_req absorb (Round 5 #14):
                 -- The ST_OFF branch handles the start+cfg_write_req coincidence
                 -- above. Any cfg_write_req arriving while we are NOT in ST_OFF
                 -- would otherwise be silently lost; latch it so the SW pulse
                 -- is consumed when the FSM next returns to ST_OFF.
-                -- Round 9 #4: snapshot the cfg_image together with the pending
-                -- pulse so the deferred run uses the SW-intended image (the
-                -- first pulse in a busy-window burst captures; later pulses
-                -- in the same window are coalesced into the same snapshot,
-                -- matching the pre-R9 collapsing behavior).
+                -- The coordinator-owned image remains stable for this whole
+                -- interval, so only the pending intent needs storage. Later
+                -- pulses are coalesced into that same deferred operation.
                 if s_state_r /= ST_OFF and i_cfg_write_req = '1' then
-                    if s_cfg_write_pending_r = '0' then
-                        -- First pending in this busy window → capture snapshot.
-                        s_cfg_pending_image_r <= i_cfg_image;
-                    else
+                    if s_cfg_write_pending_r = '1' then
                         -- Round 11 item 14: 2nd+ request while pending already
                         -- latched → coalesce. Flag sticky for SW visibility.
                         s_cfg_write_coalesced_r <= '1';
@@ -342,6 +326,35 @@ begin
             end if;
         end if;
     end process p_fsm;
+
+    -- synthesis translate_off
+    -- Keep the coordinator ownership contract executable without recreating
+    -- the removed image copies in hardware.
+    p_cfg_image_stability : process(i_clk)
+        variable v_guard_valid : boolean := false;
+        variable v_guard_image : t_cfg_image := (others => (others => '0'));
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                v_guard_valid := false;
+            else
+                if s_state_r = ST_OFF
+                    and s_cfg_write_pending_r = '0'
+                    and (i_start = '1' or i_cfg_write_req = '1') then
+                    v_guard_image := i_cfg_image;
+                    v_guard_valid := true;
+                elsif v_guard_valid
+                    and (s_state_r /= ST_OFF or s_cfg_write_pending_r = '1') then
+                    assert i_cfg_image = v_guard_image
+                        report "chip_init: i_cfg_image changed during active/deferred operation"
+                        severity failure;
+                elsif s_state_r = ST_OFF and s_cfg_write_pending_r = '0' then
+                    v_guard_valid := false;
+                end if;
+            end if;
+        end if;
+    end process p_cfg_image_stability;
+    -- synthesis translate_on
 
     o_bus_req_valid <= s_req_valid_r;
     o_bus_req_rw    <= s_req_rw_r;
