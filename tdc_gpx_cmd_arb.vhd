@@ -79,16 +79,14 @@ entity tdc_gpx_cmd_arb is
         --   another transaction is still in flight. A second overlapping
         --   request (queue already occupied) raises o_reg_rejected sticky so
         --   SW knows at least one request was lost.
+        -- Sticky request-loss summary: queue overflow or simultaneous R+W.
         o_reg_rejected       : out std_logic;
 
         -- Zero-mask status (Round 5 #17 — was sim-only)
         --   Sticky: a reg read/write request arrived with i_cmd_reg_chip_address
         --   = 0. Previously ignored with a sim-only assert; now also surfaced
         --   as a runtime-observable flag. Cleared only by reset.
-        o_reg_zero_mask      : out std_logic;
-        -- Round 12 A5: concurrent R+W sticky — write-wins ambiguity visible
-        -- at silicon (sim-only assert alone was insufficient).
-        o_err_rw_ambiguous   : out std_logic
+        o_reg_zero_mask      : out std_logic
     );
 end entity tdc_gpx_cmd_arb;
 
@@ -142,8 +140,7 @@ architecture rtl of tdc_gpx_cmd_arb is
     signal s_reg_queue_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_reg_queue_rw_r      : std_logic := '0';
     signal s_reg_queue_addr_r    : std_logic_vector(3 downto 0) := (others => '0');
-    signal s_reg_rejected_r      : std_logic := '0';  -- sticky: 2nd overlap lost
-    signal s_err_rw_ambiguous_r  : std_logic := '0';  -- Round 12 A5: concurrent R+W sticky (write-wins, read lost)
+    signal s_reg_rejected_r      : std_logic := '0';  -- sticky: request lost
     signal s_reg_zero_mask_r     : std_logic := '0';  -- sticky: zero-mask request observed (Round 5 #17)
 
     -- Round 9 #3: dispatch-wait watchdog. The existing s_reg_timeout_cnt_r
@@ -234,7 +231,6 @@ begin
                 s_reg_queue_addr_r   <= (others => '0');
                 s_reg_rejected_r     <= '0';
                 s_reg_zero_mask_r    <= '0';
-                s_err_rw_ambiguous_r <= '0';
                 s_dispatch_wait_cnt_r <= (others => '0');
             else
                 -- Default: clear single-cycle pulses
@@ -243,13 +239,13 @@ begin
                 s_loop_resume_r    <= '0';
 
                 -- Detect new request (read or write; write wins if both)
-                -- Round 9 #24 + Round 12 A5: write-wins is deliberate but
-                -- ambiguous. Sim assert still fires; synth-live sticky
-                -- below catches the same condition post-silicon so SW
-                -- can detect contract violations from the upstream caller
-                -- (previously these were silent).
+                -- Write-wins is deliberate when read and write arrive together.
+                -- The simulation assertion identifies the contract violation;
+                -- o_reg_rejected records the lost read intent in hardware.
                 if i_cmd_reg_read = '1' and i_cmd_reg_write = '1' then
-                    s_err_rw_ambiguous_r <= '1';
+                    -- One intent is lost by the defined write-wins policy.
+                    -- Reuse the existing SW-visible request-loss sticky.
+                    s_reg_rejected_r <= '1';
                 end if;
                 -- synthesis translate_off
                 assert not (i_cmd_reg_read = '1' and i_cmd_reg_write = '1')
@@ -526,6 +522,5 @@ begin
     o_reg_timeout_mask   <= s_reg_timeout_mask_r;
     o_reg_rejected       <= s_reg_rejected_r;
     o_reg_zero_mask      <= s_reg_zero_mask_r;
-    o_err_rw_ambiguous   <= s_err_rw_ambiguous_r;
 
 end architecture rtl;

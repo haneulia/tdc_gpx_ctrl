@@ -257,25 +257,6 @@ entity tdc_gpx_config_ctrl is
         -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask.
         o_cmd_collision_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
-        -- Round 12 A1: per-chip force-reinit used sticky.
-        o_err_force_reinit_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-        -- Round 12 A2: per-chip raw control-beat drop sticky.
-        o_err_raw_ctrl_drop_mask  : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-        -- Round 12 A4: per-chip chip_run drain mismatch sticky.
-        o_err_drain_mismatch_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-        -- Round 12 A5: concurrent R+W ambiguity stickies.
-        o_err_rw_ambiguous_arb    : out std_logic;  -- cmd_arb (AXI-Stream domain)
-        o_err_rw_ambiguous_reg    : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg per chip (CDC'd)
-
-        -- Round 12 B8: per-chip stopdis_override mid-shot sticky.
-        o_err_stopdis_mid_shot_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-        -- Round 12 #20: PH_IDLE command collision vector (OR across chips).
-        o_err_cmd_collision_vec  : out std_logic_vector(3 downto 0);
-
         -- Round 12 #15: distinct raw-overflow cause masks (per-chip).
         o_err_raw_drop_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_err_drain_cap_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -287,9 +268,6 @@ entity tdc_gpx_config_ctrl is
 
         -- Round 13 axis 2: per-chip bus fatal sticky mask.
         o_err_bus_fatal_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-
-        -- Round 13 axis 1a: per-chip drain_done_faulted sticky mask.
-        o_drain_faulted_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
 
         -- =====================================================================
         -- Interrupt
@@ -504,45 +482,11 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_force_reinit_toggle_src_r : std_logic := '0';
     signal s_cmd_soft_reset_sync_tdc_r     : std_logic_vector(2 downto 0) := (others => '0');
     signal s_cmd_force_reinit_sync_tdc_r   : std_logic_vector(2 downto 0) := (others => '0');
-    signal s_err_force_reinit    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A1: per-chip force-reinit sticky
-    signal s_err_raw_ctrl_drop   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A2: per-chip control-beat drop sticky
-    signal s_err_drain_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A4: per-chip drain mismatch sticky
-    -- Round 12 A3 (extended): drain_mismatch also CDC'd
-    signal s_err_drain_mismatch_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_drain_mismatch_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-
-    -- Round 12 A5: cmd_arb + chip_reg R+W ambiguity stickies. cmd_arb is in
-    -- AXI-Stream domain; chip_reg is in TDC domain (one per chip).
-    signal s_err_rw_ambiguous_arb : std_logic;  -- AXI-Stream domain (cmd_arb)
-    signal s_err_rw_ambiguous_reg : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- TDC domain (chip_reg per chip)
-    signal s_err_rw_ambiguous_reg_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_rw_ambiguous_reg_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-
-    -- Round 12 B8: per-chip stopdis_override mid-shot sticky (TDC domain)
-    signal s_err_stopdis_mid_shot : std_logic_vector(c_N_CHIPS - 1 downto 0);
     -- Round 13 axis 2: per-chip bus fatal sticky (TDC domain)
     signal s_err_bus_fatal        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    -- Round 13 axis 1a: per-chip drain_done_faulted pulse (TDC domain).
-    -- OR-aggregated to a sticky mask surfaced to SW.
-    signal s_drain_done_faulted   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_drain_faulted_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_drain_faulted_mask_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_drain_faulted_mask_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_stopdis_mid_shot_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_stopdis_mid_shot_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
-    -- Round 12 #20: per-chip collision vector (4 bits each)
-    type t_collision_vec_arr is array(0 to c_N_CHIPS - 1) of std_logic_vector(3 downto 0);
-    signal s_cmd_collision_vec_per : t_collision_vec_arr;
-    -- Aggregated across chips: [0]=any-chip-start-collision, [1]=cfg_write,
-    -- [2]=reg_read, [3]=reg_write. The OR reduction is registered in the
-    -- TDC source domain before the per-bit synchronizer.
-    signal s_cmd_collision_vec_src_r  : std_logic_vector(3 downto 0) := (others => '0');
-    signal s_cmd_collision_vec_meta_r : std_logic_vector(3 downto 0) := (others => '0');
-    signal s_cmd_collision_vec_axi_r  : std_logic_vector(3 downto 0) := (others => '0');
-
-    -- Round 12 A3: per-bit 2-FF synchronizers protect independent sticky
-    -- masks. Encoded timeout causes use the atomic snapshot mailbox below.
+    -- The three retained per-chip sticky masks use independent 2-FF
+    -- synchronizers. Encoded timeout causes use the atomic mailbox below.
     -- Encoded causes cross as one atomic snapshot. A bitwise synchronizer can
     -- transiently form a different 3-bit code that downstream CSR logic would
     -- capture as a real diagnostic value.
@@ -558,10 +502,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_init_cfg_coalesced_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_cmd_collision_meta_r      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
     signal s_cmd_collision_axi_r       : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_force_reinit_meta_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_force_reinit_axi_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_raw_ctrl_drop_meta_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_raw_ctrl_drop_axi_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
 
     -- ASYNC_REG attribute declaration (scoped to this section; the later
     -- declaration at the cfg CDC section is for a separate set of signals).
@@ -570,22 +510,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     attribute ASYNC_REG of s_init_cfg_coalesced_axi_r  : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_collision_meta_r      : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_collision_axi_r       : signal is "TRUE";
-    attribute ASYNC_REG of s_err_force_reinit_meta_r   : signal is "TRUE";
-    attribute ASYNC_REG of s_err_force_reinit_axi_r    : signal is "TRUE";
-    attribute ASYNC_REG of s_err_raw_ctrl_drop_meta_r  : signal is "TRUE";
-    attribute ASYNC_REG of s_err_raw_ctrl_drop_axi_r   : signal is "TRUE";
-    attribute ASYNC_REG of s_err_drain_mismatch_meta_r : signal is "TRUE";
-    attribute ASYNC_REG of s_err_drain_mismatch_axi_r  : signal is "TRUE";
-    attribute ASYNC_REG of s_err_rw_ambiguous_reg_meta_r : signal is "TRUE";
-    attribute ASYNC_REG of s_err_rw_ambiguous_reg_axi_r  : signal is "TRUE";
-    attribute ASYNC_REG of s_err_stopdis_mid_shot_meta_r : signal is "TRUE";
-    attribute ASYNC_REG of s_err_stopdis_mid_shot_axi_r  : signal is "TRUE";
-    attribute ASYNC_REG of s_cmd_collision_vec_meta_r    : signal is "TRUE";
-    attribute ASYNC_REG of s_cmd_collision_vec_axi_r     : signal is "TRUE";
     attribute ASYNC_REG of s_err_bus_fatal_meta_r         : signal is "TRUE";
     attribute ASYNC_REG of s_err_bus_fatal_axi_r          : signal is "TRUE";
-    attribute ASYNC_REG of s_drain_faulted_mask_meta_r    : signal is "TRUE";
-    attribute ASYNC_REG of s_drain_faulted_mask_axi_r     : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_soft_reset_sync_tdc_r     : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_force_reinit_sync_tdc_r   : signal is "TRUE";
     signal s_cmd_cfg_write_g_tdc : std_logic;
@@ -861,19 +787,6 @@ begin
     -- run_timeout pulse so SW always sees the latest non-stale value. TDC
     -- domain; consumers are quasi-static so a 2-FF sync at consumer side is
     -- sufficient (handled by the status CDC that carries STAT7).
-    -- Round 13 axis 1a: latch drain_done_faulted pulses into sticky mask
-    -- (TDC domain) so CDC carries a level not a pulse.
-    p_drain_faulted_latch : process(i_tdc_clk)
-    begin
-        if rising_edge(i_tdc_clk) then
-            if s_tdc_aresetn = '0' then
-                s_drain_faulted_mask_r <= (others => '0');
-            else
-                s_drain_faulted_mask_r <= s_drain_faulted_mask_r or s_drain_done_faulted;
-            end if;
-        end if;
-    end process p_drain_faulted_latch;
-
     -- Round 12 #17: per-chip cause latch (keeps the last cause that fired
     -- on each chip, instead of the previous behavior that overwrote a
     -- single register with whichever chip iterated last).
@@ -918,43 +831,15 @@ begin
                 s_init_cfg_coalesced_axi_r  <= (others => '0');
                 s_cmd_collision_meta_r      <= (others => '0');
                 s_cmd_collision_axi_r       <= (others => '0');
-                s_err_force_reinit_meta_r   <= (others => '0');
-                s_err_force_reinit_axi_r    <= (others => '0');
-                s_err_raw_ctrl_drop_meta_r  <= (others => '0');
-                s_err_raw_ctrl_drop_axi_r   <= (others => '0');
-                s_err_drain_mismatch_meta_r <= (others => '0');
-                s_err_drain_mismatch_axi_r  <= (others => '0');
-                s_err_rw_ambiguous_reg_meta_r <= (others => '0');
-                s_err_rw_ambiguous_reg_axi_r  <= (others => '0');
-                s_err_stopdis_mid_shot_meta_r <= (others => '0');
-                s_err_stopdis_mid_shot_axi_r  <= (others => '0');
-                s_cmd_collision_vec_meta_r    <= (others => '0');
-                s_cmd_collision_vec_axi_r     <= (others => '0');
                 s_err_bus_fatal_meta_r         <= (others => '0');
                 s_err_bus_fatal_axi_r          <= (others => '0');
-                s_drain_faulted_mask_meta_r    <= (others => '0');
-                s_drain_faulted_mask_axi_r     <= (others => '0');
             else
                 s_init_cfg_coalesced_meta_r <= s_init_cfg_coalesced;
                 s_init_cfg_coalesced_axi_r  <= s_init_cfg_coalesced_meta_r;
                 s_cmd_collision_meta_r      <= s_cmd_collision_mask;
                 s_cmd_collision_axi_r       <= s_cmd_collision_meta_r;
-                s_err_force_reinit_meta_r   <= s_err_force_reinit;
-                s_err_force_reinit_axi_r    <= s_err_force_reinit_meta_r;
-                s_err_raw_ctrl_drop_meta_r  <= s_err_raw_ctrl_drop;
-                s_err_raw_ctrl_drop_axi_r   <= s_err_raw_ctrl_drop_meta_r;
-                s_err_drain_mismatch_meta_r <= s_err_drain_mismatch;
-                s_err_drain_mismatch_axi_r  <= s_err_drain_mismatch_meta_r;
-                s_err_rw_ambiguous_reg_meta_r <= s_err_rw_ambiguous_reg;
-                s_err_rw_ambiguous_reg_axi_r  <= s_err_rw_ambiguous_reg_meta_r;
-                s_err_stopdis_mid_shot_meta_r <= s_err_stopdis_mid_shot;
-                s_err_stopdis_mid_shot_axi_r  <= s_err_stopdis_mid_shot_meta_r;
-                s_cmd_collision_vec_meta_r    <= s_cmd_collision_vec_src_r;
-                s_cmd_collision_vec_axi_r     <= s_cmd_collision_vec_meta_r;
                 s_err_bus_fatal_meta_r         <= s_err_bus_fatal;
                 s_err_bus_fatal_axi_r          <= s_err_bus_fatal_meta_r;
-                s_drain_faulted_mask_meta_r    <= s_drain_faulted_mask_r;
-                s_drain_faulted_mask_axi_r     <= s_drain_faulted_mask_meta_r;
             end if;
         end if;
     end process p_tdc_to_axi_status_sync;
@@ -969,26 +854,6 @@ begin
     -- required.
     o_init_cfg_coalesced_mask <= s_init_cfg_coalesced_axi_r;
     o_cmd_collision_mask      <= s_cmd_collision_axi_r;
-    o_err_force_reinit_mask   <= s_err_force_reinit_axi_r;
-    o_err_raw_ctrl_drop_mask  <= s_err_raw_ctrl_drop_axi_r;
-    o_err_drain_mismatch_mask <= s_err_drain_mismatch_axi_r;
-    o_err_rw_ambiguous_arb    <= s_err_rw_ambiguous_arb;  -- AXI-Stream domain, no CDC needed
-    o_err_rw_ambiguous_reg    <= s_err_rw_ambiguous_reg_axi_r;
-    o_err_stopdis_mid_shot_mask <= s_err_stopdis_mid_shot_axi_r;
-    -- Register the OR reduction in the TDC source domain before the 2-FF CDC.
-    p_cmd_collision_vec_src : process(i_tdc_clk)
-    begin
-        if rising_edge(i_tdc_clk) then
-            if s_tdc_aresetn = '0' then
-                s_cmd_collision_vec_src_r <= (others => '0');
-            else
-                s_cmd_collision_vec_src_r <=
-                    s_cmd_collision_vec_per(0) or s_cmd_collision_vec_per(1) or
-                    s_cmd_collision_vec_per(2) or s_cmd_collision_vec_per(3);
-            end if;
-        end if;
-    end process p_cmd_collision_vec_src;
-    o_err_cmd_collision_vec <= s_cmd_collision_vec_axi_r;
     -- Round 12 #15: distinct cause masks.
     o_err_raw_drop_mask     <= s_err_raw_drop_axi;
     o_err_drain_cap_mask    <= s_err_drain_cap_axi;
@@ -1020,7 +885,6 @@ begin
         <= s_run_cause_axi_packed(c_RUN_CAUSE_CDC_BITS - 1 downto 3);
     -- Round 13 axis 2: bus fatal mask.
     o_err_bus_fatal_mask     <= s_err_bus_fatal_axi_r;
-    o_drain_faulted_mask     <= s_drain_faulted_mask_axi_r;
 
     -- =========================================================================
     -- MUX: when err_handler is active, it owns the cmd_arb reg-access path
@@ -1157,8 +1021,7 @@ begin
             o_reg_timeout        => s_reg_arb_timeout,
             o_reg_timeout_mask   => o_reg_timeout_mask,  -- Round 11 C: surface to top
             o_reg_rejected       => o_reg_rejected,  -- surfaced to top via config_ctrl port
-            o_reg_zero_mask      => o_reg_zero_mask,  -- surfaced to top via config_ctrl port
-            o_err_rw_ambiguous   => s_err_rw_ambiguous_arb  -- Round 12 A5
+            o_reg_zero_mask      => o_reg_zero_mask   -- surfaced to top via config_ctrl port
         );
 
     -- =========================================================================
@@ -1946,14 +1809,7 @@ begin
                 o_run_timeout_cause => s_run_timeout_cause(i),
                 o_init_cfg_coalesced => s_init_cfg_coalesced(i),
                 o_err_cmd_collision  => s_cmd_collision_mask(i),
-                o_err_force_reinit   => s_err_force_reinit(i),
-                o_err_raw_ctrl_drop  => s_err_raw_ctrl_drop(i),
-                o_err_drain_mismatch => s_err_drain_mismatch(i),
-                o_err_reg_rw_ambiguous => s_err_rw_ambiguous_reg(i),
-                o_err_stopdis_mid_shot => s_err_stopdis_mid_shot(i),
-                o_err_cmd_collision_vec => s_cmd_collision_vec_per(i),
-                o_err_bus_fatal        => s_err_bus_fatal(i),
-                o_drain_done_faulted   => s_drain_done_faulted(i)
+                o_err_bus_fatal        => s_err_bus_fatal(i)
             );
 
         -- ----- chip_ctrl raw stream -> decode_pipe clock strategy -----

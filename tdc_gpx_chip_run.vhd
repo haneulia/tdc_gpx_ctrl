@@ -159,10 +159,6 @@ entity tdc_gpx_chip_run is
         o_range_active      : out std_logic;           -- '1' during capture+drain window
         o_timeout           : out std_logic;           -- 1-clk pulse: abnormal drain exit
         o_timeout_cause     : out std_logic_vector(2 downto 0);  -- cause code (valid with o_timeout)
-        -- Round 12 A4: sticky set when ST_DRAIN_CHECK fallback completion
-        -- finalizes with drain_cnt != expected_ififo. Distinguishes clean
-        -- drain completion from premature/drifted termination.
-        o_err_drain_mismatch : out std_logic;
         -- Round 13 axis 1a: 1-clk pulse, co-asserts with o_drain_done when
         -- the completion was a mismatch fallback. Lets supervisor SW treat
         -- the frame as suspect without losing the downstream drain_done
@@ -360,17 +356,8 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_done_r            : std_logic := '0';
     signal s_timeout_r         : std_logic := '0';
     signal s_timeout_cause_r   : std_logic_vector(2 downto 0) := (others => '0');
-    -- Round 12 A4: drain expected-vs-actual mismatch sticky. Fires when
-    -- the ST_DRAIN_CHECK fallback completion path finalizes with
-    -- s_drain_cnt_ififo1/2_r != s_expected_ififo1/2_r. Pre-fallback the
-    -- two counts are expected to match (drain_cnt ticks up to expected);
-    -- a mismatch at fallback time means upstream count drift or premature
-    -- completion. Distinguishes "clean completion" from "forced exit
-    -- with wrong count" — the latter previously passed silently.
-    signal s_err_drain_mismatch_r : std_logic := '0';
-    -- Round 13 axis 1a: 1-clk pulse co-asserted with drain_done when
-    -- completion is "faulted" (mismatch seen at fallback). Distinct from
-    -- s_err_drain_mismatch_r (historical sticky) — this pulses per event.
+    -- One-cycle pulse co-asserted with drain_done when completion is faulted.
+    -- The pulse is carried on the final raw control beat as tuser[5].
     signal s_drain_done_faulted_r : std_logic := '0';
 
     -- Round 9 #1: Secondary watchdog for "pending stuck" deadlock.
@@ -510,7 +497,6 @@ begin
                 s_timeout_r          <= '0';
                 s_timeout_cause_r    <= (others => '0');
                 s_pending_stuck_cnt_r <= (others => '0');
-                s_err_drain_mismatch_r <= '0';
                 s_drain_done_faulted_r <= '0';
             else
                 s_raw_valid_r        <= '0';
@@ -689,7 +675,6 @@ begin
                                 s_purge_mode_r <= '0';
                             end if;
                             if s_eval_r.drain_mismatch = '1' then
-                                s_err_drain_mismatch_r <= '1';
                                 s_drain_done_faulted_r <= '1';
                             end if;
                             -- Always emit final drain_done (normal + purge)
@@ -740,7 +725,6 @@ begin
                             -- Purge-mode bypasses the check (it doesn't
                             -- track against expected counts).
                             if s_eval_r.drain_mismatch = '1' then
-                                s_err_drain_mismatch_r <= '1';
                                 -- Round 13 axis 1a: co-assert "faulted"
                                 -- pulse so SW can distinguish a clean
                                 -- drain_done from one that actually
@@ -1168,7 +1152,6 @@ begin
     o_range_active      <= s_range_active_r;
     o_timeout           <= s_timeout_r;
     o_timeout_cause     <= s_timeout_cause_r;
-    o_err_drain_mismatch <= s_err_drain_mismatch_r;
     o_drain_done_faulted <= s_drain_done_faulted_r;
     o_armed             <= '1' when s_state_r = ST_ARMED else '0';
 

@@ -65,9 +65,8 @@ entity tdc_gpx_chip_reg is
         --   while ST_ACTIVE AND the 1-depth pending queue is already full
         --   (i.e. a request was actually dropped). Cleared by reset or by
         --   i_soft_clear (Round 7 B-5, shared with status_agg / err_handler).
+        -- Also covers simultaneous R+W because one intent is discarded.
         o_err_req_overflow : out std_logic;
-        -- Round 12 A5: concurrent R+W sticky (write-wins ambiguity).
-        o_err_rw_ambiguous : out std_logic;
 
         -- SW-initiated sticky clear (Round 7 B-5). Default '0' keeps legacy.
         i_soft_clear       : in  std_logic := '0'
@@ -93,15 +92,14 @@ architecture rtl of tdc_gpx_chip_reg is
 
     -- 1-depth pending queue: if a request pulse arrives while s_state_r =
     -- ST_ACTIVE, latch it (plus addr/wdata/rw) so the request is not silently
-    -- dropped. Also protects against concurrent read+write in the same cycle
-    -- (read wins, write queued).
+    -- dropped. Concurrent read+write follows the explicit write-wins policy
+    -- and records the discarded read in s_err_req_overflow_r.
     signal s_pend_valid_r : std_logic := '0';
     signal s_pend_rw_r    : std_logic := '0';
     signal s_pend_addr_r  : std_logic_vector(3 downto 0) := (others => '0');
     signal s_pend_wdata_r : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     -- Sticky: 2nd request arrived while pending queue was already occupied.
     signal s_err_req_overflow_r : std_logic := '0';
-    signal s_err_rw_ambiguous_r : std_logic := '0';  -- Round 12 A5
 
 begin
 
@@ -126,7 +124,6 @@ begin
                 s_pend_addr_r    <= (others => '0');
                 s_pend_wdata_r   <= (others => '0');
                 s_err_req_overflow_r <= '0';
-                s_err_rw_ambiguous_r <= '0';
             else
                 s_rvalid_r      <= '0';
                 s_done_r        <= '0';
@@ -200,18 +197,17 @@ begin
                         --     write is asserted; if both are high, write wins
                         --     and read intent is dropped.
                         --   Sim assertion: WARNING fires below.
-                        --   Overflow sticky (s_err_req_overflow_r): does NOT
-                        --     fire for this case (the pending slot IS being
-                        --     filled, just with the wrong request). A
-                        --     dedicated "ambiguous overlap" sticky would be
-                        --     needed to catch this in silicon.
+                        --   Request-loss sticky: fires because the read intent
+                        --     is discarded by the write-wins rule.
                         --   Caller contract: the cmd_arb layer upstream is
                         --     expected to serialize read/write into non-
                         --     overlapping pulses. This assertion catches
                         --     contract violations during regression.
-                        -- Round 12 A5: synth-live sticky for concurrent R+W.
                         if i_start_read = '1' and i_start_write = '1' then
-                            s_err_rw_ambiguous_r <= '1';
+                            -- The write-wins policy drops the read intent.
+                            -- Fold it into the existing per-chip request-loss
+                            -- sticky instead of carrying a second status bit.
+                            s_err_req_overflow_r <= '1';
                         end if;
                         -- synthesis translate_off
                         assert not (i_start_read = '1' and i_start_write = '1')
@@ -259,12 +255,6 @@ begin
                 -- err_handler for their shared i_soft_clear paths.
                 if i_soft_clear = '1' then
                     s_err_req_overflow_r <= '0';
-                    -- Round 13 axis 3 (M-6 fix): align rw_ambiguous with
-                    -- req_overflow so both stickies obey the same
-                    -- "SOFT-CLEAR" category. Previously this sticky was
-                    -- HARD-RESET-ONLY which was inconsistent with its
-                    -- neighbor.
-                    s_err_rw_ambiguous_r <= '0';
                 end if;
             end if;
         end if;
@@ -280,6 +270,5 @@ begin
     o_timeout       <= s_timeout_out_r;
     o_busy          <= s_busy_r;
     o_err_req_overflow <= s_err_req_overflow_r;
-    o_err_rw_ambiguous <= s_err_rw_ambiguous_r;
 
 end architecture rtl;

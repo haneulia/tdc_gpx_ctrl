@@ -277,18 +277,10 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_soft_reset   : std_logic;
     signal s_cmd_force_reinit : std_logic;  -- Round 12 A1
     signal s_cmd_recovery_reset : std_logic;
-    signal s_err_force_reinit_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_raw_ctrl_drop_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A2
-    signal s_err_drain_mismatch_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A4
-    signal s_err_rw_ambiguous_arb    : std_logic;  -- Round 12 A5
-    signal s_err_rw_ambiguous_reg_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 A5
-    signal s_err_stopdis_mid_shot_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 B8
-    signal s_err_cmd_collision_vec : std_logic_vector(3 downto 0);  -- Round 12 #20
     signal s_err_raw_drop_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
     signal s_err_drain_cap_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
     signal s_run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);  -- Round 12 #17
     signal s_err_bus_fatal_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 2
-    signal s_drain_faulted_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 1a
     -- Round 13 follow-up P1 (audit 4번): per-chip cell tuser(0) = faulted
     -- flag, carried on each chip's tlast beat. Threaded cell_pipe →
     -- output_stage → face_assembler (via its per-chip xpm_fifo_axis).
@@ -588,8 +580,12 @@ begin
     -- =========================================================================
     -- Chip error merged (concurrent glue)
     -- =========================================================================
-    -- Unmasked: all chip errors visible for SW diagnostics / status
-    s_chip_error_raw    <= s_errflag_sync or s_chip_error_flags or s_chip_fall_error;
+    -- Unmasked: all chip errors visible for SW diagnostics / status. A raw
+    -- FIFO credit violation means a data or control beat was lost, so fold it
+    -- into the existing per-chip error contract instead of carrying another
+    -- unconsumed diagnostic mask.
+    s_chip_error_raw    <= s_errflag_sync or s_chip_error_flags
+                           or s_chip_fall_error or s_err_raw_overflow;
     -- Masked: only active chips, used for recovery gating and header
     s_chip_error_merged <= s_chip_error_raw and s_face_active_mask_r;
 
@@ -780,19 +776,6 @@ begin
             o_init_cfg_coalesced_mask => s_init_cfg_coalesced_mask,
             -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
             o_cmd_collision_mask      => s_cmd_collision_mask,
-            -- Round 12 A1: per-chip force-reinit used sticky
-            o_err_force_reinit_mask   => s_err_force_reinit_mask,
-            -- Round 12 A2: per-chip raw control-beat drop sticky
-            o_err_raw_ctrl_drop_mask  => s_err_raw_ctrl_drop_mask,
-            -- Round 12 A4: per-chip chip_run drain mismatch sticky
-            o_err_drain_mismatch_mask => s_err_drain_mismatch_mask,
-            -- Round 12 A5: concurrent R+W ambiguity stickies
-            o_err_rw_ambiguous_arb    => s_err_rw_ambiguous_arb,
-            o_err_rw_ambiguous_reg    => s_err_rw_ambiguous_reg_mask,
-            -- Round 12 B8: per-chip stopdis_override mid-shot sticky
-            o_err_stopdis_mid_shot_mask => s_err_stopdis_mid_shot_mask,
-            -- Round 12 #20: PH_IDLE command collision vector
-            o_err_cmd_collision_vec    => s_err_cmd_collision_vec,
             -- Round 12 #15: distinct raw-overflow cause masks
             o_err_raw_drop_mask        => s_err_raw_drop_mask,
             o_err_drain_cap_mask       => s_err_drain_cap_mask,
@@ -800,8 +783,6 @@ begin
             o_run_timeout_cause_per_chip => s_run_timeout_cause_per_chip,
             -- Round 13 axis 2: per-chip bus fatal sticky mask
             o_err_bus_fatal_mask       => s_err_bus_fatal_mask,
-            -- Round 13 axis 1a: per-chip drain_done_faulted sticky
-            o_drain_faulted_mask       => s_drain_faulted_mask,
             o_cdc_idle           => s_cdc_idle,
             -- Interrupt
             o_irq                => o_irq
@@ -1186,7 +1167,6 @@ begin
     s_status.err_chip_mask       <= s_err_chip_mask;
     s_status.err_cause           <= s_err_cause;
     s_status.rsp_mismatch_mask   <= s_err_rsp_mismatch;
-    s_status.raw_overflow_mask   <= s_err_raw_overflow;
     s_status.cfg_rejected        <= s_cfg_rejected_r;
     s_status.run_timeout_mask    <= s_run_timeout_sticky_r;
     s_status.reg_arb_timeout     <= s_reg_arb_timeout;
@@ -1251,22 +1231,9 @@ begin
         s_shot_flush_drop_mask_rise or s_shot_flush_drop_mask_fall;
     -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
     s_status.cmd_collision_mask <= s_cmd_collision_mask;
-    -- Round 12 A1: per-chip force-reinit used sticky
-    s_status.force_reinit_mask  <= s_err_force_reinit_mask;
-    -- Round 12 A2: per-chip raw control-beat drop sticky
-    s_status.raw_ctrl_drop_mask <= s_err_raw_ctrl_drop_mask;
-    -- Round 12 A4: per-chip chip_run drain mismatch sticky
-    s_status.drain_mismatch_mask <= s_err_drain_mismatch_mask;
-    -- Round 12 A5: R+W ambiguity stickies
-    s_status.rw_ambiguous_arb      <= s_err_rw_ambiguous_arb;
-    s_status.rw_ambiguous_reg_mask <= s_err_rw_ambiguous_reg_mask;
-    -- Round 12 B8: stopdis_override mid-shot sticky
-    s_status.stopdis_mid_shot_mask <= s_err_stopdis_mid_shot_mask;
     -- Round 12 #19: per-slope abort-truncation sticky
     s_status.rise_hdr_abort_truncated <= s_hdr_abort_truncated_rise;
     s_status.fall_hdr_abort_truncated <= s_hdr_abort_truncated_fall;
-    -- Round 12 #20: PH_IDLE collision vector
-    s_status.cmd_collision_vec  <= s_err_cmd_collision_vec;
     -- Round 12 #15: distinct raw-overflow cause masks
     s_status.raw_drop_mask     <= s_err_raw_drop_mask;
     s_status.drain_cap_mask    <= s_err_drain_cap_mask;
@@ -1281,8 +1248,6 @@ begin
     s_status.orphan_stop_evt_sticky <= s_orphan_stop_evt_sticky;
     -- Round 13 axis 2: bus fatal sticky — mask and OR-folded into err_fatal
     s_status.bus_fatal_mask <= s_err_bus_fatal_mask;
-    -- Round 13 axis 1a: drain-completion-faulted per-chip sticky
-    s_status.drain_faulted_mask <= s_drain_faulted_mask;
 
     -- Round 13 axis 1b: latch frame_done_faulted pulses into a sticky
     -- (either slope firing sets it). AXI-Stream domain; no CDC needed

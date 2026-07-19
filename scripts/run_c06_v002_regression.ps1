@@ -121,6 +121,7 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_atomic_snapshot_cdc.vhd",
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
     "$Hdl/tb_tdc_gpx_stop_cfg_decode.vhd",
+    "$Hdl/tb_tdc_gpx_request_loss.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
@@ -170,6 +171,11 @@ try {
         "xil_defaultlib.tb_tdc_gpx_stop_cfg_decode"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_stop_cfg_decode_snap", "-runall", "-log", "xsim_c06_v002_stop_cfg_decode_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_stop_cfg_decode_$Stamp.log" "tb_tdc_gpx_stop_cfg_decode: ALL TESTS PASSED"
+
+    Invoke-Xelab "tb_c06_v002_request_loss_snap" "xelab_c06_v002_request_loss_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_request_loss"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_request_loss_snap", "-runall", "-log", "xsim_c06_v002_request_loss_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_request_loss_$Stamp.log" "REQUEST_LOSS_DIAGNOSTIC_COLLAPSE PASS"
 
     $linePackerCases = @(
         @{ Name = "w32_mh7";   Top = "xil_defaultlib.tb_tdc_gpx_line_packer_w32" },

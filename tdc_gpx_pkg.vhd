@@ -386,9 +386,7 @@ package tdc_gpx_pkg is
     --
     --   HISTORICAL   — hard reset (i_rst_n) only. Survives soft_reset,
     --                  err_soft_clear, cmd_stop, cmd_start.
-    --                  Example: chip_error_mask, quarantine_escape_mask,
-    --                  mono_violation_mask, bus_fatal_mask, force_reinit_mask,
-    --                  drain_faulted_mask.
+    --                  Example: chip_error_mask and quarantine_escape_mask.
     --                  Use when SW needs "did this EVER happen?" answer.
     --
     --   LAST-TX      — cleared on next transaction accept. Overrides
@@ -431,7 +429,6 @@ package tdc_gpx_pkg is
         err_chip_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chips under recovery
         err_cause           : std_logic_vector(2 downto 0);  -- [0]=HitFIFO [1]=IFIFO [2]=PLL
         rsp_mismatch_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- bus response tuser mismatch
-        raw_overflow_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_ctrl raw hold+skid overflow (beat dropped)
         cfg_rejected        : std_logic;  -- cmd_start rejected due to invalid config
         run_timeout_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip chip_run timeout (sticky)
         reg_arb_timeout     : std_logic;  -- cmd_arb register access timeout (sticky)
@@ -444,9 +441,9 @@ package tdc_gpx_pkg is
         fall_overrun        : std_logic;  -- fall face_assembler overrun only
         -- Round 5 follow-up: 7 observability stickies surfaced to SW via STAT6
         err_read_timeout    : std_logic;  -- err_handler ST_WAIT_READ watchdog fired (sticky)
-        reg_rejected        : std_logic;  -- cmd_arb queue-full rejected a reg request (sticky)
+        reg_rejected        : std_logic;  -- cmd_arb request loss: queue full or simultaneous R+W (sticky)
         reg_zero_mask       : std_logic;  -- cmd_arb got a zero chip_mask request (sticky)
-        err_reg_overflow_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg 3rd-pulse overflow (per-chip sticky)
+        err_reg_overflow_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg request loss: queue full or simultaneous R+W (per-chip sticky)
         run_drain_complete_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_run internal drain-complete seen (per-chip sticky latched from pulse)
         rise_shot_flush_drop : std_logic;  -- rise face_assembler dropped non-empty FIFO on shot_start (sticky)
         fall_shot_flush_drop : std_logic;  -- fall face_assembler dropped non-empty FIFO on shot_start (sticky)
@@ -489,33 +486,9 @@ package tdc_gpx_pkg is
         -- (cmd_arb enforces mutual exclusion at source); a fire indicates a
         -- cmd_arb contract violation, not a chip_ctrl bug.
         cmd_collision_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Round 12 A1: per-chip force-reinit used sticky. Bit i = '1' means
-        -- SW issued force_reinit while chip i's chip_ctrl was in PH_RESP_DRAIN
-        -- quarantine. Bus synchronization was bypassed — SW is responsible
-        -- for the prior external flush.
-        force_reinit_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Round 12 A2: per-chip raw control-beat drop sticky.
-        raw_ctrl_drop_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Round 12 A4: per-chip chip_run drain expected-vs-actual mismatch
-        -- sticky. Bit i = '1' means chip i's chip_run ST_DRAIN_CHECK
-        -- fallback completion finalized with drain_cnt != expected_ififo.
-        drain_mismatch_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Round 12 A5: concurrent R+W ambiguity stickies.
-        --   _arb = cmd_arb saw start_read=1 AND start_write=1 same cycle
-        --   _reg = chip_reg (per chip) saw it in ST_ACTIVE (write wins,
-        --          read intent lost)
-        rw_ambiguous_arb     : std_logic;
-        rw_ambiguous_reg_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Round 12 B8: per-chip stopdis_override asserted during PH_RUN.
-        -- Non-zero means debug override was used mid-shot — the affected
-        -- frame should be treated as suspect.
-        stopdis_mid_shot_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
         -- Round 12 #19: per-slope header_inserter abort-truncation sticky.
         rise_hdr_abort_truncated : std_logic;
         fall_hdr_abort_truncated : std_logic;
-        -- Round 12 #20: PH_IDLE command collision vector (OR across chips).
-        -- Bit layout: [0]=start, [1]=cfg_write, [2]=reg_read, [3]=reg_write.
-        cmd_collision_vec        : std_logic_vector(3 downto 0);
         -- Round 12 #18: partial/blank chip error split per slope.
         rise_chip_error_partial  : std_logic_vector(c_N_CHIPS - 1 downto 0);
         rise_chip_error_blank    : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -525,11 +498,6 @@ package tdc_gpx_pkg is
         orphan_stop_evt_sticky   : std_logic;
         -- Round 13 axis 2: per-chip bus fatal sticky mask.
         bus_fatal_mask           : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        -- Round 13 axis 1a: per-chip drain-completion-faulted sticky.
-        -- Set when chip_run finalized ST_DRAIN_CHECK via mismatch fallback.
-        -- Distinguishes "clean completion" (not set) from "done with
-        -- wrong counts" (set) at SW.
-        drain_faulted_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);
         -- Round 13 axis 1b: header_inserter frame_done_faulted sticky
         -- (either slope's drain-watchdog escape → frame is synthetic).
         frame_done_faulted_sticky : std_logic;
@@ -568,7 +536,6 @@ package tdc_gpx_pkg is
         err_chip_mask       => (others => '0'),
         err_cause           => (others => '0'),
         rsp_mismatch_mask   => (others => '0'),
-        raw_overflow_mask   => (others => '0'),
         cfg_rejected        => '0',
         run_timeout_mask    => (others => '0'),
         reg_arb_timeout     => '0',
@@ -598,15 +565,8 @@ package tdc_gpx_pkg is
         init_cfg_coalesced_mask => (others => '0'),
         shot_flush_drop_mask    => (others => '0'),
         cmd_collision_mask      => (others => '0'),
-        force_reinit_mask       => (others => '0'),
-        raw_ctrl_drop_mask      => (others => '0'),
-        drain_mismatch_mask     => (others => '0'),
-        rw_ambiguous_arb        => '0',
-        rw_ambiguous_reg_mask   => (others => '0'),
-        stopdis_mid_shot_mask   => (others => '0'),
         rise_hdr_abort_truncated => '0',
         fall_hdr_abort_truncated => '0',
-        cmd_collision_vec        => (others => '0'),
         raw_drop_mask            => (others => '0'),
         drain_cap_mask           => (others => '0'),
         run_timeout_cause_per_chip => (others => '0'),
@@ -617,7 +577,6 @@ package tdc_gpx_pkg is
         fall_chip_error_blank    => (others => '0'),
         orphan_stop_evt_sticky   => '0',
         bus_fatal_mask           => (others => '0'),
-        drain_faulted_mask       => (others => '0'),
         frame_done_faulted_sticky => '0',
         row_done_faulted_sticky  => '0'
     );

@@ -43,8 +43,8 @@
 --   has been stably idle. If it stays idle for g_BUS_IDLE_STABLE_CLKS
 --   cycles (generic, default 4096 ≈ 20us @200MHz), the phase auto-
 --   transitions to PH_INIT. This reclaims liveness when the bus recovers
---   on its own, without relying on SW force_reinit. The event is logged
---   in s_err_force_reinit_r (shared observability path).
+--   on its own, without relying on SW force_reinit. The latched bus-fatal
+--   status remains the software-visible evidence of the recovery event.
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -91,8 +91,7 @@ entity tdc_gpx_chip_ctrl is
         -- flushing the bus before issuing this pulse (e.g. via FPGA-side
         -- GPIO reset to the TDC chip); otherwise stale responses may
         -- pollute the init sequence. Use only when PH_RESP_DRAIN is stuck
-        -- and s_err_drain_cap_r is observed. Setting the sticky below
-        -- marks the fact that bus synchronization was bypassed.
+        -- and the bus has been externally flushed.
         i_cmd_force_reinit  : in  std_logic := '0';
         i_cmd_cfg_write     : in  std_logic;         -- IDLE -> CFG_WRITE
         -- Round 7 B-5: SW-initiated sticky clear, forwarded to u_reg so its
@@ -207,11 +206,8 @@ entity tdc_gpx_chip_ctrl is
         o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
         o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
         o_err_raw_overflow  : out std_logic;    -- sticky: OR of raw-drop + drain-cap (legacy, retained)
-        -- Round 12 #15: distinct cause bits so SW can differentiate
-        -- "data/control beat dropped by raw FIFO" from "PH_RESP_DRAIN
-        -- hard-cap hit while bus still active". Previously both OR-folded
-        -- into o_err_raw_overflow which hid the actual root cause.
-        o_err_raw_drop      : out std_logic;    -- sticky: raw FIFO beat dropped (see also o_err_raw_ctrl_drop)
+        -- Distinguish a raw FIFO beat loss from the response-drain hard cap.
+        o_err_raw_drop      : out std_logic;    -- sticky: raw FIFO beat dropped
         o_err_drain_cap     : out std_logic;    -- sticky: PH_RESP_DRAIN hit 15-cycle hard cap while bus busy
         o_err_reg_overflow  : out std_logic;    -- sticky: chip_reg 3rd-pulse queue overflow (Round 5 #12)
         o_run_timeout       : out std_logic;    -- 1-clk pulse: chip_run abnormal drain exit
@@ -226,24 +222,9 @@ entity tdc_gpx_chip_ctrl is
         -- Investigate cmd_arb (source serialization failure), not the
         -- dropped command itself.
         o_err_cmd_collision  : out std_logic;
-        -- Round 12 A1: force-reinit used sticky (SW bypassed PH_RESP_DRAIN).
-        o_err_force_reinit   : out std_logic;
-        -- Round 12 A2: control-beat drop sticky (distinct from data drop).
-        o_err_raw_ctrl_drop  : out std_logic;
-        -- Round 12 A4: chip_run drain count mismatch sticky.
-        o_err_drain_mismatch : out std_logic;
-        -- Round 12 A5: chip_reg concurrent R+W ambiguity sticky (per-chip).
-        o_err_reg_rw_ambiguous : out std_logic;
-        -- Round 12 B8: sticky for stopdis_override asserted during PH_RUN.
-        o_err_stopdis_mid_shot : out std_logic;
-        -- Round 12 #20: PH_IDLE collision vector (OR-accumulated).
-        --   [0] start, [1] cfg_write, [2] reg_read, [3] reg_write
-        o_err_cmd_collision_vec : out std_logic_vector(3 downto 0);
         -- Round 13 axis 2: bus fatal sticky (PH_RESP_DRAIN quarantine cap
         -- reached AND bus still stuck). In-band recovery impossible.
-        o_err_bus_fatal        : out std_logic;
-        -- Round 13 axis 1a: drain completion faulted pulse (chip_run passthrough).
-        o_drain_done_faulted   : out std_logic
+        o_err_bus_fatal        : out std_logic
     );
 end entity tdc_gpx_chip_ctrl;
 
@@ -419,20 +400,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: FIFO credit violation
-    -- A control drop requires more than the two control beats permitted by
-    -- one shot while the FIFO cannot drain. It is retained as a protocol-
-    -- violation diagnostic, not as a normal congestion response.
-    signal s_err_raw_ctrl_drop_r  : std_logic := '0';
-    signal s_err_drain_mismatch   : std_logic;  -- Round 12 A4: from chip_run
-    signal s_err_reg_rw_ambiguous : std_logic;  -- Round 12 A5: from chip_reg
     signal s_drain_done_faulted   : std_logic;  -- Round 13 axis 1a: from chip_run
-    -- Round 12 B8: sticky for "stopdis_override asserted mid-shot".
-    -- The override is intentionally live (debug escape hatch), but using
-    -- it during PH_RUN almost certainly corrupts the in-flight shot.
-    -- This sticky surfaces the event so SW can correlate dropped shots
-    -- with override pulses. Intended use: leave override inactive in
-    -- production; any set bit here implies debug intervention or bug.
-    signal s_err_stopdis_mid_shot_r : std_logic := '0';
     -- Round 13 axis 2: bus fatal sticky.
     -- Set when PH_RESP_DRAIN quarantine reaches saturation (~65K cycles
     -- @200MHz = ~327us) with bus still busy/rsp_pending. Means in-band
@@ -446,22 +414,13 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- cycles, auto-transition to PH_INIT. This reclaims liveness when the
     -- bus recovers on its own without requiring SW force_reinit, while
     -- still guarding against phase pollution via the idle-stable window.
-    -- The existing s_err_force_reinit_r sticky is set to surface the event
-    -- (SW cannot distinguish auto vs SW-initiated; both imply "bus was
-    -- flushed without full hard reset").
+    -- s_err_bus_fatal_r intentionally stays latched for post-mortem diagnosis.
     -- Counter width: 24-bit accommodates generic override up to ~84 ms.
     constant c_BUS_IDLE_CNT_WIDTH   : natural := 24;
     signal   s_bus_idle_stable_cnt_r : unsigned(c_BUS_IDLE_CNT_WIDTH - 1 downto 0)
                                        := (others => '0');
     signal s_err_drain_cap_r      : std_logic := '0';  -- sticky: PH_RESP_DRAIN hit hard cap while bus still active
     signal s_err_cmd_collision_r  : std_logic := '0';  -- Round 11 item 18 (C): per-chip PH_IDLE cmd collision sticky (cmd_arb contract violation)
-    -- Round 12 #20: collision vector — records WHICH commands collided.
-    -- [0] start, [1] cfg_write, [2] reg_read, [3] reg_write
-    -- OR-accumulated across all collision events. SW can decode to see
-    -- if, e.g., start+cfg_write always collide together (upstream bug
-    -- pattern) vs. sporadic all-four collisions.
-    signal s_err_cmd_collision_vec_r : std_logic_vector(3 downto 0) := (others => '0');
-    signal s_err_force_reinit_r   : std_logic := '0';  -- Round 12 A1: sticky — force-reinit was used (stale pollution risk acknowledged)
     -- #13: i_stop_tdc CDC moved to config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse);
     -- arrives here as a clean 1-cycle pulse in the TDC clock domain, so no
     -- internal 2-FF sync or edge-detect is needed.
@@ -525,7 +484,6 @@ begin
             o_range_active      => s_run_range_active,
             o_timeout           => s_run_timeout,
             o_timeout_cause     => o_run_timeout_cause,  -- Round 11 C: surface to SW
-            o_err_drain_mismatch => s_err_drain_mismatch,  -- Round 12 A4
             o_drain_done_faulted => s_drain_done_faulted,  -- Round 13 axis 1a
             o_armed             => s_run_armed,
             i_drain_mode        => s_drain_mode_snap_r,
@@ -588,7 +546,6 @@ begin
             i_bus_rsp_valid => s_reg_rsp_valid,
             i_bus_rsp_rdata => s_reg_rsp_rdata,
             o_err_req_overflow => o_err_reg_overflow,
-            o_err_rw_ambiguous => s_err_reg_rw_ambiguous,  -- Round 12 A5
             i_soft_clear       => i_soft_clear
         );
 
@@ -702,9 +659,6 @@ begin
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
                 s_err_drain_cap_r    <= '0';
                 s_err_cmd_collision_r <= '0';
-                s_err_cmd_collision_vec_r <= (others => '0');
-                s_err_force_reinit_r  <= '0';
-                s_err_stopdis_mid_shot_r <= '0';
                 s_err_bus_fatal_r        <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_bus_idle_stable_cnt_r  <= (others => '0');
@@ -754,12 +708,6 @@ begin
                            or (i_cmd_start and (i_cmd_reg_read or i_cmd_reg_write)) = '1'
                            or (i_cmd_cfg_write and (i_cmd_reg_read or i_cmd_reg_write)) = '1' then
                             s_err_cmd_collision_r <= '1';
-                            -- Round 12 #20: record which commands were
-                            -- active at collision (OR-accumulates).
-                            s_err_cmd_collision_vec_r(0) <= s_err_cmd_collision_vec_r(0) or i_cmd_start;
-                            s_err_cmd_collision_vec_r(1) <= s_err_cmd_collision_vec_r(1) or i_cmd_cfg_write;
-                            s_err_cmd_collision_vec_r(2) <= s_err_cmd_collision_vec_r(2) or i_cmd_reg_read;
-                            s_err_cmd_collision_vec_r(3) <= s_err_cmd_collision_vec_r(3) or i_cmd_reg_write;
                             -- synthesis translate_off
                             assert false
                                 report "chip_ctrl: multiple commands in PH_IDLE (lower priority dropped)"
@@ -796,13 +744,6 @@ begin
 
                     when PH_RUN =>
                         s_stopdis_latch_r <= s_run_stopdis;
-                        -- Round 12 B8: detect mid-shot stopdis_override use.
-                        -- The override bypasses FSM state to drive the pin
-                        -- directly; firing during PH_RUN almost always means
-                        -- the in-flight shot is being corrupted.
-                        if i_cfg.stopdis_override(4) = '1' then
-                            s_err_stopdis_mid_shot_r <= '1';
-                        end if;
                         if s_run_done = '1' then
                             -- chip_run has multiple internal timeout paths;
                             -- any of them may leave stale responses in bus_phy.
@@ -950,10 +891,9 @@ begin
                 -- s_err_bus_fatal_r is latched. Counter increments only while
                 -- in PH_RESP_DRAIN AND the bus has stabilised at idle. Any
                 -- activity (busy or rsp_pending) resets the counter. When
-                -- the window is reached, transition to PH_INIT and log the
-                -- event in the force_reinit sticky (reusing the existing SW
-                -- observability path). This is strictly additive: if the bus
-                -- never clears, s_bus_idle_stable_cnt_r never reaches the
+                -- the window is reached, transition to PH_INIT. The existing
+                -- bus-fatal sticky remains set until software clears status.
+                -- If the bus never clears, the counter never reaches the
                 -- threshold and the module stays in quarantine as before.
                 if s_phase_r = PH_RESP_DRAIN and s_err_bus_fatal_r = '1' then
                     if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
@@ -974,7 +914,6 @@ begin
                             s_drain_to_init_r        <= '0';
                             s_drain_quarantine_cnt_r <= (others => '0');
                             s_bus_idle_stable_cnt_r  <= (others => '0');
-                            s_err_force_reinit_r     <= '1';
                         end if;
                     else
                         s_bus_idle_stable_cnt_r <= (others => '0');
@@ -1014,8 +953,8 @@ begin
                 -- Round 12 A1: force-reinit escape. Highest-priority override
                 -- (last-assignment wins in this sequential process). Bypasses
                 -- PH_RESP_DRAIN entirely — SW MUST have flushed the bus
-                -- externally before pulsing this. Sets the force_reinit
-                -- sticky so the event is SW-visible for post-mortem.
+                -- externally before pulsing this. The command itself is the
+                -- software-owned audit point for this manual recovery action.
                 if i_cmd_force_reinit = '1' then
                     -- synthesis translate_off
                     assert false
@@ -1035,7 +974,6 @@ begin
                     s_drain_to_init_r        <= '0';
                     s_drain_quarantine_cnt_r <= (others => '0');
                     s_force_reinit_start_pending_r <= '1';
-                    s_err_force_reinit_r     <= '1';
                 end if;
             end if;
         end if;
@@ -1143,7 +1081,6 @@ begin
                 s_raw_count_r  <= 0;
                 s_raw_hold_busy <= '0';
                 s_err_raw_overflow_r <= '0';
-                s_err_raw_ctrl_drop_r <= '0';
             else
                 v_rd_ptr := s_raw_rd_ptr_r;
                 v_wr_ptr := s_raw_wr_ptr_r;
@@ -1212,9 +1149,6 @@ begin
                         v_count := v_count + 1;
                     else
                         s_err_raw_overflow_r <= '1';
-                        if v_control then
-                            s_err_raw_ctrl_drop_r <= '1';
-                        end if;
                         -- synthesis translate_off
                         assert false
                             report "chip_ctrl: raw FIFO credit violation (control="
@@ -1299,17 +1233,9 @@ begin
     o_err_rsp_mismatch  <= s_err_rsp_mismatch_r;
     o_init_cfg_coalesced <= s_init_cfg_coalesced;
     o_err_cmd_collision  <= s_err_cmd_collision_r;
-    o_err_force_reinit   <= s_err_force_reinit_r;
-    o_err_raw_ctrl_drop  <= s_err_raw_ctrl_drop_r;
-    o_err_drain_mismatch <= s_err_drain_mismatch;
-    o_err_reg_rw_ambiguous <= s_err_reg_rw_ambiguous;
-    o_err_stopdis_mid_shot <= s_err_stopdis_mid_shot_r;
-    o_err_cmd_collision_vec <= s_err_cmd_collision_vec_r;
     o_err_bus_fatal        <= s_err_bus_fatal_r;
-    o_drain_done_faulted   <= s_drain_done_faulted;
-    -- raw_overflow aggregates multiple "integrity compromised" events so SW
-    -- only needs to observe one flag per chip. Individual cause codes can be
-    -- split into dedicated ports later if needed:
+    -- raw_overflow is the legacy summary; the two following outputs retain
+    -- the individual causes for the existing error-handler contract:
     --   s_err_raw_overflow_r -> raw FIFO credit violation (beat dropped)
     --   s_err_drain_cap_r    -> PH_RESP_DRAIN hard cap hit while bus busy
     o_err_raw_overflow  <= s_err_raw_overflow_r or s_err_drain_cap_r;

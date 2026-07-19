@@ -192,12 +192,8 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_run_drain_complete : std_logic;
     signal s_err_raw_overflow   : std_logic;
     signal s_err_raw_drop       : std_logic;
-    signal s_err_raw_ctrl_drop  : std_logic;
     signal s_err_drain_cap      : std_logic;
-    signal s_err_drain_mismatch : std_logic;
     signal s_err_bus_fatal      : std_logic;
-    signal s_drain_done_faulted : std_logic;
-    signal s_err_force_reinit   : std_logic;
     signal s_run_timeout        : std_logic;
     signal s_run_timeout_cause  : std_logic_vector(2 downto 0);
     signal s_expected_ififo1    : unsigned(7 downto 0) := (others => '0');
@@ -372,14 +368,7 @@ begin
             o_run_timeout_cause => s_run_timeout_cause,
             o_init_cfg_coalesced => open,
             o_err_cmd_collision => open,
-            o_err_force_reinit  => s_err_force_reinit,
-            o_err_raw_ctrl_drop => s_err_raw_ctrl_drop,
-            o_err_drain_mismatch => s_err_drain_mismatch,
-            o_err_reg_rw_ambiguous => open,
-            o_err_stopdis_mid_shot => open,
-            o_err_cmd_collision_vec => open,
             o_err_bus_fatal => s_err_bus_fatal,
-            o_drain_done_faulted => s_drain_done_faulted,
             o_run_drain_complete => s_run_drain_complete
         );
 
@@ -1088,8 +1077,7 @@ begin
                         & nat_img(v_drain_words), v_fail);
             end if;
 
-            if s_raw_faulted_ctrl_cnt = v_faulted_snap
-               and s_err_drain_mismatch = '0' then
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap then
                 pr_pass("[2c] known-zero empty shot completed without fault");
             else
                 pr_fail("[2c] unexpected fault indication for known-zero empty shot", v_fail);
@@ -1139,9 +1127,8 @@ begin
                         & nat_img(v_drain_words), v_fail);
             end if;
 
-            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1
-               and s_err_drain_mismatch = '1' then
-                pr_pass("[2d] zero-count/EF conflict flagged via raw tuser fault and sticky");
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1 then
+                pr_pass("[2d] zero-count/EF conflict flagged via raw tuser fault");
             else
                 pr_fail("[2d] missing fault indication for zero-count/EF conflict", v_fail);
             end if;
@@ -2162,8 +2149,7 @@ begin
                         & " measured=" & nat_img(v_meas_data_cnt), v_fail);
             end if;
 
-            if s_err_raw_drop = '0' and s_err_raw_ctrl_drop = '0'
-               and s_err_raw_overflow = '0' then
+            if s_err_raw_drop = '0' and s_err_raw_overflow = '0' then
                 pr_pass("[16b] raw FIFO absorbed bounded backpressure without drop");
             else
                 pr_fail("[16b] raw drop/overflow set during bounded backpressure", v_fail);
@@ -2291,8 +2277,7 @@ begin
                         & nat_img(v_drain_words), v_fail);
             end if;
 
-            if s_err_raw_drop = '0' and s_err_raw_ctrl_drop = '0'
-               and s_err_raw_overflow = '0' then
+            if s_err_raw_drop = '0' and s_err_raw_overflow = '0' then
                 pr_pass("[16c] source backpressure prevented data/control drop");
             else
                 pr_fail("[16c] raw drop set at reserve threshold", v_fail);
@@ -2342,13 +2327,8 @@ begin
                         & nat_img(v_drain_words), v_fail);
             end if;
 
-            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1
-               and s_err_drain_mismatch = '1'
-               and s_drain_done_faulted = '1' then
-                pr_pass("[17] mismatch propagated via faulted drain_done");
-            elsif s_raw_faulted_ctrl_cnt = v_faulted_snap + 1
-                  and s_err_drain_mismatch = '1' then
-                pr_pass("[17] mismatch propagated via raw tuser fault flag and sticky");
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1 then
+                pr_pass("[17] mismatch propagated via raw tuser fault flag");
             else
                 pr_fail("[17] missing expected drain mismatch/faulted indication", v_fail);
             end if;
@@ -2388,8 +2368,8 @@ begin
                     & nat_img(s_raw_final_done_ctrl_cnt), v_fail);
         end if;
 
-        if s_err_raw_drop = '0' and s_err_raw_ctrl_drop = '0'
-           and s_err_drain_cap = '0' and s_err_bus_fatal = '0' then
+        if s_err_raw_drop = '0' and s_err_drain_cap = '0'
+           and s_err_bus_fatal = '0' then
             pr_pass("[18] Raw/drop and PH_RESP_DRAIN fatal indicators clean");
         else
             pr_fail("[18] Unexpected raw/drop or bus fatal indicator set", v_fail);
@@ -2443,14 +2423,6 @@ begin
         end if;
 
         s_force_resp_drain_stuck <= '0';
-        tb_wait_sig_value(s_clk, s_err_force_reinit, '1', 200, v_found);
-        if v_found then
-            pr_pass("[19] bus idle stable window triggered force-reinit sticky");
-        else
-            pr_fail("[19] force-reinit sticky did not assert after bus release",
-                    v_fail);
-        end if;
-
         wait_ctrl_idle(c_TIMEOUT, v_found);
         if v_found then
             pr_pass("[19] chip_ctrl returned to idle after PH_RESP_DRAIN recovery");
