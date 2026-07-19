@@ -9,7 +9,7 @@
 
 set_false_path -to [get_pins -quiet -hier -regexp {^.*/u_config_ctrl/.*u_bus_phy/s_(ef1|ef2|lf1|lf2|irflag|errflag)_meta_r_reg/D$}]
 
-set_false_path -to [get_pins -quiet -hier -regexp {^.*/u_config_ctrl/s_(cmd_collision|cmd_collision_vec|drain_faulted_mask|err_bus_fatal|err_drain_mismatch|err_force_reinit|err_raw_ctrl_drop|err_rw_ambiguous_reg|err_stopdis_mid_shot|init_cfg_coalesced)_meta_r_reg\[[0-9]+\]/D$}]
+set_false_path -to [get_pins -quiet -hier -regexp {^.*/u_config_ctrl/s_(cmd_collision|err_bus_fatal|init_cfg_coalesced)_meta_r_reg\[[0-9]+\]/D$}]
 
 set_false_path -to [get_pins -quiet -hier -regexp {^.*/s_cdc_all_idle_ff_reg\[0\]/D$}]
 

@@ -146,8 +146,8 @@ $Report.Add('PASS clock_interaction=xpm_max_delay_no_unsafe_paths')
 
 $manualCdc = Read-Report "${Prefix}_manual_cdc.rpt"
 $manualCdcLines = @($manualCdc -split "`r?`n" | Where-Object { $_.Trim() })
-$expectedDiagnosticPins = if ($Stage -eq 'IMPL') { 12 } else { 40 }
-$expectedManualTotal = if ($Stage -eq 'IMPL') { 40 } else { 68 }
+$expectedDiagnosticPins = 12
+$expectedManualTotal = 40
 $expectedManualCdc = [ordered]@{
     'tdc_pin_status' = 24
     'diagnostic_status' = $expectedDiagnosticPins
@@ -226,33 +226,10 @@ Assert-True ($cdcCritical.Count -eq 0) (
     (($cdcCritical | ForEach-Object { "$($_.Id)=$($_.Count)" }) -join ', ')
 )
 $cdcWarnings = @($cdcRows | Where-Object { $_.Severity -eq 'Warning' -and $_.Count -gt 0 })
-Assert-AllowedRules $cdcWarnings @('CDC-6', 'CDC-15') 'cdc_warning'
-$cdc6 = @($cdcWarnings | Where-Object { $_.Id -eq 'CDC-6' })
+Assert-AllowedRules $cdcWarnings @('CDC-15') 'cdc_warning'
 $cdc15 = @($cdcWarnings | Where-Object { $_.Id -eq 'CDC-15' })
-$cdc6Count = 0
-if ($cdc6.Count -gt 0) {
-    Assert-True ($cdc6.Count -eq 1 -and $cdc6[0].Count -le 2) `
-        "$Prefix CDC-6 count must be 0..2"
-    $cdc6Count = $cdc6[0].Count
-}
 Assert-True ($cdc15.Count -eq 1 -and $cdc15[0].Count -eq 160) `
     "$Prefix CDC-15 count must be 160"
-
-$cdc6Details = @($cdc -split "`r?`n" | Where-Object {
-    $_ -match '^\s*\d+\s+CDC-6\s+Warning'
-})
-Assert-True ($cdc6Details.Count -eq $cdc6Count) `
-    "$Prefix CDC-6 detail count $($cdc6Details.Count) differs from summary $cdc6Count"
-$allowedCdc6Destinations = @(
-    's_cmd_collision_vec_meta_r_reg',
-    's_drain_faulted_mask_meta_r_reg'
-)
-$unexpectedCdc6 = @($cdc6Details | Where-Object {
-    $line = $_
-    -not ($allowedCdc6Destinations | Where-Object { $line.Contains($_) })
-})
-Assert-True ($unexpectedCdc6.Count -eq 0) `
-    "$Prefix CDC-6 contains a non-diagnostic vector crossing"
 
 $cdc15Details = @($cdc -split "`r?`n" | Where-Object {
     $_ -match '^\s*\d+\s+CDC-15\s+Warning'
@@ -262,7 +239,7 @@ Assert-True ($cdc15Details.Count -eq 160) `
 Assert-True ((@($cdc15Details | Where-Object {
     $_ -notmatch 'xpm_fifo_base_inst'
 })).Count -eq 0) "$Prefix CDC-15 contains a non-XPM-FIFO path"
-$Report.Add("PASS cdc.cdc6_independent_masks=$cdc6Count")
+$Report.Add('PASS cdc.cdc6=0')
 $Report.Add('PASS cdc.cdc15_xpm_fifo_paths=160')
 $Report.Add('PASS cdc.critical=0')
 

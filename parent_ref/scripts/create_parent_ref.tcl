@@ -37,7 +37,7 @@ set parent_manual_cdc_groups [list \
     [list tdc_pin_status \
         {^.*/u_config_ctrl/.*u_bus_phy/s_(ef1|ef2|lf1|lf2|irflag|errflag)_meta_r_reg/D$} 24 24] \
     [list diagnostic_status \
-        {^.*/u_config_ctrl/s_(cmd_collision|cmd_collision_vec|drain_faulted_mask|err_bus_fatal|err_drain_mismatch|err_force_reinit|err_raw_ctrl_drop|err_rw_ambiguous_reg|err_stopdis_mid_shot|init_cfg_coalesced)_meta_r_reg\[[0-9]+\]/D$} 40 12] \
+        {^.*/u_config_ctrl/s_(cmd_collision|err_bus_fatal|init_cfg_coalesced)_meta_r_reg\[[0-9]+\]/D$} 12 12] \
     [list csr_idle \
         {^.*/s_cdc_all_idle_ff_reg\[0\]/D$} 2 2] \
     [list command_toggle \
@@ -49,7 +49,7 @@ proc verify_parent_manual_cdc {stage report_path groups} {
     set detail_path [file join [file dirname $report_path] ${stage}_manual_cdc_detail.rpt]
     set detail [open $detail_path w]
     fconfigure $detail -encoding ascii -translation lf
-    set expected_total [expr {$stage eq "post_route" ? 40 : 68}]
+    set expected_total 40
     set total 0
 
     foreach spec $groups {
