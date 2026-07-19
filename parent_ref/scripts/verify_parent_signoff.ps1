@@ -11,6 +11,10 @@ $Stage = $Stage.ToUpperInvariant()
 $Prefix = if ($Stage -eq 'IMPL') { 'post_route' } else { 'post_synth' }
 $Report = [System.Collections.Generic.List[string]]::new()
 $MinimumSetupSlackNs = 0.100
+$ControlSetLimits = @{
+    'SYNTH' = @{ Design = 1217; ConfigCtrl = 435 }
+    'IMPL' = @{ Design = 1184; ConfigCtrl = 422 }
+}
 
 function Assert-True {
     param(
@@ -29,6 +33,20 @@ function Read-Report {
     $path = Join-Path $ResultDir $Name
     Assert-True (Test-Path -LiteralPath $path) "missing report $path"
     return Get-Content -Raw -LiteralPath $path
+}
+
+function Get-ControlSetCount {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $match = [regex]::Match(
+        $Text,
+        '(?m)^\|\s*Total control sets\s*\|\s*(?<count>\d+)\s*\|'
+    )
+    Assert-True $match.Success "could not parse $Name total control sets"
+    return [int]$match.Groups['count'].Value
 }
 
 function Get-RuleSummary {
@@ -187,6 +205,21 @@ if ($Stage -eq 'IMPL') {
     }
     $Report.Add('PASS manual_cdc.route_diagnostic_subset=cmd_collision,err_bus_fatal,init_cfg_coalesced')
 }
+
+$controlSets = Get-ControlSetCount `
+    (Read-Report "${Prefix}_control_sets_hier.rpt") 'design'
+$configControlSets = Get-ControlSetCount `
+    (Read-Report "${Prefix}_config_ctrl_control_sets.rpt") 'config_ctrl'
+$controlSetLimit = $ControlSetLimits[$Stage]
+Assert-True ($controlSets -le $controlSetLimit.Design) `
+    "$Prefix design control sets exceed $($controlSetLimit.Design) (got $controlSets)"
+Assert-True ($configControlSets -le $controlSetLimit.ConfigCtrl) `
+    "$Prefix config_ctrl control sets exceed $($controlSetLimit.ConfigCtrl) (got $configControlSets)"
+$Report.Add("PASS control_sets.design=$controlSets")
+$Report.Add("PASS control_sets.config_ctrl=$configControlSets")
+$Report.Add(
+    "PASS control_sets.limits=design:$($controlSetLimit.Design),config_ctrl:$($controlSetLimit.ConfigCtrl)"
+)
 
 $busSkew = Read-Report "${Prefix}_bus_skew.rpt"
 $busSummary = [regex]::Match(
