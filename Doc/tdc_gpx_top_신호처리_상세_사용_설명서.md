@@ -31,13 +31,13 @@
 
 ## 2. 한눈에 보는 결론
 
-`tdc_gpx_top`은 4개의 TDC-GPX 칩을 제어하고, 각 칩의 IFIFO 원시 시간값을 읽어 Rise/Fall별 정형 데이터로 조립한 뒤 AXI4-Stream으로 출력하는 모듈이다.
+`tdc_gpx_top`은 합성 시 선택한 1~4개의 TDC-GPX 칩을 제어하고, 각 칩의 IFIFO 원시 시간값을 읽어 Rise/Fall별 정형 데이터로 조립한 뒤 AXI4-Stream으로 출력하는 모듈이다. 논리 chip slot ABI의 상한은 4개지만 외부 물리 핀 수는 `g_NUM_CHIPS`에 맞춰 축소된다.
 
 ```mermaid
 flowchart LR
     L["Laser controller\nShot trigger"] --> FS["Face / Shot sequencer"]
     ER["Echo receiver\nStop event + fire count"] --> EC["Expected-count correlator"]
-    FS --> CC["4 x GPX chip control"]
+    FS --> CC["1..4 x GPX chip control"]
     EC --> CC
     CC --> RB["28-bit raw IFIFO words"]
     RB --> DP["Decode + event context"]
@@ -118,14 +118,14 @@ flowchart TB
     subgraph TDC["i_tdc_clk chip-control domain"]
         CCSR["Chip CSR transfer"]
         ARB["Command arbiter"]
-        CHIP["4 x chip_ctrl"]
-        PHY["4 x bus_phy"]
+        CHIP["up to 4 x chip_ctrl"]
+        PHY["up to 4 x bus_phy"]
     end
 
     subgraph EXT["External blocks"]
         LASER["laser_ctrl"]
         ECHO["echo_receiver"]
-        GPX["4 x TDC-GPX"]
+        GPX["1..4 x TDC-GPX"]
         DMA["Rise/Fall VDMA"]
     end
 
@@ -158,6 +158,8 @@ flowchart TB
 
 1. 실제 클럭 생성과 XDC 제약
 2. GPX 병렬 버스 핀 배치와 I/O timing constraint
+   - `g_NUM_CHIPS = popcount(g_PRESENT_CHIP_MASK)` 일치
+   - compact physical lane과 실제 schematic chip의 대응
 3. `laser_ctrl`의 물리 TStart/레이저 timing과 이에 정렬된 `i_shot_start`/`i_stop_tdc` 표지
 4. `echo_receiver`의 stop-event/fire-count 포맷 준수
 5. Rise/Fall VDMA의 HSIZE, VSIZE, STRIDE, buffer 주소
@@ -172,7 +174,7 @@ flowchart TB
 | 순서 | 인스턴스 | 파일 | 책임 |
 |---:|---|---|---|
 | 1 | `u_csr_pipeline` | [`tdc_gpx_csr_pipeline.vhd`](../tdc_gpx_csr_pipeline.vhd) | Pipeline AXI-Lite, 명령 edge 검출, status CDC |
-| 2 | `u_config_ctrl` | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd) | Chip CSR, 예상 count, 명령 중재, 4-chip 제어, raw CDC |
+| 2 | `u_config_ctrl` | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd) | Chip CSR, 예상 count, 명령 중재, 최대 4-slot chip 제어, compact physical pin mapping, raw CDC |
 | 3 | `u_decode_pipe` | [`tdc_gpx_decode_pipe.vhd`](../tdc_gpx_decode_pipe.vhd) | GPX raw decode와 chip/shot 문맥 부여 |
 | 4 | `u_cell_pipe` | [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd) | slope demux, chip별 Cell 생성 |
 | 5 | `u_output_stage` | [`tdc_gpx_output_stage.vhd`](../tdc_gpx_output_stage.vhd) | Row 조립, canonical packing, header 삽입 |
@@ -300,7 +302,8 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 |---|---:|---|---|
 | `g_HW_VERSION` | `0x00010000` | HW 식별값 | 드라이버 호환성 |
 | `g_OUTPUT_WIDTH` | 32 | Rise/Fall AXIS 폭, 32/64/128 | VDMA stream 폭과 TB matrix |
-| `g_PRESENT_CHIP_MASK` | `1111` | 합성할 물리 chip slot mask, chip 수는 `popcount(mask)`로 파생 | 실제 GPX 배치와 slope 그룹 |
+| `g_NUM_CHIPS` | 4 | 외부 물리 TDC lane 수, 1..4; top port 폭을 직접 결정 | `popcount(g_PRESENT_CHIP_MASK)`와 반드시 일치 |
+| `g_PRESENT_CHIP_MASK` | `1111` | 고정 4-slot 논리 ABI 중 구현할 chip ID 선택 | 실제 GPX 배치, compact lane 순서, slope 그룹 |
 | `g_RISE_CHIP_MASK` | `0011` | Fall 활성 시 chip별 Rise 가능 역할; Fall mask와 중복 가능 | 보드 배선, GPX Reg0, 활성 mask 조합 |
 | `g_FALL_CHIP_MASK` | `1100` | chip별 Fall 가능 역할; `0000`이면 Fall datapath 합성 제거 | 보드 배선, Fall VDMA 필요 여부 |
 | `g_MAX_STOPS_PER_CHIP` | 8 | 빌드가 허용하는 chip당 최대 Stop 수, 2..8 | GPX 설정과 최대 Cell/VDMA geometry |
@@ -346,11 +349,22 @@ EF guard는 단순 고정 시간이 아니라 `ceil(11.8 ns / TDC period) + 2 sy
 
 | Package 상수 | 고정 이유 | 선택값 |
 |---|---|---|
-| `c_N_CHIPS=4` | top 포트 배열, chip ID 폭, CSR/header slot 형식 | `g_PRESENT_CHIP_MASK` |
+| `c_MAX_CHIPS=4` | 논리 chip ID 폭, 내부 ABI 배열, CSR/header slot 형식의 상한 | `g_NUM_CHIPS`, `g_PRESENT_CHIP_MASK` |
 | `c_MAX_STOPS_PER_CHIP=8` | Stop ID/배열 및 canonical 형식의 상한 | `g_MAX_STOPS_PER_CHIP` |
 | `c_MAX_HITS_PER_STOP=7` | 17-bit GPX hit의 Cell metadata/slot 형식 상한 | `g_MAX_HITS_PER_STOP` |
 
-별도 `g_N_CHIPS`는 두지 않는다. chip 개수만으로는 실제 slot 위치를 표현할 수 없고 mask와 count가 서로 다를 위험이 있으므로, 구현 chip 수는 항상 `popcount(g_PRESENT_CHIP_MASK)`로 한 번만 계산한다.
+`g_NUM_CHIPS`와 `g_PRESENT_CHIP_MASK`는 역할이 다르다. `g_NUM_CHIPS`는 Vivado IP Integrator가 사용자 함수를 포트 범위에서 해석하지 못하기 때문에 필요한 **물리 포트 폭 generic**이고, mask는 sparse 논리 chip ID를 보존하는 **slot 선택 generic**이다. RTL은 `g_NUM_CHIPS = popcount(g_PRESENT_CHIP_MASK)`를 assertion으로 강제한다. 따라서 두 값을 독립적인 자유도로 사용하면 안 되며, parent 생성 스크립트 또는 빌드 설정에서 한 쌍으로 변경해야 한다.
+
+물리 lane은 `g_PRESENT_CHIP_MASK`의 낮은 chip ID부터 연속 배치된다.
+
+| 예시 | `g_NUM_CHIPS` | Present mask | 물리 lane mapping | 외부 D / ADR 폭 |
+|---|---:|---:|---|---:|
+| 1-chip | 1 | `0001` | P0 -> logical chip 0 | 28 / 4 bit |
+| sparse 2-chip | 2 | `0101` | P0 -> chip 0, P1 -> chip 2 | 56 / 8 bit |
+| 3-chip | 3 | `0111` | P0/P1/P2 -> chip 0/1/2 | 84 / 12 bit |
+| 4-chip | 4 | `1111` | P0/P1/P2/P3 -> chip 0/1/2/3 | 112 / 16 bit |
+
+CSR, header, status의 chip ID는 compact physical lane 번호로 바뀌지 않는다. 예를 들어 `0101`에서는 외부 lane이 2개뿐이어도 metadata의 chip ID는 0과 2이다.
 
 CSR 요청은 build profile 밖으로 나가지 못한다.
 
@@ -405,6 +419,15 @@ Fall-capable build에서 `falling_enable=0`으로 바꾸는 것은 합성 제거
 
 Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 792개(34.5%)가 감소했다. netlist topology assertion으로 Fall assembler/FIFO/line-packer/header가 0개임도 확인했다. 즉 `g_FALL_CHIP_MASK=0000`의 합성 제거는 단순 기대가 아니라 생성 netlist와 utilization 양쪽에서 확인된 계약이다.
 
+2026-07-22 physical-pin OOC matrix는 동일 part/clock/output 조건에서 다음 포트 폭을 netlist에서 직접 확인했다. 네 경우 모두 post-synthesis timing, `check_timing`, CDC gate를 통과했다.
+
+| Build profile | `g_NUM_CHIPS` / Present | `io_tdc_d` | `o_tdc_adr` | 각 control/status vector |
+|---|---:|---:|---:|---:|
+| 1-chip dual edge | 1 / `0001` | 28 | 4 | 1 |
+| sparse 2-chip rising | 2 / `0101` | 56 | 8 | 2 |
+| 3-chip 2R+1F | 3 / `0111` | 84 | 12 | 3 |
+| 4-chip 2R+2F | 4 / `1111` | 112 | 16 | 4 |
+
 ---
 
 ## 8. Top 포트 설명
@@ -429,11 +452,15 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 
 | 그룹 | 포트 | 설명 |
 |---|---|---|
-| 데이터/주소 | `io_tdc_d`, `o_tdc_adr` | 28비트 bidirectional data와 4비트 register address, chip별 배열 |
-| 버스 strobe | `o_tdc_csn`, `o_tdc_rdn`, `o_tdc_wrn`, `o_tdc_oen` | chip select/read/write/output enable |
-| GPX 제어 | `o_tdc_stopdis`, `o_tdc_alutrigger`, `o_tdc_puresn` | stop disable, ALU trigger, reset |
-| FIFO 상태 | `i_tdc_ef1/2`, `i_tdc_lf1/2` | empty/load flag, 내부 2-FF sync |
-| 완료/오류 | `i_tdc_irflag`, `i_tdc_errflag` | 측정 완료와 GPX 오류 flag |
+| 데이터/주소 | `io_tdc_d`, `o_tdc_adr` | compact flat vector; 폭은 각각 `28*g_NUM_CHIPS`, `4*g_NUM_CHIPS` |
+| 버스 strobe | `o_tdc_csn`, `o_tdc_rdn`, `o_tdc_wrn`, `o_tdc_oen` | 각 `g_NUM_CHIPS` bit, chip select/read/write/output enable |
+| GPX 제어 | `o_tdc_stopdis`, `o_tdc_alutrigger`, `o_tdc_puresn` | 각 `g_NUM_CHIPS` bit, stop disable/ALU trigger/reset |
+| FIFO 상태 | `i_tdc_ef1/2`, `i_tdc_lf1/2` | 각 `g_NUM_CHIPS` bit, empty/load flag, 내부 2-FF sync |
+| 완료/오류 | `i_tdc_irflag`, `i_tdc_errflag` | 각 `g_NUM_CHIPS` bit, 측정 완료와 GPX 오류 flag |
+
+물리 lane `p`의 data slice는 `io_tdc_d(28*p+27 downto 28*p)`, address slice는 `o_tdc_adr(4*p+3 downto 4*p)`이다. `p`는 logical chip ID가 아니라 present mask의 낮은 set bit부터 매긴 compact 번호다. 따라서 XDC/보드 wrapper는 generic profile별 lane mapping을 고정해야 한다. `tdc_gpx_config_ctrl`가 이 경계에서 IOBUF를 소유하고, 내부 `bus_phy`는 분리된 `i_d/o_d/o_d_tri` 신호로 동작한다.
+
+`g_NUM_CHIPS`만 바꾸거나 mask만 바꾸는 구성은 허용되지 않는다. 예를 들어 3-chip 구성은 `g_NUM_CHIPS=3`과 1-bit가 세 개인 Present mask를 함께 사용해야 한다. 기본 연속 배치는 `0111`이고 sparse 배치도 가능하지만, sparse mapping은 반드시 schematic/XDC와 일치해야 한다.
 
 ### 8.3 출력
 
@@ -611,7 +638,7 @@ sequenceDiagram
     participant SW as Driver
     participant PCS as Pipeline CSR
     participant CCS as Chip CSR/config_ctrl
-    participant GPX as 4 x GPX
+    participant GPX as 1..4 x GPX
     participant SEQ as face_seq
     participant LAS as laser_ctrl
 
@@ -770,7 +797,7 @@ sequenceDiagram
 4. 예상 count, EF flag, 선택적 drain cap 중 조건을 만족하면 IFIFO 완료로 본다.
 5. IFIFO1 완료 marker는 Cell의 앞쪽 stop 출력 시작을 허용한다.
 6. IFIFO2 최종 완료 marker가 전체 chip slice를 닫는다.
-7. 4-chip 결과는 chip 번호 오름차순으로 한 Row가 된다.
+7. 활성 chip 결과는 논리 chip 번호 오름차순으로 한 Row가 된다. 물리 lane이 compact여도 metadata chip ID와 Row 순서는 바뀌지 않는다.
 8. Row마다 48바이트 prefix를 붙여 VDMA line을 만든다.
 
 ---
@@ -1755,7 +1782,7 @@ latency 보고서에는 평균값만 쓰지 말고 다음을 분리한다.
 
 | 시험 | 목적 |
 |---|---|
-| `tb_tdc_gpx_top_int.vhd` | top 통합, CSR, 4-chip drain, Rise/Fall 출력, VDMA geometry |
+| `tb_tdc_gpx_top_int.vhd` | top 통합, CSR, 1/2/3/4-chip 및 sparse physical pin contract, Rise/Fall 출력, VDMA geometry |
 | `tb_tdc_gpx_top_int_c07_4chip_target.vhd` | 4-chip target configuration |
 | `tb_tdc_gpx_top_int_c08_dual_edge_shared.vhd` | legacy 이름을 유지한 all-chip dual-edge topology |
 | `tb_tdc_gpx_top_int_slope_profiles.vhd` | runtime Rise-only, 정적 Rise-only 32채널 순서, 3-chip 2R+1F, 1-chip dual-edge, chip별 GPX Reg0 역할 |
@@ -1952,8 +1979,10 @@ p_run_timeout_sticky
 | [`signoff_results/README.md`](../signoff_results/README.md) | OOC sign-off 실행 방법과 범위 | 현재 flow 참조 |
 | [C08 Slope Mask/Falling Simulator v015](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Contract_Simulator_v015.html) | Present/Rise/Fall generic, runtime Fall, APD coverage, HSIZE/DDR/Ethernet 상호작용 | 브라우저 계산/검증 도구 |
 | [C08 Clock/Timing Generic Simulator v016](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Contract_Simulator_v016.html) | ns generic의 TDC/AXIS clock 변환, 5 ns scan CSR 변환과 시간 margin | 현재 timing 계약 계산/검증 도구 |
+| [C08 Physical Chip Pin Contract Simulator v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Simulator_v017.html) | `g_NUM_CHIPS`, sparse Present mask, compact physical lane과 D/ADR/control 핀 폭 | 현재 physical pin 계약 계산/검증 도구 |
 | [C08 Slope Mask/Falling Closure v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Closure_v017.md) | xsim, parent validate, OOC, HTML 검증 근거 | 현재 slope closure 기록 |
 | [C08 Clock/Timing Generic Closure v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Closure_v018.md) | 시간 generic 전파, 5 ns CSR, 50~200 MHz 회귀와 OOC timing 근거 | 현재 clock/timing closure 기록 |
+| [C08 Physical Chip Pin Contract Closure v019](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Closure_v019.md) | `c_MAX_CHIPS` 전수 조사, compact physical pin 구현, 1/2/3/4-chip xsim/OOC/parent/HTML 검증 근거 | 현재 physical pin closure 기록 |
 
 ---
 
