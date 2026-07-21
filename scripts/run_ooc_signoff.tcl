@@ -80,9 +80,9 @@ read_xdc -unmanaged $xdc_file
 
 set generics [list \
     "g_OUTPUT_WIDTH=$width" \
-    "g_PRESENT_CHIP_MASK=$present_mask" \
-    "g_RISE_CHIP_MASK=$rise_mask" \
-    "g_FALL_CHIP_MASK=$fall_mask" \
+    "g_PRESENT_CHIP_MASK=4'b$present_mask" \
+    "g_RISE_CHIP_MASK=4'b$rise_mask" \
+    "g_FALL_CHIP_MASK=4'b$fall_mask" \
     "g_MAX_STOPS_PER_CHIP=$max_stops" \
     "g_MAX_HITS_PER_STOP=$max_hits" \
     "g_AXIS_CLK_MHZ=$axis_mhz" \

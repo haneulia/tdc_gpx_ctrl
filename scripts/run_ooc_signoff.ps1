@@ -51,6 +51,7 @@ $fallBits = [Convert]::ToInt32($FallChipMask, 2)
 $activeRiseBits = $riseBits -band $presentBits
 $activeFallBits = $fallBits -band $presentBits
 $roleCoverage = ($activeRiseBits -bor $activeFallBits)
+$presentCount = ($PresentChipMask.ToCharArray() | Where-Object { $_ -eq '1' }).Count
 $riseActiveCount = ([Convert]::ToString($activeRiseBits, 2).ToCharArray() | Where-Object { $_ -eq '1' }).Count
 $fallActiveCount = ([Convert]::ToString($activeFallBits, 2).ToCharArray() | Where-Object { $_ -eq '1' }).Count
 
@@ -118,6 +119,47 @@ function Assert-StageClosed {
     }
 }
 
+function Assert-GeneratedTopology {
+    param(
+        [string]$UtilizationReport,
+        [int]$ExpectedRiseBuilders,
+        [int]$ExpectedFallBuilders
+    )
+
+    $riseBuilders = @(Select-String -LiteralPath $UtilizationReport `
+        -Pattern '^\|\s+gen_chip\[\d+\]\.gen_rise_builder\.u_cell_bld_rise\s+\|').Count
+    $fallBuilders = @(Select-String -LiteralPath $UtilizationReport `
+        -Pattern '^\|\s+gen_chip\[\d+\]\.gen_fall_builder\.u_cell_bld_fall\s+\|').Count
+
+    if ($riseBuilders -ne $ExpectedRiseBuilders) {
+        throw "Expected $ExpectedRiseBuilders rising builders, found $riseBuilders in $UtilizationReport"
+    }
+    if ($fallBuilders -ne $ExpectedFallBuilders) {
+        throw "Expected $ExpectedFallBuilders falling builders, found $fallBuilders in $UtilizationReport"
+    }
+
+    $fallStagePatterns = @(
+        '^\|\s+gen_fall_face_assembler\.u_face_asm_fall\s+\|'
+        '^\|\s+gen_fall_fifo\.u_face_fall_fifo\s+\|'
+        '^\|\s+gen_fall_line_packer\.u_line_packer_fall\s+\|'
+        '^\|\s+gen_fall_header\.u_header_fall\s+\|'
+    )
+    $expectedStageRows = if ($ExpectedFallBuilders -eq 0) { 0 } else { $fallStagePatterns.Count }
+    $fallStageRows = 0
+    foreach ($pattern in $fallStagePatterns) {
+        $fallStageRows += @(Select-String -LiteralPath $UtilizationReport -Pattern $pattern).Count
+    }
+    if ($fallStageRows -ne $expectedStageRows) {
+        throw "Expected $expectedStageRows falling output-stage rows, found $fallStageRows in $UtilizationReport"
+    }
+
+    @(
+        "rise_builders=$riseBuilders"
+        "fall_builders=$fallBuilders"
+        "fall_output_stage_rows=$fallStageRows"
+    ) | Set-Content -Encoding ASCII "$OutDir/generated_topology.txt"
+}
+
 $GitHead = (git -C $Hdl rev-parse HEAD).Trim()
 $GitChanges = @(git -C $Hdl status --porcelain --untracked-files=normal)
 $GitState = if ($GitChanges.Count -eq 0) { "clean" } else { "dirty" }
@@ -165,6 +207,10 @@ if (-not (Select-String -Path $Log -Pattern "OOC_SIGNOFF_SYNTH_PASS" -SimpleMatc
 $RequireSynthTiming = -not $Implement.IsPresent
 Assert-StageClosed -Prefix "post_synth" -Stage "Post-synthesis" `
     -RequireTiming $RequireSynthTiming
+Assert-GeneratedTopology `
+    -UtilizationReport "$OutDir/post_synth_utilization_hier.rpt" `
+    -ExpectedRiseBuilders $presentCount `
+    -ExpectedFallBuilders $fallActiveCount
 
 if ($Implement -and -not (Select-String -Path $Log -Pattern "OOC_SIGNOFF_IMPL_PASS" -SimpleMatch -Quiet)) {
     throw "Vivado log is missing OOC_SIGNOFF_IMPL_PASS: $Log"
