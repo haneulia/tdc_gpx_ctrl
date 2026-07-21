@@ -105,7 +105,7 @@ use work.tdc_gpx_pkg.all;
 entity tdc_gpx_header_inserter is
     generic (
         g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
-        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
@@ -121,14 +121,14 @@ entity tdc_gpx_header_inserter is
         i_cfg               : in  t_tdc_cfg;
         -- Physical chips represented by this slope lane. This can differ
         -- from i_cfg.active_chip_mask in dedicated 2-rise + 2-fall mode.
-        i_lane_chip_mask    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_lane_chip_mask    : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Header metadata (captured at face_start)
         i_vdma_frame_id     : in  unsigned(31 downto 0);
         i_face_id           : in  unsigned(7 downto 0);
         i_shot_seq_start    : in  unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         i_timestamp_ns      : in  unsigned(63 downto 0);
-        i_chip_error_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_chip_error_mask   : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_chip_error_cnt    : in  std_logic_vector(31 downto 0);
         i_bin_resolution_ps : in  unsigned(15 downto 0);
         i_k_dist_fixed      : in  unsigned(31 downto 0);
@@ -239,7 +239,7 @@ architecture rtl of tdc_gpx_header_inserter is
     signal s_face_id_r           : unsigned(7 downto 0)  := (others => '0');
 
     -- Structure (from i_cfg)
-    signal s_active_chip_mask_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_active_chip_mask_r  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_n_faces_r           : unsigned(2 downto 0)  := (others => '0');
     signal s_rows_per_face_r     : unsigned(15 downto 0) := (others => '0');
     signal s_cols_per_face_r     : unsigned(15 downto 0) := (others => '0');
@@ -267,7 +267,7 @@ architecture rtl of tdc_gpx_header_inserter is
     signal s_timestamp_ns_r      : unsigned(63 downto 0) := (others => '0');
 
     -- Error
-    signal s_chip_error_mask_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_chip_error_mask_r   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_chip_error_cnt_r    : std_logic_vector(31 downto 0) := (others => '0');
 
     -- =========================================================================

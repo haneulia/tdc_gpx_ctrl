@@ -24,9 +24,9 @@ entity tdc_gpx_cell_pipe is
         -- the named lane when falling_enable='1'. Runtime falling disable
         -- promotes every present chip to rising, so rising builders exist for
         -- every present chip. A zero fall mask removes all fall builders.
-        g_RISE_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_RISE_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         -- AXIS-domain watchdog margins. Production values are derived from
         -- tdc_gpx_top physical-time generics; cycle generics remain here so
         -- the builder datapath contains no runtime time conversion.
@@ -39,13 +39,13 @@ entity tdc_gpx_cell_pipe is
         i_rst_n                 : in  std_logic;
 
         -- Event input from Cluster 2 (AXI-Stream x4 chips)
-        i_evt_sk_tvalid         : in  std_logic_vector(c_N_CHIPS-1 downto 0);
+        i_evt_sk_tvalid         : in  std_logic_vector(c_MAX_CHIPS-1 downto 0);
         i_evt_sk_tdata          : in  t_evt_axis_tdata_array;
         i_evt_sk_tuser          : in  t_evt_axis_tuser_array;
-        o_evt_sk_tready         : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_evt_sk_tready         : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
         -- Control / Config
-        i_shot_start_per_chip   : in  std_logic_vector(c_N_CHIPS-1 downto 0);
+        i_shot_start_per_chip   : in  std_logic_vector(c_MAX_CHIPS-1 downto 0);
         -- CHAIN P1 (2026-07-16): per-slope lane chip masks (face snapshot).
         -- A chip's builder participates in a slope lane only when its bit
         -- is set: shot_start is gated per (chip, slope) and drain_done
@@ -57,8 +57,8 @@ entity tdc_gpx_cell_pipe is
         -- slope are consumed and dropped with a per-chip sticky (physical
         -- edge misconfiguration visibility). Defaults keep the legacy
         -- both-slopes-active behavior for existing instantiations.
-        i_rise_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := c_ALL_CHIPS_MASK;
-        i_fall_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := c_ALL_CHIPS_MASK;
+        i_rise_chip_mask        : in  std_logic_vector(c_MAX_CHIPS-1 downto 0) := c_ALL_CHIPS_MASK;
+        i_fall_chip_mask        : in  std_logic_vector(c_MAX_CHIPS-1 downto 0) := c_ALL_CHIPS_MASK;
         i_abort                 : in  std_logic;   -- legacy global abort (default)
         -- #22 Sprint 2: per-slope abort ports. Tie to i_abort if caller wants
         -- legacy coupling; drive separately when slope-independence is
@@ -81,45 +81,45 @@ entity tdc_gpx_cell_pipe is
         o_cell_rise_tdata_1     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
         o_cell_rise_tdata_2     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
         o_cell_rise_tdata_3     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
-        o_cell_rise_tvalid      : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_cell_rise_tlast       : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        i_cell_rise_tready      : in  std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_cell_rise_tvalid      : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_cell_rise_tlast       : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        i_cell_rise_tready      : in  std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
         -- Falling cell output to Cluster 4 (AXI-Stream x4)
         o_cell_fall_tdata_0     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
         o_cell_fall_tdata_1     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
         o_cell_fall_tdata_2     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
         o_cell_fall_tdata_3     : out std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
-        o_cell_fall_tvalid      : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_cell_fall_tlast       : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        i_cell_fall_tready      : in  std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_cell_fall_tvalid      : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_cell_fall_tlast       : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        i_cell_fall_tready      : in  std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
         -- Status
-        o_hit_dropped           : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_hit_fall_dropped      : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_shot_dropped          : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_shot_fall_dropped     : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_slice_timeout         : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_slice_fall_timeout    : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_hit_dropped           : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_hit_fall_dropped      : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_shot_dropped          : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_shot_fall_dropped     : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_slice_timeout         : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_slice_fall_timeout    : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
         -- Round 11 C: distinct stop_id error cause (separate from hit overflow)
-        o_stop_id_error         : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_stop_id_fall_error    : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_stop_id_error         : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_stop_id_fall_error    : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
         -- Round 11 item 4: per-chip cell_builder QUARANTINE escalation sticky.
-        o_quarantine_escape_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_quarantine_escape_fall : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_quarantine_escape_rise : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_quarantine_escape_fall : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
         -- Round 13 follow-up P1 (audit 4번): per-chip tuser(0) = faulted,
         -- co-incident with each chip's cell-stream tlast (non-tlast beats
         -- always 0). Travels with the cell data through the downstream
         -- xpm_fifo_axis so face_assembler can tag degraded rows without
         -- a cross-shot race. Replaces the earlier slice_done_faulted
         -- side-channel which could mis-align across FIFO latency.
-        o_cell_rise_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_cell_fall_tuser       : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_cell_rise_tuser       : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_cell_fall_tuser       : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
         -- CHAIN P1: sticky per chip -- a hit beat addressed a masked slope
         -- and was dropped at the slope demux. Survives abort/cmd_stop for
         -- post-run read; cleared by i_rst_n or i_sticky_clear.
-        o_masked_slope_drop_rise : out std_logic_vector(c_N_CHIPS-1 downto 0);
-        o_masked_slope_drop_fall : out std_logic_vector(c_N_CHIPS-1 downto 0)
+        o_masked_slope_drop_rise : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
+        o_masked_slope_drop_fall : out std_logic_vector(c_MAX_CHIPS-1 downto 0)
     );
 end entity tdc_gpx_cell_pipe;
 
@@ -132,21 +132,21 @@ architecture rtl of tdc_gpx_cell_pipe is
     ---------------------------------------------------------------------------
     -- Internal tdata array type (maps to individual output ports)
     ---------------------------------------------------------------------------
-    type t_out_tdata_array is array(0 to c_N_CHIPS-1)
+    type t_out_tdata_array is array(0 to c_MAX_CHIPS-1)
         of std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
 
     -- All present chips need a rising builder because falling_enable='0'
     -- means "all active chips are rising" without rebuilding the bitstream.
-    constant c_STATIC_RISE_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
+    constant c_STATIC_RISE_MASK : std_logic_vector(c_MAX_CHIPS-1 downto 0) :=
         g_PRESENT_CHIP_MASK;
-    constant c_STATIC_FALL_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
+    constant c_STATIC_FALL_MASK : std_logic_vector(c_MAX_CHIPS-1 downto 0) :=
         g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK;
 
     ---------------------------------------------------------------------------
     -- Input skid output (Cluster 2 -> Cluster 3 boundary)
     ---------------------------------------------------------------------------
-    signal s_evt_skid_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_evt_skid_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_evt_skid_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_evt_skid_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0);
     signal s_evt_skid_tdata  : t_evt_axis_tdata_array;
     signal s_evt_skid_tuser  : t_evt_axis_tuser_array;
     signal s_max_range_axis_clks : unsigned(15 downto 0);
@@ -154,8 +154,8 @@ architecture rtl of tdc_gpx_cell_pipe is
     ---------------------------------------------------------------------------
     -- Slope-demux registered outputs
     ---------------------------------------------------------------------------
-    signal s_rise_valid_r : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_fall_valid_r : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_rise_valid_r : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_fall_valid_r : std_logic_vector(c_MAX_CHIPS-1 downto 0);
     signal s_rise_tdata_r : t_evt_axis_tdata_array;
     signal s_fall_tdata_r : t_evt_axis_tdata_array;
     signal s_rise_tuser_r : t_evt_axis_tuser_array;
@@ -168,12 +168,12 @@ architecture rtl of tdc_gpx_cell_pipe is
     signal s_cell_fall_tdata : t_out_tdata_array;
 
     -- cell_builder tready (architecture scope for cross-generate visibility)
-    signal s_rise_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_fall_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_rise_tready : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_fall_tready : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- Round 13 follow-up P1: per-chip cell_builder m_axis_tuser (1-bit slv).
     -- Each bit i holds chip i's tuser(0) = faulted flag on tlast beat.
-    type t_cell_tuser_array is array(0 to c_N_CHIPS - 1)
+    type t_cell_tuser_array is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(0 downto 0);
     signal s_cell_rise_tuser_int : t_cell_tuser_array;
     signal s_cell_fall_tuser_int : t_cell_tuser_array;
@@ -199,12 +199,12 @@ architecture rtl of tdc_gpx_cell_pipe is
 
     -- CHAIN P1: lane-gated shot_start per (chip, slope) and masked-slope
     -- hit-drop stickies (written by p_slope_demux, single driver).
-    signal s_shot_start_rise    : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_shot_start_fall    : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_effective_rise_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_effective_fall_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_masked_drop_rise_r : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
-    signal s_masked_drop_fall_r : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
+    signal s_shot_start_rise    : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_shot_start_fall    : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_effective_rise_mask : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_effective_fall_mask : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_masked_drop_rise_r : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
+    signal s_masked_drop_fall_r : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
 
 begin
 
@@ -261,7 +261,7 @@ begin
     -- Per-chip: can this chip's demux accept new input?
     -- drain_done goes to both → need both ready
     -- hit goes to one → need that one ready
-    gen_input_skid : for i in 0 to c_N_CHIPS - 1 generate
+    gen_input_skid : for i in 0 to c_MAX_CHIPS - 1 generate
     begin
         u_evt_in_skid : entity work.tdc_gpx_skid_buffer
             generic map (
@@ -281,7 +281,7 @@ begin
             );
     end generate gen_input_skid;
 
-    gen_demux_ready : for i in 0 to c_N_CHIPS - 1 generate
+    gen_demux_ready : for i in 0 to c_MAX_CHIPS - 1 generate
         signal s_rise_free : std_logic;
         signal s_fall_free : std_logic;
         signal s_rise_accept : std_logic;
@@ -328,7 +328,7 @@ begin
                     s_rise_valid_r <= (others => '0');
                     s_fall_valid_r <= (others => '0');
                 else
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                     -- Clear valid on downstream handshake or matching slope abort.
                     if s_abort_rise = '1' then
                         s_rise_valid_r(i) <= '0';
@@ -409,7 +409,7 @@ begin
     -- whenever a beat waits for cell_builder (e.g. arrived before
     -- shot_start, or during a DROP→QUARANTINE transition). Not an error.
     ---------------------------------------------------------------------------
-    gen_chip : for i in 0 to c_N_CHIPS-1 generate
+    gen_chip : for i in 0 to c_MAX_CHIPS-1 generate
     begin
 
         -- Simulation-only timing observability. Fires when a beat is held
@@ -543,7 +543,7 @@ begin
     o_cell_fall_tdata_3 <= s_cell_fall_tdata(3);
 
     -- Round 13 follow-up P1: pack per-chip tuser(0) bit into output vector
-    gen_tuser_map : for i in 0 to c_N_CHIPS - 1 generate
+    gen_tuser_map : for i in 0 to c_MAX_CHIPS - 1 generate
         o_cell_rise_tuser(i) <= s_cell_rise_tuser_int(i)(0);
         o_cell_fall_tuser(i) <= s_cell_fall_tuser_int(i)(0);
     end generate gen_tuser_map;

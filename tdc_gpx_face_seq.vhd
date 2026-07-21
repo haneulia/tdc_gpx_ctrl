@@ -31,13 +31,13 @@ use work.tdc_gpx_pkg.all;
 entity tdc_gpx_face_seq is
     generic (
         g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
-        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP;
         -- Compile-time edge capabilities. Overlap means a chip can supply
         -- both edges; a zero fall mask is a rise-only build.
-        g_RISE_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
+        g_RISE_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
     );
     port (
         i_clk                : in  std_logic;
@@ -49,7 +49,7 @@ entity tdc_gpx_face_seq is
         i_cmd_soft_reset     : in  std_logic;
 
         -- Pipeline idle indicators (for start acceptance)
-        i_chip_busy          : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_chip_busy          : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_reg_outstanding    : in  std_logic;
         i_face_asm_idle      : in  std_logic;
         i_face_asm_fall_idle : in  std_logic;
@@ -89,7 +89,7 @@ entity tdc_gpx_face_seq is
         o_pipeline_abort_fall : out std_logic;
         o_shot_drop_cnt      : out unsigned(15 downto 0);
         o_cfg_rejected       : out std_logic;  -- 1-clk pulse: cmd_start rejected due to invalid config
-        o_shot_start_per_chip : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_shot_start_per_chip : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- ID outputs
         o_face_id            : out unsigned(7 downto 0);
@@ -102,7 +102,7 @@ entity tdc_gpx_face_seq is
         o_frame_done_both    : out std_logic;
 
         -- Config snapshots (latched at packet_start)
-        o_face_active_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_face_active_mask   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_face_stops_per_chip : out unsigned(3 downto 0);
         o_face_cols_per_face : out unsigned(15 downto 0);
         o_face_n_faces       : out unsigned(3 downto 0);
@@ -121,7 +121,7 @@ end entity tdc_gpx_face_seq;
 
 architecture rtl of tdc_gpx_face_seq is
 
-    constant C_ZEROS_CHIPS : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    constant C_ZEROS_CHIPS : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     constant c_BUILD_MAX_ROWS : natural :=
         fn_count_ones(g_PRESENT_CHIP_MASK) * g_MAX_STOPS_PER_CHIP;
 
@@ -141,7 +141,7 @@ architecture rtl of tdc_gpx_face_seq is
 
     signal s_face_stops_per_chip_r : unsigned(3 downto 0)  :=
         to_unsigned(g_MAX_STOPS_PER_CHIP, 4);
-    signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := g_PRESENT_CHIP_MASK;
+    signal s_face_active_mask_r    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := g_PRESENT_CHIP_MASK;
     signal s_face_cols_per_face_r  : unsigned(15 downto 0) := to_unsigned(1, 16);
     signal s_face_n_faces_r        : unsigned(3 downto 0)  := to_unsigned(1, 4);
     signal s_cfg_face_r            : t_tdc_cfg := c_TDC_CFG_INIT;
@@ -165,7 +165,7 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_face_start_gated_r    : std_logic := '0';
     signal s_shot_start_gated_comb : std_logic := '0';
     signal s_shot_start_gated_r    : std_logic := '0';
-    signal s_shot_start_per_chip_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_shot_start_per_chip_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     -- #22 Sprint 1: rise/fall abort infrastructure (values still coupled)
     -- s_pipeline_abort_rise : gates all logic that protects rise-side primary
     --                         data (FSM state, packet_start, counters, etc.)
@@ -201,8 +201,8 @@ architecture rtl of tdc_gpx_face_seq is
     -- events (packet_start_r, shot_pending_r, drop_cnt increments).
     signal s_shot_raw_d_r   : std_logic := '0';
     signal s_shot_raw_pulse : std_logic;
-    signal s_cfg_rise_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cfg_fall_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cfg_rise_mask  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cfg_fall_mask  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
 begin
 
@@ -406,7 +406,7 @@ begin
     -- Geometry & config snapshot
     -- =========================================================================
     p_geometry : process(i_clk)
-        variable v_active_cnt : natural range 0 to c_N_CHIPS;
+        variable v_active_cnt : natural range 0 to c_MAX_CHIPS;
         variable v_rows       : natural range 0 to c_MAX_ROWS_PER_FACE;
         variable v_max_hits   : natural range 1 to c_MAX_HITS_PER_STOP;
     begin
@@ -773,7 +773,7 @@ begin
             else
                 s_face_start_gated_r <= s_face_start_gated_comb;
                 s_shot_start_gated_r <= s_shot_start_gated_comb;
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     s_shot_start_per_chip_r(i) <=
                         s_shot_start_gated_comb and s_face_active_mask_r(i);
                 end loop;

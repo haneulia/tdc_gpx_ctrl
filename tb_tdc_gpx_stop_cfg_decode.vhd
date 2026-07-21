@@ -37,7 +37,7 @@ architecture sim of tb_tdc_gpx_stop_cfg_decode is
     signal s_cfg              : t_tdc_cfg := c_TDC_CFG_INIT;
     signal s_cfg_image_raw    : t_cfg_image := (others => (others => '0'));
     signal s_cfg_image        : t_cfg_image;
-    signal s_mono_mask        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_mono_mask        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_orphan_sticky    : std_logic;
 
     procedure wait_clk(signal clk : in std_logic; n : natural) is

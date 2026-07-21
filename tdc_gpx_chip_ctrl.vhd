@@ -218,7 +218,7 @@ entity tdc_gpx_chip_ctrl is
         o_init_cfg_coalesced : out std_logic;
         -- Round 11 item 18 (C): cmd_arb contract violation sticky (per-chip).
         -- Fires on this chip's instance when PH_IDLE observes >1 command
-        -- pulse in the same cycle. config_ctrl aggregates all c_N_CHIPS
+        -- pulse in the same cycle. config_ctrl aggregates all c_MAX_CHIPS
         -- outputs into a mask so SW can see WHICH chip saw the collision.
         -- Investigate cmd_arb (source serialization failure), not the
         -- dropped command itself.

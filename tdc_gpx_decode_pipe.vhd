@@ -22,10 +22,10 @@ entity tdc_gpx_decode_pipe is
         i_rst_n : in std_logic;
 
         -- Input from Cluster 1 (AXI-Stream x4, from chip_ctrl skid outputs)
-        i_raw_sk_tvalid : in  std_logic_vector(c_N_CHIPS-1 downto 0);
+        i_raw_sk_tvalid : in  std_logic_vector(c_MAX_CHIPS-1 downto 0);
         i_raw_sk_tdata  : in  t_raw_axis_tdata_array;
         i_raw_sk_tuser  : in  t_raw_axis_tuser_array;
-        o_raw_sk_tready : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_raw_sk_tready : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
         -- Context from Cluster 1 (per-chip shot sequence)
         i_chip_shot_seq : in t_shot_seq_array;
@@ -34,13 +34,13 @@ entity tdc_gpx_decode_pipe is
         i_face_stops_per_chip : in unsigned(3 downto 0);
 
         -- Output to Cluster 3 (AXI-Stream x4, skid buffer outputs)
-        o_evt_sk_tvalid : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_evt_sk_tvalid : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
         o_evt_sk_tdata  : out t_evt_axis_tdata_array;
         o_evt_sk_tuser  : out t_evt_axis_tuser_array;
-        i_evt_sk_tready : in  std_logic_vector(c_N_CHIPS-1 downto 0);  -- backpressure from cell_pipe
+        i_evt_sk_tready : in  std_logic_vector(c_MAX_CHIPS-1 downto 0);  -- backpressure from cell_pipe
 
         -- Status
-        o_stop_id_error : out std_logic_vector(c_N_CHIPS-1 downto 0);
+        o_stop_id_error : out std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
         -- Pipeline abort: flush internal skid buffers
         i_flush : in std_logic
@@ -55,33 +55,33 @@ architecture rtl of tdc_gpx_decode_pipe is
     ---------------------------------------------------------------------------
     -- decoder_i_mode output -> skid_dec input
     ---------------------------------------------------------------------------
-    signal s_dec_axis_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_dec_axis_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0);
     signal s_dec_axis_tdata  : t_raw_axis_tdata_array;
     signal s_dec_axis_tuser  : t_raw_axis_tuser_array;
-    signal s_dec_axis_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_dec_axis_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
     ---------------------------------------------------------------------------
     -- skid_dec output -> event_bld input
     ---------------------------------------------------------------------------
-    signal s_dec_sk_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_dec_sk_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0);
     signal s_dec_sk_tdata  : t_raw_axis_tdata_array;
     signal s_dec_sk_tuser  : t_raw_axis_tuser_array;
-    signal s_dec_sk_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_dec_sk_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
     ---------------------------------------------------------------------------
     -- event_bld output -> skid_evt input
     ---------------------------------------------------------------------------
-    signal s_evt_axis_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_evt_axis_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0);
     signal s_evt_axis_tdata  : t_evt_axis_tdata_array;
     signal s_evt_axis_tuser  : t_evt_axis_tuser_array;
-    signal s_evt_axis_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_evt_axis_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
 begin
 
     ---------------------------------------------------------------------------
     -- Per-chip decode pipeline (4 instances of each stage)
     ---------------------------------------------------------------------------
-    gen_chip : for i in 0 to c_N_CHIPS-1 generate
+    gen_chip : for i in 0 to c_MAX_CHIPS-1 generate
 
         -- Stage 1: I-Mode 28-bit field extraction
         u_decode : entity work.tdc_gpx_decoder_i_mode

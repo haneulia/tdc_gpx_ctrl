@@ -2,10 +2,10 @@
 -- tdc_gpx_parent_core.vhd
 -- Board-independent IP Integrator wrapper for tdc_gpx_top.
 --
--- The production core keeps package-defined array ports for the four TDC
--- devices.  IP Integrator is more predictable when those package types do not
--- cross a module-reference boundary, so this wrapper flattens only the TDC
--- data/address arrays and adds explicit AXI/clock interface metadata.
+-- The production core exports compact flat TDC pin vectors sized by
+-- g_NUM_CHIPS. This wrapper preserves that synthesis-time physical contract
+-- across the IP Integrator module-reference boundary and adds explicit
+-- AXI/clock interface metadata.
 -- =============================================================================
 
 library ieee;
@@ -22,6 +22,7 @@ entity tdc_gpx_parent_core is
         -- IP Integrator module-reference parsing does not resolve package
         -- constants in generic defaults/ranges. These literals mirror the
         -- production core's fixed four-chip ABI and package maxima.
+        g_NUM_CHIPS          : positive range 1 to 4 := 4;
         g_PRESENT_CHIP_MASK  : std_logic_vector(3 downto 0) := "1111";
         g_RISE_CHIP_MASK     : std_logic_vector(3 downto 0) := "0011";
         g_FALL_CHIP_MASK     : std_logic_vector(3 downto 0) := "1100";
@@ -112,29 +113,26 @@ entity tdc_gpx_parent_core is
         i_fire_count_keep  : in std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
         i_fire_count_last  : in std_logic;
 
-        io_tdc0_d : inout std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-        io_tdc1_d : inout std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-        io_tdc2_d : inout std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-        io_tdc3_d : inout std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        -- Compact physical lanes exported by tdc_gpx_top. Lane order follows
+        -- ascending asserted bits in g_PRESENT_CHIP_MASK.
+        io_tdc_d : inout std_logic_vector(
+            g_NUM_CHIPS * c_TDC_BUS_WIDTH - 1 downto 0);
+        o_tdc_adr : out std_logic_vector(
+            g_NUM_CHIPS * c_TDC_ADR_WIDTH - 1 downto 0);
 
-        o_tdc0_adr : out std_logic_vector(3 downto 0);
-        o_tdc1_adr : out std_logic_vector(3 downto 0);
-        o_tdc2_adr : out std_logic_vector(3 downto 0);
-        o_tdc3_adr : out std_logic_vector(3 downto 0);
-
-        o_tdc_csn        : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_rdn        : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_wrn        : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_oen        : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_stopdis    : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_alutrigger : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_puresn     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_ef1        : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_ef2        : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_lf1        : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_lf2        : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_irflag     : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_errflag    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_tdc_csn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_rdn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_wrn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_oen        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_stopdis    : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_alutrigger : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_puresn     : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_ef1        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_ef2        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_lf1        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_lf2        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_irflag     : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_errflag    : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
 
         m_axis_tdata  : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         m_axis_tkeep  : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
@@ -205,6 +203,7 @@ begin
         generic map (
             g_HW_VERSION        => g_HW_VERSION,
             g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
+            g_NUM_CHIPS          => g_NUM_CHIPS,
             g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
             g_RISE_CHIP_MASK     => g_RISE_CHIP_MASK,
             g_FALL_CHIP_MASK     => g_FALL_CHIP_MASK,
@@ -292,14 +291,8 @@ begin
             i_fire_count_tkeep  => i_fire_count_keep,
             i_fire_count_tlast  => i_fire_count_last,
 
-            io_tdc_d(0) => io_tdc0_d,
-            io_tdc_d(1) => io_tdc1_d,
-            io_tdc_d(2) => io_tdc2_d,
-            io_tdc_d(3) => io_tdc3_d,
-            o_tdc_adr(0) => o_tdc0_adr,
-            o_tdc_adr(1) => o_tdc1_adr,
-            o_tdc_adr(2) => o_tdc2_adr,
-            o_tdc_adr(3) => o_tdc3_adr,
+            io_tdc_d            => io_tdc_d,
+            o_tdc_adr           => o_tdc_adr,
             o_tdc_csn        => o_tdc_csn,
             o_tdc_rdn        => o_tdc_rdn,
             o_tdc_wrn        => o_tdc_wrn,

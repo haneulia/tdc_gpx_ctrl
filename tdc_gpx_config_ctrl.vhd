@@ -56,6 +56,9 @@ use ieee.numeric_std.all;
 library xpm;
 use xpm.vcomponents.all;
 
+library unisim;
+use unisim.vcomponents.all;
+
 use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
 
@@ -78,9 +81,10 @@ entity tdc_gpx_config_ctrl is
         g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
         g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
         g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH;
-        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_RISE_CHIP_MASK    : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
-        g_FALL_CHIP_MASK    : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
+        g_NUM_CHIPS         : positive range 1 to c_MAX_CHIPS := c_MAX_CHIPS;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_RISE_CHIP_MASK    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
+        g_FALL_CHIP_MASK    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
     port (
@@ -120,23 +124,26 @@ entity tdc_gpx_config_ctrl is
         s_axi_rresp          : out std_logic_vector(1 downto 0);
 
         -- =====================================================================
-        -- TDC-GPX physical pins pass-through (per chip, x4)
+        -- TDC-GPX physical pins. Only present logical slots are exported.
+        -- Physical lane order is ascending logical chip ID.
         -- =====================================================================
-        io_tdc_d             : inout t_tdc_bus_array;
-        o_tdc_adr            : out   t_tdc_adr_array;
-        o_tdc_csn            : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_rdn            : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_wrn            : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_oen            : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_stopdis        : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_alutrigger     : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_puresn         : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_ef1            : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_ef2            : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_lf1            : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_lf2            : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_irflag         : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_errflag        : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
+        io_tdc_d             : inout std_logic_vector(
+            g_NUM_CHIPS * c_TDC_BUS_WIDTH - 1 downto 0);
+        o_tdc_adr            : out std_logic_vector(
+            g_NUM_CHIPS * c_TDC_ADR_WIDTH - 1 downto 0);
+        o_tdc_csn            : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_rdn            : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_wrn            : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_oen            : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_stopdis        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_alutrigger     : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_puresn         : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_ef1            : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_ef2            : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_lf1            : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_lf2            : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_irflag         : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_errflag        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
 
         -- =====================================================================
         -- External inputs (stop event stream + deadline pulse)
@@ -167,7 +174,7 @@ entity tdc_gpx_config_ctrl is
         -- SW-initiated clear for err_handler fatal state + error history
         -- (shared with status_agg soft_clear). Default '0' keeps legacy.
         i_err_soft_clear     : in  std_logic := '0';
-        i_shot_start_per_chip : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_shot_start_per_chip : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_shot_start_gated   : in  std_logic;
         -- Face-local 1-base shot/fire count. Used to qualify
         -- echo_receiver fire_count_tdata[15:0] before accepting stop counts.
@@ -194,10 +201,10 @@ entity tdc_gpx_config_ctrl is
         -- =====================================================================
         -- Output to Cluster 2: AXI-Stream x4 (from sk_raw)
         -- =====================================================================
-        o_raw_sk_tvalid      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_raw_sk_tvalid      : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_raw_sk_tdata       : out t_raw_axis_tdata_array;
         o_raw_sk_tuser       : out t_raw_axis_tuser_array;
-        i_raw_sk_tready      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_raw_sk_tready      : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- =====================================================================
         -- Configuration outputs (merged from csr_chip + csr_pipeline)
@@ -214,13 +221,13 @@ entity tdc_gpx_config_ctrl is
         -- =====================================================================
         -- Chip status outputs (for face_seq + status_agg)
         -- =====================================================================
-        o_chip_busy          : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_busy          : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_chip_shot_seq      : out t_shot_seq_array;
-        o_errflag_sync       : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_err_drain_timeout  : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_err_sequence       : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_err_rsp_mismatch   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_err_raw_overflow   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_errflag_sync       : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_err_drain_timeout  : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_err_sequence       : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_err_rsp_mismatch   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_err_raw_overflow   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_reg_outstanding    : out std_logic;
         o_reg_loop_resume    : out std_logic;
         o_cdc_idle           : out std_logic;
@@ -230,13 +237,13 @@ entity tdc_gpx_config_ctrl is
         -- =====================================================================
         o_err_active         : out std_logic;
         o_err_fatal          : out std_logic;
-        o_err_chip_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_chip_mask      : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_err_cause          : out std_logic_vector(2 downto 0);
 
         -- =====================================================================
         -- Additional status outputs
         -- =====================================================================
-        o_run_timeout        : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_run_timeout        : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_reg_arb_timeout    : out std_logic;
 
         -- Round 5 follow-up: pipeline-wide sticky observability (from sub-blocks)
@@ -247,36 +254,36 @@ entity tdc_gpx_config_ctrl is
         o_reg_zero_mask      : out std_logic;  -- cmd_arb got zero chip_mask request
 
         -- Round 6 B1: per-chip observability (TDC-domain sources, CDC'd here)
-        o_err_reg_overflow   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg 3rd-pulse sticky
-        o_run_drain_complete : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_run internal drain-complete sticky
+        o_err_reg_overflow   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chip_reg 3rd-pulse sticky
+        o_run_drain_complete : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chip_run internal drain-complete sticky
 
         -- Round 11 C: Category C observability surface
-        o_reg_timeout_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
+        o_reg_timeout_mask   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
         o_run_timeout_cause  : out std_logic_vector(2 downto 0);              -- chip_run last timeout cause (OR-aggregated)
 
         -- Round 11 item 10: stop_cfg_decode monotonic violation sticky.
-        o_mono_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_mono_violation_mask : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Round 12 #16: stop_cfg_decode orphan-event sticky.
         o_orphan_stop_evt_sticky : out std_logic;
 
         -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky.
-        o_init_cfg_coalesced_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_init_cfg_coalesced_mask : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask.
-        o_cmd_collision_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_cmd_collision_mask      : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Round 12 #15: distinct raw-overflow cause masks (per-chip).
-        o_err_raw_drop_mask      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_err_drain_cap_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_raw_drop_mask      : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_err_drain_cap_mask     : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Round 12 #17: per-chip run_timeout_cause (packed 3-bit × N_CHIPS).
         --   chip i → [3*i + 2 : 3*i]
         -- Replaces the "last cause only" behavior of o_run_timeout_cause.
-        o_run_timeout_cause_per_chip : out std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
+        o_run_timeout_cause_per_chip : out std_logic_vector(3 * c_MAX_CHIPS - 1 downto 0);
 
         -- Round 13 axis 2: per-chip bus fatal sticky mask.
-        o_err_bus_fatal_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_bus_fatal_mask     : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- =====================================================================
         -- Interrupt
@@ -398,12 +405,12 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_chip    : unsigned(1 downto 0);
     signal s_cmd_reg_wdata   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     signal s_cmd_reg_rdata   : t_slv28_array;
-    signal s_cmd_reg_rvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_done    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_reg_rsp_pending_tdc : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_read_g  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_write_g : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_chip_address    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_rvalid  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_done    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_reg_rsp_pending_tdc : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_read_g  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_write_g : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_chip_address    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_cmd_reg_done_pulse   : std_logic;
     signal s_reg_outstanding      : std_logic;
     signal s_cmd_reg_done_chip    : unsigned(1 downto 0);
@@ -420,63 +427,81 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     -- Per-chip: bus_phy <-> chip_ctrl
     -- =========================================================================
-    signal s_bus_req_valid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_req_rw      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_tdc_d_in        : t_tdc_bus_array;
+    signal s_tdc_d_out       : t_tdc_bus_array;
+    signal s_tdc_d_tri       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_adr         : t_tdc_adr_array;
+    signal s_tdc_csn         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_rdn         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_wrn         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_oen         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_stopdis     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_alutrigger  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_puresn      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_ef1_pin     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_ef2_pin     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_lf1_pin     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_lf2_pin     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_irflag_pin  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tdc_errflag_pin : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+
+    signal s_bus_req_valid   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_bus_req_rw      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_bus_req_addr    : t_slv4_array;
     signal s_bus_req_wdata   : t_slv28_array;
-    signal s_bus_oen_perm    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_req_burst   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_oen_perm    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_bus_req_burst   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_bus_clk_div_snap : t_u6_array;
     signal s_bus_ticks_snap  : t_u3_array;
-    signal s_bus_busy           : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_rsp_pending_raw : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_bus_rsp_pending     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_bus_busy           : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_bus_rsp_pending_raw : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_bus_rsp_pending     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy response AXI-Stream
-    signal s_brsp_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_brsp_axis_tvalid : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_brsp_axis_tdata  : t_bus_rsp_tdata_array;
     signal s_brsp_axis_tkeep  : t_slv4_array;
     signal s_brsp_axis_tuser  : t_bus_rsp_tuser_array;
-    signal s_brsp_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_brsp_axis_tready : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- Per-chip: bus_phy synchronized status
-    signal s_ef1_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_ef2_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_lf1_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_lf2_sync        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_irflag_sync     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_errflag_sync    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_ef1_sync        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_ef2_sync        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_lf1_sync        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_lf2_sync        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_irflag_sync     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_errflag_sync    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- Per-chip: chip_ctrl -> downstream raw AXI-Stream
-    signal s_raw_axis_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_axis_tvalid : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_raw_axis_tdata  : t_raw_axis_tdata_array;
     signal s_raw_axis_tuser  : t_raw_axis_tuser_array;
-    signal s_raw_axis_tready : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_axis_tready : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- Per-chip: chip_ctrl status
-    signal s_drain_done      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_drain_done      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_chip_shot_seq   : t_shot_seq_array;
-    signal s_chip_busy       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_tick_en         : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_sequence      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_rsp_mismatch  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_raw_overflow  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_busy       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_tick_en         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_drain_timeout : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_sequence      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_rsp_mismatch  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_raw_overflow  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 12 #15: per-chip distinct cause stickies
-    signal s_err_raw_drop      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_drain_cap     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_raw_drop      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_drain_cap     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 6 B1: additional per-chip observability from chip_ctrl (TDC domain)
-    signal s_err_reg_overflow  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_run_drain_complete : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- pulse
-    signal s_run_drain_complete_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_run_timeout       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_reg_overflow  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_run_drain_complete : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- pulse
+    signal s_run_drain_complete_sticky_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_run_timeout       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 11 C: per-chip timeout_cause + aggregated "last cause" signal
-    type t_timeout_cause_arr is array (0 to c_N_CHIPS - 1) of std_logic_vector(2 downto 0);
+    type t_timeout_cause_arr is array (0 to c_MAX_CHIPS - 1) of std_logic_vector(2 downto 0);
     signal s_run_timeout_cause     : t_timeout_cause_arr;
     -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
-    signal s_init_cfg_coalesced    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_init_cfg_coalesced    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask
-    signal s_cmd_collision_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_collision_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_last_r : std_logic_vector(2 downto 0) := (others => '0');
     -- Round 12 #17: per-chip cause latch (each chip keeps its last cause)
     signal s_run_timeout_cause_per_chip_r : t_timeout_cause_arr := (others => (others => '0'));
@@ -485,11 +510,11 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     -- err_handler outputs
     -- =========================================================================
-    signal s_err_cmd_soft_reset    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_cmd_soft_reset    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_err_cmd_reg_read      : std_logic;
     signal s_err_cmd_reg_addr      : std_logic_vector(3 downto 0);
-    signal s_err_cmd_reg_chip_addr : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_fill              : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_cmd_reg_chip_addr : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_fill              : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_err_active            : std_logic;
 
     -- err_handler i_frame_done: latch rise+fall frame_done observations
@@ -506,18 +531,18 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_read_mux         : std_logic;
     signal s_cmd_reg_write_mux        : std_logic;
     signal s_cmd_reg_addr_mux         : std_logic_vector(3 downto 0);
-    signal s_cmd_reg_chip_address_mux : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_chip_address_mux : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Per-chip: sk_raw output (before err_fill gating)
     -- =========================================================================
-    signal s_sk_raw_tvalid : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_sk_raw_tvalid : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_sk_raw_tdata  : t_raw_axis_tdata_array;
     signal s_sk_raw_tuser  : t_raw_axis_tuser_array;
 
     -- CDC FIFO: chip_ctrl (TDC clock) -> decode_pipe (AXI-Stream clock)
-    signal s_raw_cdc_full  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_raw_cdc_empty : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_cdc_full  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_raw_cdc_empty : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- Round 6 A1: per-chip reset stretcher for u_raw_cdc flush.
     -- xpm_fifo_async.rst requires a multi-cycle hold; soft_reset pulses are
@@ -529,10 +554,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- cycles of the slowest expected AXI clock (even if it drops below the
     -- current 150 MHz). XPM async FIFO requires rst hold ≥ 5 × slowest-clk.
     constant c_RAW_FIFO_RST_CLKS : natural := 16;
-    type t_raw_fifo_rst_cnt_arr is array (0 to c_N_CHIPS - 1)
+    type t_raw_fifo_rst_cnt_arr is array (0 to c_MAX_CHIPS - 1)
         of unsigned(4 downto 0);
     signal s_raw_fifo_rst_cnt_r : t_raw_fifo_rst_cnt_arr := (others => (others => '0'));
-    signal s_raw_fifo_rst       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_fifo_rst       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- CDC signals: AXI-Stream -> TDC domain (command pulses)
@@ -550,25 +575,25 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_soft_reset_sync_tdc_r     : std_logic_vector(2 downto 0) := (others => '0');
     signal s_cmd_force_reinit_sync_tdc_r   : std_logic_vector(2 downto 0) := (others => '0');
     -- Round 13 axis 2: per-chip bus fatal sticky (TDC domain)
-    signal s_err_bus_fatal        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_bus_fatal        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- The three retained per-chip sticky masks use independent 2-FF
     -- synchronizers. Encoded timeout causes use the atomic mailbox below.
     -- Encoded causes cross as one atomic snapshot. A bitwise synchronizer can
     -- transiently form a different 3-bit code that downstream CSR logic would
     -- capture as a real diagnostic value.
-    constant c_RUN_CAUSE_CDC_BITS : positive := 3 * c_N_CHIPS + 3;
-    signal s_run_timeout_cause_packed : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
+    constant c_RUN_CAUSE_CDC_BITS : positive := 3 * c_MAX_CHIPS + 3;
+    signal s_run_timeout_cause_packed : std_logic_vector(3 * c_MAX_CHIPS - 1 downto 0);
     signal s_run_cause_src_packed : std_logic_vector(c_RUN_CAUSE_CDC_BITS - 1 downto 0);
     signal s_run_cause_axi_packed : std_logic_vector(c_RUN_CAUSE_CDC_BITS - 1 downto 0);
 
     -- Round 13 axis 2: bus fatal CDC (TDC → AXI-Stream domain).
-    signal s_err_bus_fatal_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_bus_fatal_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_init_cfg_coalesced_meta_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_init_cfg_coalesced_axi_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_cmd_collision_meta_r      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_cmd_collision_axi_r       : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_bus_fatal_meta_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_bus_fatal_axi_r  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_init_cfg_coalesced_meta_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_init_cfg_coalesced_axi_r  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_cmd_collision_meta_r      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_cmd_collision_axi_r       : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- ASYNC_REG attribute declaration (scoped to this section; the later
     -- declaration at the cfg CDC section is for a separate set of signals).
@@ -587,10 +612,10 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- follow the same sticky-clear policy as status_agg / err_handler.
     signal s_soft_clear_tdc      : std_logic;
     -- Per-chip command pulses
-    signal s_err_cmd_soft_reset_tdc : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_shot_start_tdc         : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_read_tdc       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_write_tdc      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_cmd_soft_reset_tdc : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_shot_start_tdc         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_read_tdc       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_write_tdc      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- CDC signals: AXI-Stream -> TDC domain (quasi-static config snapshot)
@@ -610,24 +635,24 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     -- Per-chip level and sticky status. One-cycle event signals are declared
     -- separately below and cross through xpm_cdc_pulse.
-    signal s_chip_busy_axi         : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_busy_effective   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_drain_timeout_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_sequence_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_rsp_mismatch_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_raw_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_busy_axi         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_busy_effective   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_drain_timeout_axi : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_sequence_axi      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_rsp_mismatch_axi  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_raw_overflow_axi  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 12 #15: distinct cause stickies (CDC'd)
-    signal s_err_raw_drop_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_drain_cap_axi     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_raw_drop_axi      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_drain_cap_axi     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 6 B1: additional per-chip observability in AXI-Stream domain
-    signal s_err_reg_overflow_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_run_drain_complete_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_errflag_sync_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_reg_overflow_axi  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_run_drain_complete_axi : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_errflag_sync_axi      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Per-chip atomic register-response outputs and independent timeout pulse.
-    signal s_cmd_reg_done_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_rvalid_axi    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cmd_reg_rvalid_held_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_run_timeout_axi       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_reg_done_axi      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_rvalid_axi    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_reg_rvalid_held_axi : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_run_timeout_axi       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Per-chip multi-bit status (xpm_cdc_gray for shot_seq, atomic handshake
     -- for register response data).
     signal s_chip_shot_seq_axi     : t_shot_seq_array;
@@ -642,7 +667,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- in the TDC domain, which is the standard pattern for cross-domain reset.
     -- =========================================================================
     signal s_tdc_aresetn : std_logic;
-    signal s_chip_rst_n   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_rst_n   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- 2-FF synchronizer stages for quasi-static config bundles (Round 5 #7).
@@ -727,7 +752,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- chip_run samples IFIFO1, IFIFO2, and final_valid together in
     -- ST_DRAIN_LATCH. Keep the three fields in one CDC payload so a latch
     -- cannot observe counts from one update and final_valid from another.
-    constant c_EXPECTED_IFIFO_BITS : natural := c_N_CHIPS * 8;
+    constant c_EXPECTED_IFIFO_BITS : natural := c_MAX_CHIPS * 8;
     constant c_EXPECTED_IFIFO1_LO  : natural := 0;
     constant c_EXPECTED_IFIFO2_LO  : natural := c_EXPECTED_IFIFO_BITS;
     constant c_EXPECTED_FINAL_IDX  : natural := c_EXPECTED_IFIFO_BITS * 2;
@@ -745,7 +770,59 @@ begin
         report "tdc_gpx_config_ctrl: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
         severity failure;
 
-    gen_chip_present_reset : for i in 0 to c_N_CHIPS - 1 generate
+    assert g_NUM_CHIPS = fn_count_ones(g_PRESENT_CHIP_MASK)
+        report "tdc_gpx_config_ctrl: g_NUM_CHIPS must equal popcount(g_PRESENT_CHIP_MASK)"
+        severity failure;
+
+    -- Compact the fixed logical chip slots onto the exported physical lanes.
+    -- Example: present mask 0101 maps physical lane 0 -> logical chip 0 and
+    -- physical lane 1 -> logical chip 2. CSR/header chip IDs stay 0 and 2.
+    gen_physical_chip_map : for logical_chip in 0 to c_MAX_CHIPS - 1 generate
+        gen_present_pin : if g_PRESENT_CHIP_MASK(logical_chip) = '1' generate
+            constant c_PHYSICAL_CHIP : natural :=
+                fn_physical_chip_index(g_PRESENT_CHIP_MASK, logical_chip);
+        begin
+            o_tdc_adr((c_PHYSICAL_CHIP + 1) * c_TDC_ADR_WIDTH - 1 downto
+                      c_PHYSICAL_CHIP * c_TDC_ADR_WIDTH) <= s_tdc_adr(logical_chip);
+            o_tdc_csn(c_PHYSICAL_CHIP)        <= s_tdc_csn(logical_chip);
+            o_tdc_rdn(c_PHYSICAL_CHIP)        <= s_tdc_rdn(logical_chip);
+            o_tdc_wrn(c_PHYSICAL_CHIP)        <= s_tdc_wrn(logical_chip);
+            o_tdc_oen(c_PHYSICAL_CHIP)        <= s_tdc_oen(logical_chip);
+            o_tdc_stopdis(c_PHYSICAL_CHIP)    <= s_tdc_stopdis(logical_chip);
+            o_tdc_alutrigger(c_PHYSICAL_CHIP) <= s_tdc_alutrigger(logical_chip);
+            o_tdc_puresn(c_PHYSICAL_CHIP)     <= s_tdc_puresn(logical_chip);
+
+            s_tdc_ef1_pin(logical_chip)     <= i_tdc_ef1(c_PHYSICAL_CHIP);
+            s_tdc_ef2_pin(logical_chip)     <= i_tdc_ef2(c_PHYSICAL_CHIP);
+            s_tdc_lf1_pin(logical_chip)     <= i_tdc_lf1(c_PHYSICAL_CHIP);
+            s_tdc_lf2_pin(logical_chip)     <= i_tdc_lf2(c_PHYSICAL_CHIP);
+            s_tdc_irflag_pin(logical_chip)  <= i_tdc_irflag(c_PHYSICAL_CHIP);
+            s_tdc_errflag_pin(logical_chip) <= i_tdc_errflag(c_PHYSICAL_CHIP);
+
+            gen_data_iobuf : for bit_index in 0 to c_TDC_BUS_WIDTH - 1 generate
+                u_data_iobuf : IOBUF
+                    port map (
+                        IO => io_tdc_d(c_PHYSICAL_CHIP * c_TDC_BUS_WIDTH + bit_index),
+                        I  => s_tdc_d_out(logical_chip)(bit_index),
+                        O  => s_tdc_d_in(logical_chip)(bit_index),
+                        T  => s_tdc_d_tri(logical_chip)
+                    );
+            end generate gen_data_iobuf;
+        end generate gen_present_pin;
+
+        gen_absent_pin : if g_PRESENT_CHIP_MASK(logical_chip) = '0' generate
+        begin
+            s_tdc_d_in(logical_chip)        <= (others => '0');
+            s_tdc_ef1_pin(logical_chip)     <= '1';
+            s_tdc_ef2_pin(logical_chip)     <= '1';
+            s_tdc_lf1_pin(logical_chip)     <= '0';
+            s_tdc_lf2_pin(logical_chip)     <= '0';
+            s_tdc_irflag_pin(logical_chip)  <= '0';
+            s_tdc_errflag_pin(logical_chip) <= '0';
+        end generate gen_absent_pin;
+    end generate gen_physical_chip_map;
+
+    gen_chip_present_reset : for i in 0 to c_MAX_CHIPS - 1 generate
         s_chip_rst_n(i) <= s_tdc_aresetn and g_PRESENT_CHIP_MASK(i);
     end generate gen_chip_present_reset;
 
@@ -882,11 +959,11 @@ begin
     begin
         if rising_edge(i_tdc_clk) then
             if s_tdc_aresetn = '0' then
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     s_run_timeout_cause_per_chip_r(i) <= (others => '0');
                 end loop;
             else
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     if s_run_timeout(i) = '1' then
                         s_run_timeout_cause_per_chip_r(i) <= s_run_timeout_cause(i);
                     end if;
@@ -901,7 +978,7 @@ begin
             if s_tdc_aresetn = '0' then
                 s_run_timeout_cause_last_r <= (others => '0');
             else
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     if s_run_timeout(i) = '1' then
                         s_run_timeout_cause_last_r <= s_run_timeout_cause(i);
                     end if;
@@ -946,7 +1023,7 @@ begin
     o_err_raw_drop_mask     <= s_err_raw_drop_axi;
     o_err_drain_cap_mask    <= s_err_drain_cap_axi;
     -- Pack the encoded last/per-chip causes into one coherent CDC snapshot.
-    gen_cause_pack : for i in 0 to c_N_CHIPS - 1 generate
+    gen_cause_pack : for i in 0 to c_MAX_CHIPS - 1 generate
         s_run_timeout_cause_packed(3*i + 2 downto 3*i) <= s_run_timeout_cause_per_chip_r(i);
     end generate;
 
@@ -1005,7 +1082,7 @@ begin
     -- =========================================================================
     -- Per-chip err_fill gating on raw AXI-Stream output
     -- =========================================================================
-    gen_err_fill : for i in 0 to c_N_CHIPS - 1 generate
+    gen_err_fill : for i in 0 to c_MAX_CHIPS - 1 generate
         -- Error-fill: replace ONLY hit[16:0] with all-ones (0x1FFFF).
         -- Preserve upper raw bits (stop_id, slope, cha_code, ififo_id)
         -- so downstream decode/cell_builder see correct stop/slope routing.
@@ -1446,7 +1523,7 @@ begin
         s_cfg_image_tdc(i) <= s_cfg_image_dst_packed(32 * (i + 1) - 1 downto 32 * i);
     end generate;
 
-    gen_edge_role_cfg : for i in 0 to c_N_CHIPS - 1 generate
+    gen_edge_role_cfg : for i in 0 to c_MAX_CHIPS - 1 generate
         s_cfg_image_tdc_per_chip(i) <=
             fn_apply_edge_role_image(s_cfg_image_tdc, i, s_cfg_tdc);
         s_cmd_reg_wdata_tdc_per_chip(i) <=
@@ -1518,7 +1595,7 @@ begin
     -- =========================================================================
     -- Pack 4 per-chip 8-bit IFIFO1 counts, 4 per-chip 8-bit IFIFO2 counts,
     -- and the final_valid qualifier into one 65-bit handshake payload.
-    gen_exp_pack : for i in 0 to c_N_CHIPS - 1 generate
+    gen_exp_pack : for i in 0 to c_MAX_CHIPS - 1 generate
         s_expected_src_packed(c_EXPECTED_IFIFO1_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO1_LO + 8 * i) <= std_logic_vector(s_expected_ififo1(i));
         s_expected_src_packed(c_EXPECTED_IFIFO2_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO2_LO + 8 * i) <= std_logic_vector(s_expected_ififo2(i));
         s_expected_ififo1_tdc(i) <= unsigned(s_expected_dst_packed(c_EXPECTED_IFIFO1_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO1_LO + 8 * i));
@@ -1569,7 +1646,7 @@ begin
     -- [4-19] Per-chip pipeline (generate x4)
     --   bus_phy + sk_brsp + chip_ctrl + sk_raw + per-chip CDC
     -- =========================================================================
-    gen_chip : for i in 0 to c_N_CHIPS - 1 generate
+    gen_chip : for i in 0 to c_MAX_CHIPS - 1 generate
 
         -- ----- bus_phy: physical bus timing FSM + IOBUF + 2-FF sync -----
         u_bus_phy : entity work.tdc_gpx_bus_phy
@@ -1595,18 +1672,20 @@ begin
                 o_m_axis_tkeep  => s_brsp_axis_tkeep(i),
                 o_m_axis_tuser  => s_brsp_axis_tuser(i),
                 i_m_axis_tready => s_brsp_axis_tready(i),
-                o_adr           => o_tdc_adr(i),
-                o_csn           => o_tdc_csn(i),
-                o_rdn           => o_tdc_rdn(i),
-                o_wrn           => o_tdc_wrn(i),
-                o_oen           => o_tdc_oen(i),
-                io_d            => io_tdc_d(i),
-                i_ef1_pin       => i_tdc_ef1(i),
-                i_ef2_pin       => i_tdc_ef2(i),
-                i_lf1_pin       => i_tdc_lf1(i),
-                i_lf2_pin       => i_tdc_lf2(i),
-                i_irflag_pin    => i_tdc_irflag(i),
-                i_errflag_pin   => i_tdc_errflag(i),
+                o_adr           => s_tdc_adr(i),
+                o_csn           => s_tdc_csn(i),
+                o_rdn           => s_tdc_rdn(i),
+                o_wrn           => s_tdc_wrn(i),
+                o_oen           => s_tdc_oen(i),
+                i_d             => s_tdc_d_in(i),
+                o_d             => s_tdc_d_out(i),
+                o_d_tri         => s_tdc_d_tri(i),
+                i_ef1_pin       => s_tdc_ef1_pin(i),
+                i_ef2_pin       => s_tdc_ef2_pin(i),
+                i_lf1_pin       => s_tdc_lf1_pin(i),
+                i_lf2_pin       => s_tdc_lf2_pin(i),
+                i_irflag_pin    => s_tdc_irflag_pin(i),
+                i_errflag_pin   => s_tdc_errflag_pin(i),
                 o_ef1_sync      => s_ef1_sync(i),
                 o_ef2_sync      => s_ef2_sync(i),
                 o_lf1_sync      => s_lf1_sync(i),
@@ -1897,9 +1976,9 @@ begin
                 i_lf1_sync          => s_lf1_sync(i),
                 i_lf2_sync          => s_lf2_sync(i),
                 o_tick_en           => s_tick_en(i),
-                o_stopdis           => o_tdc_stopdis(i),
-                o_alutrigger        => o_tdc_alutrigger(i),
-                o_puresn            => o_tdc_puresn(i),
+                o_stopdis           => s_tdc_stopdis(i),
+                o_alutrigger        => s_tdc_alutrigger(i),
+                o_puresn            => s_tdc_puresn(i),
                 o_m_raw_axis_tvalid => s_raw_axis_tvalid(i),
                 o_m_raw_axis_tdata  => s_raw_axis_tdata(i),
                 o_m_raw_axis_tuser  => s_raw_axis_tuser(i),

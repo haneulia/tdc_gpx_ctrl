@@ -32,8 +32,8 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_output_stage is
     generic (
         g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
-        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
         g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
@@ -124,10 +124,10 @@ entity tdc_gpx_output_stage is
         o_chip_error_flags   : out std_logic_vector(3 downto 0);
         o_chip_fall_error    : out std_logic_vector(3 downto 0);
         -- Round 12 #18: partial/blank chip_error split per slope
-        o_chip_error_partial_rise : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_chip_error_blank_rise   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_chip_error_partial_fall : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_chip_error_blank_fall   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_error_partial_rise : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_chip_error_blank_rise   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_chip_error_partial_fall : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_chip_error_blank_fall   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_shot_overrun       : out std_logic;
         o_shot_fall_overrun  : out std_logic;
         o_face_abort         : out std_logic;
@@ -151,8 +151,8 @@ entity tdc_gpx_output_stage is
         o_shot_flush_drop_rise : out std_logic;                       -- rise shot_start drop sticky
         o_shot_flush_drop_fall : out std_logic;                       -- fall shot_start drop sticky
         -- Round 11 item 15: per-chip breakdown of shot_flush_drop stickies.
-        o_shot_flush_drop_mask_rise : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_shot_flush_drop_mask_fall : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_shot_flush_drop_mask_rise : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_shot_flush_drop_mask_fall : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_shot_overrun_count_rise : out unsigned(7 downto 0);        -- rise blank-fill wrap count
         o_shot_overrun_count_fall : out unsigned(7 downto 0);        -- fall blank-fill wrap count
         -- Round 11 C: header_inserter per-slope face_start pulse-collapse count

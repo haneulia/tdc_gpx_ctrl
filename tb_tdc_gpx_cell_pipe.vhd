@@ -40,10 +40,10 @@ architecture sim of tb_tdc_gpx_cell_pipe is
     -- =========================================================================
     -- DUT input ports
     -- =========================================================================
-    signal evt_tvalid         : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
+    signal evt_tvalid         : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
     signal evt_tdata          : t_evt_axis_tdata_array := (others => (others => '0'));
     signal evt_tuser          : t_evt_axis_tuser_array := (others => (others => '0'));
-    signal shot_start         : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
+    signal shot_start         : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
     signal face_stops         : unsigned(3 downto 0) := to_unsigned(8, 4);
     signal max_hits           : unsigned(2 downto 0) := to_unsigned(7, 3);
 
@@ -54,10 +54,10 @@ architecture sim of tb_tdc_gpx_cell_pipe is
     signal cell_rise_tdata_1  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
     signal cell_rise_tdata_2  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
     signal cell_rise_tdata_3  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
-    signal cell_rise_tvalid   : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_rise_tlast    : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_rise_tuser    : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_rise_tready   : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+    signal cell_rise_tvalid   : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_rise_tlast    : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_rise_tuser    : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_rise_tready   : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
 
     -- =========================================================================
     -- DUT falling output ports
@@ -66,16 +66,16 @@ architecture sim of tb_tdc_gpx_cell_pipe is
     signal cell_fall_tdata_1  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
     signal cell_fall_tdata_2  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
     signal cell_fall_tdata_3  : std_logic_vector(OUTPUT_WIDTH-1 downto 0);
-    signal cell_fall_tvalid   : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_fall_tlast    : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_fall_tuser    : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_fall_tready   : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+    signal cell_fall_tvalid   : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_fall_tlast    : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_fall_tuser    : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_fall_tready   : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
 
     -- =========================================================================
     -- DUT status ports
     -- =========================================================================
-    signal hit_dropped        : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal hit_fall_dropped   : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal hit_dropped        : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal hit_fall_dropped   : std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
 begin
 

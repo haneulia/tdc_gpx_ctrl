@@ -43,12 +43,12 @@ architecture sim of tb_tdc_gpx_downstream is
     -- Face assembler ports
     -- =========================================================================
     signal cell_tdata      : t_axis_tdata_array := (others => (others => '0'));
-    signal cell_tvalid     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal cell_tlast      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal cell_tready     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal cell_tvalid     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal cell_tlast      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal cell_tready     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     signal shot_start      : std_logic := '0';
-    signal active_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
+    signal active_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
     signal stops_per_chip  : unsigned(3 downto 0) := to_unsigned(8, 4);
     signal max_scan_clks   : unsigned(15 downto 0) := to_unsigned(60000, 16);
     signal bus_ticks       : unsigned(2 downto 0) := to_unsigned(5, 3);
@@ -60,7 +60,7 @@ architecture sim of tb_tdc_gpx_downstream is
     signal face_tlast      : std_logic;
     signal face_tready     : std_logic;
     signal row_done        : std_logic;
-    signal chip_error      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal chip_error      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal shot_overrun    : std_logic;
 
     -- =========================================================================
@@ -72,7 +72,7 @@ architecture sim of tb_tdc_gpx_downstream is
     signal face_id_sig     : unsigned(7 downto 0)  := to_unsigned(3, 8);
     signal shot_seq        : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := to_unsigned(100, c_SHOT_SEQ_WIDTH);
     signal timestamp_ns    : unsigned(63 downto 0) := x"0000000012345678";
-    signal chip_err_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal chip_err_mask   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal chip_err_cnt    : std_logic_vector(31 downto 0) := (others => '0');
     signal bin_res_ps      : unsigned(15 downto 0) := to_unsigned(81, 16);
     signal k_dist          : unsigned(31 downto 0) := to_unsigned(54321, 32);
@@ -201,7 +201,7 @@ begin
     --   beat c_META_BEAT_IDX (meta): hit_valid | slope | hit_count=MAX_HITS |
     --                  dropped=0 | error=0 | chip_id=c | pad=0
     -- =========================================================================
-    gen_stim : for c in 0 to c_N_CHIPS - 1 generate
+    gen_stim : for c in 0 to c_MAX_CHIPS - 1 generate
         p_cell_gen : process
             variable v_stops : natural;
         begin
@@ -439,7 +439,7 @@ begin
         bp_enable                  <= false;
         wait_clk(2);
 
-        v_n_active       := c_N_CHIPS;
+        v_n_active       := c_MAX_CHIPS;
         v_exp_data_beats := v_n_active * 8 * c_BEATS_PER_CELL;       -- 256
         v_exp_line_beats := c_HDR_PREFIX_BEATS + v_exp_data_beats;    -- 268
 
@@ -570,7 +570,7 @@ begin
         bp_enable                  <= true;
         wait_clk(2);
 
-        v_exp_data_beats := c_N_CHIPS * 8 * c_BEATS_PER_CELL;        -- 256
+        v_exp_data_beats := c_MAX_CHIPS * 8 * c_BEATS_PER_CELL;        -- 256
         v_exp_line_beats := c_HDR_PREFIX_BEATS + v_exp_data_beats;    -- 268
 
         pulse_face_and_shot;
@@ -614,7 +614,7 @@ begin
         bp_enable                  <= false;
         wait_clk(2);
 
-        v_exp_data_beats := c_N_CHIPS * 4 * c_BEATS_PER_CELL;        -- 128
+        v_exp_data_beats := c_MAX_CHIPS * 4 * c_BEATS_PER_CELL;        -- 128
         v_exp_line_beats := c_HDR_PREFIX_BEATS + v_exp_data_beats;    -- 140
 
         pulse_face_and_shot;
@@ -661,7 +661,7 @@ begin
         bp_enable                  <= false;
         wait_clk(2);
 
-        v_n_active       := c_N_CHIPS;
+        v_n_active       := c_MAX_CHIPS;
         v_exp_data_beats := v_n_active * 8 * c_BEATS_PER_CELL;
         v_exp_line_beats := c_HDR_PREFIX_BEATS + v_exp_data_beats;
 

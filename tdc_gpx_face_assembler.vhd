@@ -88,23 +88,23 @@ entity tdc_gpx_face_assembler is
         i_s_axis_tdata_1     : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         i_s_axis_tdata_2     : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         i_s_axis_tdata_3     : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
-        i_s_axis_tvalid      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_s_axis_tlast       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_s_axis_tready      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_s_axis_tvalid      : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        i_s_axis_tlast       : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_s_axis_tready      : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Round 13 follow-up P1 (audit 4번): per-chip tuser(0) = faulted,
         -- carried with each chip's tlast beat. Threaded through the per-
         -- chip xpm_fifo_axis below so the flag is sampled at the EXACT
         -- chip-done moment for the matching shot (no cross-shot race).
         -- Default 0000 keeps legacy instantiations safe (faulted=0).
-        i_s_axis_tuser       : in  std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+        i_s_axis_tuser       : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
         -- Shot control
         i_shot_start         : in  std_logic;
         i_abort              : in  std_logic;    -- cmd_stop/soft_reset: flush + ST_IDLE
 
         -- Configuration (latched at packet_start)
-        i_active_chip_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_active_chip_mask   : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_stops_per_chip     : in  unsigned(3 downto 0);
         i_max_hits_cfg       : in  unsigned(2 downto 0);   -- runtime max_hits (1~7)
         -- Scan timeout: max clock cycles before declaring a chip's cell blank.
@@ -125,10 +125,10 @@ entity tdc_gpx_face_assembler is
         -- data was truncated or never arrived). SW distinguishes clean
         -- rows from faulted rows per event without needing the sticky.
         o_row_done_faulted   : out std_logic;
-        o_chip_error_flags   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_error_flags   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 12 #18: split chip error into partial/blank causes.
-        o_chip_error_partial : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_chip_error_blank   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_chip_error_partial : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_chip_error_blank   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_shot_overrun       : out std_logic;    -- 1-clk pulse: shot truncated (was not idle)
         -- DEPRECATED (Round 5 #19 + Round 12 #14): o_face_abort is a stub.
         -- Permanent '0' since Round 4 — face_assembler self-completes via
@@ -155,7 +155,7 @@ entity tdc_gpx_face_assembler is
         -- Bit i = '1' (latched) if chip i's input FIFO still held data at
         -- the moment shot_start flushed. The OR-reduction of this mask is
         -- what o_shot_flush_drop exposes.
-        o_shot_flush_drop_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_shot_flush_drop_mask : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_shot_overrun_count : out unsigned(7 downto 0)  -- wrapping count of mid-shot overruns (blank-fill invocations)
     );
 end entity tdc_gpx_face_assembler;
@@ -163,7 +163,7 @@ end entity tdc_gpx_face_assembler;
 architecture rtl of tdc_gpx_face_assembler is
 
     -- Per-chip tdata array type
-    type t_tdata_arr is array(0 to c_N_CHIPS - 1)
+    type t_tdata_arr is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     -- Input port mapping (before FIFO)
     signal s_in_tdata_src : t_tdata_arr;
@@ -175,7 +175,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     constant c_G_BEATS_PER_CELL : natural := fn_beats_per_cell(g_OUTPUT_WIDTH);
     constant c_IN_ELASTIC_WIDTH : natural := g_OUTPUT_WIDTH + 2;  -- tuser + tlast + tdata
-    type t_in_elastic_arr is array(0 to c_N_CHIPS - 1)
+    type t_in_elastic_arr is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(c_IN_ELASTIC_WIDTH - 1 downto 0);
 
     -- =========================================================================
@@ -183,18 +183,18 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- s_in_tdata: defined above as t_tdata_arr (g_OUTPUT_WIDTH per chip)
     signal s_fifo_tdata    : t_tdata_arr;
-    signal s_fifo_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_fifo_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_fifo_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_fifo_tuser    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_fifo_tvalid   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_fifo_tlast    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_fifo_tready   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_fifo_tuser    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_fifo_pack_in  : t_in_elastic_arr;
     signal s_fifo_pack_out : t_in_elastic_arr;
-    signal s_in_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_in_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_in_tready   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_in_tvalid   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_in_tlast    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_in_tready   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 13 follow-up P1: per-chip FIFO tuser(0) = faulted flag, valid
     -- on the same cycle as s_in_tlast(i) for the matching shot.
-    signal s_in_tuser    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_in_tuser    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Output pipe signals (FSM → output skid buffer)
@@ -310,13 +310,13 @@ architecture rtl of tdc_gpx_face_assembler is
     -- latches on the cell_builder[i] slice_done_faulted pulse and clears on
     -- row completion (so the next row starts clean). OR-reduction is folded
     -- into s_row_done_faulted_r when the row's tlast fires.
-    signal s_chip_faulted_pending_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_chip_faulted_pending_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_shot_overrun_r  : std_logic := '0';
     signal s_face_abort_r    : std_logic := '0';
     signal s_shot_pending_r  : std_logic := '0';  -- shot arrived on row-complete edge
     -- Round 5 #15/#16 trace counters / stickies
     signal s_shot_flush_drop_r      : std_logic := '0';  -- sticky: shot_start flushed non-empty FIFO
-    signal s_shot_flush_drop_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');  -- Round 11 item 15: per-chip
+    signal s_shot_flush_drop_mask_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');  -- Round 11 item 15: per-chip
     signal s_shot_overrun_cnt_r : unsigned(7 downto 0) := (others => '0');  -- wrapping mid-shot overrun count
 
     -- =========================================================================
@@ -355,7 +355,7 @@ begin
     -- Input AXI-Stream FIFOs (×4): xpm_fifo_axis, 16-deep
     -- Standard AXI-Stream interface — no manual bundle/unbundle.
     -- =========================================================================
-    gen_in_fifo : for i in 0 to c_N_CHIPS - 1 generate
+    gen_in_fifo : for i in 0 to c_MAX_CHIPS - 1 generate
         u_fifo_in : xpm_fifo_axis
             generic map (
                 CASCADE_HEIGHT    => 0,
@@ -493,7 +493,7 @@ begin
     --   below which excludes the abort-only flush case).
     --
     --   Per-chip breakdown of WHICH input FIFO still had data would
-    --   require s_shot_flush_drop_mask_r[c_N_CHIPS]; it is not added
+    --   require s_shot_flush_drop_mask_r[c_MAX_CHIPS]; it is not added
     --   here because SW typically only needs the binary indication
     --   "is the pipeline losing shot-boundary alignment?" to trigger a
     --   full re-init. Per-chip resolution can be added later if a
@@ -592,7 +592,7 @@ begin
     --   output pipe has space. This ready no longer drives the XPM input
     --   FIFO directly; the elastic FIFO between them closes that boundary.
     -- =========================================================================
-    gen_in_tready : for i in 0 to c_N_CHIPS - 1 generate
+    gen_in_tready : for i in 0 to c_MAX_CHIPS - 1 generate
         s_in_tready(i) <= '1' when s_state_r = ST_FORWARD
                                    and s_is_blank_r = '0'
                                    and s_cur_chip_r = to_unsigned(i, 2)
@@ -613,7 +613,7 @@ begin
         variable v_done_after     : std_logic_vector(3 downto 0);
         variable v_chip_idx       : natural range 0 to 3;
         variable v_row_completing : boolean;  -- row finishes on this edge
-        variable v_faulted_this_cycle : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        variable v_faulted_this_cycle : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         variable v_sanitized_tdata : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     begin
         if rising_edge(i_clk) then
@@ -663,7 +663,7 @@ begin
                 -- the cross-shot race that the earlier pulse side-channel
                 -- was vulnerable to. Fold into s_row_done_faulted_r at row
                 -- completion below, then clear.
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     if s_in_tvalid(i) = '1' and s_in_tready(i) = '1'
                        and s_in_tlast(i) = '1'
                        and s_in_tuser(i) = '1' then
@@ -707,7 +707,7 @@ begin
                 -- Latch tvalid from input elastic FIFOs (all active states)
                 if s_state_r = ST_SCAN or s_state_r = ST_RESOLVE
                    or s_state_r = ST_FORWARD then
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                         if s_active_mask_r(i) = '1'
                            and s_in_tvalid(i) = '1' then
                             s_chip_ready_r(i) <= '1';
@@ -968,7 +968,7 @@ begin
                 -- makes the whole row degraded — a safer downstream default
                 -- than the pre-existing "row looks clean" behaviour.
                 if v_row_completing
-                   and (s_chip_faulted_pending_r or v_faulted_this_cycle) /= (c_N_CHIPS - 1 downto 0 => '0') then
+                   and (s_chip_faulted_pending_r or v_faulted_this_cycle) /= (c_MAX_CHIPS - 1 downto 0 => '0') then
                     s_row_done_faulted_r <= '1';
                 end if;
                 if v_row_completing then
@@ -1022,13 +1022,13 @@ begin
                     --             next but are now force-blanked).
                     if s_state_r = ST_FORWARD and s_is_blank_r = '0' then
                         -- mark current chip as partial
-                        for k in 0 to c_N_CHIPS - 1 loop
+                        for k in 0 to c_MAX_CHIPS - 1 loop
                             if k = to_integer(s_cur_chip_r) then
                                 s_chip_error_partial_r(k) <= '1';
                             end if;
                         end loop;
                         -- blank mask = active AND not done AND NOT current chip
-                        for k in 0 to c_N_CHIPS - 1 loop
+                        for k in 0 to c_MAX_CHIPS - 1 loop
                             if s_active_mask_r(k) = '1'
                                and s_chip_done_r(k) = '0'
                                and k /= to_integer(s_cur_chip_r) then

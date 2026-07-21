@@ -57,7 +57,7 @@ architecture sim of tb_tdc_gpx_csr_chip_image_cdc is
     signal o_cmd_reg_write        : std_logic;
     signal o_cmd_reg_addr         : std_logic_vector(3 downto 0);
     signal o_cmd_reg_chip         : unsigned(1 downto 0);
-    signal o_cmd_reg_chip_address : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal o_cmd_reg_chip_address : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal o_cdc_idle             : std_logic;
     signal o_irq                  : std_logic;
 

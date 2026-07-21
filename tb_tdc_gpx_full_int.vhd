@@ -206,10 +206,10 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_KEEP_W     : natural := fn_axis_keep_width(C_OUTPUT_W);
     constant C_STOP_DW    : natural := c_DEFAULT_STOP_EVT_DWIDTH;
 
-    -- Echo-receiver geometry matches tdc_gpx_pkg (c_N_CHIPS=4, c_MAX_STOPS=8).
+    -- Echo-receiver geometry matches tdc_gpx_pkg (c_MAX_CHIPS=4, c_MAX_STOPS=8).
     -- These are package-level locked constants -- echo_receiver MUST see them
     -- so the PD vector length and stop_evt packing line up with tdc_gpx_top.
-    constant C_ER_N_CHIPS : natural := c_N_CHIPS;
+    constant C_ER_N_CHIPS : natural := c_MAX_CHIPS;
     constant C_ER_N_STOPS : natural := c_MAX_STOPS_PER_CHIP;
     constant C_PD_WIDTH   : natural := C_ER_N_CHIPS * C_ER_N_STOPS;
 
@@ -404,21 +404,21 @@ architecture sim of tb_tdc_gpx_full_int is
     -- =========================================================================
     -- TDC-GPX top physical pins (driven by 4-chip behavioral model)
     -- =========================================================================
-    signal io_tdc_d         : t_tdc_bus_array;
-    signal o_tdc_adr        : t_tdc_adr_array;
-    signal o_tdc_csn        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_rdn        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_wrn        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_oen        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_stopdis    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_alutrigger : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_puresn     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal i_tdc_ef1        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
-    signal i_tdc_ef2        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
-    signal i_tdc_lf1        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_lf2        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_irflag     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');  -- driven by per-chip p_chip
-    signal i_tdc_errflag    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal io_tdc_d         : std_logic_vector(c_MAX_CHIPS * c_TDC_BUS_WIDTH - 1 downto 0);
+    signal o_tdc_adr        : std_logic_vector(c_MAX_CHIPS * c_TDC_ADR_WIDTH - 1 downto 0);
+    signal o_tdc_csn        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_rdn        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_wrn        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_oen        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_stopdis    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_alutrigger : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_puresn     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal i_tdc_ef1        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
+    signal i_tdc_ef2        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
+    signal i_tdc_lf1        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_lf2        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_irflag     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');  -- driven by per-chip p_chip
+    signal i_tdc_errflag    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- VDMA sinks
     signal m_rise_tdata  : std_logic_vector(C_OUTPUT_W - 1 downto 0);
@@ -444,19 +444,19 @@ architecture sim of tb_tdc_gpx_full_int is
     -- =========================================================================
     -- 4-chip behavioral TDC-GPX model state (same as tb_tdc_gpx_top_int)
     -- =========================================================================
-    type t_fill_array is array (0 to c_N_CHIPS - 1) of natural;
+    type t_fill_array is array (0 to c_MAX_CHIPS - 1) of natural;
     signal fifo1_fill   : t_fill_array := (others => 0);
     signal fifo2_fill   : t_fill_array := (others => 0);
     signal fifo1_rd_cnt : t_fill_array := (others => 0);
     signal fifo2_rd_cnt : t_fill_array := (others => 0);
-    signal fifo_load_req : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal fifo_load_req : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal fifo_load_n1  : t_fill_array := (others => 0);
     signal fifo_load_n2  : t_fill_array := (others => 0);
 
-    type t_chip_d_array is array (0 to c_N_CHIPS - 1)
+    type t_chip_d_array is array (0 to c_MAX_CHIPS - 1)
         of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     signal chip_d_out : t_chip_d_array := (others => (others => '0'));
-    signal chip_d_oe  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal chip_d_oe  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- =========================================================================
     -- DUT internal observability NOTE
@@ -469,9 +469,9 @@ architecture sim of tb_tdc_gpx_full_int is
     -- =========================================================================
     signal dbg_cmd_start        : std_logic := '0';
     signal dbg_cmd_start_accept : std_logic := '0';
-    signal dbg_chip_busy        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal dbg_chip_busy        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal dbg_shot_gated       : std_logic := '0';
-    signal dbg_shot_per_chip    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal dbg_shot_per_chip    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal dbg_cfg_rejected_r   : std_logic := '0';
     signal dbg_pipeline_abort   : std_logic := '0';
 
@@ -928,7 +928,7 @@ begin
     -- =========================================================================
     -- 4-chip virtual TDC-GPX model (same as tb_tdc_gpx_top_int)
     -- =========================================================================
-    gen_flags : for i in 0 to c_N_CHIPS - 1 generate
+    gen_flags : for i in 0 to c_MAX_CHIPS - 1 generate
         i_tdc_ef1(i) <= '1' when fifo1_fill(i) = 0 else '0';
         i_tdc_ef2(i) <= '1' when fifo2_fill(i) = 0 else '0';
         i_tdc_lf1(i) <= '1' when fifo1_fill(i) >= C_LF_THRESH else '0';
@@ -951,7 +951,7 @@ begin
      --  EF pin = '1' when IFIFO empty; LF pin = '1' when fill >= LF_THRESH
      --  IrFlag stays high until an AluTrigger pulse clears the state
      -- =========================================================================
-    gen_chip : for i in 0 to c_N_CHIPS - 1 generate
+    gen_chip : for i in 0 to c_MAX_CHIPS - 1 generate
 
         p_chip : process(clk)
             -- Persistent state
@@ -1046,11 +1046,13 @@ begin
                     if o_tdc_oen(i) = '0' and o_tdc_rdn(i) = '0'
                        and o_tdc_csn(i) = '0' then
                         chip_d_oe(i) <= '1';
-                        if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 then
+                        if o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                     i * c_TDC_ADR_WIDTH) = c_TDC_REG8_IFIFO1 then
                             chip_d_out(i) <= "00" & x"00" & '0' &
                                 std_logic_vector(to_unsigned(
                                     (i * 256) + v_rd1 + 1, c_RAW_HIT_WIDTH));
-                        elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 then
+                        elsif o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                        i * c_TDC_ADR_WIDTH) = c_TDC_REG9_IFIFO2 then
                             chip_d_out(i) <= "00" & x"00" & '0' &
                                 std_logic_vector(to_unsigned(
                                     (i * 256) + 128 + v_rd2 + 1, c_RAW_HIT_WIDTH));
@@ -1061,10 +1063,12 @@ begin
 
                     -- On RDN rising edge: pop the corresponding IFIFO.
                     if o_tdc_rdn(i) = '1' and v_rdn_prev = '0' then
-                        if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 and v_fill1 > 0 then
+                        if o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                     i * c_TDC_ADR_WIDTH) = c_TDC_REG8_IFIFO1 and v_fill1 > 0 then
                             v_fill1 := v_fill1 - 1;
                             v_rd1   := v_rd1 + 1;
-                        elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 and v_fill2 > 0 then
+                        elsif o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                        i * c_TDC_ADR_WIDTH) = c_TDC_REG9_IFIFO2 and v_fill2 > 0 then
                             v_fill2 := v_fill2 - 1;
                             v_rd2   := v_rd2 + 1;
                         end if;
@@ -1083,8 +1087,8 @@ begin
             end if;
         end process p_chip;
 
-        io_tdc_d(i) <= chip_d_out(i) when chip_d_oe(i) = '1'
-                                     else (others => 'Z');
+        io_tdc_d((i + 1) * c_TDC_BUS_WIDTH - 1 downto i * c_TDC_BUS_WIDTH) <=
+            chip_d_out(i) when chip_d_oe(i) = '1' else (others => 'Z');
     end generate gen_chip;
 
     -- =========================================================================
@@ -1136,13 +1140,13 @@ begin
                     -- Broadcast echo to channel 0 of every chip (stop_id=0,
                     -- one hit per chip per shot). Ensures whichever chip
                     -- chip_run decides to drain finds a hit in its IFIFO1.
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                         pd_p(i * C_ER_N_STOPS) <= '1';
                         pd_n(i * C_ER_N_STOPS) <= '0';
                     end loop;
                     v_pulse_hold := v_pulse_hold - 1;
                 else
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                         pd_p(i * C_ER_N_STOPS) <= '0';
                     end loop;
                 end if;

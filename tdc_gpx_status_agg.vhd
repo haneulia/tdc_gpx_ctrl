@@ -43,7 +43,7 @@ entity tdc_gpx_status_agg is
 
         -- Pipeline state inputs
         i_face_state_idle    : in  std_logic;
-        i_chip_busy          : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_chip_busy          : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_reg_outstanding    : in  std_logic;
         i_face_asm_idle      : in  std_logic;
         i_face_asm_fall_idle : in  std_logic;
@@ -57,13 +57,13 @@ entity tdc_gpx_status_agg is
         i_m_axis_fall_tvalid : in  std_logic;
 
         -- Error inputs
-        i_stop_id_error      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_hit_dropped        : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_hit_fall_dropped   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_err_drain_timeout  : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_err_sequence       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_chip_error_merged  : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_face_active_mask   : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_stop_id_error      : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        i_hit_dropped        : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        i_hit_fall_dropped   : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        i_err_drain_timeout  : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        i_err_sequence       : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        i_chip_error_merged  : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        i_face_active_mask   : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_shot_overrun       : in  std_logic;
         i_shot_fall_overrun  : in  std_logic;
 
@@ -86,20 +86,20 @@ entity tdc_gpx_status_agg is
         o_fall_overrun       : out std_logic;
         o_timestamp          : out unsigned(63 downto 0);
         o_error_cycle_count  : out unsigned(31 downto 0);  -- error-active cycle count (not event count)
-        o_err_drain_sticky   : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_err_seq_sticky     : out std_logic_vector(c_N_CHIPS - 1 downto 0)
+        o_err_drain_sticky   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_err_seq_sticky     : out std_logic_vector(c_MAX_CHIPS - 1 downto 0)
     );
 end entity tdc_gpx_status_agg;
 
 architecture rtl of tdc_gpx_status_agg is
 
-    constant C_ZEROS : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    constant C_ZEROS : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     signal s_timestamp_r        : unsigned(63 downto 0) := (others => '0');
     signal s_error_count_r      : unsigned(31 downto 0) := (others => '0');
-    signal s_chip_error_prev_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_drain_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_seq_sticky_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_chip_error_prev_r  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_drain_sticky_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_seq_sticky_r   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_busy_r             : std_logic := '0';
     signal s_pipeline_overrun_r : std_logic := '0';
     signal s_rise_overrun_r     : std_logic := '0';
@@ -127,7 +127,7 @@ begin
     -- Semantics: "number of error-active cycles", NOT "number of events".
     -- =========================================================================
     p_error_cnt : process(i_clk)
-        variable v_merged_rising : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        variable v_merged_rising : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or i_cmd_soft_reset = '1' then

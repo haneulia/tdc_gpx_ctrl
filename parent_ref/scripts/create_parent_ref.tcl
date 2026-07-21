@@ -118,7 +118,7 @@ set ip_repo_axil32 C:/Projects/my_sp/lib/IP/my_axil_csr32/ip_repo
 file mkdir $build_dir
 file mkdir $result_dir
 
-puts "PARENT_REF_CONFIG part=$part_name axi=100MHz axis=150MHz tdc=200MHz width=32 present=1111 rise=0011 fall=1100 mode=$run_mode"
+puts "PARENT_REF_CONFIG part=$part_name axi=100MHz axis=150MHz tdc=200MHz width=32 chips=4 present=1111 rise=0011 fall=1100 mode=$run_mode"
 
 create_project $project_name $project_dir -part $part_name -force
 set_property target_language VHDL [current_project]
@@ -287,6 +287,7 @@ set tdc [create_bd_cell -type module \
 set_property -dict [list \
     CONFIG.g_HW_VERSION 00000000000000010000000000000000 \
     CONFIG.g_OUTPUT_WIDTH 32 \
+    CONFIG.g_NUM_CHIPS 4 \
     CONFIG.g_PRESENT_CHIP_MASK 1111 \
     CONFIG.g_RISE_CHIP_MASK 0011 \
     CONFIG.g_FALL_CHIP_MASK 1100 \
@@ -488,8 +489,7 @@ connect_bd_net [get_bd_pins $irq_concat/dout] \
 
 # Board-owned TDC pins are the only PL interfaces made external.
 foreach pin_name [list \
-    io_tdc0_d io_tdc1_d io_tdc2_d io_tdc3_d \
-    o_tdc0_adr o_tdc1_adr o_tdc2_adr o_tdc3_adr \
+    io_tdc_d o_tdc_adr \
     o_tdc_csn o_tdc_rdn o_tdc_wrn o_tdc_oen o_tdc_stopdis \
     o_tdc_alutrigger o_tdc_puresn \
     i_tdc_ef1 i_tdc_ef2 i_tdc_lf1 i_tdc_lf2 \
@@ -509,6 +509,9 @@ puts $summary "FCLK1_AXIS_MHZ=150"
 puts $summary "FCLK2_TDC_MHZ=200"
 puts $summary "OUTPUT_WIDTH=32"
 puts $summary "PRESENT_CHIP_MASK=1111"
+puts $summary "PHYSICAL_CHIP_COUNT=4"
+puts $summary "TDC_D_WIDTH=112"
+puts $summary "TDC_ADR_WIDTH=16"
 puts $summary "RISE_CHIP_MASK=0011"
 puts $summary "FALL_CHIP_MASK=1100"
 puts $summary "VDMA_CHANNELS=2"

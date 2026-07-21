@@ -89,6 +89,8 @@ architecture sim of tb_tdc_gpx_bus_phy is
     signal s_wrn            : std_logic;
     signal s_oen            : std_logic;
     signal s_io_d           : std_logic_vector(c_DATA_W - 1 downto 0);
+    signal s_d_out          : std_logic_vector(c_DATA_W - 1 downto 0);
+    signal s_d_tri          : std_logic;
 
     -- Status pins (directly driven by TB)
     signal s_ef1_pin        : std_logic := '1';   -- empty at start
@@ -146,6 +148,8 @@ architecture sim of tb_tdc_gpx_bus_phy is
     signal s_bus_clk_div    : natural range 0 to 255 := 1;
 
 begin
+
+    s_io_d <= s_d_out when s_d_tri = '0' else (others => 'Z');
 
     -- Convenience aliases: extract rsp from AXI-Stream for existing test code
     s_rsp_valid <= s_axis_tvalid;
@@ -206,7 +210,9 @@ begin
             o_rdn           => s_rdn,
             o_wrn           => s_wrn,
             o_oen           => s_oen,
-            io_d            => s_io_d,
+            i_d             => s_io_d,
+            o_d             => s_d_out,
+            o_d_tri         => s_d_tri,
             i_ef1_pin       => s_ef1_pin,
             i_ef2_pin       => s_ef2_pin,
             i_lf1_pin       => s_lf1_pin,

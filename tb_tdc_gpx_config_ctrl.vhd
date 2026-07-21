@@ -95,35 +95,35 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     -- =========================================================================
     -- TDC physical pins
     -- =========================================================================
-    signal io_tdc_d       : t_tdc_bus_array;      -- inout, leave at 'Z'
-    signal o_tdc_adr      : t_tdc_adr_array;
-    signal o_tdc_csn      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_rdn      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_wrn      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_oen      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_stopdis  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_alutrigger : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_puresn   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal i_tdc_ef1      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');  -- empty = '1'
-    signal i_tdc_ef2      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
-    signal i_tdc_lf1      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_lf2      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_irflag   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_errflag  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal io_tdc_d       : std_logic_vector(c_MAX_CHIPS * c_TDC_BUS_WIDTH - 1 downto 0);
+    signal o_tdc_adr      : std_logic_vector(c_MAX_CHIPS * c_TDC_ADR_WIDTH - 1 downto 0);
+    signal o_tdc_csn      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_rdn      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_wrn      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_oen      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_stopdis  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_alutrigger : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_puresn   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal i_tdc_ef1      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');  -- empty = '1'
+    signal i_tdc_ef2      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
+    signal i_tdc_lf1      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_lf2      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_irflag   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_errflag  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- 4-chip behavioral model state
-    type t_fill_array is array (0 to c_N_CHIPS - 1) of natural;
+    type t_fill_array is array (0 to c_MAX_CHIPS - 1) of natural;
     signal fifo1_fill   : t_fill_array := (others => 0);
     signal fifo2_fill   : t_fill_array := (others => 0);
     signal fifo1_rd_cnt : t_fill_array := (others => 0);
     signal fifo2_rd_cnt : t_fill_array := (others => 0);
-    signal fifo_load_req : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal fifo_load_req : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal fifo_load_n1  : t_fill_array := (others => 0);
     signal fifo_load_n2  : t_fill_array := (others => 0);
-    type t_chip_d_array is array (0 to c_N_CHIPS - 1)
+    type t_chip_d_array is array (0 to c_MAX_CHIPS - 1)
         of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     signal chip_d_out : t_chip_d_array := (others => (others => '0'));
-    signal chip_d_oe  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal chip_d_oe  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Stop event stream / fire-count contract input
@@ -147,7 +147,7 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     signal i_cmd_stop           : std_logic := '0';
     signal i_cmd_soft_reset     : std_logic := '0';
     signal i_cmd_cfg_write      : std_logic := '0';
-    signal i_shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal i_shot_start_per_chip : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal i_shot_start_gated   : std_logic := '0';
     signal i_current_fire_count : unsigned(15 downto 0) := (others => '0');
 
@@ -162,29 +162,29 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     signal i_frame_fall_done    : std_logic := '0';
 
     -- Raw skid tready
-    signal i_raw_sk_tready      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
+    signal i_raw_sk_tready      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
 
     -- =========================================================================
     -- DUT outputs
     -- =========================================================================
-    signal o_raw_sk_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal o_raw_sk_tvalid  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal o_raw_sk_tdata   : t_raw_axis_tdata_array;
     signal o_raw_sk_tuser   : t_raw_axis_tuser_array;
     signal o_cfg            : t_tdc_cfg;
     signal o_cfg_image      : t_cfg_image;
     signal o_cmd_start      : std_logic;
     signal o_cmd_cfg_write_g : std_logic;
-    signal o_chip_busy      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal o_chip_busy      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal o_chip_shot_seq  : t_shot_seq_array;
-    signal o_errflag_sync   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_err_sequence   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal o_errflag_sync   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_err_drain_timeout : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_err_sequence   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal o_reg_outstanding : std_logic;
     signal o_reg_loop_resume : std_logic;
     signal o_cdc_idle       : std_logic;
     signal o_err_active     : std_logic;
     signal o_err_fatal      : std_logic;
-    signal o_err_chip_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal o_err_chip_mask  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal o_err_cause      : std_logic_vector(2 downto 0);
     signal o_irq            : std_logic;
     signal mon_raw_data_cnt : natural := 0;
@@ -216,14 +216,14 @@ begin
     -- =========================================================================
     -- 4-chip virtual TDC-GPX model
     -- =========================================================================
-    gen_flags : for i in 0 to c_N_CHIPS - 1 generate
+    gen_flags : for i in 0 to c_MAX_CHIPS - 1 generate
         i_tdc_ef1(i) <= '1' when fifo1_fill(i) = 0 else '0';
         i_tdc_ef2(i) <= '1' when fifo2_fill(i) = 0 else '0';
         i_tdc_lf1(i) <= '1' when fifo1_fill(i) >= 4 else '0';
         i_tdc_lf2(i) <= '1' when fifo2_fill(i) >= 4 else '0';
     end generate gen_flags;
 
-    gen_chip_model : for i in 0 to c_N_CHIPS - 1 generate
+    gen_chip_model : for i in 0 to c_MAX_CHIPS - 1 generate
         p_chip_model : process(clk_axis)
             variable v_rdn_prev  : std_logic := '1';
             variable v_load_prev : std_logic := '0';
@@ -254,11 +254,13 @@ begin
                     if o_tdc_oen(i) = '0' and o_tdc_rdn(i) = '0'
                        and o_tdc_csn(i) = '0' then
                         chip_d_oe(i) <= '1';
-                        if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 then
+                        if o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                     i * c_TDC_ADR_WIDTH) = c_TDC_REG8_IFIFO1 then
                             chip_d_out(i) <= "00" & x"00" & '0' &
                                 std_logic_vector(to_unsigned((i * 256) + v_my_rd1 + 1,
                                                              c_RAW_HIT_WIDTH));
-                        elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 then
+                        elsif o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                        i * c_TDC_ADR_WIDTH) = c_TDC_REG9_IFIFO2 then
                             chip_d_out(i) <= "00" & x"00" & '0' &
                                 std_logic_vector(to_unsigned((i * 256) + 128 + v_my_rd2 + 1,
                                                              c_RAW_HIT_WIDTH));
@@ -268,19 +270,23 @@ begin
                     end if;
 
                     if o_tdc_rdn(i) = '0' and v_rdn_prev = '1' then
-                        assert not (o_tdc_adr(i) = c_TDC_REG8_IFIFO1 and v_my_fill1 = 0)
+                        assert not (o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                              i * c_TDC_ADR_WIDTH) = c_TDC_REG8_IFIFO1 and v_my_fill1 = 0)
                             report "tb_tdc_gpx_config_ctrl: EMPTY IFIFO1 read attempted"
                             severity failure;
-                        assert not (o_tdc_adr(i) = c_TDC_REG9_IFIFO2 and v_my_fill2 = 0)
+                        assert not (o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                              i * c_TDC_ADR_WIDTH) = c_TDC_REG9_IFIFO2 and v_my_fill2 = 0)
                             report "tb_tdc_gpx_config_ctrl: EMPTY IFIFO2 read attempted"
                             severity failure;
                     end if;
 
                     if o_tdc_rdn(i) = '1' and v_rdn_prev = '0' then
-                        if o_tdc_adr(i) = c_TDC_REG8_IFIFO1 and v_my_fill1 > 0 then
+                        if o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                     i * c_TDC_ADR_WIDTH) = c_TDC_REG8_IFIFO1 and v_my_fill1 > 0 then
                             v_my_fill1 := v_my_fill1 - 1;
                             v_my_rd1   := v_my_rd1 + 1;
-                        elsif o_tdc_adr(i) = c_TDC_REG9_IFIFO2 and v_my_fill2 > 0 then
+                        elsif o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
+                                        i * c_TDC_ADR_WIDTH) = c_TDC_REG9_IFIFO2 and v_my_fill2 > 0 then
                             v_my_fill2 := v_my_fill2 - 1;
                             v_my_rd2   := v_my_rd2 + 1;
                         end if;
@@ -295,8 +301,8 @@ begin
             end if;
         end process p_chip_model;
 
-        io_tdc_d(i) <= chip_d_out(i) when chip_d_oe(i) = '1'
-                                     else (others => 'Z');
+        io_tdc_d((i + 1) * c_TDC_BUS_WIDTH - 1 downto i * c_TDC_BUS_WIDTH) <=
+            chip_d_out(i) when chip_d_oe(i) = '1' else (others => 'Z');
     end generate gen_chip_model;
 
     p_raw_monitor : process(clk_axis)
@@ -310,7 +316,7 @@ begin
             else
                 v_data_inc := 0;
                 v_ctrl_inc := 0;
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     if o_raw_sk_tvalid(i) = '1' and i_raw_sk_tready(i) = '1' then
                         if o_raw_sk_tuser(i)(7) = '1' then
                             v_ctrl_inc := v_ctrl_inc + 1;
@@ -453,7 +459,7 @@ begin
 
         procedure load_all_fifos(n1 : natural; n2 : natural) is
         begin
-            for i in 0 to c_N_CHIPS - 1 loop
+            for i in 0 to c_MAX_CHIPS - 1 loop
                 fifo_load_n1(i) <= n1;
                 fifo_load_n2(i) <= n2;
             end loop;
@@ -477,7 +483,7 @@ begin
 
             v_data := (others => '0');
             v_user := (others => '0');
-            for i in 0 to c_N_CHIPS - 1 loop
+            for i in 0 to c_MAX_CHIPS - 1 loop
                 v_lo := i * 8;
                 v_data(v_lo + 3 downto v_lo) :=
                     std_logic_vector(to_unsigned(ififo1_cnt, 4));
@@ -517,7 +523,7 @@ begin
 
         constant c_TEST_IFIFO_WORDS : natural := 2;
         constant c_EXPECTED_DATA_WORDS : natural :=
-            c_N_CHIPS * c_TEST_IFIFO_WORDS * 2;
+            c_MAX_CHIPS * c_TEST_IFIFO_WORDS * 2;
         variable v_found : boolean;
     begin
         -- Wait for reset release + settling time
@@ -588,7 +594,7 @@ begin
         wait_clk(20);
         i_tdc_irflag <= (others => '0');
 
-        for i in 0 to c_N_CHIPS - 1 loop
+        for i in 0 to c_MAX_CHIPS - 1 loop
             assert fifo1_rd_cnt(i) = c_TEST_IFIFO_WORDS
                 report "TB: IFIFO1 read count mismatch on chip " & integer'image(i)
                        & " actual=" & integer'image(fifo1_rd_cnt(i))
@@ -599,7 +605,7 @@ begin
                 severity failure;
         end loop;
 
-        if mon_raw_ctrl_cnt < c_N_CHIPS * 2 then
+        if mon_raw_ctrl_cnt < c_MAX_CHIPS * 2 then
             report "TB: FAIL -- expected drain control beats missing, got "
                    & integer'image(mon_raw_ctrl_cnt)
                 severity failure;

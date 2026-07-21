@@ -37,7 +37,7 @@ architecture sim of tb_tdc_gpx_face_seq is
     signal cmd_soft_reset         : std_logic := '0';
 
     -- pipeline idle indicators (all idle by default so cmd_start accepts)
-    signal chip_busy              : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal chip_busy              : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal reg_outstanding        : std_logic := '0';
     signal face_asm_idle          : std_logic := '1';
     signal face_asm_fall_idle     : std_logic := '1';
@@ -97,14 +97,14 @@ architecture sim of tb_tdc_gpx_face_seq is
     signal pipeline_abort_fall    : std_logic;
     signal shot_drop_cnt          : unsigned(15 downto 0);
     signal cfg_rejected           : std_logic;
-    signal shot_start_per_chip    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal shot_start_per_chip    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal face_id                : unsigned(7 downto 0);
     signal frame_id               : unsigned(31 downto 0);
     signal global_shot_seq        : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal face_shot_count        : unsigned(15 downto 0);
     signal frame_abort_cnt        : unsigned(15 downto 0);
     signal frame_done_both        : std_logic;
-    signal face_active_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal face_active_mask       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal face_stops_per_chip    : unsigned(3 downto 0);
     signal face_cols_per_face     : unsigned(15 downto 0);
     signal face_n_faces           : unsigned(3 downto 0);

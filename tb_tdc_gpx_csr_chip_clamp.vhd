@@ -101,7 +101,7 @@ architecture sim of tb_tdc_gpx_csr_chip_clamp is
     signal o_cmd_reg_write        : std_logic;
     signal o_cmd_reg_addr         : std_logic_vector(3 downto 0);
     signal o_cmd_reg_chip         : unsigned(1 downto 0);
-    signal o_cmd_reg_chip_address : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal o_cmd_reg_chip_address : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal o_cdc_idle             : std_logic;
     signal o_irq                  : std_logic;
 
@@ -110,7 +110,7 @@ architecture sim of tb_tdc_gpx_csr_chip_clamp is
     signal i_cmd_reg_rdata_1      : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) := (others => '0');
     signal i_cmd_reg_rdata_2      : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) := (others => '0');
     signal i_cmd_reg_rdata_3      : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) := (others => '0');
-    signal i_cmd_reg_rvalid       : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal i_cmd_reg_rvalid       : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal i_cmd_reg_done_pulse   : std_logic := '0';
     signal i_cmd_reg_addr_done    : std_logic_vector(3 downto 0) := (others => '0');
 

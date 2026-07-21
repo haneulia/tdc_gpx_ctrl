@@ -448,23 +448,40 @@ architecture sim of tb_tdc_gpx_top_int is
     signal lc_stop_tdc  : std_logic := '0';   -- -> i_stop_tdc
 
     -- =========================================================================
-    -- TDC-GPX physical pins (4 chips)
+    -- TDC-GPX logical model slots and compact physical DUT pins
     -- =========================================================================
-    signal io_tdc_d         : t_tdc_bus_array;
+    constant C_PHYSICAL_CHIPS : positive := fn_physical_chip_count(G_PRESENT_CHIP_MASK);
+    signal io_tdc_d         : std_logic_vector(C_PHYSICAL_CHIPS * c_TDC_BUS_WIDTH - 1 downto 0);
+    signal p_o_tdc_adr      : std_logic_vector(C_PHYSICAL_CHIPS * c_TDC_ADR_WIDTH - 1 downto 0);
+    signal p_o_tdc_csn      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_o_tdc_rdn      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_o_tdc_wrn      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_o_tdc_oen      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_o_tdc_stopdis  : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_o_tdc_alutrigger : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_o_tdc_puresn   : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_i_tdc_ef1      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_i_tdc_ef2      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_i_tdc_lf1      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_i_tdc_lf2      : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_i_tdc_irflag   : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+    signal p_i_tdc_errflag  : std_logic_vector(C_PHYSICAL_CHIPS - 1 downto 0);
+
+    signal s_tdc_d_sample   : t_tdc_bus_array;
     signal o_tdc_adr        : t_tdc_adr_array;
-    signal o_tdc_csn        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_rdn        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_wrn        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_oen        : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_stopdis    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_alutrigger : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal o_tdc_puresn     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal i_tdc_ef1        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
-    signal i_tdc_ef2        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
-    signal i_tdc_lf1        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_lf2        : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_irflag     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal i_tdc_errflag    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal o_tdc_csn        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_rdn        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_wrn        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_oen        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_stopdis    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_alutrigger : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal o_tdc_puresn     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal i_tdc_ef1        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
+    signal i_tdc_ef2        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
+    signal i_tdc_lf1        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_lf2        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_irflag     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal i_tdc_errflag    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Stop event AXI Stream (expected-count contract driver)
@@ -513,23 +530,23 @@ architecture sim of tb_tdc_gpx_top_int is
     -- =========================================================================
     -- 4-chip behavioral model state
     -- =========================================================================
-    type t_fill_array is array (0 to c_N_CHIPS - 1) of natural;
+    type t_fill_array is array (0 to c_MAX_CHIPS - 1) of natural;
     signal fifo1_fill : t_fill_array := (others => 0);
     signal fifo2_fill : t_fill_array := (others => 0);
     signal fifo1_rd_cnt : t_fill_array := (others => 0);
     signal fifo2_rd_cnt : t_fill_array := (others => 0);
 
     -- FIFO load request (stim pulses prior to each shot)
-    signal fifo_load_req : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal fifo_load_req : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal fifo_load_n1  : t_fill_array := (others => 0);
     signal fifo_load_n2  : t_fill_array := (others => 0);
 
     -- Bus tri-state drive per chip
-    type t_chip_d_array is array (0 to c_N_CHIPS - 1)
+    type t_chip_d_array is array (0 to c_MAX_CHIPS - 1)
         of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     signal chip_d_out : t_chip_d_array := (others => (others => '0'));
-    signal chip_d_oe  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal reg0_write_seen : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal chip_d_oe  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal reg0_write_seen : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal reg0_write_data : t_slv28_array := (others => (others => '0'));
 
     -- Monitor counters
@@ -648,6 +665,83 @@ architecture sim of tb_tdc_gpx_top_int is
 
 begin
 
+    p_physical_pin_contract : process
+    begin
+        assert io_tdc_d'length = C_PHYSICAL_CHIPS * c_TDC_BUS_WIDTH
+            report "physical TDC data pin width does not match present-chip count"
+            severity failure;
+        assert p_o_tdc_adr'length = C_PHYSICAL_CHIPS * c_TDC_ADR_WIDTH
+            report "physical TDC address pin width does not match present-chip count"
+            severity failure;
+        assert p_o_tdc_csn'length = C_PHYSICAL_CHIPS and
+               p_o_tdc_rdn'length = C_PHYSICAL_CHIPS and
+               p_o_tdc_wrn'length = C_PHYSICAL_CHIPS and
+               p_o_tdc_oen'length = C_PHYSICAL_CHIPS and
+               p_o_tdc_stopdis'length = C_PHYSICAL_CHIPS and
+               p_o_tdc_alutrigger'length = C_PHYSICAL_CHIPS and
+               p_o_tdc_puresn'length = C_PHYSICAL_CHIPS and
+               p_i_tdc_ef1'length = C_PHYSICAL_CHIPS and
+               p_i_tdc_ef2'length = C_PHYSICAL_CHIPS and
+               p_i_tdc_lf1'length = C_PHYSICAL_CHIPS and
+               p_i_tdc_lf2'length = C_PHYSICAL_CHIPS and
+               p_i_tdc_irflag'length = C_PHYSICAL_CHIPS and
+               p_i_tdc_errflag'length = C_PHYSICAL_CHIPS
+            report "physical TDC scalar-vector width does not match present-chip count"
+            severity failure;
+        report "PHYSICAL_PIN_CONTRACT PASS: chips=" &
+               integer'image(C_PHYSICAL_CHIPS) &
+               " d=" & integer'image(io_tdc_d'length) &
+               " adr=" & integer'image(p_o_tdc_adr'length)
+            severity note;
+        wait;
+    end process p_physical_pin_contract;
+
+    gen_tb_physical_map : for logical_chip in 0 to c_MAX_CHIPS - 1 generate
+        gen_present_pin : if G_PRESENT_CHIP_MASK(logical_chip) = '1' generate
+            constant C_PHYSICAL_CHIP : natural :=
+                fn_physical_chip_index(G_PRESENT_CHIP_MASK, logical_chip);
+        begin
+            o_tdc_adr(logical_chip) <=
+                p_o_tdc_adr((C_PHYSICAL_CHIP + 1) * c_TDC_ADR_WIDTH - 1 downto
+                            C_PHYSICAL_CHIP * c_TDC_ADR_WIDTH);
+            o_tdc_csn(logical_chip)        <= p_o_tdc_csn(C_PHYSICAL_CHIP);
+            o_tdc_rdn(logical_chip)        <= p_o_tdc_rdn(C_PHYSICAL_CHIP);
+            o_tdc_wrn(logical_chip)        <= p_o_tdc_wrn(C_PHYSICAL_CHIP);
+            o_tdc_oen(logical_chip)        <= p_o_tdc_oen(C_PHYSICAL_CHIP);
+            o_tdc_stopdis(logical_chip)    <= p_o_tdc_stopdis(C_PHYSICAL_CHIP);
+            o_tdc_alutrigger(logical_chip) <= p_o_tdc_alutrigger(C_PHYSICAL_CHIP);
+            o_tdc_puresn(logical_chip)     <= p_o_tdc_puresn(C_PHYSICAL_CHIP);
+
+            p_i_tdc_ef1(C_PHYSICAL_CHIP)     <= i_tdc_ef1(logical_chip);
+            p_i_tdc_ef2(C_PHYSICAL_CHIP)     <= i_tdc_ef2(logical_chip);
+            p_i_tdc_lf1(C_PHYSICAL_CHIP)     <= i_tdc_lf1(logical_chip);
+            p_i_tdc_lf2(C_PHYSICAL_CHIP)     <= i_tdc_lf2(logical_chip);
+            p_i_tdc_irflag(C_PHYSICAL_CHIP)  <= i_tdc_irflag(logical_chip);
+            p_i_tdc_errflag(C_PHYSICAL_CHIP) <= i_tdc_errflag(logical_chip);
+
+            s_tdc_d_sample(logical_chip) <=
+                io_tdc_d((C_PHYSICAL_CHIP + 1) * c_TDC_BUS_WIDTH - 1 downto
+                         C_PHYSICAL_CHIP * c_TDC_BUS_WIDTH);
+            io_tdc_d((C_PHYSICAL_CHIP + 1) * c_TDC_BUS_WIDTH - 1 downto
+                     C_PHYSICAL_CHIP * c_TDC_BUS_WIDTH) <=
+                chip_d_out(logical_chip) when chip_d_oe(logical_chip) = '1'
+                else (others => 'Z');
+        end generate gen_present_pin;
+
+        gen_absent_pin : if G_PRESENT_CHIP_MASK(logical_chip) = '0' generate
+        begin
+            s_tdc_d_sample(logical_chip)   <= (others => '0');
+            o_tdc_adr(logical_chip)        <= (others => '0');
+            o_tdc_csn(logical_chip)        <= '1';
+            o_tdc_rdn(logical_chip)        <= '1';
+            o_tdc_wrn(logical_chip)        <= '1';
+            o_tdc_oen(logical_chip)        <= '1';
+            o_tdc_stopdis(logical_chip)    <= '1';
+            o_tdc_alutrigger(logical_chip) <= '0';
+            o_tdc_puresn(logical_chip)     <= '0';
+        end generate gen_absent_pin;
+    end generate gen_tb_physical_map;
+
     -- =========================================================================
     -- Clock / Reset
     -- =========================================================================
@@ -760,7 +854,7 @@ begin
     -- 4-chip virtual TDC-GPX model
     -- =========================================================================
     -- EF / LF pins driven by fill levels
-    gen_flags : for i in 0 to c_N_CHIPS - 1 generate
+    gen_flags : for i in 0 to c_MAX_CHIPS - 1 generate
         i_tdc_ef1(i) <= '1' when fifo1_fill(i) = 0 else '0';
         i_tdc_ef2(i) <= '1' when fifo2_fill(i) = 0 else '0';
         i_tdc_lf1(i) <= '1' when fifo1_fill(i) >= C_LF_THRESH else '0';
@@ -768,7 +862,7 @@ begin
     end generate;
 
     -- Chip model body (FIFO state + writes per chip)
-    gen_chip : for i in 0 to c_N_CHIPS - 1 generate
+    gen_chip : for i in 0 to c_MAX_CHIPS - 1 generate
 
         p_chip : process(tdc_clk)
             variable v_rdn_prev  : std_logic := '1';
@@ -797,7 +891,7 @@ begin
                     if o_tdc_csn(i) = '0' and o_tdc_wrn(i) = '0'
                        and o_tdc_adr(i) = c_TDC_REG0 then
                         reg0_write_seen(i) <= '1';
-                        reg0_write_data(i) <= io_tdc_d(i);
+                        reg0_write_data(i) <= s_tdc_d_sample(i);
                     end if;
 
                     -- FIFO load request (stim pulses prior to shot)
@@ -869,9 +963,6 @@ begin
             end if;
         end process p_chip;
 
-        -- Tri-state bus
-        io_tdc_d(i) <= chip_d_out(i) when chip_d_oe(i) = '1'
-                                     else (others => 'Z');
     end generate gen_chip;
 
     -- =========================================================================
@@ -883,6 +974,7 @@ begin
             g_OUTPUT_WIDTH   => C_OUTPUT_W,
             g_RISE_CHIP_MASK => G_RISE_CHIP_MASK,
             g_FALL_CHIP_MASK => G_FALL_CHIP_MASK,
+            g_NUM_CHIPS => C_PHYSICAL_CHIPS,
             g_PRESENT_CHIP_MASK => G_PRESENT_CHIP_MASK,
             g_MAX_STOPS_PER_CHIP => G_BUILD_MAX_STOPS_PER_CHIP,
             g_MAX_HITS_PER_STOP => G_BUILD_MAX_HITS_PER_STOP,
@@ -961,20 +1053,20 @@ begin
             i_fire_count_tlast  => fire_count_tlast,
             -- TDC physical pins
             io_tdc_d         => io_tdc_d,
-            o_tdc_adr        => o_tdc_adr,
-            o_tdc_csn        => o_tdc_csn,
-            o_tdc_rdn        => o_tdc_rdn,
-            o_tdc_wrn        => o_tdc_wrn,
-            o_tdc_oen        => o_tdc_oen,
-            o_tdc_stopdis    => o_tdc_stopdis,
-            o_tdc_alutrigger => o_tdc_alutrigger,
-            o_tdc_puresn     => o_tdc_puresn,
-            i_tdc_ef1        => i_tdc_ef1,
-            i_tdc_ef2        => i_tdc_ef2,
-            i_tdc_lf1        => i_tdc_lf1,
-            i_tdc_lf2        => i_tdc_lf2,
-            i_tdc_irflag     => i_tdc_irflag,
-            i_tdc_errflag    => i_tdc_errflag,
+            o_tdc_adr        => p_o_tdc_adr,
+            o_tdc_csn        => p_o_tdc_csn,
+            o_tdc_rdn        => p_o_tdc_rdn,
+            o_tdc_wrn        => p_o_tdc_wrn,
+            o_tdc_oen        => p_o_tdc_oen,
+            o_tdc_stopdis    => p_o_tdc_stopdis,
+            o_tdc_alutrigger => p_o_tdc_alutrigger,
+            o_tdc_puresn     => p_o_tdc_puresn,
+            i_tdc_ef1        => p_i_tdc_ef1,
+            i_tdc_ef2        => p_i_tdc_ef2,
+            i_tdc_lf1        => p_i_tdc_lf1,
+            i_tdc_lf2        => p_i_tdc_lf2,
+            i_tdc_irflag     => p_i_tdc_irflag,
+            i_tdc_errflag    => p_i_tdc_errflag,
             -- VDMA rising
             o_m_axis_tdata  => m_rise_tdata,
             o_m_axis_tkeep  => m_rise_tkeep,
@@ -1016,7 +1108,7 @@ begin
         variable v_header_hits    : natural range 0 to 255 := 0;
         variable v_cell_idx       : natural := 0;
         variable v_word_in_cell   : natural := 0;
-        variable v_expected_chip  : natural range 0 to c_N_CHIPS - 1 := 0;
+        variable v_expected_chip  : natural range 0 to c_MAX_CHIPS - 1 := 0;
         variable v_expected_stop  : natural range 0 to c_MAX_STOPS_PER_CHIP - 1 := 0;
         variable v_expected_hit   : natural := 0;
         variable v_rise_first_line : boolean := false;
@@ -1434,7 +1526,7 @@ begin
         ----------------------------------------------------------------
         procedure load_all_fifos(n1 : natural; n2 : natural) is
         begin
-            for i in 0 to c_N_CHIPS - 1 loop
+            for i in 0 to c_MAX_CHIPS - 1 loop
                 fifo_load_n1(i) <= n1;
                 fifo_load_n2(i) <= n2;
             end loop;
@@ -1483,7 +1575,7 @@ begin
             end if;
             v_user_nib2 := ififo2_cnt - v_data_nib2;
 
-            for i in 0 to c_N_CHIPS - 1 loop
+            for i in 0 to c_MAX_CHIPS - 1 loop
                 v_lo := i * 8;
                 if C_EFFECTIVE_ACTIVE_MASK(i) = '1' then
                     v_data(v_lo + 3 downto v_lo) :=
@@ -1588,7 +1680,7 @@ begin
             i_tdc_irflag <= (others => '0');
             wait_clk(G_ALU_PULSE_CLKS + G_RECOVERY_CLKS + 8);
 
-            for i in 0 to c_N_CHIPS - 1 loop
+            for i in 0 to c_MAX_CHIPS - 1 loop
                 if C_EFFECTIVE_ACTIVE_MASK(i) = '1' then
                     assert fifo1_rd_cnt(i) = expected_hits
                         report "tb_tdc_gpx_top_int: IFIFO1 expected-count drain mismatch on chip "
@@ -1954,7 +2046,7 @@ begin
                 severity note;
         end if;
         if G_CHECK_EDGE_ROLE_WRITES then
-            for i in 0 to c_N_CHIPS - 1 loop
+            for i in 0 to c_MAX_CHIPS - 1 loop
                 if G_PRESENT_CHIP_MASK(i) = '1' then
                     assert reg0_write_seen(i) = '1'
                         report "tb_tdc_gpx_top_int: GPX Reg0 write not observed on chip "

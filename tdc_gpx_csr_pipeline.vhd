@@ -66,8 +66,8 @@ entity tdc_gpx_csr_pipeline is
     generic (
         g_HW_VERSION          : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
         g_OUTPUT_WIDTH        : natural := c_DEFAULT_OUTPUT_WIDTH;
-        g_PRESENT_CHIP_MASK   : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_FALL_CHIP_MASK      : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
+        g_PRESENT_CHIP_MASK   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
         g_MAX_STOPS_PER_CHIP  : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP   : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
@@ -261,9 +261,9 @@ architecture rtl of tdc_gpx_csr_pipeline is
     constant c_BUILD_CELL_BYTES : natural := fn_canonical_cell_bytes(g_MAX_HITS_PER_STOP);
     constant c_BUILD_VDMA_BYTES : natural :=
         fn_vdma_line_bytes(c_BUILD_MAX_ROWS, g_MAX_HITS_PER_STOP);
-    constant c_ZERO_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_requested_chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_effective_chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    constant c_ZERO_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_requested_chip_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_effective_chip_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- Command edge detect (i_axis_aclk domain)
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');

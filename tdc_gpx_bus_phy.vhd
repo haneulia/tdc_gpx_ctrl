@@ -78,9 +78,6 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-library unisim;
-use unisim.vcomponents.all;
-
 use work.tdc_gpx_pkg.all;
 use work.tdc_gpx_cfg_pkg.all;
 
@@ -113,13 +110,17 @@ entity tdc_gpx_bus_phy is
         o_busy          : out std_logic;
         o_rsp_pending   : out std_logic;  -- response pending or AXI tvalid held
 
-        -- TDC-GPX physical pins
+        -- TDC-GPX physical-pin signals. The owning integration layer places
+        -- the IOBUF so sparse logical chip slots can be compacted onto only
+        -- the physical lanes selected by g_PRESENT_CHIP_MASK.
         o_adr           : out std_logic_vector(3 downto 0);
         o_csn           : out std_logic;
         o_rdn           : out std_logic;
         o_wrn           : out std_logic;
         o_oen           : out std_logic;
-        io_d            : inout std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        i_d             : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        o_d             : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        o_d_tri         : out std_logic;
 
         -- Async status pins (from TDC-GPX, active HIGH)
         i_ef1_pin       : in  std_logic;
@@ -209,7 +210,6 @@ architecture rtl of tdc_gpx_bus_phy is
 
     -- D-bus IOBUF control
     signal s_d_out_r         : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
-    signal s_d_in            : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
     signal s_d_tri_r         : std_logic := '1';    -- '1'=Hi-Z, '0'=drive
 
     -- IOB FF for read data capture
@@ -282,18 +282,8 @@ architecture rtl of tdc_gpx_bus_phy is
 
 begin
 
-    -- =========================================================================
-    -- IOBUF instantiation (bidirectional D-bus)
-    -- =========================================================================
-    gen_iobuf : for i in 0 to g_BUS_DATA_WIDTH - 1 generate
-        u_iobuf : IOBUF
-            port map (
-                IO => io_d(i),          -- physical pin (bidirectional)
-                I  => s_d_out_r(i),     -- FPGA -> chip (write data)
-                O  => s_d_in(i),        -- chip -> FPGA (read data)
-                T  => s_d_tri_r         -- '1' = Hi-Z, '0' = drive
-            );
-    end generate gen_iobuf;
+    o_d     <= s_d_out_r;
+    o_d_tri <= s_d_tri_r;
 
     -- =========================================================================
     -- IOB FF: read data capture
@@ -306,7 +296,7 @@ begin
     begin
         if rising_edge(i_clk) then
             if s_sample_en = '1' then
-                s_d_in_ff_r <= s_d_in;
+                s_d_in_ff_r <= i_d;
             end if;
         end if;
     end process p_iob_ff;

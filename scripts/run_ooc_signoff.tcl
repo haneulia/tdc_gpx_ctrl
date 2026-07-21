@@ -21,6 +21,12 @@ set max_hits     [lindex $argv 8]
 set stream_mode  [lindex $argv 9]
 set do_impl      [expr {[lindex $argv 10] eq "1"}]
 set impl_strategy [lindex $argv 11]
+set num_chips 0
+foreach bit [split $present_mask ""] {
+    if {$bit eq "1"} {
+        incr num_chips
+    }
+}
 
 if {$impl_strategy ni {DEFAULT TIMING_EXPLORE}} {
     error "unsupported implementation strategy: $impl_strategy"
@@ -32,7 +38,7 @@ set project_dir [file dirname $project_file]
 set gen_ip_dir  [file join $project_dir tdc_gpx_ctrl.gen sources_1 ip]
 file mkdir $out_dir
 
-puts "OOC_SIGNOFF_CONFIG width=$width axis_mhz=$axis_mhz tdc_mhz=$tdc_mhz present=$present_mask rise=$rise_mask fall=$fall_mask max_stops=$max_stops max_hits=$max_hits stream=$stream_mode impl=$do_impl strategy=$impl_strategy"
+puts "OOC_SIGNOFF_CONFIG width=$width axis_mhz=$axis_mhz tdc_mhz=$tdc_mhz chips=$num_chips present=$present_mask rise=$rise_mask fall=$fall_mask max_stops=$max_stops max_hits=$max_hits stream=$stream_mode impl=$do_impl strategy=$impl_strategy"
 
 set axis_period [expr {1000.0 / double($axis_mhz)}]
 set tdc_period  [expr {1000.0 / double($tdc_mhz)}]
@@ -80,6 +86,7 @@ read_xdc -unmanaged $xdc_file
 
 set generics [list \
     "g_OUTPUT_WIDTH=$width" \
+    "g_NUM_CHIPS=$num_chips" \
     "g_PRESENT_CHIP_MASK=4'b$present_mask" \
     "g_RISE_CHIP_MASK=4'b$rise_mask" \
     "g_FALL_CHIP_MASK=4'b$fall_mask" \
@@ -95,6 +102,43 @@ synth_design \
     -mode out_of_context \
     -flatten_hierarchy rebuilt \
     -generic $generics
+
+# The logical ABI remains four slots, while physical pins scale with the
+# synthesis-time chip count. Count synthesized bit ports independently of the
+# VHDL helper functions used for logical-lane compaction.
+proc vector_port_width {base_name} {
+    set pattern [format {^%s(\[[0-9]+\])?$} $base_name]
+    return [llength [get_ports -quiet -regexp $pattern]]
+}
+set physical_port_contract [list \
+    [list io_tdc_d [expr {$num_chips * 28}]] \
+    [list o_tdc_adr [expr {$num_chips * 4}]] \
+    [list o_tdc_csn $num_chips] \
+    [list o_tdc_rdn $num_chips] \
+    [list o_tdc_wrn $num_chips] \
+    [list o_tdc_oen $num_chips] \
+    [list o_tdc_stopdis $num_chips] \
+    [list o_tdc_alutrigger $num_chips] \
+    [list o_tdc_puresn $num_chips] \
+    [list i_tdc_ef1 $num_chips] \
+    [list i_tdc_ef2 $num_chips] \
+    [list i_tdc_lf1 $num_chips] \
+    [list i_tdc_lf2 $num_chips] \
+    [list i_tdc_irflag $num_chips] \
+    [list i_tdc_errflag $num_chips]]
+set port_report [open [file join $out_dir physical_port_contract.txt] w]
+foreach spec $physical_port_contract {
+    lassign $spec port_name expected_width
+    set actual_width [vector_port_width $port_name]
+    if {$actual_width != $expected_width} {
+        puts $port_report "FAIL port=$port_name expected=$expected_width actual=$actual_width"
+        close $port_report
+        error "physical port '$port_name' expected width $expected_width, got $actual_width"
+    }
+    puts $port_report "PASS port=$port_name width=$actual_width"
+}
+close $port_report
+puts "OOC_PHYSICAL_PORT_CONTRACT_PASS chips=$num_chips"
 
 set black_boxes [get_cells -hierarchical -filter {IS_BLACKBOX == 1}]
 if {[llength $black_boxes] != 0} {

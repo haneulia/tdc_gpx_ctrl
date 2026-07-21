@@ -44,23 +44,23 @@ entity tdc_gpx_cmd_arb is
         i_cmd_reg_read       : in  std_logic;
         i_cmd_reg_write      : in  std_logic;
         i_cmd_reg_chip       : in  unsigned(1 downto 0);             -- backward compat
-        i_cmd_reg_chip_address  : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- target chip mask
+        i_cmd_reg_chip_address  : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- target chip mask
         i_cmd_reg_addr       : in  std_logic_vector(3 downto 0);     -- register address
 
         -- Pipeline idle
-        i_chip_busy          : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_chip_busy          : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_face_asm_idle      : in  std_logic;
         i_face_asm_fall_idle : in  std_logic;
         i_hdr_idle           : in  std_logic;
         i_hdr_fall_idle      : in  std_logic;
 
         -- Per-chip reg done (from chip_ctrl)
-        i_cmd_reg_done       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_cmd_reg_done       : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Gated outputs
         o_cmd_cfg_write_g    : out std_logic;
-        o_cmd_reg_read_g     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_cmd_reg_write_g    : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_cmd_reg_read_g     : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_cmd_reg_write_g    : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_reg_outstanding    : out std_logic;
         o_outstanding_chip   : out unsigned(1 downto 0);             -- backward compat
 
@@ -72,7 +72,7 @@ entity tdc_gpx_cmd_arb is
 
         -- Timeout status
         o_reg_timeout        : out std_logic;                        -- sticky: reg access timeout occurred
-        o_reg_timeout_mask   : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- which chips timed out
+        o_reg_timeout_mask   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- which chips timed out
 
         -- Overlap handling (Round 5 #10)
         --   1-depth pending queue absorbs a new reg request that arrives while
@@ -92,7 +92,7 @@ end entity tdc_gpx_cmd_arb;
 
 architecture rtl of tdc_gpx_cmd_arb is
 
-    constant C_ZEROS : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    constant C_ZEROS : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- -------------------------------------------------------------------------
     -- cfg_write pending (unchanged from original)
@@ -106,13 +106,13 @@ architecture rtl of tdc_gpx_cmd_arb is
     signal s_reg_active_r        : std_logic := '0';                          -- any reg op in progress
     signal s_reg_pending_rw_r    : std_logic := '0';                          -- '0'=read, '1'=write
     signal s_reg_pending_addr_r  : std_logic_vector(3 downto 0) := (others => '0');
-    signal s_reg_target_mask_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_reg_done_mask_r     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_reg_dispatched_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_reg_pending_r       : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_target_mask_r   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_done_mask_r     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_dispatched_r    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_pending_r       : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- Dispatch pulses (1-clk each, registered)
-    signal s_dispatch_pulse_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_dispatch_pulse_r    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- Done tracking
     signal s_done_pulse_r        : std_logic := '0';
@@ -131,13 +131,13 @@ architecture rtl of tdc_gpx_cmd_arb is
     -- Reg access timeout (prevents permanent hang if chip never responds)
     signal s_reg_timeout_cnt_r   : unsigned(15 downto 0) := (others => '0');
     signal s_reg_timeout_r       : std_logic := '0';  -- sticky: timeout occurred
-    signal s_reg_timeout_mask_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_timeout_mask_r  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- -------------------------------------------------------------------------
     -- 1-depth pending queue for overlapping reg requests (Round 5 #10)
     -- -------------------------------------------------------------------------
     signal s_reg_queue_valid_r   : std_logic := '0';
-    signal s_reg_queue_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_reg_queue_mask_r    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_reg_queue_rw_r      : std_logic := '0';
     signal s_reg_queue_addr_r    : std_logic_vector(3 downto 0) := (others => '0');
     signal s_reg_rejected_r      : std_logic := '0';  -- sticky: request lost
@@ -401,7 +401,7 @@ begin
                     s_reg_dispatched_r   <= (others => '0');
 
                     -- Immediate dispatch for chips that are ready now
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                         if i_cmd_reg_chip_address(i) = '1' then
                             if i_chip_busy(i) = '0'
                                and i_cmd_start = '0'
@@ -428,7 +428,7 @@ begin
                 -- ---- Active: continue dispatching pending + collect dones ----
                 elsif s_reg_active_r = '1' then
                     -- Dispatch pending chips that become ready
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                         if s_reg_pending_r(i) = '1'
                            and s_reg_dispatched_r(i) = '0'
                            and s_reg_done_mask_r(i) = '0'
@@ -445,7 +445,7 @@ begin
                     end loop;
 
                     -- Collect per-chip done signals
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                         if i_cmd_reg_done(i) = '1'
                            and s_reg_target_mask_r(i) = '1' then
                             s_reg_done_mask_r(i) <= '1';
@@ -503,7 +503,7 @@ begin
     -- =========================================================================
     -- Output: gated read/write pulses (1-clk per chip)
     -- =========================================================================
-    gen_reg_out : for i in 0 to c_N_CHIPS - 1 generate
+    gen_reg_out : for i in 0 to c_MAX_CHIPS - 1 generate
         o_cmd_reg_read_g(i)  <= s_dispatch_pulse_r(i) when s_reg_pending_rw_r = '0' else '0';
         o_cmd_reg_write_g(i) <= s_dispatch_pulse_r(i) when s_reg_pending_rw_r = '1' else '0';
     end generate;

@@ -42,25 +42,25 @@ architecture sim of tb_tdc_gpx_scenarios is
     -- =========================================================================
     -- err_handler DUT signals
     -- =========================================================================
-    signal eh_errflag_sync      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal eh_chip_busy         : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal eh_errflag_sync      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal eh_chip_busy         : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal eh_reg11_data_0      : std_logic_vector(31 downto 0) := (others => '0');
     signal eh_reg11_data_1      : std_logic_vector(31 downto 0) := (others => '0');
     signal eh_reg11_data_2      : std_logic_vector(31 downto 0) := (others => '0');
     signal eh_reg11_data_3      : std_logic_vector(31 downto 0) := (others => '0');
     signal eh_cmd_reg_done_pulse: std_logic := '0';
-    signal eh_cmd_reg_rvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal eh_cmd_reg_rvalid    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal eh_reg_outstanding   : std_logic := '0';
     signal eh_frame_done        : std_logic := '0';
     signal eh_shot_start        : std_logic := '0';
     -- Outputs
-    signal eh_cmd_soft_reset    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal eh_cmd_soft_reset    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal eh_cmd_reg_read      : std_logic;
     signal eh_cmd_reg_addr      : std_logic_vector(3 downto 0);
-    signal eh_cmd_reg_chip_addr : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal eh_err_fill          : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal eh_cmd_reg_chip_addr : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal eh_err_fill          : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal eh_err_active        : std_logic;
-    signal eh_err_chip_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal eh_err_chip_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal eh_err_cause         : std_logic_vector(2 downto 0);
     signal eh_err_fatal         : std_logic;
 

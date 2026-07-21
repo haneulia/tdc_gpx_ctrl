@@ -66,7 +66,7 @@ architecture sim of tb_tdc_gpx_mask_sweep is
     signal hdr_fall_draining      : std_logic := '0';
     signal face_asm_idle          : std_logic := '1';
     signal face_asm_fall_idle     : std_logic := '1';
-    signal chip_busy              : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal chip_busy              : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal reg_outstanding        : std_logic := '0';
     signal face_tvalid            : std_logic := '0';
     signal face_fall_tvalid       : std_logic := '0';
@@ -114,14 +114,14 @@ architecture sim of tb_tdc_gpx_mask_sweep is
     signal pipeline_abort_fall : std_logic;
     signal shot_drop_cnt       : unsigned(15 downto 0);
     signal cfg_rejected        : std_logic;
-    signal shot_start_per_chip : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal shot_start_per_chip : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal face_id             : unsigned(7 downto 0);
     signal frame_id            : unsigned(31 downto 0);
     signal global_shot_seq     : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal face_shot_count     : unsigned(15 downto 0);
     signal frame_abort_cnt     : unsigned(15 downto 0);
     signal frame_done_both     : std_logic;
-    signal face_active_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal face_active_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal face_stops_per_chip : unsigned(3 downto 0);
     signal face_cols_per_face  : unsigned(15 downto 0);
     signal face_n_faces        : unsigned(3 downto 0);
@@ -134,21 +134,21 @@ architecture sim of tb_tdc_gpx_mask_sweep is
     signal fa_in_tdata_1 : std_logic_vector(C_G_WIDTH - 1 downto 0) := (others => '0');
     signal fa_in_tdata_2 : std_logic_vector(C_G_WIDTH - 1 downto 0) := (others => '0');
     signal fa_in_tdata_3 : std_logic_vector(C_G_WIDTH - 1 downto 0) := (others => '0');
-    signal fa_in_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal fa_in_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal fa_in_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal fa_in_tvalid  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal fa_in_tlast   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal fa_in_tready  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- face_assembler outputs
     signal fa_out_tdata  : std_logic_vector(C_G_WIDTH - 1 downto 0);
     signal fa_out_tvalid : std_logic;
     signal fa_out_tlast  : std_logic;
     signal fa_row_done   : std_logic;
-    signal fa_chip_err   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal fa_chip_err   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal fa_shot_overrun : std_logic;
     signal fa_face_abort : std_logic;
     signal fa_idle       : std_logic;
     signal fa_flush_drop : std_logic;
-    signal fa_flush_drop_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal fa_flush_drop_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal fa_overrun_cnt : unsigned(7 downto 0);
 
     -- Beat counter on face_assembler output (for mask verification)
@@ -156,7 +156,7 @@ architecture sim of tb_tdc_gpx_mask_sweep is
 
     -- Per-chip data generator state (architecture scope so tdata can be
     -- assigned concurrently outside the generate).
-    type t_chip_nat_arr is array(0 to c_N_CHIPS - 1) of natural range 0 to 31;
+    type t_chip_nat_arr is array(0 to c_MAX_CHIPS - 1) of natural range 0 to 31;
     signal s_gen_remaining : t_chip_nat_arr := (others => 0);
     signal s_gen_beat_idx  : t_chip_nat_arr := (others => 0);
     signal s_gen_arm_delay : t_chip_nat_arr := (others => 0);
@@ -292,7 +292,7 @@ begin
                 s_gen_arm_delay <= (others => 0);
             else
                 v_total_beats := C_STOPS * C_BEATS_PER_CELL;
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     if shot_start_per_chip(i) = '1' and face_active_mask(i) = '1' then
                         s_gen_arm_delay(i) <= 8;
                         s_gen_remaining(i) <= 0;
@@ -351,7 +351,7 @@ begin
         variable v_expected_rows : natural;
         variable v_expected_beats : natural;
         variable v_active_cnt : natural;
-        variable v_shot_start_sampled : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        variable v_shot_start_sampled : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         procedure wait_clk(n : natural) is
         begin
@@ -360,7 +360,7 @@ begin
             end loop;
         end procedure;
 
-        procedure run_mask_scenario(mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        procedure run_mask_scenario(mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
                                     name : string) is
         begin
             report "=== Mask " & name & " (" &
@@ -374,7 +374,7 @@ begin
 
             -- Compute expected values from mask
             v_active_cnt := 0;
-            for i in 0 to c_N_CHIPS - 1 loop
+            for i in 0 to c_MAX_CHIPS - 1 loop
                 if mask(i) = '1' then
                     v_active_cnt := v_active_cnt + 1;
                 end if;

@@ -20,8 +20,8 @@ architecture sim of tb_tdc_gpx_request_loss is
 
     signal s_arb_reg_read        : std_logic := '0';
     signal s_arb_reg_write       : std_logic := '0';
-    signal s_arb_reg_read_g      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_arb_reg_write_g     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_arb_reg_read_g      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_arb_reg_write_g     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_arb_reg_rejected    : std_logic;
     signal s_arb_reg_outstanding : std_logic;
 
@@ -48,7 +48,7 @@ begin
             i_cmd_reg_read         => s_arb_reg_read,
             i_cmd_reg_write        => s_arb_reg_write,
             i_cmd_reg_chip         => (others => '0'),
-            i_cmd_reg_chip_address => std_logic_vector(to_unsigned(1, c_N_CHIPS)),
+            i_cmd_reg_chip_address => std_logic_vector(to_unsigned(1, c_MAX_CHIPS)),
             i_cmd_reg_addr         => x"5",
             i_chip_busy            => (others => '0'),
             i_face_asm_idle        => '1',

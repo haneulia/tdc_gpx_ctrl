@@ -152,7 +152,7 @@ entity tdc_gpx_stop_cfg_decode is
         -- Cleared only by i_rst_n; SW reads it to detect silent upstream
         -- format drift that would otherwise corrupt chip_run's drain
         -- policy via a bogus expected_ififo count.
-        o_monotonic_violation_mask : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_monotonic_violation_mask : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
         -- Round 12 #16 + Round 13 follow-up (audit 5번): "orphan stop event"
         -- sticky. Fires when i_stop_evt_tvalid pulses while NO shot window
@@ -169,11 +169,11 @@ architecture rtl of tdc_gpx_stop_cfg_decode is
     -- Round 11 item 10: synth-side monotonic tracker.
     -- Remembers the previous running total per chip/IFIFO within a shot so
     -- a decrease latches s_mono_viol_r. Reset on shot boundary + global rst.
-    type t_prev_arr is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
+    type t_prev_arr is array(0 to c_MAX_CHIPS - 1) of unsigned(7 downto 0);
     signal s_prev_ififo1_r : t_prev_arr := (others => (others => '0'));
     signal s_prev_ififo2_r : t_prev_arr := (others => (others => '0'));
     signal s_track_r       : std_logic  := '0';   -- has at least one beat been seen this shot?
-    signal s_mono_viol_r   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_mono_viol_r   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     -- Round 13 follow-up (audit 5번): distance-bounded shot window.
     --
     -- Timing contract:
@@ -221,10 +221,10 @@ begin
     assert g_FIRE_COUNT_DWIDTH >= 16
         report "tdc_gpx_stop_cfg_decode: g_FIRE_COUNT_DWIDTH must be >= 16"
         severity failure;
-    assert g_STOP_EVT_DWIDTH >= c_N_CHIPS * 8
+    assert g_STOP_EVT_DWIDTH >= c_MAX_CHIPS * 8
         report "tdc_gpx_stop_cfg_decode: g_STOP_EVT_DWIDTH must cover 8 bits per chip"
         severity failure;
-    assert g_STOP_EVT_TUSER_WIDTH >= c_N_CHIPS * 8
+    assert g_STOP_EVT_TUSER_WIDTH >= c_MAX_CHIPS * 8
         report "tdc_gpx_stop_cfg_decode: g_STOP_EVT_TUSER_WIDTH must cover 8 bits per chip"
         severity failure;
     assert g_WINDOW_MARGIN_CLKS <= 65535
@@ -283,7 +283,7 @@ begin
                 s_window_cap_r        <= (others => '0');
                 s_orphan_evt_sticky_r <= '0';
                 s_expected_final_r    <= '0';
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     o_expected_ififo1(i) <= (others => '0');
                     o_expected_ififo2(i) <= (others => '0');
                 end loop;
@@ -316,7 +316,7 @@ begin
                     s_prev_ififo2_r <= (others => (others => '0'));
                     s_track_r       <= '0';
                     s_expected_final_r <= '0';
-                    for i in 0 to c_N_CHIPS - 1 loop
+                    for i in 0 to c_MAX_CHIPS - 1 loop
                         o_expected_ififo1(i) <= (others => '0');
                         o_expected_ififo2(i) <= (others => '0');
                     end loop;
@@ -335,7 +335,7 @@ begin
                     -- Commit the previous cycle's owned event. Back-to-back
                     -- events advance through this stage without bubbles.
                     if s_owned_evt_valid_r = '1' then
-                        for i in 0 to c_N_CHIPS - 1 loop
+                        for i in 0 to c_MAX_CHIPS - 1 loop
                             v_lo   := i * 8;
                             v_new1 := resize(unsigned(s_owned_evt_data_r(v_lo + 3 downto v_lo)), 8)
                                     + resize(unsigned(s_owned_evt_tuser_r(v_lo + 3 downto v_lo)), 8);
@@ -401,12 +401,12 @@ begin
 
             if i_rst_n = '0' or i_shot_start_gated = '1' then
                 v_track := false;
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     v_prev1(i) := (others => '0');
                     v_prev2(i) := (others => '0');
                 end loop;
             elsif v_stop_owned then
-                for i in 0 to c_N_CHIPS - 1 loop
+                for i in 0 to c_MAX_CHIPS - 1 loop
                     v_lo   := i * 8;
                     v_new1 := resize(unsigned(i_stop_evt_tdata(v_lo + 3 downto v_lo)), 8)
                             + resize(unsigned(i_stop_evt_tuser(v_lo + 3 downto v_lo)), 8);

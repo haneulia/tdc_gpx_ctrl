@@ -22,7 +22,7 @@ end entity tb_tdc_gpx_status_agg_c06_fix;
 
 architecture sim of tb_tdc_gpx_status_agg_c06_fix is
     constant C_CLK_PER : time := 5 ns;
-    constant C_ZEROS   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    constant C_ZEROS   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     signal s_clk       : std_logic := '0';
     signal s_rst_n     : std_logic := '0';
@@ -31,7 +31,7 @@ architecture sim of tb_tdc_gpx_status_agg_c06_fix is
     signal s_soft_clr  : std_logic := '0';
 
     signal s_face_idle      : std_logic := '1';
-    signal s_chip_busy      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_chip_busy      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_reg_outstanding : std_logic := '0';
     signal s_face_asm_idle  : std_logic := '1';
     signal s_face_asm_fall_idle : std_logic := '1';
@@ -44,21 +44,21 @@ architecture sim of tb_tdc_gpx_status_agg_c06_fix is
     signal s_axis_tvalid    : std_logic := '0';
     signal s_axis_fall_tvalid : std_logic := '0';
 
-    signal s_stop_id_error  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_hit_dropped    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_hit_fall_dropped : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_drain_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_sequence   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_chip_error     : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_face_mask      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
+    signal s_stop_id_error  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_hit_dropped    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_hit_fall_dropped : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_drain_timeout : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_sequence   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_chip_error     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_face_mask      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '1');
     signal s_shot_overrun   : std_logic := '0';
     signal s_fall_overrun   : std_logic := '0';
 
     signal s_status         : t_tdc_status;
     signal s_timestamp      : unsigned(63 downto 0);
     signal s_error_count    : unsigned(31 downto 0);
-    signal s_drain_sticky   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_seq_sticky     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_drain_sticky   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_seq_sticky     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     procedure wait_clk(signal i_clk : in std_logic; constant n : natural) is
     begin

@@ -49,13 +49,16 @@ entity tdc_gpx_top is
         -- same-chip dual-edge operation. g_FALL_CHIP_MASK="0000" builds a
         -- rising-only datapath; runtime falling_enable can also disable fall
         -- and use every active chip as rising in a fall-capable bitstream.
-        g_RISE_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
-        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
-        -- Compile-time build profile. The external 4-chip ABI remains fixed;
-        -- absent chip slots and geometry above these limits are not selectable.
-        -- The implemented chip count is derived from this mask, avoiding a
-        -- second count generic that could disagree with the physical mapping.
-        g_PRESENT_CHIP_MASK  : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_RISE_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
+        -- Compile-time build profile. CSR/header logical chip slots remain
+        -- fixed at c_MAX_CHIPS. g_NUM_CHIPS sets the physical pin-vector width
+        -- using IP-Integrator-safe integer arithmetic; g_PRESENT_CHIP_MASK
+        -- selects the logical slots. Their values must agree by assertion.
+        -- Physical lane order follows ascending asserted logical chip IDs, so
+        -- sparse masks keep metadata IDs without exporting absent-slot pins.
+        g_NUM_CHIPS         : positive range 1 to c_MAX_CHIPS := c_MAX_CHIPS;
+        g_PRESENT_CHIP_MASK  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP  : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP;
         -- Signal-processing clock contract. Supported values are
@@ -165,22 +168,25 @@ entity tdc_gpx_top is
         i_fire_count_tkeep  : in  std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
         i_fire_count_tlast  : in  std_logic;
 
-        -- TDC-GPX physical pins (per chip, x4)
-        io_tdc_d         : inout t_tdc_bus_array;
-        o_tdc_adr        : out   t_tdc_adr_array;
-        o_tdc_csn        : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_rdn        : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_wrn        : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_oen        : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_stopdis    : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_alutrigger : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        o_tdc_puresn     : out   std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_ef1        : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_ef2        : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_lf1        : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_lf2        : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_irflag     : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
-        i_tdc_errflag    : in    std_logic_vector(c_N_CHIPS - 1 downto 0);
+        -- TDC-GPX physical pins. The two buses are flattened as contiguous
+        -- physical lanes for Vivado/IP Integrator compatibility.
+        io_tdc_d         : inout std_logic_vector(
+            g_NUM_CHIPS * c_TDC_BUS_WIDTH - 1 downto 0);
+        o_tdc_adr        : out std_logic_vector(
+            g_NUM_CHIPS * c_TDC_ADR_WIDTH - 1 downto 0);
+        o_tdc_csn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_rdn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_wrn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_oen        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_stopdis    : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_alutrigger : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        o_tdc_puresn     : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_ef1        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_ef2        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_lf1        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_lf2        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_irflag     : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
+        i_tdc_errflag    : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
 
         -- AXI-Stream master output: RISING pipeline (to CDC FIFO / VDMA)
         o_m_axis_tdata   : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
@@ -234,7 +240,7 @@ architecture rtl of tdc_gpx_top is
         unsigned(c_GEOMETRY_BLOCK_WIDTH - 1 downto 0);
 
     function fn_lane_cell_slots(
-        chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        chip_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         stops     : unsigned(3 downto 0)
     ) return unsigned is
         variable v_slots : natural range 0 to c_MAX_ROWS_PER_FACE;
@@ -346,15 +352,15 @@ architecture rtl of tdc_gpx_top is
     signal s_cmd_soft_reset   : std_logic;
     signal s_cmd_force_reinit : std_logic;  -- Round 12 A1
     signal s_cmd_recovery_reset : std_logic;
-    signal s_err_raw_drop_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
-    signal s_err_drain_cap_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 12 #15
-    signal s_run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);  -- Round 12 #17
-    signal s_err_bus_fatal_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- Round 13 axis 2
+    signal s_err_raw_drop_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- Round 12 #15
+    signal s_err_drain_cap_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- Round 12 #15
+    signal s_run_timeout_cause_per_chip : std_logic_vector(3 * c_MAX_CHIPS - 1 downto 0);  -- Round 12 #17
+    signal s_err_bus_fatal_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- Round 13 axis 2
     -- Round 13 follow-up P1 (audit 4번): per-chip cell tuser(0) = faulted
     -- flag, carried on each chip's tlast beat. Threaded cell_pipe →
     -- output_stage → face_assembler (via its per-chip xpm_fifo_axis).
-    signal s_cell_rise_tuser : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cell_fall_tuser : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_rise_tuser : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cell_fall_tuser : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_cmd_cfg_write    : std_logic;
     -- Shared SW-initiated error clear (Q&A #40). Drives BOTH err_handler
     -- (fatal/retry state) and status_agg (sticky errors + error cycle count).
@@ -367,18 +373,18 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     -- Cluster 1 -> Cluster 2 (AXI-Stream x4)
     -- =========================================================================
-    signal s_raw_sk_tvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_sk_tvalid    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_raw_sk_tdata     : t_raw_axis_tdata_array;
     signal s_raw_sk_tuser     : t_raw_axis_tuser_array;
-    signal s_raw_sk_tready    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_raw_sk_tready    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Cluster 2 -> Cluster 3 (AXI-Stream x4)
     -- =========================================================================
-    signal s_evt_sk_tvalid    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_evt_sk_tvalid    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_evt_sk_tdata     : t_evt_axis_tdata_array;
     signal s_evt_sk_tuser     : t_evt_axis_tuser_array;
-    signal s_evt_sk_tready    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_evt_sk_tready    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Cluster 3 -> Cluster 4 (AXI-Stream x4, dual slope)
@@ -387,25 +393,25 @@ architecture rtl of tdc_gpx_top is
     signal s_cell_rise_tdata_1 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_cell_rise_tdata_2 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_cell_rise_tdata_3 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
-    signal s_cell_rise_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cell_rise_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cell_rise_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_rise_tvalid  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cell_rise_tlast   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cell_rise_tready  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_cell_fall_tdata_0 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_cell_fall_tdata_1 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_cell_fall_tdata_2 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     signal s_cell_fall_tdata_3 : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
-    signal s_cell_fall_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cell_fall_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_cell_fall_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cell_fall_tvalid  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cell_fall_tlast   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cell_fall_tready  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Chip status (config_ctrl -> face_seq + status_agg)
     -- =========================================================================
-    signal s_chip_busy          : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_busy          : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_chip_shot_seq      : t_shot_seq_array;
-    signal s_errflag_sync       : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_drain_timeout  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_sequence       : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_errflag_sync       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_drain_timeout  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_sequence       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_reg_outstanding    : std_logic;
 
     -- =========================================================================
@@ -419,8 +425,8 @@ architecture rtl of tdc_gpx_top is
     signal s_hdr_fall_draining    : std_logic;
     signal s_row_done             : std_logic;
     signal s_row_fall_done        : std_logic;
-    signal s_chip_error_flags     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_fall_error      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_flags     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_fall_error      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_shot_overrun         : std_logic;
     signal s_shot_fall_overrun    : std_logic;
     -- Round 7 C-1: s_face_abort / s_face_fall_abort declarations removed.
@@ -440,13 +446,13 @@ architecture rtl of tdc_gpx_top is
     -- =========================================================================
     -- Decode pipe status
     -- =========================================================================
-    signal s_stop_id_error    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_hit_dropped      : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_hit_fall_dropped : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_shot_dropped     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_shot_fall_dropped : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_slice_timeout    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_slice_fall_timeout : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_stop_id_error    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_hit_dropped      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_hit_fall_dropped : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_shot_dropped     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_shot_fall_dropped : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_slice_timeout    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_slice_fall_timeout : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- Face sequencer signals
@@ -460,14 +466,14 @@ architecture rtl of tdc_gpx_top is
     -- outputs so a fall-only abort no longer kills the rise side.
     signal s_pipeline_abort_rise    : std_logic;
     signal s_pipeline_abort_fall    : std_logic;
-    signal s_shot_start_per_chip    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_start_per_chip    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_face_id_r              : unsigned(7 downto 0);
     signal s_frame_id_r             : unsigned(31 downto 0);
     signal s_global_shot_seq_r      : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
     signal s_face_shot_count_r      : unsigned(15 downto 0);
-    signal s_face_active_mask_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_face_rise_mask         : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_face_fall_mask         : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_face_active_mask_r     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_face_rise_mask         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_face_fall_mask         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_face_stops_per_chip_r  : unsigned(3 downto 0);
     signal s_face_cols_per_face_r   : unsigned(15 downto 0);
     signal s_cell_slots_rise        : unsigned(15 downto 0);
@@ -498,13 +504,13 @@ architecture rtl of tdc_gpx_top is
     signal s_status               : t_tdc_status := c_TDC_STATUS_INIT;
     signal s_timestamp_r          : unsigned(63 downto 0);
     signal s_error_count_r        : unsigned(31 downto 0);
-    signal s_err_drain_to_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_seq_sticky_r     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_error_merged    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_error_raw       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- unmasked: all chips
-    signal s_err_rsp_mismatch     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_err_raw_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_run_timeout          : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_drain_to_sticky_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_seq_sticky_r     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_error_merged    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_error_raw       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- unmasked: all chips
+    signal s_err_rsp_mismatch     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_err_raw_overflow     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_run_timeout          : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_reg_arb_timeout      : std_logic;
     -- Round 5 follow-up: pipeline-wide sticky observability
     signal s_err_read_timeout     : std_logic;
@@ -512,24 +518,24 @@ architecture rtl of tdc_gpx_top is
     signal s_reg_rejected         : std_logic;
     signal s_reg_zero_mask        : std_logic;
     -- Round 6 B1: per-chip observability (CDC'd to AXI-S by config_ctrl)
-    signal s_err_reg_overflow     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_run_drain_complete   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_reg_overflow     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_run_drain_complete   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 6 follow-up: per-slope face_assembler stickies (AXI-Stream domain)
     signal s_shot_flush_drop_rise    : std_logic;
-    signal s_shot_flush_drop_mask_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_shot_flush_drop_mask_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_flush_drop_mask_rise : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_shot_flush_drop_mask_fall : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_shot_flush_drop_fall    : std_logic;
     signal s_shot_overrun_count_rise : unsigned(7 downto 0);
     signal s_shot_overrun_count_fall : unsigned(7 downto 0);
     -- Round 11 C: Category C observability surface
-    signal s_reg_timeout_mask        : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_reg_timeout_mask        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 11 item 10: per-chip stop_cfg_decode monotonic violation sticky
-    signal s_mono_violation_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_mono_violation_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_orphan_stop_evt_sticky  : std_logic;  -- Round 12 #16
     -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
-    signal s_init_cfg_coalesced_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_init_cfg_coalesced_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
-    signal s_cmd_collision_mask      : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cmd_collision_mask      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_run_timeout_cause_last  : std_logic_vector(2 downto 0);
     signal s_hdr_face_start_collapsed_rise : unsigned(7 downto 0);
     signal s_hdr_drain_timeout_rise : std_logic;
@@ -544,34 +550,38 @@ architecture rtl of tdc_gpx_top is
     signal s_row_done_faulted_fall    : std_logic;  -- Round 13 axis 1c (pulse)
     signal s_row_done_faulted_sticky_r : std_logic := '0';
     -- Round 12 #18: partial/blank chip_error split per slope
-    signal s_chip_error_partial_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_error_blank_rise   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_error_partial_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_error_blank_fall   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_partial_rise : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_error_blank_rise   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_error_partial_fall : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_error_blank_fall   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_hdr_face_start_collapsed_fall : unsigned(7 downto 0);
     -- cell_pipe stop_id_error per-chip (rise and fall); sticky aggregation below
-    signal s_stop_id_error_rise   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_stop_id_error_fall   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_stop_id_error_rise   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_stop_id_error_fall   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 11 item 4: cell_builder QUARANTINE escalation sticky, per chip / slope
-    signal s_quarantine_escape_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_quarantine_escape_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_quarantine_escape_rise : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_quarantine_escape_fall : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- CHAIN P1: cell_pipe masked-slope hit-drop stickies (per chip/slope).
-    signal s_masked_slope_drop_rise : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_masked_slope_drop_fall : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_quarantine_escape_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_stop_id_error_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_run_timeout_sticky_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_masked_slope_drop_rise : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_masked_slope_drop_fall : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_quarantine_escape_mask_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_stop_id_error_mask_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_run_timeout_sticky_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- Error handler status (from config_ctrl)
     signal s_err_active    : std_logic;
     signal s_err_fatal     : std_logic;
-    signal s_err_chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_err_chip_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_err_cause     : std_logic_vector(2 downto 0);
 
 begin
 
     assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
         report "tdc_gpx_top: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
+        severity failure;
+
+    assert g_NUM_CHIPS = fn_count_ones(g_PRESENT_CHIP_MASK)
+        report "tdc_gpx_top: g_NUM_CHIPS must equal popcount(g_PRESENT_CHIP_MASK)"
         severity failure;
 
     assert c_MAX_ROWS_PER_FACE < 2 ** c_GEOMETRY_SLOT_WIDTH
@@ -658,12 +668,12 @@ begin
         report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
-    assert g_STOP_EVT_DWIDTH >= c_N_CHIPS * 8
+    assert g_STOP_EVT_DWIDTH >= c_MAX_CHIPS * 8
         and g_STOP_EVT_DWIDTH mod 8 = 0
         report "tdc_gpx_top: g_STOP_EVT_DWIDTH must cover 8 bits/chip and be byte aligned"
         severity failure;
 
-    assert g_STOP_EVT_TUSER_WIDTH >= c_N_CHIPS * 8
+    assert g_STOP_EVT_TUSER_WIDTH >= c_MAX_CHIPS * 8
         report "tdc_gpx_top: g_STOP_EVT_TUSER_WIDTH must cover 8 bits/chip"
         severity failure;
 
@@ -794,6 +804,7 @@ begin
     -- =========================================================================
     u_config_ctrl : entity work.tdc_gpx_config_ctrl
         generic map (
+            g_NUM_CHIPS       => g_NUM_CHIPS,
             g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
             g_TDC_CLK_MHZ     => g_TDC_CLK_MHZ,
             g_POWERUP_CLKS    => c_TDC_POWERUP_CLKS,

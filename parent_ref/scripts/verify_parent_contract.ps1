@@ -55,9 +55,23 @@ Assert-ContractValue 'irq_f2p_enabled' $ps.parameters.PCW_IRQ_F2P_INTR.value '1'
 Assert-ContractValue 'output_width_bits' $tdc.parameters.g_OUTPUT_WIDTH.value '32'
 Assert-ContractValue 'hw_version_bits' $tdc.parameters.g_HW_VERSION.value `
     '00000000000000010000000000000000'
+Assert-ContractValue 'physical_chip_count' $tdc.parameters.g_NUM_CHIPS.value '4'
 Assert-ContractValue 'present_chip_mask' $tdc.parameters.g_PRESENT_CHIP_MASK.value '1111'
 Assert-ContractValue 'rise_chip_mask' $tdc.parameters.g_RISE_CHIP_MASK.value '0011'
 Assert-ContractValue 'fall_chip_mask' $tdc.parameters.g_FALL_CHIP_MASK.value '1100'
+Assert-ContractValue 'tdc_data_pin_width' $tdc.ports.io_tdc_d.left '111'
+Assert-ContractValue 'tdc_data_pin_lsb' $tdc.ports.io_tdc_d.right '0'
+Assert-ContractValue 'tdc_address_pin_width' $tdc.ports.o_tdc_adr.left '15'
+Assert-ContractValue 'tdc_address_pin_lsb' $tdc.ports.o_tdc_adr.right '0'
+foreach ($pin in @(
+    'o_tdc_csn', 'o_tdc_rdn', 'o_tdc_wrn', 'o_tdc_oen',
+    'o_tdc_stopdis', 'o_tdc_alutrigger', 'o_tdc_puresn',
+    'i_tdc_ef1', 'i_tdc_ef2', 'i_tdc_lf1', 'i_tdc_lf2',
+    'i_tdc_irflag', 'i_tdc_errflag'
+)) {
+    Assert-ContractValue "$pin.width" $tdc.ports.$pin.left '3'
+    Assert-ContractValue "$pin.lsb" $tdc.ports.$pin.right '0'
+}
 Assert-ContractValue 'max_stops_per_chip' $tdc.parameters.g_MAX_STOPS_PER_CHIP.value '8'
 Assert-ContractValue 'max_hits_per_stop' $tdc.parameters.g_MAX_HITS_PER_STOP.value '7'
 Assert-ContractValue 'stream_clock_mode' $tdc.parameters.g_STREAM_CLK_MODE.value 'ASYNC'

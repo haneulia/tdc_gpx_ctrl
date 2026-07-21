@@ -27,12 +27,12 @@ architecture sim of tb_tdc_gpx_cell_pipe_c03_fix is
     signal s_rst_n  : std_logic := '0';
     signal s_done   : boolean := false;
 
-    signal s_evt_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
-    signal s_evt_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_evt_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
+    signal s_evt_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0);
     signal s_evt_tdata  : t_evt_axis_tdata_array := (others => (others => '0'));
     signal s_evt_tuser  : t_evt_axis_tuser_array := (others => (others => '0'));
 
-    signal s_shot_start : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
+    signal s_shot_start : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
     signal s_abort_rise : std_logic := '0';
     signal s_abort_fall : std_logic := '0';
     signal s_face_stops : unsigned(3 downto 0) := to_unsigned(1, 4);
@@ -42,24 +42,24 @@ architecture sim of tb_tdc_gpx_cell_pipe_c03_fix is
     signal s_cell_rise_tdata_1 : std_logic_vector(c_OUTPUT_WIDTH-1 downto 0);
     signal s_cell_rise_tdata_2 : std_logic_vector(c_OUTPUT_WIDTH-1 downto 0);
     signal s_cell_rise_tdata_3 : std_logic_vector(c_OUTPUT_WIDTH-1 downto 0);
-    signal s_cell_rise_tvalid  : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_cell_rise_tlast   : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_cell_rise_tuser   : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_cell_rise_tready  : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+    signal s_cell_rise_tvalid  : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_cell_rise_tlast   : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_cell_rise_tuser   : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_cell_rise_tready  : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
 
     signal s_cell_fall_tdata_0 : std_logic_vector(c_OUTPUT_WIDTH-1 downto 0);
     signal s_cell_fall_tdata_1 : std_logic_vector(c_OUTPUT_WIDTH-1 downto 0);
     signal s_cell_fall_tdata_2 : std_logic_vector(c_OUTPUT_WIDTH-1 downto 0);
     signal s_cell_fall_tdata_3 : std_logic_vector(c_OUTPUT_WIDTH-1 downto 0);
-    signal s_cell_fall_tvalid  : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_cell_fall_tlast   : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_cell_fall_tuser   : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_cell_fall_tready  : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+    signal s_cell_fall_tvalid  : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_cell_fall_tlast   : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_cell_fall_tuser   : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_cell_fall_tready  : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
 
-    signal s_hit_dropped      : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_hit_fall_dropped : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_stop_id_error    : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal s_stop_id_fall_err : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal s_hit_dropped      : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_hit_fall_dropped : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_stop_id_error    : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal s_stop_id_fall_err : std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
     function fn_tuser_data(
         slope    : natural;

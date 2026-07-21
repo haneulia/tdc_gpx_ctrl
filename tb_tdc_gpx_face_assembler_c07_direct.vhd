@@ -45,10 +45,10 @@ architecture sim of tb_tdc_gpx_face_assembler_c07_direct is
     signal s_tdata_1 : std_logic_vector(G_TDATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_tdata_2 : std_logic_vector(G_TDATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_tdata_3 : std_logic_vector(G_TDATA_WIDTH - 1 downto 0) := (others => '0');
-    signal s_tvalid  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_tlast   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_tuser   : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_tready  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_tvalid  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_tlast   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_tuser   : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_tready  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
 
     signal s_shot_start : std_logic := '0';
     signal s_abort      : std_logic := '0';
@@ -60,14 +60,14 @@ architecture sim of tb_tdc_gpx_face_assembler_c07_direct is
 
     signal s_row_done           : std_logic;
     signal s_row_done_faulted   : std_logic;
-    signal s_chip_error_flags   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_error_partial : std_logic_vector(c_N_CHIPS - 1 downto 0);
-    signal s_chip_error_blank   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_error_flags   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_error_partial : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_chip_error_blank   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_shot_overrun       : std_logic;
     signal s_face_abort         : std_logic;
     signal s_idle               : std_logic;
     signal s_shot_flush_drop    : std_logic;
-    signal s_shot_flush_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_shot_flush_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_overrun_count      : unsigned(7 downto 0);
 
     signal s_out_count      : natural := 0;
@@ -241,8 +241,8 @@ begin
 
         procedure send_chip(chip : natural) is
             variable v_timeout : natural;
-            variable v_valid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
-            variable v_last    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+            variable v_valid   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+            variable v_last    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         begin
             for beat in 0 to c_BEATS_PER_CHIP - 1 loop
                 v_valid := (others => '0');

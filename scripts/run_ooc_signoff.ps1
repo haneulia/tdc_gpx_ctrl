@@ -181,6 +181,7 @@ New-Item -ItemType Directory -Path $OutDir | Out-Null
     "width=$Width"
     "axis_mhz=$AxisMhz"
     "tdc_mhz=$TdcMhz"
+    "num_chips=$presentCount"
     "present_chip_mask=$PresentChipMask"
     "rise_chip_mask=$RiseChipMask"
     "fall_chip_mask=$FallChipMask"

@@ -43,8 +43,8 @@ use work.tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_cell_pipe_lane_mask is
     generic (
-        G_STATIC_RISE_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        G_STATIC_FALL_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
+        G_STATIC_RISE_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        G_STATIC_FALL_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
     );
 end entity;
 
@@ -74,31 +74,31 @@ architecture sim of tb_tdc_gpx_cell_pipe_lane_mask is
     signal done  : boolean   := false;
 
     -- DUT inputs
-    signal evt_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
+    signal evt_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
     signal evt_tdata  : t_evt_axis_tdata_array := (others => (others => '0'));
     signal evt_tuser  : t_evt_axis_tuser_array := (others => (others => '0'));
-    signal evt_tready : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal shot_start : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '0');
-    signal rise_mask  : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
-    signal fall_mask  : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+    signal evt_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal shot_start : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '0');
+    signal rise_mask  : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
+    signal fall_mask  : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
     signal abort      : std_logic := '0';
     signal sticky_clear : std_logic := '0';
     signal face_stops : unsigned(3 downto 0) := to_unsigned(C_STOPS, 4);
     signal max_hits   : unsigned(2 downto 0) := to_unsigned(C_MAX_HITS, 3);
 
     -- DUT outputs
-    signal cell_rise_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_rise_tlast  : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_rise_tready : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
-    signal cell_fall_tvalid : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_fall_tlast  : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal cell_fall_tready : std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
-    signal shot_dropped      : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal shot_fall_dropped : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal masked_drop_rise  : std_logic_vector(c_N_CHIPS-1 downto 0);
-    signal masked_drop_fall  : std_logic_vector(c_N_CHIPS-1 downto 0);
+    signal cell_rise_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_rise_tlast  : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_rise_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
+    signal cell_fall_tvalid : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_fall_tlast  : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal cell_fall_tready : std_logic_vector(c_MAX_CHIPS-1 downto 0) := (others => '1');
+    signal shot_dropped      : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal shot_fall_dropped : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal masked_drop_rise  : std_logic_vector(c_MAX_CHIPS-1 downto 0);
+    signal masked_drop_fall  : std_logic_vector(c_MAX_CHIPS-1 downto 0);
 
-    type t_cell_data_array is array (0 to c_N_CHIPS-1) of
+    type t_cell_data_array is array (0 to c_MAX_CHIPS-1) of
         std_logic_vector(OUTPUT_WIDTH-1 downto 0);
     signal cell_rise_tdata : t_cell_data_array;
     signal cell_fall_tdata : t_cell_data_array;
@@ -106,7 +106,7 @@ architecture sim of tb_tdc_gpx_cell_pipe_lane_mask is
     signal first_fall_data : t_cell_data_array := (others => (others => '0'));
 
     -- Monitor counters (per lane)
-    type t_nat_arr is array (0 to c_N_CHIPS-1) of natural;
+    type t_nat_arr is array (0 to c_MAX_CHIPS-1) of natural;
     signal beat_rise  : t_nat_arr := (others => 0);
     signal beat_fall  : t_nat_arr := (others => 0);
     signal tlast_rise : t_nat_arr := (others => 0);
@@ -175,7 +175,7 @@ begin
     p_monitor : process(clk)
     begin
         if rising_edge(clk) then
-            for i in 0 to c_N_CHIPS-1 loop
+            for i in 0 to c_MAX_CHIPS-1 loop
                 if cell_rise_tvalid(i) = '1' and cell_rise_tready(i) = '1' then
                     if (beat_rise(i) mod C_SLICE_BEATS) = 0 then
                         first_rise_data(i) <= cell_rise_tdata(i);
@@ -251,7 +251,7 @@ begin
             shot_start <= (others => '0');
             wait for 5 * CLK_PERIOD;
             wait until rising_edge(clk);
-            for ch in 0 to c_N_CHIPS-1 loop
+            for ch in 0 to c_MAX_CHIPS-1 loop
                 if ch < 2 then v_slope := 1; else v_slope := 0; end if;
                 send_beat(ch, std_logic_vector(to_unsigned(ch + 1, 32)),
                           fn_tuser_data(v_slope, ch, 0, 0));
@@ -264,7 +264,7 @@ begin
         variable v_base_beat_fall  : t_nat_arr;
         variable v_base_tlast_rise : t_nat_arr;
         variable v_base_tlast_fall : t_nat_arr;
-        variable v_dual_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
+        variable v_dual_mask : std_logic_vector(c_MAX_CHIPS-1 downto 0);
         variable v_ok : boolean;
     begin
         rst_n <= '0';
@@ -289,7 +289,7 @@ begin
         wait until rising_edge(clk);
 
         v_ok := true;
-        for i in 0 to c_N_CHIPS-1 loop
+        for i in 0 to c_MAX_CHIPS-1 loop
             report "L: chip" & integer'image(i)
                    & " rise beats=" & integer'image(beat_rise(i))
                    & " tlast=" & integer'image(tlast_rise(i))
@@ -343,7 +343,7 @@ begin
         end loop;
 
         v_ok := true;
-        for i in 0 to c_N_CHIPS-1 loop
+        for i in 0 to c_MAX_CHIPS-1 loop
             report "D: chip" & integer'image(i)
                    & " rise beats+=" & integer'image(beat_rise(i) - v_base_beat_rise(i))
                    & " tlast+=" & integer'image(tlast_rise(i) - v_base_tlast_rise(i))
@@ -440,7 +440,7 @@ begin
         send_beat(0, x"00000000", fn_tuser_drain(0));
         send_beat(0, x"00000000", fn_tuser_drain(1));
         -- Other chips: drains only (blank slices on their own lanes)
-        for ch in 1 to c_N_CHIPS-1 loop
+        for ch in 1 to c_MAX_CHIPS-1 loop
             send_beat(ch, x"00000000", fn_tuser_drain(0));
             send_beat(ch, x"00000000", fn_tuser_drain(1));
         end loop;

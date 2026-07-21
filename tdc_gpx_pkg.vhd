@@ -120,12 +120,13 @@ package tdc_gpx_pkg is
     -- Fixed protocol/cell-format capacities
     -- =========================================================================
     -- Fixed ABI/format capacities. These are not the selected build profile:
-    -- tdc_gpx_top generics may implement a subset without changing port widths
-    -- or the canonical cell/header format.
-    constant c_N_CHIPS              : natural := 4;
+    -- tdc_gpx_top may implement a subset while the CSR/header logical slot
+    -- format stays four chips wide. Physical pin widths use g_NUM_CHIPS, which
+    -- each owner requires to equal popcount(g_PRESENT_CHIP_MASK).
+    constant c_MAX_CHIPS            : natural := 4;
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
     constant c_MAX_HITS_PER_STOP    : natural := 7;
-    constant c_ALL_CHIPS_MASK       : std_logic_vector(c_N_CHIPS - 1 downto 0) :=
+    constant c_ALL_CHIPS_MASK       : std_logic_vector(c_MAX_CHIPS - 1 downto 0) :=
         (others => '1');
     -- Cell hit slots carry the lower 16 bits of each GPX raw hit. The 17th
     -- raw hit bit is preserved separately in the cell metadata beat as
@@ -214,8 +215,9 @@ package tdc_gpx_pkg is
 
     constant c_SHOT_SEQ_WIDTH       : natural := 16;
     constant c_TDC_BUS_WIDTH        : natural := 28;
+    constant c_TDC_ADR_WIDTH        : natural := 4;
     constant c_RAW_HIT_WIDTH        : natural := 17;   -- TDC-GPX I-Mode raw hit (always 17-bit)
-    constant c_MAX_ROWS_PER_FACE    : natural := c_N_CHIPS * c_MAX_STOPS_PER_CHIP;  -- 32
+    constant c_MAX_ROWS_PER_FACE    : natural := c_MAX_CHIPS * c_MAX_STOPS_PER_CHIP;  -- 32
 
     -- =========================================================================
     -- TDC-GPX register addresses (ADR[3:0])
@@ -262,6 +264,17 @@ package tdc_gpx_pkg is
     ) return natural;
 
     function fn_count_ones(v : std_logic_vector) return natural;
+    -- A non-zero count suitable for entity port bounds. A zero mask returns
+    -- one only to keep the interface elaboratable; each owner separately
+    -- rejects a zero present mask with a severity-failure assertion.
+    function fn_physical_chip_count(v : std_logic_vector) return positive;
+    -- Compact physical lane for an asserted logical chip slot. Physical lanes
+    -- are ordered by ascending logical chip ID, preserving sparse slot IDs in
+    -- CSR/header metadata without exporting unused pins.
+    function fn_physical_chip_index(
+        present_mask : std_logic_vector;
+        logical_chip : natural
+    ) return natural;
     function fn_first_one_mask(v : std_logic_vector) return std_logic_vector;
 
     -- Stop event AXI-Stream helpers
@@ -306,9 +319,9 @@ package tdc_gpx_pkg is
     -- =========================================================================
     -- AXI-Stream array type (for multi-chip slice data)
     -- =========================================================================
-    type t_expected_array is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
+    type t_expected_array is array(0 to c_MAX_CHIPS - 1) of unsigned(7 downto 0);
 
-    type t_axis_tdata_array is array(0 to c_N_CHIPS - 1)
+    type t_axis_tdata_array is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(c_DEFAULT_OUTPUT_WIDTH - 1 downto 0);
 
     subtype t_bus_rsp_tdata is std_logic_vector(c_BUS_RSP_TDATA_WIDTH - 1 downto 0);
@@ -318,51 +331,51 @@ package tdc_gpx_pkg is
     subtype t_evt_axis_tdata is std_logic_vector(c_EVT_AXIS_TDATA_WIDTH - 1 downto 0);
     subtype t_evt_axis_tuser is std_logic_vector(c_EVT_AXIS_TUSER_WIDTH - 1 downto 0);
 
-    type t_bus_rsp_tdata_array is array(0 to c_N_CHIPS - 1) of t_bus_rsp_tdata;
-    type t_bus_rsp_tuser_array is array(0 to c_N_CHIPS - 1) of t_bus_rsp_tuser;
-    type t_raw_axis_tdata_array is array(0 to c_N_CHIPS - 1) of t_raw_axis_tdata;
-    type t_raw_axis_tuser_array is array(0 to c_N_CHIPS - 1) of t_raw_axis_tuser;
-    type t_evt_axis_tdata_array is array(0 to c_N_CHIPS - 1) of t_evt_axis_tdata;
-    type t_evt_axis_tuser_array is array(0 to c_N_CHIPS - 1) of t_evt_axis_tuser;
+    type t_bus_rsp_tdata_array is array(0 to c_MAX_CHIPS - 1) of t_bus_rsp_tdata;
+    type t_bus_rsp_tuser_array is array(0 to c_MAX_CHIPS - 1) of t_bus_rsp_tuser;
+    type t_raw_axis_tdata_array is array(0 to c_MAX_CHIPS - 1) of t_raw_axis_tdata;
+    type t_raw_axis_tuser_array is array(0 to c_MAX_CHIPS - 1) of t_raw_axis_tuser;
+    type t_evt_axis_tdata_array is array(0 to c_MAX_CHIPS - 1) of t_evt_axis_tdata;
+    type t_evt_axis_tuser_array is array(0 to c_MAX_CHIPS - 1) of t_evt_axis_tuser;
 
     -- =========================================================================
     -- TDC-GPX physical bus array types (for top-level port maps)
     -- =========================================================================
-    type t_tdc_bus_array is array(0 to c_N_CHIPS - 1)
+    type t_tdc_bus_array is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-    type t_tdc_adr_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(3 downto 0);
+    type t_tdc_adr_array is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(c_TDC_ADR_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- Per-chip pipeline array types (package scope)
     -- Used by cluster wrapper port lists and top-level signal declarations.
     -- =========================================================================
-    type t_slv32_array    is array(0 to c_N_CHIPS - 1)
+    type t_slv32_array    is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(31 downto 0);
-    type t_slv16_array    is array(0 to c_N_CHIPS - 1)
+    type t_slv16_array    is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(15 downto 0);
-    type t_slv8_array     is array(0 to c_N_CHIPS - 1)
+    type t_slv8_array     is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(7 downto 0);
-    type t_slv4_array     is array(0 to c_N_CHIPS - 1)
+    type t_slv4_array     is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(3 downto 0);
-    type t_slv28_array    is array(0 to c_N_CHIPS - 1)
+    type t_slv28_array    is array(0 to c_MAX_CHIPS - 1)
         of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-    type t_u2_array       is array(0 to c_N_CHIPS - 1)
+    type t_u2_array       is array(0 to c_MAX_CHIPS - 1)
         of unsigned(1 downto 0);
-    type t_u3_array       is array(0 to c_N_CHIPS - 1)
+    type t_u3_array       is array(0 to c_MAX_CHIPS - 1)
         of unsigned(2 downto 0);
-    type t_u6_array       is array(0 to c_N_CHIPS - 1)
+    type t_u6_array       is array(0 to c_MAX_CHIPS - 1)
         of unsigned(5 downto 0);
-    type t_shot_seq_array is array(0 to c_N_CHIPS - 1)
+    type t_shot_seq_array is array(0 to c_MAX_CHIPS - 1)
         of unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
-    type t_raw_hit_array  is array(0 to c_N_CHIPS - 1)
+    type t_raw_hit_array  is array(0 to c_MAX_CHIPS - 1)
         of unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- cfg_image array type (TDC-GPX register image stored in CSR)
     -- =========================================================================
     type t_cfg_image is array(0 to 15) of std_logic_vector(31 downto 0);
-    type t_cfg_image_array is array(0 to c_N_CHIPS - 1) of t_cfg_image;
+    type t_cfg_image_array is array(0 to c_MAX_CHIPS - 1) of t_cfg_image;
 
     -- =========================================================================
     -- t_tdc_cfg : CSR configuration (CSR -> submodules)
@@ -378,7 +391,7 @@ package tdc_gpx_pkg is
     -- =========================================================================
     type t_tdc_cfg is record
         -- CTL0: MAIN_CTRL packed fields
-        active_chip_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);     -- CTL0[3:0]
+        active_chip_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);     -- CTL0[3:0]
         packet_scope        : std_logic;                                    -- CTL0[4]    HEADER-ONLY
         hit_store_mode      : unsigned(1 downto 0);                         -- CTL0[6:5]  HEADER-ONLY
         dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]  HEADER-ONLY
@@ -445,7 +458,7 @@ package tdc_gpx_pkg is
     -- corrupts the destination bundle.
     -- =========================================================================
     constant c_TDC_CFG_BITS : natural :=
-          c_N_CHIPS    -- active_chip_mask
+          c_MAX_CHIPS    -- active_chip_mask
         + 1            -- packet_scope
         + 2            -- hit_store_mode
         + 3            -- dist_scale
@@ -507,20 +520,20 @@ package tdc_gpx_pkg is
         busy                : std_logic;
         pipeline_overrun    : std_logic;
         err_fatal           : std_logic;  -- err_handler fatal recovery failure
-        chip_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        drain_timeout_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip drain timeout
-        sequence_error_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip sequence error
+        chip_error_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        drain_timeout_mask  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip drain timeout
+        sequence_error_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip sequence error
         shot_seq_current    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
         vdma_frame_count    : unsigned(31 downto 0);
         error_cycle_count         : unsigned(31 downto 0);
         shot_drop_count     : unsigned(15 downto 0);  -- deferred-shot overflow drops
         frame_abort_count   : unsigned(15 downto 0);  -- frames discarded by abort
         err_active          : std_logic;               -- err_handler recovery in progress
-        err_chip_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chips under recovery
+        err_chip_mask       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chips under recovery
         err_cause           : std_logic_vector(2 downto 0);  -- [0]=HitFIFO [1]=IFIFO [2]=PLL
-        rsp_mismatch_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- bus response tuser mismatch
+        rsp_mismatch_mask   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- bus response tuser mismatch
         cfg_rejected        : std_logic;  -- cmd_start rejected due to invalid config
-        run_timeout_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip chip_run timeout (sticky)
+        run_timeout_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip chip_run timeout (sticky)
         reg_arb_timeout     : std_logic;  -- cmd_arb register access timeout (sticky)
         shot_drop_any       : std_logic;  -- OR of all cell_builder shot_dropped (rise+fall)
         slice_timeout_any   : std_logic;  -- OR of all cell_builder slice_timeout (rise+fall)
@@ -533,15 +546,15 @@ package tdc_gpx_pkg is
         err_read_timeout    : std_logic;  -- err_handler ST_WAIT_READ watchdog fired (sticky)
         reg_rejected        : std_logic;  -- cmd_arb request loss: queue full or simultaneous R+W (sticky)
         reg_zero_mask       : std_logic;  -- cmd_arb got a zero chip_mask request (sticky)
-        err_reg_overflow_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_reg request loss: queue full or simultaneous R+W (per-chip sticky)
-        run_drain_complete_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- chip_run internal drain-complete seen (per-chip sticky latched from pulse)
+        err_reg_overflow_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chip_reg request loss: queue full or simultaneous R+W (per-chip sticky)
+        run_drain_complete_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chip_run internal drain-complete seen (per-chip sticky latched from pulse)
         rise_shot_flush_drop : std_logic;  -- rise face_assembler dropped non-empty FIFO on shot_start (sticky)
         fall_shot_flush_drop : std_logic;  -- fall face_assembler dropped non-empty FIFO on shot_start (sticky)
         rise_shot_overrun_count : unsigned(7 downto 0);  -- rise face_assembler blank-fill invocation count (wrap)
         fall_shot_overrun_count : unsigned(7 downto 0);  -- fall face_assembler blank-fill invocation count (wrap)
         -- Round 11 C: observability surface for CSR (STAT7).
-        reg_timeout_mask       : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
-        stop_id_error_mask     : std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip cell_builder stop_id out-of-range sticky
+        reg_timeout_mask       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
+        stop_id_error_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip cell_builder stop_id out-of-range sticky
         run_timeout_cause_last : std_logic_vector(2 downto 0);  -- chip_run last timeout cause (any chip, most recent)
         rise_face_start_collapsed_count : unsigned(7 downto 0);
         fall_face_start_collapsed_count : unsigned(7 downto 0);
@@ -557,37 +570,37 @@ package tdc_gpx_pkg is
         -- QUARANTINE force-escaped because neither drain_done nor i_abort
         -- arrived within ~4.9ms — the chip's slice stream is out of sync.
         -- Cleared only by full i_rst_n (cell_builder has no soft-reset).
-        quarantine_escape_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        quarantine_escape_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 11 item 10: stop_cfg_decode monotonic violation sticky mask.
-        mono_violation_mask    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        mono_violation_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 11 item 11: err_handler ST_WAIT_FRAME_DONE escape sticky
         -- (distinct from err_read_timeout so SW can tell the two failure
         -- modes apart).
         err_frame_wait_escape  : std_logic;
         -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky mask.
-        init_cfg_coalesced_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        init_cfg_coalesced_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 11 item 15: per-chip shot_flush_drop mask (OR of rise+fall).
         -- Bit i = '1' (latched) if chip i's face_assembler input FIFO held
         -- old-shot tail data at a shot_start boundary on either slope.
-        shot_flush_drop_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        shot_flush_drop_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask.
         -- Bit i = '1' means chip i's chip_ctrl saw >1 command pulse in the
         -- same PH_IDLE cycle. Under correct operation this should stay zero
         -- (cmd_arb enforces mutual exclusion at source); a fire indicates a
         -- cmd_arb contract violation, not a chip_ctrl bug.
-        cmd_collision_mask   : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        cmd_collision_mask   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 12 #19: per-slope header_inserter abort-truncation sticky.
         rise_hdr_abort_truncated : std_logic;
         fall_hdr_abort_truncated : std_logic;
         -- Round 12 #18: partial/blank chip error split per slope.
-        rise_chip_error_partial  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        rise_chip_error_blank    : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        fall_chip_error_partial  : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        fall_chip_error_blank    : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        rise_chip_error_partial  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        rise_chip_error_blank    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        fall_chip_error_partial  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        fall_chip_error_blank    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 12 #16: stop_cfg_decode orphan-event sticky.
         orphan_stop_evt_sticky   : std_logic;
         -- Round 13 axis 2: per-chip bus fatal sticky mask.
-        bus_fatal_mask           : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        bus_fatal_mask           : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 13 axis 1b: header_inserter frame_done_faulted sticky
         -- (either slope's drain-watchdog escape → frame is synthetic).
         frame_done_faulted_sticky : std_logic;
@@ -595,10 +608,10 @@ package tdc_gpx_pkg is
         -- (either slope's row had blank-fill / chip_error).
         row_done_faulted_sticky  : std_logic;
         -- Round 12 #15: distinct per-chip raw-overflow cause masks.
-        raw_drop_mask            : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        drain_cap_mask           : std_logic_vector(c_N_CHIPS - 1 downto 0);
+        raw_drop_mask            : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        drain_cap_mask           : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 12 #17: per-chip last run_timeout_cause (3-bit × N_CHIPS packed).
-        run_timeout_cause_per_chip : std_logic_vector(3 * c_N_CHIPS - 1 downto 0);
+        run_timeout_cause_per_chip : std_logic_vector(3 * c_MAX_CHIPS - 1 downto 0);
         -- CHAIN P1 (2026-07-16): cell_pipe masked-slope hit drop, OR across
         -- all chips and both slopes. Set means a hit beat addressed a slope
         -- lane its chip does not serve (physical edge misconfiguration in
@@ -834,6 +847,40 @@ package body tdc_gpx_pkg is
             end if;
         end loop;
         return cnt;
+    end function;
+
+    function fn_physical_chip_count(v : std_logic_vector) return positive is
+        variable count : natural := fn_count_ones(v);
+    begin
+        if count = 0 then
+            return 1;
+        end if;
+        return count;
+    end function;
+
+    function fn_physical_chip_index(
+        present_mask : std_logic_vector;
+        logical_chip : natural
+    ) return natural is
+        variable rank : natural := 0;
+    begin
+        assert logical_chip >= present_mask'low
+           and logical_chip <= present_mask'high
+            report "fn_physical_chip_index: logical chip is outside mask range"
+            severity failure;
+        assert present_mask(logical_chip) = '1'
+            report "fn_physical_chip_index: logical chip is not present"
+            severity failure;
+
+        for i in present_mask'low to present_mask'high loop
+            if present_mask(i) = '1' then
+                if i = logical_chip then
+                    return rank;
+                end if;
+                rank := rank + 1;
+            end if;
+        end loop;
+        return 0;
     end function;
 
     -- Return a one-hot mask containing the lowest-index asserted bit.
@@ -1072,7 +1119,7 @@ package body tdc_gpx_pkg is
         variable v : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0);
         variable i : natural := 0;
     begin
-        v(i + c_N_CHIPS - 1 downto i) := cfg.active_chip_mask;    i := i + c_N_CHIPS;
+        v(i + c_MAX_CHIPS - 1 downto i) := cfg.active_chip_mask;    i := i + c_MAX_CHIPS;
         v(i)                          := cfg.packet_scope;        i := i + 1;
         v(i + 1 downto i)             := std_logic_vector(cfg.hit_store_mode);    i := i + 2;
         v(i + 2 downto i)             := std_logic_vector(cfg.dist_scale);        i := i + 3;
@@ -1099,7 +1146,7 @@ package body tdc_gpx_pkg is
         variable cfg : t_tdc_cfg := c_TDC_CFG_INIT;
         variable i   : natural := 0;
     begin
-        cfg.active_chip_mask := v(i + c_N_CHIPS - 1 downto i);    i := i + c_N_CHIPS;
+        cfg.active_chip_mask := v(i + c_MAX_CHIPS - 1 downto i);    i := i + c_MAX_CHIPS;
         cfg.packet_scope     := v(i);                             i := i + 1;
         cfg.hit_store_mode   := unsigned(v(i + 1 downto i));      i := i + 2;
         cfg.dist_scale       := unsigned(v(i + 2 downto i));      i := i + 3;

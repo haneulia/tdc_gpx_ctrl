@@ -124,14 +124,14 @@ entity tdc_gpx_csr_chip is
         i_cmd_reg_rdata_1   : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
         i_cmd_reg_rdata_2   : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
         i_cmd_reg_rdata_3   : in  std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-        i_cmd_reg_rvalid    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip valid
+        i_cmd_reg_rvalid    : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip valid
 
         -- All-done feedback from cmd_arb (i_axis_aclk domain)
         i_cmd_reg_done_pulse : in  std_logic;  -- 1-clk: all target chips completed
         i_cmd_reg_addr_done  : in  std_logic_vector(3 downto 0);  -- addr that was accessed
 
         -- Chip mask output from CTL1 CDC (i_axis_aclk domain)
-        o_cmd_reg_chip_address : out std_logic_vector(c_N_CHIPS - 1 downto 0);  -- CTL1[19:16]
+        o_cmd_reg_chip_address : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- CTL1[19:16]
 
         -- CDC idle output (to csr_pipeline, s_axi_aclk domain)
         o_cdc_idle          : out std_logic;
@@ -286,10 +286,10 @@ architecture rtl of tdc_gpx_csr_chip is
     type t_cdc_data_array is array(natural range <>) of std_logic_vector(31 downto 0);
 
     -- Per-chip STAT registers (i_axis_aclk domain)
-    type t_stat_array is array(0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
+    type t_stat_array is array(0 to c_MAX_CHIPS - 1) of std_logic_vector(31 downto 0);
 
     -- Per-chip STAT CDC output (s_axi_aclk domain)
-    type t_stat_cdc_array is array(0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
+    type t_stat_cdc_array is array(0 to c_MAX_CHIPS - 1) of std_logic_vector(31 downto 0);
 
     -- =========================================================================
     -- CTL raw outputs from SRM (s_axi_aclk domain)
@@ -743,7 +743,7 @@ begin
     --   Generate 4 xpm_cdc_handshake instances, one per chip.
     --   Each transfers s_reg_stat_r(i) to s_stat_out(i).
     -- =========================================================================
-    gen_stat_cdc : for i in 0 to c_N_CHIPS - 1 generate
+    gen_stat_cdc : for i in 0 to c_MAX_CHIPS - 1 generate
         signal s_src_send_stat : std_logic := '0';
         signal s_src_rcv_stat  : std_logic;
         signal s_dest_req_stat : std_logic;
@@ -881,7 +881,7 @@ begin
     o_cmd_reg_chip_address <=
         s_ctl1_out(c_BT_REG_CHIP_ADDR_HI downto c_BT_REG_CHIP_ADDR_LO)
         when s_ctl1_out(c_BT_REG_CHIP_ADDR_HI downto c_BT_REG_CHIP_ADDR_LO) /= "0000"
-        else std_logic_vector(shift_left(to_unsigned(1, c_N_CHIPS),
+        else std_logic_vector(shift_left(to_unsigned(1, c_MAX_CHIPS),
              to_integer(unsigned(s_ctl1_out(c_BT_REG_CHIP_HI downto c_BT_REG_CHIP_LO)))));
 
     -- =========================================================================

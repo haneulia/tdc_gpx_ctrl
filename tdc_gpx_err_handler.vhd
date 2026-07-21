@@ -45,9 +45,9 @@ entity tdc_gpx_err_handler is
         i_clk               : in  std_logic;
         i_rst_n             : in  std_logic;
         -- ErrFlag (bus_phy synchronized, per-chip)
-        i_errflag_sync      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_errflag_sync      : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Chip status
-        i_chip_busy         : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
+        i_chip_busy         : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Reg read results (from csr_chip STAT, per-chip).
         --
         -- NAMING DEBT (Round 5 #23): the port prefix "reg11" is historical;
@@ -61,7 +61,7 @@ entity tdc_gpx_err_handler is
         i_reg11_data_2      : in  std_logic_vector(31 downto 0);  -- chip status (Reg12)
         i_reg11_data_3      : in  std_logic_vector(31 downto 0);  -- chip status (Reg12)
         i_cmd_reg_done_pulse: in  std_logic;
-        i_cmd_reg_rvalid    : in  std_logic_vector(c_N_CHIPS - 1 downto 0);  -- per-chip read valid
+        i_cmd_reg_rvalid    : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip read valid
         i_reg_outstanding   : in  std_logic;   -- cmd_arb has active reg access
         -- Frame done (from output_stage, for VDMA frame boundary)
         i_frame_done        : in  std_logic;
@@ -72,15 +72,15 @@ entity tdc_gpx_err_handler is
         -- Tie to '0' if no SW clear path is needed.
         i_soft_clear        : in  std_logic := '0';
         -- Command outputs (OR'd in config_ctrl)
-        o_cmd_soft_reset    : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_cmd_soft_reset    : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_cmd_reg_read      : out std_logic;
         o_cmd_reg_addr      : out std_logic_vector(3 downto 0);
-        o_cmd_reg_chip_addr : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_cmd_reg_chip_addr : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Error-fill (per-chip, '1' = hit data replaced with 0x1FFFF)
-        o_err_fill          : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_fill          : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Status
         o_err_active        : out std_logic;
-        o_err_chip_mask     : out std_logic_vector(c_N_CHIPS - 1 downto 0);
+        o_err_chip_mask     : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         o_err_cause         : out std_logic_vector(2 downto 0);
         o_err_fatal         : out std_logic;
         -- Sticky: ST_WAIT_READ watchdog expired (Round 5 #13 — was internal)
@@ -116,24 +116,24 @@ architecture rtl of tdc_gpx_err_handler is
     -- Per-chip debounce counters (width derived from generic)
     -- =========================================================================
     constant C_DEB_WIDTH : natural := maximum(1, integer(ceil(log2(real(g_DEBOUNCE_CLKS)))));
-    type t_debounce_arr is array (0 to c_N_CHIPS - 1) of unsigned(C_DEB_WIDTH - 1 downto 0);
+    type t_debounce_arr is array (0 to c_MAX_CHIPS - 1) of unsigned(C_DEB_WIDTH - 1 downto 0);
     signal s_debounce_cnt_r : t_debounce_arr := (others => (others => '0'));
 
     -- =========================================================================
     -- Latched error state
     -- =========================================================================
-    signal s_err_chip_mask_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
-    signal s_err_fill_r      : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_chip_mask_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    signal s_err_fill_r      : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_err_cause_r     : std_logic_vector(2 downto 0)             := (others => '0');
     signal s_err_fatal_r     : std_logic                                := '0';
 
     -- =========================================================================
     -- Command registers (1-clk pulses)
     -- =========================================================================
-    signal s_cmd_soft_reset_r  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_cmd_soft_reset_r  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal s_cmd_reg_read_r    : std_logic                                := '0';
     signal s_cmd_reg_addr_r    : std_logic_vector(3 downto 0)             := (others => '0');
-    signal s_cmd_reg_chip_addr_r : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_cmd_reg_chip_addr_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
     -- =========================================================================
     -- Recovery timeout & retry
@@ -176,7 +176,7 @@ architecture rtl of tdc_gpx_err_handler is
     -- =========================================================================
     -- Reg11 data selection helper
     -- =========================================================================
-    type t_reg12_arr is array (0 to c_N_CHIPS - 1) of std_logic_vector(31 downto 0);
+    type t_reg12_arr is array (0 to c_MAX_CHIPS - 1) of std_logic_vector(31 downto 0);
     signal s_reg12_data : t_reg12_arr;
 
 begin
@@ -232,7 +232,7 @@ begin
 
                         -- After fatal, block auto-recovery. SW must system reset.
                         if s_err_fatal_r = '0' then
-                            for i in 0 to c_N_CHIPS - 1 loop
+                            for i in 0 to c_MAX_CHIPS - 1 loop
                                 if i_errflag_sync(i) = '1' then
                                     if s_debounce_cnt_r(i) = to_unsigned(g_DEBOUNCE_CLKS - 1, C_DEB_WIDTH) then
                                         s_err_chip_mask_r(i) <= '1';
@@ -292,7 +292,7 @@ begin
                     -- ---------------------------------------------------------
                     when ST_WAIT_READ =>
                         if i_cmd_reg_done_pulse = '1' then
-                            for i in 0 to c_N_CHIPS - 1 loop
+                            for i in 0 to c_MAX_CHIPS - 1 loop
                                 if s_err_chip_mask_r(i) = '1' and i_cmd_reg_rvalid(i) = '1' then
                                     -- Only classify if read data is actually valid.
                                     -- If reg timeout occurred, rvalid stays '0' and
