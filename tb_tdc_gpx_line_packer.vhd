@@ -72,7 +72,7 @@ begin
 
     u_dut : entity work.tdc_gpx_line_packer
         generic map (
-            g_TDATA_WIDTH => G_WIDTH
+            g_OUTPUT_WIDTH => G_WIDTH
         )
         port map (
             i_clk           => clk,

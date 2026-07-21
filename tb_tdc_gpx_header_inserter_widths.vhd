@@ -90,7 +90,7 @@ begin
     clk <= not clk after C_CLK_PERIOD / 2;
 
     u_hdr32 : entity work.tdc_gpx_header_inserter
-        generic map (g_TDATA_WIDTH => 32)
+        generic map (g_OUTPUT_WIDTH => 32)
         port map (
             i_clk => clk,
             i_rst_n => rst_n,
@@ -129,7 +129,7 @@ begin
         );
 
     u_hdr64 : entity work.tdc_gpx_header_inserter
-        generic map (g_TDATA_WIDTH => 64)
+        generic map (g_OUTPUT_WIDTH => 64)
         port map (
             i_clk => clk,
             i_rst_n => rst_n,
@@ -168,7 +168,7 @@ begin
         );
 
     u_hdr128 : entity work.tdc_gpx_header_inserter
-        generic map (g_TDATA_WIDTH => 128)
+        generic map (g_OUTPUT_WIDTH => 128)
         port map (
             i_clk => clk,
             i_rst_n => rst_n,

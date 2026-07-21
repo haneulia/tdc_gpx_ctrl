@@ -88,7 +88,7 @@
 --   tuser[15:11] = shot_seq[4:0]
 --
 -- AXI-Stream master output (to face_assembler):
---   tdata         = g_TDATA_WIDTH bits (32, 64, or 128)
+--   tdata         = g_OUTPUT_WIDTH bits (32, 64, or 128)
 --   tlast         = last beat of chip slice
 --
 -- Beat layout (compile-time MAX=7, runtime truncated by max_hits_cfg):
@@ -96,7 +96,7 @@
 --   Beat META_BEAT_IDX:        metadata (hit_valid, slope_vec, hit_count,
 --                               flags, hit_msb_vec)
 --   Remaining beats:           padding (zeros)
---   Runtime beats/cell: fn_beats_per_cell_rt(max_hits_cfg, g_TDATA_WIDTH)
+--   Runtime beats/cell: fn_beats_per_cell_rt(max_hits_cfg, g_OUTPUT_WIDTH)
 --   Examples @64b: max_hits=7->3, max_hits=3->2, max_hits=1->2
 --
 -- Signal ownership (no multi-driver):
@@ -125,7 +125,7 @@ use work.tdc_gpx_pkg.all;
 entity tdc_gpx_cell_builder is
     generic (
         g_CHIP_ID                : natural range 0 to 3 := 0;
-        g_TDATA_WIDTH            : natural := c_TDATA_WIDTH;  -- 32, 64, or 128
+        g_OUTPUT_WIDTH           : natural := c_DEFAULT_OUTPUT_WIDTH;
         -- Compile-time builder role. cell_pipe instantiates separate rising
         -- and falling builders, so slope is not stored per hit.
         g_SLOPE_VALUE            : std_logic := '1';
@@ -175,7 +175,7 @@ entity tdc_gpx_cell_builder is
         i_max_range_axis_clks : in unsigned(15 downto 0);
 
         -- AXI-Stream master (chip slice output)
-        o_m_axis_tdata      : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tdata      : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         o_m_axis_tvalid     : out std_logic;
         o_m_axis_tlast      : out std_logic;
         -- Round 13 follow-up P1 (audit 4번): tuser(0) carries the slice
@@ -483,10 +483,10 @@ architecture rtl of tdc_gpx_cell_builder is
     signal s_last_stop_r : unsigned(2 downto 0) := (others => '0');
 
     -- Generic-derived beat layout constants (compile-time, MAX=7)
-    constant c_G_SLOTS_PER_BEAT  : natural := fn_slots_per_beat(g_TDATA_WIDTH);
-    constant c_G_HIT_DATA_BEATS  : natural := fn_hit_data_beats(g_TDATA_WIDTH);
-    constant c_G_META_BEAT_IDX   : natural := fn_meta_beat_idx(g_TDATA_WIDTH);
-    constant c_G_BEATS_PER_CELL  : natural := fn_beats_per_cell(g_TDATA_WIDTH);
+    constant c_G_SLOTS_PER_BEAT  : natural := fn_slots_per_beat(g_OUTPUT_WIDTH);
+    constant c_G_HIT_DATA_BEATS  : natural := fn_hit_data_beats(g_OUTPUT_WIDTH);
+    constant c_G_META_BEAT_IDX   : natural := fn_meta_beat_idx(g_OUTPUT_WIDTH);
+    constant c_G_BEATS_PER_CELL  : natural := fn_beats_per_cell(g_OUTPUT_WIDTH);
 
     -- Runtime beats/cell: latched from the read buffer's max_hits snapshot.
     -- fn_cell_beat still uses compile-time constants for slot packing;
@@ -497,7 +497,7 @@ architecture rtl of tdc_gpx_cell_builder is
     -- count signal used by the output serializer.
 
     -- Registered outputs
-    signal s_tdata_r     : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_tdata_r     : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0) := (others => '0');
     signal s_tvalid_r    : std_logic := '0';
     signal s_tlast_r     : std_logic := '0';
     signal s_hit_dropped_r   : std_logic := '0';
@@ -542,7 +542,7 @@ architecture rtl of tdc_gpx_cell_builder is
 
     -- =========================================================================
     -- Cell-to-beat mux (combinational, used inside p_output)
-    -- Auto-calculated from c_MAX_HITS_PER_STOP / g_TDATA_WIDTH.
+    -- Auto-calculated from c_MAX_HITS_PER_STOP / g_OUTPUT_WIDTH.
     --
     -- 32-bit mode (8 beats/cell):
     --   Beat 0-3: hit_slot pairs (2 slots/beat)
@@ -586,7 +586,7 @@ architecture rtl of tdc_gpx_cell_builder is
         beat_idx      : unsigned(2 downto 0);
         last_beat_idx : unsigned(2 downto 0)
     ) return std_logic_vector is
-        variable v_result   : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        variable v_result   : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         variable v_beat     : natural range 0 to 7;
         variable v_slot_idx : natural;
         variable v_lo       : natural;
@@ -678,14 +678,13 @@ begin
         end if;
     end process p_abort_local;
 
-    assert fn_output_width_supported(g_TDATA_WIDTH)
-        report "tdc_gpx_cell_builder: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+    assert fn_output_width_supported(g_OUTPUT_WIDTH)
+        report "tdc_gpx_cell_builder: g_OUTPUT_WIDTH must be 32, 64, or 128"
         severity failure;
 
     -- Round 9 #8: effective max_hits_cfg (000 aliased to 7 so collect and
     -- output paths agree on the slot count).
-    s_cfg_max_hits_eff_u <= "0111" when i_max_hits_cfg = "000"
-                            else ('0' & i_max_hits_cfg);
+    s_cfg_max_hits_eff_u <= to_unsigned(fn_effective_max_hits(i_max_hits_cfg), 4);
 
     -- AXI-Stream slave: accept during collect, drop, quarantine, or during
     -- the Round 12 B6 post-escape absorb window. QUARANTINE continues to
@@ -1267,15 +1266,11 @@ begin
                                     s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
                                 end if;
                                 -- Runtime beats/cell lookup (elaboration-safe)
-                                case s_buf_max_hits_r(v_rd)(2 downto 0) is
-                                    when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
-                                    when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
-                                    when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
-                                    when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
-                                    when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
-                                    when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
-                                    when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
-                                end case;
+                                s_rt_last_beat_r <= to_unsigned(
+                                    fn_beats_per_cell_rt(
+                                        fn_effective_max_hits(s_buf_max_hits_r(v_rd)(2 downto 0)),
+                                        g_OUTPUT_WIDTH) - 1,
+                                    3);
                                 s_ostate_r       <= ST_O_LOAD;
                             end if;
 

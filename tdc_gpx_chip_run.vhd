@@ -64,8 +64,8 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_chip_run is
     generic (
         g_BUS_DATA_WIDTH    : natural  := c_TDC_BUS_WIDTH;
-        g_RECOVERY_CLKS     : positive := 8;
-        g_ALU_PULSE_CLKS    : positive := 4;
+        g_RECOVERY_CLKS     : positive := c_DEFAULT_RECOVERY_CLKS;
+        g_ALU_PULSE_CLKS    : positive := c_DEFAULT_ALU_PULSE_CLKS;
         -- Drain/flush watchdog headroom above max_range_tdc_clks.
         -- The cap used by the shared registered wait-timeout detector is computed at
         -- shot_start as (i_max_range_tdc_clks + g_DRAIN_MARGIN_CLKS), saturating

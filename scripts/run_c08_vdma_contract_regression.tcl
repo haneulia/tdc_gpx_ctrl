@@ -11,21 +11,27 @@ if {[package vcompare $running_vivado $required_vivado] < 0} {
 
 set prj_dir "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl"
 set hdl_dir "$prj_dir/HDL"
-set packer "$hdl_dir/tdc_gpx_line_packer.vhd"
-set c08_sources [list \
-    $packer \
+set c08_rtl_sources [list \
+    "$hdl_dir/tdc_gpx_atomic_snapshot_cdc.vhd" \
+    "$hdl_dir/tdc_gpx_sync_fifo.vhd" \
+    "$hdl_dir/tdc_gpx_reg_rsp_cdc.vhd" \
+    "$hdl_dir/tdc_gpx_line_packer.vhd"]
+set c08_tb_sources [list \
+    "$hdl_dir/tb_tdc_gpx_top_int_c07_4chip_target.vhd" \
     "$hdl_dir/tb_tdc_gpx_top_int_c08_vdma_widths.vhd" \
     "$hdl_dir/tb_tdc_gpx_top_int_c08_dual_edge_shared.vhd"]
 
 open_project "$prj_dir/tdc_gpx_ctrl.xpr"
 
-if {[llength [get_files -quiet $packer]] == 0} {
-    puts "C08: adding tdc_gpx_line_packer.vhd to sources_1"
-    add_files -norecurse -fileset sources_1 $packer
+foreach rtl $c08_rtl_sources {
+    if {[llength [get_files -quiet $rtl]] == 0} {
+        puts "C08: adding [file tail $rtl] to sources_1"
+        add_files -norecurse -fileset sources_1 $rtl
+    }
+    set_property file_type {VHDL 2008} [get_files $rtl]
 }
-set_property file_type {VHDL 2008} [get_files $packer]
 
-foreach tb [lrange $c08_sources 1 end] {
+foreach tb $c08_tb_sources {
     if {[llength [get_files -quiet $tb]] == 0} {
         puts "C08: adding [file tail $tb] to sim_1"
         add_files -norecurse -fileset sim_1 $tb

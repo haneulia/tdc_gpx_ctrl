@@ -86,7 +86,7 @@ use work.tdc_gpx_cfg_pkg.all;
 entity tdc_gpx_bus_phy is
     generic (
         g_BUS_DATA_WIDTH             : natural  := c_TDC_BUS_WIDTH;      -- 28
-        g_OEN_MODE                   : string   := "DYNAMIC_CONNECTED";
+        g_OEN_MODE                   : string   := c_DEFAULT_OEN_MODE;
         g_BUS_READ_PERIOD_MIN_CLKS   : positive := c_BUS_READ_PERIOD_MIN_CLKS
     );
     port (

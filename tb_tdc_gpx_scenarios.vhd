@@ -145,7 +145,7 @@ begin
     u_cell_builder : entity work.tdc_gpx_cell_builder
         generic map (
             g_CHIP_ID     => 0,
-            g_TDATA_WIDTH => 32
+            g_OUTPUT_WIDTH => 32
         )
         port map (
             i_clk             => clk,

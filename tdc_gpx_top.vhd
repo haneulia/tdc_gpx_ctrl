@@ -41,30 +41,29 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_top is
     generic (
-        g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
-        g_OUTPUT_WIDTH    : natural := 32;     -- output AXI-Stream tdata width (32, 64, or 128)
+        g_HW_VERSION      : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
+        g_OUTPUT_WIDTH    : natural := c_DEFAULT_OUTPUT_WIDTH;
         -- Compile-time board topology; no extra CSR is required.
         -- DEDICATED_2X2: chip0/1 rise, chip2/3 fall.
         -- SHARED_DUAL_EDGE: every active chip participates in both lanes.
-        g_SLOPE_CHIP_MODE : string := "DEDICATED_2X2";
+        g_SLOPE_CHIP_MODE : string := c_DEFAULT_SLOPE_CHIP_MODE;
         -- Signal-processing clock contract. Supported values are
         -- 50/100/125/150/200 MHz. AXIS must not be faster than TDC; therefore
         -- end-to-end processing margin and throughput closure use AXIS timing.
         -- Domain-local watchdogs still use counts converted for their clock.
         -- These values must match the real clocks and XDC constraints.
-        g_AXIS_CLK_MHZ    : positive := 150;
-        g_TDC_CLK_MHZ     : positive := 200;
-        g_POWERUP_CLKS    : positive := 48;
-        g_RECOVERY_CLKS   : positive := 8;
-        g_ALU_PULSE_CLKS  : positive := 4;
-        g_OEN_MODE        : string   := "DYNAMIC_CONNECTED";
+        g_AXIS_CLK_MHZ    : positive := c_DEFAULT_AXIS_CLK_MHZ;
+        g_TDC_CLK_MHZ     : positive := c_DEFAULT_TDC_CLK_MHZ;
+        g_POWERUP_CLKS    : positive := c_DEFAULT_POWERUP_CLKS;
+        g_RECOVERY_CLKS   : positive := c_DEFAULT_RECOVERY_CLKS;
+        g_ALU_PULSE_CLKS  : positive := c_DEFAULT_ALU_PULSE_CLKS;
+        g_OEN_MODE        : string   := c_DEFAULT_OEN_MODE;
         g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
-        g_STREAM_CLK_MODE : string   := "ASYNC";
+        g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE;
         -- Stop event AXI-Stream interface parameters
-        g_STOP_CNT_WIDTH  : natural := c_STOP_CNT_WIDTH;
-        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
-        g_STOP_EVT_TUSER_WIDTH : natural := c_STOP_EVT_TUSER_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH
+        g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
+        g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH
     );
     port (
         -- Processing / AXI-Stream clock and reset (g_AXIS_CLK_MHZ)
@@ -212,22 +211,6 @@ architecture rtl of tdc_gpx_top is
     begin
         v_slots := fn_count_ones(chip_mask) * to_integer(stops);
         return to_unsigned(v_slots, 16);
-    end function;
-
-    function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural is
-    begin
-        case cfg is
-            when "001" => return 1;
-            when "010" => return 2;
-            when "011" => return 3;
-            when "100" => return 4;
-            when "101" => return 5;
-            when "110" => return 6;
-            -- 000 is the defined alias for 7. Treat startup X/U the same
-            -- way so combinational geometry has a conservative value before
-            -- the first registered Face snapshot settles.
-            when others => return c_MAX_HITS_PER_STOP;
-        end case;
     end function;
 
     function fn_lane_hsize(
@@ -641,7 +624,6 @@ begin
     -- =========================================================================
     u_config_ctrl : entity work.tdc_gpx_config_ctrl
         generic map (
-            g_HW_VERSION      => g_HW_VERSION,
             g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
             g_TDC_CLK_MHZ     => g_TDC_CLK_MHZ,
             g_POWERUP_CLKS    => g_POWERUP_CLKS,
@@ -901,8 +883,7 @@ begin
     -- =========================================================================
     u_output_stage : entity work.tdc_gpx_output_stage
         generic map (
-            g_OUTPUT_WIDTH   => g_OUTPUT_WIDTH,
-            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
         )
         port map (
             i_clk                => i_axis_aclk,

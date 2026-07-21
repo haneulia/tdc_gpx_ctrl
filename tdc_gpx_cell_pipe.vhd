@@ -18,8 +18,8 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_cell_pipe is
     generic (
-        g_OUTPUT_WIDTH : natural := 32;  -- 32, 64, or 128
-        g_AXIS_CLK_MHZ : positive := 150;
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
+        g_AXIS_CLK_MHZ : positive := c_DEFAULT_AXIS_CLK_MHZ;
         -- Compile-time physical edge topology. The default preserves the
         -- direct-instantiation legacy behavior used by cell-pipe unit tests.
         -- Top-level integration passes its board topology explicitly.
@@ -431,9 +431,9 @@ begin
         gen_rise_builder : if c_STATIC_RISE_MASK(i) = '1' generate
             u_cell_bld_rise : entity work.tdc_gpx_cell_builder
                 generic map (
-                    g_CHIP_ID     => i,
-                    g_TDATA_WIDTH => g_OUTPUT_WIDTH,
-                    g_SLOPE_VALUE => '1'
+                    g_CHIP_ID      => i,
+                    g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
+                    g_SLOPE_VALUE  => '1'
                 )
                 port map (
                     i_clk               => i_clk,
@@ -477,9 +477,9 @@ begin
         gen_fall_builder : if c_STATIC_FALL_MASK(i) = '1' generate
             u_cell_bld_fall : entity work.tdc_gpx_cell_builder
                 generic map (
-                    g_CHIP_ID     => i,
-                    g_TDATA_WIDTH => g_OUTPUT_WIDTH,
-                    g_SLOPE_VALUE => '0'
+                    g_CHIP_ID      => i,
+                    g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
+                    g_SLOPE_VALUE  => '0'
                 )
                 port map (
                     i_clk               => i_clk,

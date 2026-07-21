@@ -64,8 +64,8 @@ use xpm.vcomponents.all;
 
 entity tdc_gpx_csr_pipeline is
     generic (
-        g_HW_VERSION   : std_logic_vector(31 downto 0) := x"00010000";
-        g_OUTPUT_WIDTH : natural := 32    -- 32, 64, or 128 (for HW_CONFIG TDATA width report)
+        g_HW_VERSION   : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
     );
     port (
         -- AXI4-Lite clock / reset

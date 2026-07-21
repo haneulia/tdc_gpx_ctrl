@@ -21,8 +21,8 @@ architecture sim of tb_tdc_gpx_stop_cfg_decode is
     signal s_rst_n : std_logic := '0';
 
     signal s_stop_evt_tvalid : std_logic := '0';
-    signal s_stop_evt_tdata  : std_logic_vector(c_STOP_EVT_DATA_WIDTH - 1 downto 0) := (others => '0');
-    signal s_stop_evt_tuser  : std_logic_vector(c_STOP_EVT_DATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_stop_evt_tdata  : std_logic_vector(c_DEFAULT_STOP_EVT_DWIDTH - 1 downto 0) := (others => '0');
+    signal s_stop_evt_tuser  : std_logic_vector(c_DEFAULT_STOP_EVT_TUSER_WIDTH - 1 downto 0) := (others => '0');
     signal s_stop_evt_tready : std_logic;
 
     signal s_fire_count_tvalid : std_logic := '0';
@@ -59,7 +59,7 @@ begin
 
     u_dut : entity work.tdc_gpx_stop_cfg_decode
         generic map (
-            g_STOP_EVT_DWIDTH   => c_STOP_EVT_DATA_WIDTH,
+            g_STOP_EVT_DWIDTH   => c_DEFAULT_STOP_EVT_DWIDTH,
             g_FIRE_COUNT_DWIDTH => 32,
             g_WINDOW_MARGIN_CLKS => 1
         )

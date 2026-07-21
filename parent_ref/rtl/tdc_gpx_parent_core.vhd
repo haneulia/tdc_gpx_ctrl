@@ -77,14 +77,14 @@ entity tdc_gpx_parent_core is
         i_stop_tdc   : in std_logic;
 
         i_stop_evt_valid : in  std_logic;
-        i_stop_evt_data  : in  std_logic_vector(c_STOP_EVT_DATA_WIDTH - 1 downto 0);
-        i_stop_evt_keep  : in  std_logic_vector(c_STOP_EVT_DATA_WIDTH/8 - 1 downto 0);
-        i_stop_evt_user  : in  std_logic_vector(c_STOP_EVT_TUSER_WIDTH - 1 downto 0);
+        i_stop_evt_data  : in  std_logic_vector(c_DEFAULT_STOP_EVT_DWIDTH - 1 downto 0);
+        i_stop_evt_keep  : in  std_logic_vector(c_DEFAULT_STOP_EVT_DWIDTH/8 - 1 downto 0);
+        i_stop_evt_user  : in  std_logic_vector(c_DEFAULT_STOP_EVT_TUSER_WIDTH - 1 downto 0);
         o_stop_evt_ready : out std_logic;
 
         i_fire_count_valid : in std_logic;
-        i_fire_count_data  : in std_logic_vector(c_FIRE_COUNT_DATA_WIDTH - 1 downto 0);
-        i_fire_count_keep  : in std_logic_vector(c_FIRE_COUNT_DATA_WIDTH/8 - 1 downto 0);
+        i_fire_count_data  : in std_logic_vector(c_DEFAULT_FIRE_COUNT_DWIDTH - 1 downto 0);
+        i_fire_count_keep  : in std_logic_vector(c_DEFAULT_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
         i_fire_count_last  : in std_logic;
 
         io_tdc0_d : inout std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);

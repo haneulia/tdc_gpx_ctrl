@@ -47,7 +47,7 @@ architecture sim of tb_tdc_gpx_mask_sweep is
     constant C_STOPS        : natural := 2;
     constant C_MAX_HITS     : natural := 1;
     constant C_G_WIDTH      : natural := 32;
-    -- beats_per_cell for g_TDATA_WIDTH=32, max_hits=1 → 2
+    -- beats_per_cell for g_OUTPUT_WIDTH=32, max_hits=1 -> 2
     constant C_BEATS_PER_CELL : natural := fn_beats_per_cell_rt(C_MAX_HITS, C_G_WIDTH);
 
     signal clk   : std_logic := '0';
@@ -232,8 +232,7 @@ begin
     -- ====================================================================
     u_face_asm : entity work.tdc_gpx_face_assembler
         generic map (
-            g_ALU_PULSE_CLKS => 4,
-            g_TDATA_WIDTH    => C_G_WIDTH
+            g_OUTPUT_WIDTH => C_G_WIDTH
         )
         port map (
             i_clk                 => clk,

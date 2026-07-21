@@ -61,18 +61,17 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_config_ctrl is
     generic (
-        g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
-        g_AXIS_CLK_MHZ    : positive := 150;
-        g_TDC_CLK_MHZ     : positive := 200;
-        g_POWERUP_CLKS    : positive := 48;
-        g_RECOVERY_CLKS   : positive := 8;
-        g_ALU_PULSE_CLKS  : positive := 4;
-        g_OEN_MODE        : string   := "DYNAMIC_CONNECTED";
+        g_AXIS_CLK_MHZ    : positive := c_DEFAULT_AXIS_CLK_MHZ;
+        g_TDC_CLK_MHZ     : positive := c_DEFAULT_TDC_CLK_MHZ;
+        g_POWERUP_CLKS    : positive := c_DEFAULT_POWERUP_CLKS;
+        g_RECOVERY_CLKS   : positive := c_DEFAULT_RECOVERY_CLKS;
+        g_ALU_PULSE_CLKS  : positive := c_DEFAULT_ALU_PULSE_CLKS;
+        g_OEN_MODE        : string   := c_DEFAULT_OEN_MODE;
         g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
-        g_STREAM_CLK_MODE : string   := "ASYNC"; -- "ASYNC" uses raw_cdc, "SYNC" bypasses it
-        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
-        g_STOP_EVT_TUSER_WIDTH : natural := c_STOP_EVT_TUSER_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH
+        g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE;
+        g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
+        g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH
     );
     port (
         -- Clock / Reset: processing domain (g_AXIS_CLK_MHZ)

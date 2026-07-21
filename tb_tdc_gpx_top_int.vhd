@@ -181,7 +181,7 @@ architecture sim of tb_tdc_gpx_top_int is
     -- TDC sub-module generic override values
     constant C_OUTPUT_W     : natural := G_TDATA_WIDTH;
     constant C_KEEP_W       : natural := fn_axis_keep_width(C_OUTPUT_W);
-    constant C_STOP_DW      : natural := c_STOP_EVT_DATA_WIDTH;  -- 32 from pkg
+    constant C_STOP_DW      : natural := c_DEFAULT_STOP_EVT_DWIDTH;
 
     -- Chip model fixed
     constant C_FIFO_DEPTH   : natural := 32;
@@ -774,7 +774,6 @@ begin
             g_RECOVERY_CLKS  => G_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS => G_ALU_PULSE_CLKS,
             g_STREAM_CLK_MODE => G_STREAM_CLK_MODE,
-            g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW
         )
         port map (

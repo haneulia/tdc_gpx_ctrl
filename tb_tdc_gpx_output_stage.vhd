@@ -10,7 +10,6 @@
 --
 -- Configuration:
 --   G_OUTPUT_WIDTH   = 64 default, run also with 32 and 128 for Phase A
---   g_ALU_PULSE_CLKS = 4
 --   1 active chip (mask "0001"), 2 stops, 2 rows
 --
 -- Standard: VHDL-2008
@@ -36,7 +35,6 @@ architecture sim of tb_tdc_gpx_output_stage is
     -- Constants
     -- =========================================================================
     constant C_OUTPUT_WIDTH   : natural := G_OUTPUT_WIDTH;
-    constant C_ALU_PULSE_CLKS : natural := 4;
     constant C_CLK_PERIOD     : time    := 5 ns;   -- 200 MHz
     constant C_WATCHDOG       : time    := 50 us;
     constant C_KEEP_WIDTH     : natural := fn_axis_keep_width(C_OUTPUT_WIDTH);
@@ -203,8 +201,7 @@ begin
     -- =========================================================================
     u_dut : entity work.tdc_gpx_output_stage
         generic map (
-            g_OUTPUT_WIDTH   => C_OUTPUT_WIDTH,
-            g_ALU_PULSE_CLKS => C_ALU_PULSE_CLKS
+            g_OUTPUT_WIDTH => C_OUTPUT_WIDTH
         )
         port map (
             i_clk                  => clk,

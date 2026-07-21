@@ -77,7 +77,7 @@ begin
     u_dut : entity work.tdc_gpx_cell_builder
         generic map (
             g_CHIP_ID                => 0,
-            g_TDATA_WIDTH            => G_TDATA_WIDTH,
+            g_OUTPUT_WIDTH           => G_TDATA_WIDTH,
             g_QUARANTINE_MARGIN_CLKS => 8,
             g_IFIFO2_MARGIN_CLKS     => 8
         )

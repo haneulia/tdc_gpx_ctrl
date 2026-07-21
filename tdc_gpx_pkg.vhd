@@ -40,7 +40,25 @@ package tdc_gpx_pkg is
     function fn_ceil_div(a : natural; b : positive) return natural;
 
     -- =========================================================================
-    -- Design constants (defaults — entity generics override where needed)
+    -- Build defaults
+    --
+    -- These constants are defaults only.  The effective value for an instance
+    -- is owned by the matching tdc_gpx_top generic and is propagated down the
+    -- hierarchy explicitly.
+    -- =========================================================================
+    constant c_DEFAULT_HW_VERSION       : std_logic_vector(31 downto 0) := x"00010000";
+    constant c_DEFAULT_OUTPUT_WIDTH     : natural := 32;
+    constant c_DEFAULT_SLOPE_CHIP_MODE  : string := "DEDICATED_2X2";
+    constant c_DEFAULT_AXIS_CLK_MHZ     : positive := 150;
+    constant c_DEFAULT_TDC_CLK_MHZ      : positive := 200;
+    constant c_DEFAULT_POWERUP_CLKS     : positive := 48;
+    constant c_DEFAULT_RECOVERY_CLKS    : positive := 8;
+    constant c_DEFAULT_ALU_PULSE_CLKS   : positive := 4;
+    constant c_DEFAULT_OEN_MODE         : string := "DYNAMIC_CONNECTED";
+    constant c_DEFAULT_STREAM_CLK_MODE  : string := "ASYNC";
+
+    -- =========================================================================
+    -- Fixed protocol/cell-format capacities
     -- =========================================================================
     constant c_N_CHIPS              : natural := 4;
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
@@ -48,21 +66,20 @@ package tdc_gpx_pkg is
     -- Cell hit slots carry the lower 16 bits of each GPX raw hit. The 17th
     -- raw hit bit is preserved separately in the cell metadata beat as
     -- hit_msb_vec[6:0], so output beat count still scales only by
-    -- g_TDATA_WIDTH and max_hits_cfg.
+    -- g_OUTPUT_WIDTH and max_hits_cfg.
     constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;
-    constant c_TDATA_WIDTH          : natural := 32;    -- default, overridden by g_TDATA_WIDTH
-    constant c_TDATA_BYTES          : natural := c_TDATA_WIDTH / 8;
+    constant c_DEFAULT_OUTPUT_BYTES : natural := c_DEFAULT_OUTPUT_WIDTH / 8;
     constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
 
     -- Derived cell layout constants (auto-calculated from MAX_HITS / TDATA_WIDTH)
-    -- These use c_TDATA_WIDTH=32 defaults. Modules with g_TDATA_WIDTH generic
+    -- These use c_DEFAULT_OUTPUT_WIDTH=32 defaults. Modules with g_OUTPUT_WIDTH generic
     -- should use fn_slots_per_beat/fn_beats_per_cell instead.
-    constant c_SLOTS_PER_BEAT       : natural := c_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH;  -- 2
+    constant c_SLOTS_PER_BEAT       : natural := c_DEFAULT_OUTPUT_WIDTH / c_HIT_SLOT_DATA_WIDTH;  -- 2
     constant c_HIT_DATA_BEATS       : natural := fn_ceil_div(c_MAX_HITS_PER_STOP,
                                                               c_SLOTS_PER_BEAT);          -- 4
     constant c_META_BEAT_IDX        : natural := c_HIT_DATA_BEATS;                        -- 4
 
-    -- Generic-width helper functions (for modules with g_TDATA_WIDTH)
+    -- Generic-width helper functions (for modules with g_OUTPUT_WIDTH)
     function fn_output_width_supported(tdata_width : natural) return boolean;
     function fn_slots_per_beat(tdata_width : natural) return natural;
     function fn_hit_data_beats(tdata_width : natural) return natural;
@@ -84,6 +101,7 @@ package tdc_gpx_pkg is
     ) return unsigned;
 
     -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
+    function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural;
     function fn_cell_size_rt(max_hits : natural) return natural;
     function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
     -- Canonical VDMA storage keeps the existing 32-bit cell word ABI:
@@ -118,11 +136,10 @@ package tdc_gpx_pkg is
     constant c_EVT_AXIS_PACK_WIDTH  : natural := c_EVT_AXIS_TDATA_WIDTH + c_EVT_AXIS_TUSER_WIDTH;
 
     -- Stop event AXI-Stream constants
-    constant c_STOP_EVT_DATA_WIDTH  : natural := 32;    -- stop count payload width
-    constant c_STOP_EVT_TUSER_WIDTH : natural := 32;    -- sideband width, intentionally decoupled from tdata
-    constant c_STOP_CNT_WIDTH       : natural := 4;     -- FIXED: p_stop_decode hardcodes 4-bit
-    constant c_FIRE_COUNT_DATA_WIDTH : natural := 32;
-    constant c_FIRE_COUNT_TKEEP_WIDTH : natural := c_FIRE_COUNT_DATA_WIDTH / c_AXIS_BYTE_WIDTH;
+    constant c_DEFAULT_STOP_EVT_DWIDTH      : natural := 32;
+    constant c_DEFAULT_STOP_EVT_TUSER_WIDTH : natural := 32;
+    constant c_STOP_COUNT_FIELD_WIDTH       : natural := 4;
+    constant c_DEFAULT_FIRE_COUNT_DWIDTH    : natural := 32;
     -- Layout: per-chip packed [chip3(8b)|chip2(8b)|chip1(8b)|chip0(8b)]
     --   Each 8-bit chip slice: [IFIFO2(4b) | IFIFO1(4b)]
     -- tkeep: reserved (always "1111", not consumed by p_stop_decode)
@@ -207,7 +224,7 @@ package tdc_gpx_pkg is
 
     -- Header prefix (embedded in each VDMA line, 48 bytes fixed)
     constant c_HDR_PREFIX_BYTES     : natural := 48;
-    constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_TDATA_BYTES;  -- 12@32b, 6@64b, 3@128b via generics
+    constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_DEFAULT_OUTPUT_BYTES;
     -- All supported output widths divide 16 bytes. Aligning only at the line
     -- boundary keeps full TKEEP and a width-independent HSIZE/STRIDE while
     -- avoiding the former per-cell padding.
@@ -223,7 +240,7 @@ package tdc_gpx_pkg is
     type t_expected_array is array(0 to c_N_CHIPS - 1) of unsigned(7 downto 0);
 
     type t_axis_tdata_array is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+        of std_logic_vector(c_DEFAULT_OUTPUT_WIDTH - 1 downto 0);
 
     subtype t_bus_rsp_tdata is std_logic_vector(c_BUS_RSP_TDATA_WIDTH - 1 downto 0);
     subtype t_bus_rsp_tuser is std_logic_vector(c_BUS_RSP_TUSER_WIDTH - 1 downto 0);
@@ -663,10 +680,10 @@ package body tdc_gpx_pkg is
     -- =========================================================================
     constant c_CELL_SIZE_BYTES : natural := -- 32
         fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, c_MAX_HITS_PER_STOP);
-    constant c_BEATS_PER_CELL  : natural := c_CELL_SIZE_BYTES / c_TDATA_BYTES;  -- 32/ 4 = 8
+    constant c_BEATS_PER_CELL  : natural := c_CELL_SIZE_BYTES / c_DEFAULT_OUTPUT_BYTES;
     constant c_DATA_BEATS_MAX  : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;
     constant c_HSIZE_BEATS_MAX : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;
-    constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * (c_TDATA_WIDTH / 8);
+    constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * c_DEFAULT_OUTPUT_BYTES;
     constant c_CANONICAL_CELL_BYTES_MAX : natural :=
         fn_canonical_cell_bytes(c_MAX_HITS_PER_STOP);
     constant c_VDMA_LINE_BYTES_MAX : natural :=
@@ -860,6 +877,21 @@ package body tdc_gpx_pkg is
                 -- The assertion above is fatal in simulation. Keep a defined
                 -- synthesis return for tools that still elaborate this arm.
                 return ticks_5ns;
+        end case;
+    end function;
+
+    function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural is
+    begin
+        case cfg is
+            when "001" => return 1;
+            when "010" => return 2;
+            when "011" => return 3;
+            when "100" => return 4;
+            when "101" => return 5;
+            when "110" => return 6;
+            -- 000 is the defined full-capacity alias. Unknown startup values
+            -- also resolve conservatively to the protocol capacity.
+            when others => return c_MAX_HITS_PER_STOP;
         end case;
     end function;
 

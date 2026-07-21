@@ -19,7 +19,7 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_line_packer is
     generic (
-        g_TDATA_WIDTH : natural := 32
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
     );
     port (
         i_clk          : in  std_logic;
@@ -28,12 +28,12 @@ entity tdc_gpx_line_packer is
         i_max_hits_cfg : in  unsigned(2 downto 0);
         i_cfg_latch    : in  std_logic;
 
-        i_s_axis_tdata  : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata  : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         i_s_axis_tvalid : in  std_logic;
         i_s_axis_tlast  : in  std_logic;
         o_s_axis_tready : out std_logic;
 
-        o_m_axis_tdata  : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tdata  : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         o_m_axis_tvalid : out std_logic;
         o_m_axis_tlast  : out std_logic;
         i_m_axis_tready : in  std_logic;
@@ -43,7 +43,7 @@ entity tdc_gpx_line_packer is
 end entity tdc_gpx_line_packer;
 
 architecture rtl of tdc_gpx_line_packer is
-    constant c_WORDS_PER_BEAT : positive := g_TDATA_WIDTH / 32;
+    constant c_WORDS_PER_BEAT : positive := g_OUTPUT_WIDTH / 32;
     -- One incoming beat plus worst-case line padding can be appended while an
     -- older output beat is held under backpressure.
     constant c_QUEUE_WORDS : positive := 2 * c_WORDS_PER_BEAT + 4;
@@ -60,7 +60,7 @@ architecture rtl of tdc_gpx_line_packer is
     -- One-entry input stage separates cell-beat decoding from the wide queue
     -- write controls. It can be consumed and refilled in the same cycle, so
     -- the accepted-beat initiation interval remains one clock.
-    signal s_stage_data_r       : std_logic_vector(g_TDATA_WIDTH - 1 downto 0)
+    signal s_stage_data_r       : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0)
                                   := (others => '0');
     signal s_stage_word_count_r : natural range 1 to c_WORDS_PER_BEAT := 1;
     signal s_stage_last_r       : std_logic := '0';
@@ -72,25 +72,12 @@ architecture rtl of tdc_gpx_line_packer is
     signal s_hit_words_r : natural range 1 to 4 := 4;
     signal s_hit_beats_r : natural range 1 to 4 :=
         fn_ceil_div(c_MAX_HITS_PER_STOP,
-                    g_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH);
+                    g_OUTPUT_WIDTH / c_HIT_SLOT_DATA_WIDTH);
 
-    signal s_out_tdata_r : std_logic_vector(g_TDATA_WIDTH - 1 downto 0)
+    signal s_out_tdata_r : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0)
                            := (others => '0');
     signal s_out_tvalid_r : std_logic := '0';
     signal s_out_tlast_r  : std_logic := '0';
-
-    function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural is
-    begin
-        case cfg is
-            when "001" => return 1;
-            when "010" => return 2;
-            when "011" => return 3;
-            when "100" => return 4;
-            when "101" => return 5;
-            when "110" => return 6;
-            when others => return c_MAX_HITS_PER_STOP;
-        end case;
-    end function;
 
     function fn_min(a : natural; b : natural) return natural is
     begin
@@ -102,8 +89,8 @@ architecture rtl of tdc_gpx_line_packer is
     end function;
 
 begin
-    assert fn_output_width_supported(g_TDATA_WIDTH)
-        report "tdc_gpx_line_packer: g_TDATA_WIDTH must be 32, 64, or 128"
+    assert fn_output_width_supported(g_OUTPUT_WIDTH)
+        report "tdc_gpx_line_packer: g_OUTPUT_WIDTH must be 32, 64, or 128"
         severity failure;
 
     assert (c_VDMA_LINE_ALIGN_BYTES / 4) mod c_WORDS_PER_BEAT = 0
@@ -142,13 +129,13 @@ begin
                 s_hit_words_r <= fn_ceil_div(c_MAX_HITS_PER_STOP, 2);
                 s_hit_beats_r <= fn_ceil_div(
                     c_MAX_HITS_PER_STOP,
-                    g_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH);
+                    g_OUTPUT_WIDTH / c_HIT_SLOT_DATA_WIDTH);
             elsif i_cfg_latch = '1' and o_idle = '1' then
                 v_max_hits := fn_effective_max_hits(i_max_hits_cfg);
                 s_hit_words_r <= fn_ceil_div(v_max_hits, 2);
                 s_hit_beats_r <= fn_ceil_div(
                     v_max_hits,
-                    g_TDATA_WIDTH / c_HIT_SLOT_DATA_WIDTH);
+                    g_OUTPUT_WIDTH / c_HIT_SLOT_DATA_WIDTH);
             end if;
 
             -- synthesis translate_off
@@ -224,7 +211,7 @@ begin
         variable v_mod4        : natural range 0 to 3;
         variable v_end_pending : std_logic;
         variable v_out_free    : boolean;
-        variable v_out_data    : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        variable v_out_data    : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         variable v_new_mod4    : natural range 0 to 3;
         variable v_pad_words   : natural range 0 to 3;
     begin

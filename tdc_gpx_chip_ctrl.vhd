@@ -60,9 +60,9 @@ entity tdc_gpx_chip_ctrl is
     generic (
         g_BUS_DATA_WIDTH    : natural := c_TDC_BUS_WIDTH;   -- 28
         g_CHIP_ID           : natural := 0;                  -- 0..3
-        g_POWERUP_CLKS      : positive := 48;    -- PuResN low duration (>200ns, ~240ns @ 200MHz)
-        g_RECOVERY_CLKS     : positive := 8;      -- Reset/ALU recovery (~40ns @ 200MHz)
-        g_ALU_PULSE_CLKS    : positive := 4;       -- AluTrigger pulse width (~20ns @ 200MHz)
+        g_POWERUP_CLKS      : positive := c_DEFAULT_POWERUP_CLKS;
+        g_RECOVERY_CLKS     : positive := c_DEFAULT_RECOVERY_CLKS;
+        g_ALU_PULSE_CLKS    : positive := c_DEFAULT_ALU_PULSE_CLKS;
         -- Round 13 follow-up P4 (audit 3번): bus-idle stability window for
         -- auto-recover from PH_RESP_DRAIN quarantine. After s_err_bus_fatal_r
         -- latches, the bus must stay idle (busy='0' AND rsp_pending='0') for

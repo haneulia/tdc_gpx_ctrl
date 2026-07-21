@@ -28,7 +28,7 @@
 --   No additional frame-level footer is needed.
 --
 -- Generics:
---   g_TDATA_WIDTH : 32, 64, or 128 (output bus width)
+--   g_OUTPUT_WIDTH : 32, 64, or 128 (output bus width)
 --     32-bit: 12 beats × 4B = 48B header prefix
 --     64-bit:  6 beats × 8B = 48B header prefix (2 words packed per beat)
 --    128-bit:  3 beats ×16B = 48B header prefix (4 words packed per beat)
@@ -53,7 +53,7 @@
 --
 --   VDMA line structure (all lines uniform):
 --     [48-byte prefix] [packed canonical cell words] [0..12-byte line pad]
---   The beat count is HSIZE / (g_TDATA_WIDTH / 8); wider AXIS widths reduce
+--   The beat count is HSIZE / (g_OUTPUT_WIDTH / 8); wider AXIS widths reduce
 --   transfer cycles without changing the number of bytes stored in DDR.
 --
 --     Header prefix layout (only line 0, little-endian):
@@ -103,7 +103,7 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_header_inserter is
     generic (
-        g_TDATA_WIDTH : natural := c_TDATA_WIDTH   -- 32, 64, or 128
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
     );
     port (
         i_clk               : in  std_logic;
@@ -134,15 +134,15 @@ entity tdc_gpx_header_inserter is
         i_rows_per_face     : in  unsigned(15 downto 0);   -- active_chips × stops_per_chip
 
         -- AXI-Stream slave (from face_assembler)
-        i_s_axis_tdata      : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        i_s_axis_tdata      : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         i_s_axis_tvalid     : in  std_logic;
         i_s_axis_tlast      : in  std_logic;
         o_s_axis_tready     : out std_logic;
 
         -- AXI-Stream master (to downstream / CDC FIFO)
-        o_m_axis_tdata      : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
-        o_m_axis_tkeep      : out std_logic_vector(g_TDATA_WIDTH/8 - 1 downto 0);
-        o_m_axis_tstrb      : out std_logic_vector(g_TDATA_WIDTH/8 - 1 downto 0);
+        o_m_axis_tdata      : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        o_m_axis_tkeep      : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
+        o_m_axis_tstrb      : out std_logic_vector(g_OUTPUT_WIDTH/8 - 1 downto 0);
         o_m_axis_tvalid     : out std_logic;
         o_m_axis_tlast      : out std_logic;
         o_m_axis_tuser      : out std_logic_vector(0 downto 0);   -- (0) = SOF
@@ -181,8 +181,8 @@ architecture rtl of tdc_gpx_header_inserter is
     signal s_state_r : t_state := ST_IDLE;
 
     -- Generic-derived constants
-    constant c_G_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(g_TDATA_WIDTH);
-    constant c_G_TKEEP_WIDTH      : natural := fn_axis_keep_width(g_TDATA_WIDTH);
+    constant c_G_HDR_PREFIX_BEATS : natural := fn_hdr_prefix_beats(g_OUTPUT_WIDTH);
+    constant c_G_TKEEP_WIDTH      : natural := fn_axis_keep_width(g_OUTPUT_WIDTH);
 
     -- Header ROM build: deferred by 1 cycle after face_start so that
     -- s_*_r signals are valid (VHDL signal semantics: same-edge latch
@@ -286,7 +286,7 @@ architecture rtl of tdc_gpx_header_inserter is
     -- =========================================================================
     -- Output register (1-deep pipeline)
     -- =========================================================================
-    signal s_out_tdata_r  : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_out_tdata_r  : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0) := (others => '0');
     signal s_out_tvalid_r : std_logic := '0';
     signal s_out_tlast_r  : std_logic := '0';
     signal s_out_tuser_r  : std_logic := '0';
@@ -303,12 +303,12 @@ architecture rtl of tdc_gpx_header_inserter is
 
 begin
 
-    assert fn_output_width_supported(g_TDATA_WIDTH)
-        report "tdc_gpx_header_inserter: g_TDATA_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
+    assert fn_output_width_supported(g_OUTPUT_WIDTH)
+        report "tdc_gpx_header_inserter: g_OUTPUT_WIDTH must be 32, 64, or 128"
         severity failure;
 
-    assert c_G_TKEEP_WIDTH * 8 = g_TDATA_WIDTH
-        report "tdc_gpx_header_inserter: g_TDATA_WIDTH must be byte aligned"
+    assert c_G_TKEEP_WIDTH * 8 = g_OUTPUT_WIDTH
+        report "tdc_gpx_header_inserter: g_OUTPUT_WIDTH must be byte aligned"
         severity failure;
 
     -- =========================================================================
@@ -346,12 +346,13 @@ begin
     -- =========================================================================
     p_main : process(i_clk)
         variable v_beat    : natural range 0 to 15;
-        variable v_hdr_data : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        variable v_hdr_data : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         variable v_word     : std_logic_vector(31 downto 0);
         variable v_widx     : natural;
 
         -- 32-bit header word ROM (word index 0..11)
         procedure get_hdr_word(widx : natural; word : out std_logic_vector) is
+            variable v_max_hits : natural range 1 to c_MAX_HITS_PER_STOP;
         begin
             word := (others => '0');
             case widx is
@@ -373,26 +374,16 @@ begin
                     word(15 downto 0)  := std_logic_vector(s_rows_per_face_r);
                     word(31 downto 16) := std_logic_vector(s_cols_per_face_r);
                 when 5  =>
-                    -- Round 10 #7: alias max_hits_cfg=000 to 7 in the header
-                    -- low byte too, so the header is self-consistent with the
-                    -- cell_size computed below (`others => 7`). Matches
+                    -- max_hits_cfg=000 aliases to seven effective hits.
+                    -- The shared helper keeps this field consistent with the
+                    -- cell-size calculation below.
                     -- cell_builder's Round 9 #8 canonical 000 → 7 convention.
-                    if s_max_hits_cfg_r = "000" then
-                        word(7 downto 0)   := "00000" & "111";
-                    else
-                        word(7 downto 0)   := "00000" & std_logic_vector(s_max_hits_cfg_r);
-                    end if;
+                    v_max_hits := fn_effective_max_hits(s_max_hits_cfg_r);
+                    word(7 downto 0) := std_logic_vector(to_unsigned(v_max_hits, 8));
                     -- Canonical 32-bit-word storage size, independent of the
                     -- external 32/64/128-bit AXIS width.
-                    case s_max_hits_cfg_r is
-                        when "001" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(1), 8));
-                        when "010" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(2), 8));
-                        when "011" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(3), 8));
-                        when "100" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(4), 8));
-                        when "101" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(5), 8));
-                        when "110" => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(6), 8));
-                        when others => word(15 downto 8) := std_logic_vector(to_unsigned(fn_canonical_cell_bytes(7), 8));
-                    end case;
+                    word(15 downto 8) := std_logic_vector(to_unsigned(
+                        fn_canonical_cell_bytes(v_max_hits), 8));
                     word(23 downto 16) := std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 8));
                     word(27 downto 24) := std_logic_vector(to_unsigned(c_N_CHIPS, 4));
                     word(31 downto 28) := std_logic_vector(to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
@@ -496,8 +487,8 @@ begin
                         if s_first_line_r = '1' then
                             -- Read from pre-built ROM: 1 array index per 32-bit word.
                             -- 32-bit: 1 word/beat, 64-bit: 2 words/beat.
-                            for w in 0 to (g_TDATA_WIDTH / 32) - 1 loop
-                                v_widx := v_beat * (g_TDATA_WIDTH / 32) + w;
+                            for w in 0 to (g_OUTPUT_WIDTH / 32) - 1 loop
+                                v_widx := v_beat * (g_OUTPUT_WIDTH / 32) + w;
                                 v_hdr_data(w * 32 + 31 downto w * 32) := s_hdr_rom_r(v_widx);
                             end loop;
                         end if;

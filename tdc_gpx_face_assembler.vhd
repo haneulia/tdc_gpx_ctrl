@@ -9,7 +9,7 @@
 --   with error_fill=1.
 --
 -- Generics:
---   g_TDATA_WIDTH : 32, 64, or 128 (output bus width, affects beats/cell)
+--   g_OUTPUT_WIDTH : 32, 64, or 128 (output bus width, affects beats/cell)
 --
 -- Input FIFOs:
 --   4× xpm_fifo_axis (Xilinx XPM, 16-deep, distributed RAM).
@@ -77,18 +77,17 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_face_assembler is
     generic (
-        g_ALU_PULSE_CLKS     : natural := 4;
-        g_TDATA_WIDTH        : natural := c_TDATA_WIDTH   -- 32, 64, or 128
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
     );
     port (
         i_clk                : in  std_logic;
         i_rst_n              : in  std_logic;
 
-        -- 4 chip cell AXI-Stream inputs (from cell_builders, g_TDATA_WIDTH per chip)
-        i_s_axis_tdata_0     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
-        i_s_axis_tdata_1     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
-        i_s_axis_tdata_2     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
-        i_s_axis_tdata_3     : in  std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        -- 4 chip cell AXI-Stream inputs (from cell_builders)
+        i_s_axis_tdata_0     : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        i_s_axis_tdata_1     : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        i_s_axis_tdata_2     : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
+        i_s_axis_tdata_3     : in  std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         i_s_axis_tvalid      : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         i_s_axis_tlast       : in  std_logic_vector(c_N_CHIPS - 1 downto 0);
         o_s_axis_tready      : out std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -114,7 +113,7 @@ entity tdc_gpx_face_assembler is
         i_max_scan_clks     : in  unsigned(15 downto 0);
 
         -- AXI-Stream master (packed row output)
-        o_m_axis_tdata       : out std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        o_m_axis_tdata       : out std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
         o_m_axis_tvalid      : out std_logic;
         o_m_axis_tlast       : out std_logic;
         i_m_axis_tready      : in  std_logic;
@@ -165,7 +164,7 @@ architecture rtl of tdc_gpx_face_assembler is
 
     -- Per-chip tdata array type
     type t_tdata_arr is array(0 to c_N_CHIPS - 1)
-        of std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        of std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     -- Input port mapping (before FIFO)
     signal s_in_tdata_src : t_tdata_arr;
     -- FIFO output (after FIFO elasticity, to FSM)
@@ -174,15 +173,15 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Derived constants
     -- =========================================================================
-    constant c_G_BEATS_PER_CELL : natural := fn_beats_per_cell(g_TDATA_WIDTH);
-    constant c_IN_ELASTIC_WIDTH : natural := g_TDATA_WIDTH + 2;  -- tuser + tlast + tdata
+    constant c_G_BEATS_PER_CELL : natural := fn_beats_per_cell(g_OUTPUT_WIDTH);
+    constant c_IN_ELASTIC_WIDTH : natural := g_OUTPUT_WIDTH + 2;  -- tuser + tlast + tdata
     type t_in_elastic_arr is array(0 to c_N_CHIPS - 1)
         of std_logic_vector(c_IN_ELASTIC_WIDTH - 1 downto 0);
 
     -- =========================================================================
     -- Input FIFO output signals (xpm_fifo_axis → FSM)
     -- =========================================================================
-    -- s_in_tdata: defined above as t_tdata_arr (g_TDATA_WIDTH per chip)
+    -- s_in_tdata: defined above as t_tdata_arr (g_OUTPUT_WIDTH per chip)
     signal s_fifo_tdata    : t_tdata_arr;
     signal s_fifo_tvalid   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_fifo_tlast    : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -200,7 +199,7 @@ architecture rtl of tdc_gpx_face_assembler is
     -- =========================================================================
     -- Output pipe signals (FSM → output skid buffer)
     -- =========================================================================
-    signal s_pipe_tdata_r  : std_logic_vector(g_TDATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_pipe_tdata_r  : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0) := (others => '0');
     signal s_pipe_tvalid_r : std_logic := '0';
     signal s_pipe_tlast_r  : std_logic := '0';
     signal s_pipe_tready   : std_logic;  -- from output FIFO
@@ -329,7 +328,7 @@ architecture rtl of tdc_gpx_face_assembler is
         last_beat : unsigned(2 downto 0);
         chip_id   : unsigned(1 downto 0)
     ) return std_logic_vector is
-        variable v_result : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        variable v_result : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     begin
         v_result := (others => '0');
         -- Metadata on last beat (matches cell_builder fn_cell_beat convention)
@@ -342,8 +341,8 @@ architecture rtl of tdc_gpx_face_assembler is
 
 begin
 
-    assert fn_output_width_supported(g_TDATA_WIDTH)
-        report "tdc_gpx_face_assembler: g_TDATA_WIDTH must be 32, 64, or 128 for full-keep Phase A"
+    assert fn_output_width_supported(g_OUTPUT_WIDTH)
+        report "tdc_gpx_face_assembler: g_OUTPUT_WIDTH must be 32, 64, or 128"
         severity failure;
 
     -- Map individual tdata ports to internal array
@@ -366,7 +365,7 @@ begin
                 FIFO_DEPTH        => 16,
                 FIFO_MEMORY_TYPE  => "distributed",
                 PACKET_FIFO       => "false",
-                TDATA_WIDTH       => g_TDATA_WIDTH,
+                TDATA_WIDTH       => g_OUTPUT_WIDTH,
                 TDEST_WIDTH       => 1,
                 TID_WIDTH         => 1,
                 TUSER_WIDTH       => 1,
@@ -422,9 +421,9 @@ begin
                 o_m_data  => s_fifo_pack_out(i)
             );
 
-        s_in_tuser(i) <= s_fifo_pack_out(i)(g_TDATA_WIDTH + 1);
-        s_in_tlast(i) <= s_fifo_pack_out(i)(g_TDATA_WIDTH);
-        s_in_tdata(i) <= s_fifo_pack_out(i)(g_TDATA_WIDTH - 1 downto 0);
+        s_in_tuser(i) <= s_fifo_pack_out(i)(g_OUTPUT_WIDTH + 1);
+        s_in_tlast(i) <= s_fifo_pack_out(i)(g_OUTPUT_WIDTH);
+        s_in_tdata(i) <= s_fifo_pack_out(i)(g_OUTPUT_WIDTH - 1 downto 0);
     end generate gen_in_fifo;
 
     -- =========================================================================
@@ -439,7 +438,7 @@ begin
             FIFO_DEPTH        => c_OUT_FIFO_DEPTH,
             FIFO_MEMORY_TYPE  => "distributed",
             PACKET_FIFO       => "false",
-            TDATA_WIDTH       => g_TDATA_WIDTH,
+            TDATA_WIDTH       => g_OUTPUT_WIDTH,
             TDEST_WIDTH       => 1,
             TID_WIDTH         => 1,
             TUSER_WIDTH       => 1,
@@ -613,7 +612,7 @@ begin
         variable v_chip_idx       : natural range 0 to 3;
         variable v_row_completing : boolean;  -- row finishes on this edge
         variable v_faulted_this_cycle : std_logic_vector(c_N_CHIPS - 1 downto 0);
-        variable v_sanitized_tdata : std_logic_vector(g_TDATA_WIDTH - 1 downto 0);
+        variable v_sanitized_tdata : std_logic_vector(g_OUTPUT_WIDTH - 1 downto 0);
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -738,15 +737,11 @@ begin
                             s_last_stop_r <= (others => '0');  -- degenerate: clamp to 1 stop
                         end if;
                         -- Runtime beats/cell for blank generation
-                        case i_max_hits_cfg is
-                            when "001" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(1, g_TDATA_WIDTH) - 1, 3);
-                            when "010" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(2, g_TDATA_WIDTH) - 1, 3);
-                            when "011" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(3, g_TDATA_WIDTH) - 1, 3);
-                            when "100" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(4, g_TDATA_WIDTH) - 1, 3);
-                            when "101" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(5, g_TDATA_WIDTH) - 1, 3);
-                            when "110" => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(6, g_TDATA_WIDTH) - 1, 3);
-                            when others => s_rt_last_beat_r <= to_unsigned(fn_beats_per_cell_rt(7, g_TDATA_WIDTH) - 1, 3);
-                        end case;
+                        s_rt_last_beat_r <= to_unsigned(
+                            fn_beats_per_cell_rt(
+                                fn_effective_max_hits(i_max_hits_cfg),
+                                g_OUTPUT_WIDTH) - 1,
+                            3);
                         -- Strict in-order: start from lowest active chip
                         s_next_chip_r     <= (others => '0');
                         if i_active_chip_mask = "0000" then

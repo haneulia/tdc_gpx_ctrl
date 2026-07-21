@@ -48,7 +48,6 @@ end entity tb_tdc_gpx_output_stage_shot_bp;
 architecture sim of tb_tdc_gpx_output_stage_shot_bp is
 
     constant C_OUTPUT_WIDTH   : natural := 32;
-    constant C_ALU_PULSE_CLKS : natural := 4;
     constant C_CLK_PERIOD     : time    := 5 ns;   -- 200 MHz
     constant C_KEEP_WIDTH     : natural := fn_axis_keep_width(C_OUTPUT_WIDTH);
 
@@ -146,8 +145,7 @@ begin
     -- =========================================================================
     u_dut : entity work.tdc_gpx_output_stage
         generic map (
-            g_OUTPUT_WIDTH   => C_OUTPUT_WIDTH,
-            g_ALU_PULSE_CLKS => C_ALU_PULSE_CLKS
+            g_OUTPUT_WIDTH => C_OUTPUT_WIDTH
         )
         port map (
             i_clk                  => clk,

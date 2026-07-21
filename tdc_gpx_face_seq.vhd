@@ -30,7 +30,7 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_face_seq is
     generic (
-        g_OUTPUT_WIDTH : natural := 32;  -- 32, 64, or 128 output contract validation
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
         -- Dedicated topology must retain at least one active chip in each
         -- fixed group: chip0/1 rise and chip2/3 fall.
         g_REQUIRE_DEDICATED_GROUPS : boolean := false
@@ -388,15 +388,7 @@ begin
                 -- Canonical 32-bit cell words are packed across cell
                 -- boundaries. HSIZE therefore depends on semantic cell bytes,
                 -- not g_OUTPUT_WIDTH; only the line end is aligned to 16 B.
-                case i_cfg.max_hits_cfg is
-                    when "001" => v_max_hits := 1;
-                    when "010" => v_max_hits := 2;
-                    when "011" => v_max_hits := 3;
-                    when "100" => v_max_hits := 4;
-                    when "101" => v_max_hits := 5;
-                    when "110" => v_max_hits := 6;
-                    when others => v_max_hits := 7;
-                end case;
+                v_max_hits := fn_effective_max_hits(i_cfg.max_hits_cfg);
                 s_hsize_bytes_r <= to_unsigned(
                     fn_vdma_line_bytes(v_rows, v_max_hits), 16);
             end if;

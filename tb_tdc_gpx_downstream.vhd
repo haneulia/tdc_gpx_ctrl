@@ -55,7 +55,7 @@ architecture sim of tb_tdc_gpx_downstream is
     signal bus_clk_div     : unsigned(7 downto 0) := to_unsigned(1, 8);
 
     -- face_asm -> header
-    signal face_tdata      : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
+    signal face_tdata      : std_logic_vector(c_DEFAULT_OUTPUT_WIDTH - 1 downto 0);
     signal face_tvalid     : std_logic;
     signal face_tlast      : std_logic;
     signal face_tready     : std_logic;
@@ -79,9 +79,9 @@ architecture sim of tb_tdc_gpx_downstream is
     signal rows_per_face   : unsigned(15 downto 0) := to_unsigned(32, 16);
 
     -- output AXI-Stream
-    signal out_tdata       : std_logic_vector(c_TDATA_WIDTH - 1 downto 0);
-    signal out_tkeep       : std_logic_vector(c_TDATA_WIDTH/8 - 1 downto 0);
-    signal out_tstrb       : std_logic_vector(c_TDATA_WIDTH/8 - 1 downto 0);
+    signal out_tdata       : std_logic_vector(c_DEFAULT_OUTPUT_WIDTH - 1 downto 0);
+    signal out_tkeep       : std_logic_vector(c_DEFAULT_OUTPUT_WIDTH/8 - 1 downto 0);
+    signal out_tstrb       : std_logic_vector(c_DEFAULT_OUTPUT_WIDTH/8 - 1 downto 0);
     signal out_tvalid      : std_logic;
     signal out_tlast       : std_logic;
     signal out_tuser       : std_logic_vector(0 downto 0);
@@ -122,7 +122,6 @@ begin
     -- DUT [1]: face_assembler
     -- =========================================================================
     u_face_asm : entity work.tdc_gpx_face_assembler
-        generic map (g_ALU_PULSE_CLKS => 4)
         port map (
             i_clk              => clk,
             i_rst_n            => rst_n,

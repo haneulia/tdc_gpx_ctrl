@@ -86,7 +86,7 @@ begin
 
     u_dut : entity work.tdc_gpx_header_inserter
         generic map (
-            g_TDATA_WIDTH => G_TDATA_WIDTH
+            g_OUTPUT_WIDTH => G_TDATA_WIDTH
         )
         port map (
             i_clk               => s_clk,

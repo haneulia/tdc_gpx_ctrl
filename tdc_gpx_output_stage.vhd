@@ -31,8 +31,7 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_output_stage is
     generic (
-        g_OUTPUT_WIDTH   : natural := 32;   -- 32, 64, or 128
-        g_ALU_PULSE_CLKS : natural := 4
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
     );
     port (
         -- Clock / Reset
@@ -357,8 +356,7 @@ begin
     -- =========================================================================
     u_face_asm_rise : entity work.tdc_gpx_face_assembler
         generic map (
-            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS,
-            g_TDATA_WIDTH    => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
         )
         port map (
             i_clk              => i_clk,
@@ -399,8 +397,7 @@ begin
     -- =========================================================================
     u_face_asm_fall : entity work.tdc_gpx_face_assembler
         generic map (
-            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS,
-            g_TDATA_WIDTH    => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
         )
         port map (
             i_clk              => i_clk,
@@ -529,7 +526,7 @@ begin
     -- =========================================================================
     u_line_packer_rise : entity work.tdc_gpx_line_packer
         generic map (
-            g_TDATA_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
         )
         port map (
             i_clk           => i_clk,
@@ -550,7 +547,7 @@ begin
 
     u_line_packer_fall : entity work.tdc_gpx_line_packer
         generic map (
-            g_TDATA_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
         )
         port map (
             i_clk           => i_clk,
@@ -574,7 +571,7 @@ begin
     -- =========================================================================
     u_header_rise : entity work.tdc_gpx_header_inserter
         generic map (
-            g_TDATA_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
         )
         port map (
             i_clk               => i_clk,
@@ -618,7 +615,7 @@ begin
     -- =========================================================================
     u_header_fall : entity work.tdc_gpx_header_inserter
         generic map (
-            g_TDATA_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
         )
         port map (
             i_clk               => i_clk,

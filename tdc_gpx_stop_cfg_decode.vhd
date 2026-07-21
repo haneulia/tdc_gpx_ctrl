@@ -83,9 +83,9 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_stop_cfg_decode is
     generic (
-        g_STOP_EVT_DWIDTH : natural := c_STOP_EVT_DATA_WIDTH;
-        g_STOP_EVT_TUSER_WIDTH : natural := c_STOP_EVT_TUSER_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := c_FIRE_COUNT_DATA_WIDTH;
+        g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
+        g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
+        g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH;
         -- Round 13 follow-up (audit 5번): stop-event window margin.
         -- The effective window close = snapshot(i_max_range_axis_clks) + this
         -- margin. i_max_range_axis_clks is the 5 ns CSR range converted to

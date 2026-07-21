@@ -204,7 +204,7 @@ architecture sim of tb_tdc_gpx_full_int is
     -- Output width + stop-event width (for sub-module generic override)
     constant C_OUTPUT_W   : natural := G_TDATA_WIDTH;
     constant C_KEEP_W     : natural := fn_axis_keep_width(C_OUTPUT_W);
-    constant C_STOP_DW    : natural := c_STOP_EVT_DATA_WIDTH;  -- 32 (from tdc_gpx_pkg)
+    constant C_STOP_DW    : natural := c_DEFAULT_STOP_EVT_DWIDTH;
 
     -- Echo-receiver geometry matches tdc_gpx_pkg (c_N_CHIPS=4, c_MAX_STOPS=8).
     -- These are package-level locked constants -- echo_receiver MUST see them
@@ -751,7 +751,7 @@ begin
         generic map (
             g_N_CHIPS         => C_ER_N_CHIPS,
             g_STOPS_PER_CHIP  => C_ER_N_STOPS,
-            g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
+            g_STOP_CNT_WIDTH  => c_STOP_COUNT_FIELD_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW,
             g_FIRE_COUNT_DWIDTH => 32
         )
@@ -815,7 +815,6 @@ begin
             g_POWERUP_CLKS    => G_POWERUP_CLKS,
             g_RECOVERY_CLKS   => G_RECOVERY_CLKS,
             g_ALU_PULSE_CLKS  => G_ALU_PULSE_CLKS,
-            g_STOP_CNT_WIDTH  => c_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW,
             g_FIRE_COUNT_DWIDTH => 32
         )
