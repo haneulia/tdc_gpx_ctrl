@@ -10,7 +10,8 @@
 --     cmd_arb        : command arbitration (cfg_write, reg read/write gating)
 --     err_handler    : automatic ErrFlag detection, Reg11 read, recovery FSM
 --     stop_decode    : stop event decode + cfg_image override
---     bus_phy x4     : TDC-GPX bus physical layer (IOBUF + timing FSM)
+--     bus_phy x4     : TDC-GPX bus timing FSM and synchronized status input
+--     pin adapter    : compact physical-lane mapping and IOBUF ownership
 --     chip_ctrl x4   : chip FSM coordinator (powerup/cfg/arm/capture/drain)
 --                      with internal bus-response skid
 --     raw_cdc x4     : optional xpm_fifo_async chip_ctrl -> decode_pipe (40b)
@@ -1643,12 +1644,12 @@ begin
     end process p_exp_send;
 
     -- =========================================================================
-    -- [4-19] Per-chip pipeline (generate x4)
+    -- [4-19] Per-chip pipeline (generate x c_MAX_CHIPS logical slots)
     --   bus_phy + sk_brsp + chip_ctrl + sk_raw + per-chip CDC
     -- =========================================================================
     gen_chip : for i in 0 to c_MAX_CHIPS - 1 generate
 
-        -- ----- bus_phy: physical bus timing FSM + IOBUF + 2-FF sync -----
+        -- ----- bus_phy: bus timing FSM + split D-bus + 2-FF status sync -----
         u_bus_phy : entity work.tdc_gpx_bus_phy
             generic map (
                 g_OEN_MODE                 => g_OEN_MODE,

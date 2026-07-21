@@ -209,9 +209,8 @@ architecture sim of tb_tdc_gpx_full_int is
     -- Echo-receiver geometry matches tdc_gpx_pkg (c_MAX_CHIPS=4, c_MAX_STOPS=8).
     -- These are package-level locked constants -- echo_receiver MUST see them
     -- so the PD vector length and stop_evt packing line up with tdc_gpx_top.
-    constant C_ER_N_CHIPS : natural := c_MAX_CHIPS;
     constant C_ER_N_STOPS : natural := c_MAX_STOPS_PER_CHIP;
-    constant C_PD_WIDTH   : natural := C_ER_N_CHIPS * C_ER_N_STOPS;
+    constant C_PD_WIDTH   : natural := c_MAX_CHIPS * C_ER_N_STOPS;
 
     -- Chip model fixed parameters (not distance dependent)
     constant C_FIFO_DEPTH : natural := 32;
@@ -749,7 +748,9 @@ begin
     -- =========================================================================
     u_er : entity work.echo_receiver_top
         generic map (
-            g_N_CHIPS         => C_ER_N_CHIPS,
+            -- Formal name belongs to the sibling echo_receiver interface;
+            -- this integration profile consumes the shared logical ABI max.
+            g_N_CHIPS         => c_MAX_CHIPS,
             g_STOPS_PER_CHIP  => C_ER_N_STOPS,
             g_STOP_CNT_WIDTH  => c_STOP_COUNT_FIELD_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW,
