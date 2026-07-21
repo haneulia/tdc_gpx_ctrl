@@ -451,7 +451,7 @@ Rise는 `o_m_axis_*`, Fall은 `o_m_axis_fall_*`이다.
 
 VDMA를 tight packing으로 설정하면 `STRIDE = 해당 lane HSIZE`이다. Rise와 Fall의 활성 chip 수가 다르면 두 HSIZE도 달라질 수 있다.
 
-HSIZE/VSIZE 출력은 live CSR mirror가 아니라 **Face snapshot의 관측값**이다. 첫 `packet_start` 후 약 2 AXIS clocks가 지나야 현재 Face 값으로 안정된다. PS가 첫 Shot 전에 VDMA를 설정해야 한다면 CSR 설정으로 같은 산식을 미리 계산하고, exported geometry는 snapshot 후 일치 여부를 확인하는 용도로 사용한다.
+HSIZE/VSIZE 출력은 live CSR mirror가 아니라 **Face snapshot의 관측값**이다. 첫 `packet_start` 후 약 3 AXIS clocks가 지나야 현재 Face 값으로 안정된다. PS가 첫 Shot 전에 VDMA를 설정해야 한다면 CSR 설정으로 같은 산식을 미리 계산하고, exported geometry는 snapshot 후 일치 여부를 확인하는 용도로 사용한다.
 
 ### 8.4 interrupt
 
@@ -654,7 +654,7 @@ HSIZE           = 48 + align16(cell_slots x cell_bytes)
 VSIZE           = cols_per_face
 ```
 
-첫 Shot에서 snapshot된 뒤 exported geometry가 계산값과 같은지 확인한다. parent에 hardware VDMA programming logic이 있다면 `packet_start` 이후 2 AXIS clock의 settling과 첫 data beat까지의 제어 순서를 함께 검증한다.
+첫 Shot에서 snapshot된 뒤 exported geometry가 계산값과 같은지 확인한다. parent에 hardware VDMA programming logic이 있다면 `packet_start` 이후 3 AXIS clock의 settling과 첫 data beat까지의 제어 순서를 함께 검증한다.
 
 `cmd_start_accepted`는 top 외부 포트나 published CSR bit가 아니라 내부 handshake이다. SW는 유효 설정을 사전 검증하고 `STAT5.busy`의 session-active 전환을 간접 확인하며, 정확한 acceptance cycle이 필요하면 parent debug port 또는 ILA로 `s_cmd_start_accepted`를 관측한다. `busy`는 Face 사이 `ST_WAIT_SHOT`에서도 high이므로 session 중 chip이 잠시 idle이라는 뜻으로 사용하면 안 된다.
 
@@ -1249,7 +1249,7 @@ Cell slots = 4 x 8 = 32
 HSIZE      = 48 + align16(32 x 20) = 688 B
 ```
 
-`p_vdma_geometry`는 Face snapshot 값을 두 단계 register로 계산한다. 따라서 새 Face snapshot 후 HSIZE/VSIZE가 안정되기까지 약 2 AXIS clocks를 허용한다. 활성 Face 동안에는 안정적으로 유지된다.
+`p_vdma_geometry`는 Face snapshot 값을 세 단계 register로 계산한다. 1단계에서 slot/hit/VSIZE를 포착하고, 2단계에서 payload block 수를 계산하며, 3단계에서 header block을 더해 정렬된 HSIZE/VSIZE를 출력한다. 따라서 새 Face snapshot 후 HSIZE/VSIZE가 안정되기까지 약 3 AXIS clocks를 허용한다. 활성 Face 동안에는 안정적으로 유지된다.
 
 `face_seq`에도 이름이 비슷한 `o_rows_per_face`, `o_hsize_bytes`가 남아 있지만 이는 full active mask 기준 legacy reference이고 top에서는 둘 다 `open`이다. VDMA의 authoritative contract는 top이 slope lane mask로 계산한 `o_vdma_hsize_bytes_rise/fall`과 `o_vdma_vsize_lines`이다. split topology에서 legacy full-mask 값으로 VDMA를 설정하면 lane당 Cell 수를 두 배로 해석할 수 있다.
 
@@ -1953,6 +1953,7 @@ p_run_timeout_sticky
 | [C08 Slope Mask/Falling Simulator v015](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Contract_Simulator_v015.html) | Present/Rise/Fall generic, runtime Fall, APD coverage, HSIZE/DDR/Ethernet 상호작용 | 브라우저 계산/검증 도구 |
 | [C08 Clock/Timing Generic Simulator v016](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Contract_Simulator_v016.html) | ns generic의 TDC/AXIS clock 변환, 5 ns scan CSR 변환과 시간 margin | 현재 timing 계약 계산/검증 도구 |
 | [C08 Slope Mask/Falling Closure v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Closure_v017.md) | xsim, parent validate, OOC, HTML 검증 근거 | 현재 slope closure 기록 |
+| [C08 Clock/Timing Generic Closure v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Closure_v018.md) | 시간 generic 전파, 5 ns CSR, 50~200 MHz 회귀와 OOC timing 근거 | 현재 clock/timing closure 기록 |
 
 ---
 

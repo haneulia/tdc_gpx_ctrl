@@ -96,7 +96,7 @@ change to the fixed 40-pin baseline is a sign-off failure.
 
 | Item | Result |
 |---|---|
-| Session | `260721_generic_parity_validate_ps_fclk_parent_ref` |
+| Session | `260721_final_timing_generic_ps_fclk_parent_ref` |
 | Slope contract | present `1111`, rise `0011`, fall `1100` |
 | Build limits | 8 stops/chip, 7 hits/stop |
 | Generic parity | top 25, parent 25, same-name map 25 |
