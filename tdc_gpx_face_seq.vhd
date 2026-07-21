@@ -243,6 +243,12 @@ begin
                 case s_face_state_r is
                     when ST_IDLE =>
                         if i_cmd_start = '1' or s_cmd_start_pending_r = '1' then
+                            -- No Face is active in ST_IDLE, so initialize the
+                            -- run-local Face ID as soon as a start is requested.
+                            -- Keeping this independent of the full config-valid
+                            -- expression avoids routing that expression onto all
+                            -- eight Face-ID clock-enable pins at high AXIS rates.
+                            s_face_id_r <= (others => '0');
                             -- Config validation: reject if geometry is degenerate
                             -- Round 11 item 7: upper bound check on stops_per_chip.
                             -- The fixed ABI supports at most eight stops, while
@@ -292,7 +298,6 @@ begin
                                and i_face_fall_buf_tvalid = '0'
                                and i_m_axis_tvalid = '0'
                                and i_m_axis_fall_tvalid = '0' then
-                                s_face_id_r            <= (others => '0');
                                 s_cmd_start_accepted_r <= '1';
                                 s_cmd_start_pending_r  <= '0';  -- consume
                                 s_face_state_r         <= ST_WAIT_SHOT;

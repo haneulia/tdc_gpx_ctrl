@@ -223,6 +223,16 @@ end entity tdc_gpx_top;
 
 architecture rtl of tdc_gpx_top is
 
+    -- A slope lane contains at most four chips x eight stops = 32 cells.
+    -- Keep this geometry-only arithmetic at its real range instead of carrying
+    -- a 16-bit public-interface width through the HSIZE calculation.
+    constant c_GEOMETRY_SLOT_WIDTH  : positive := 6;
+    constant c_GEOMETRY_BLOCK_WIDTH : positive := 6;
+    subtype t_geometry_slot_count is
+        unsigned(c_GEOMETRY_SLOT_WIDTH - 1 downto 0);
+    subtype t_geometry_block_count is
+        unsigned(c_GEOMETRY_BLOCK_WIDTH - 1 downto 0);
+
     function fn_lane_cell_slots(
         chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
         stops     : unsigned(3 downto 0)
@@ -233,41 +243,62 @@ architecture rtl of tdc_gpx_top is
         return to_unsigned(v_slots, 16);
     end function;
 
-    function fn_lane_hsize(
-        cell_slots : unsigned(15 downto 0);
+    function fn_lane_payload_blocks(
+        cell_slots : t_geometry_slot_count;
         max_hits   : unsigned(2 downto 0);
         build_max_hits : positive
-    ) return unsigned is
-        variable v_slots          : natural;
-        variable v_payload_blocks : natural;
-        variable v_total_blocks   : natural;
+    ) return t_geometry_block_count is
+        variable v_slots  : unsigned(8 downto 0);
+        variable v_scaled : unsigned(8 downto 0);
     begin
-        v_slots := to_integer(cell_slots);
-
-        -- Zero means this VDMA lane does not exist for the active Face. Do
-        -- not publish a header-only 48-byte line for a disabled slope.
-        if v_slots = 0 then
-            return to_unsigned(0, 16);
+        if cell_slots = 0 then
+            return (cell_slots'range => '0');
         end if;
+
+        v_slots := resize(cell_slots, v_slots'length);
 
         -- Canonical cell bytes are 8/12/16/20 for effective max_hits
         -- 1..2/3..4/5..6/7. Compute directly in 16-byte line blocks to
-        -- avoid a general multiply followed by ceil-divide on this output
-        -- timing path.
+        -- avoid a general multiplier. Explicit 9-bit shift/add arithmetic
+        -- also prevents the bounded 0..32 slot count from expanding back to
+        -- the 16-bit public geometry width during synthesis.
         case fn_effective_max_hits(max_hits, build_max_hits) is
             when 1 | 2 =>
-                v_payload_blocks := (v_slots + 1) / 2;
+                v_scaled := v_slots + to_unsigned(1, v_slots'length);
+                v_scaled := shift_right(v_scaled, 1);
             when 3 | 4 =>
-                v_payload_blocks := (3 * v_slots + 3) / 4;
+                v_scaled := shift_left(v_slots, 1) + v_slots
+                          + to_unsigned(3, v_slots'length);
+                v_scaled := shift_right(v_scaled, 2);
             when 5 | 6 =>
-                v_payload_blocks := v_slots;
+                v_scaled := v_slots;
             when others =>
-                v_payload_blocks := (5 * v_slots + 3) / 4;
+                v_scaled := shift_left(v_slots, 2) + v_slots
+                          + to_unsigned(3, v_slots'length);
+                v_scaled := shift_right(v_scaled, 2);
         end case;
 
-        v_total_blocks := c_HDR_PREFIX_BYTES / c_VDMA_LINE_ALIGN_BYTES
-                        + v_payload_blocks;
-        return to_unsigned(v_total_blocks * c_VDMA_LINE_ALIGN_BYTES, 16);
+        return resize(v_scaled, c_GEOMETRY_BLOCK_WIDTH);
+    end function;
+
+    function fn_lane_hsize(
+        payload_blocks : t_geometry_block_count
+    ) return unsigned is
+        variable v_total_blocks : unsigned(c_GEOMETRY_BLOCK_WIDTH downto 0);
+        variable v_hsize        : unsigned(15 downto 0) := (others => '0');
+    begin
+        -- Zero means this VDMA lane does not exist for the active Face. Do
+        -- not publish a header-only 48-byte line for a disabled slope.
+        if payload_blocks = 0 then
+            return v_hsize;
+        end if;
+
+        v_total_blocks := resize(payload_blocks, v_total_blocks'length)
+                        + to_unsigned(
+                            c_HDR_PREFIX_BYTES / c_VDMA_LINE_ALIGN_BYTES,
+                            v_total_blocks'length);
+        v_hsize := shift_left(resize(v_total_blocks, v_hsize'length), 4);
+        return v_hsize;
     end function;
 
     -- Physical-time generics are converted exactly once per consuming clock
@@ -441,10 +472,13 @@ architecture rtl of tdc_gpx_top is
     signal s_face_cols_per_face_r   : unsigned(15 downto 0);
     signal s_cell_slots_rise        : unsigned(15 downto 0);
     signal s_cell_slots_fall        : unsigned(15 downto 0);
-    signal s_geometry_slots_rise_r  : unsigned(15 downto 0) := (others => '0');
-    signal s_geometry_slots_fall_r  : unsigned(15 downto 0) := (others => '0');
+    signal s_geometry_slots_rise_r  : t_geometry_slot_count := (others => '0');
+    signal s_geometry_slots_fall_r  : t_geometry_slot_count := (others => '0');
     signal s_geometry_max_hits_r    : unsigned(2 downto 0)  := (others => '0');
     signal s_geometry_vsize_r       : unsigned(15 downto 0) := (others => '0');
+    signal s_geometry_blocks_rise_r : t_geometry_block_count := (others => '0');
+    signal s_geometry_blocks_fall_r : t_geometry_block_count := (others => '0');
+    signal s_geometry_vsize_pipe_r  : unsigned(15 downto 0) := (others => '0');
     signal s_vdma_hsize_rise        : unsigned(15 downto 0) := (others => '0');
     signal s_vdma_hsize_fall        : unsigned(15 downto 0) := (others => '0');
     signal s_vdma_vsize             : unsigned(15 downto 0) := (others => '0');
@@ -540,6 +574,12 @@ begin
         report "tdc_gpx_top: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
         severity failure;
 
+    assert c_MAX_ROWS_PER_FACE < 2 ** c_GEOMETRY_SLOT_WIDTH
+        and fn_ceil_div(5 * c_MAX_ROWS_PER_FACE, 4) <
+            2 ** c_GEOMETRY_BLOCK_WIDTH
+        report "tdc_gpx_top: bounded VDMA geometry widths are too small"
+        severity failure;
+
     assert (g_PRESENT_CHIP_MASK and not (g_RISE_CHIP_MASK or g_FALL_CHIP_MASK)) =
            (g_PRESENT_CHIP_MASK'range => '0')
         report "tdc_gpx_top: every present chip needs a rise and/or fall role"
@@ -562,9 +602,10 @@ begin
     s_cell_slots_fall <= fn_lane_cell_slots(s_face_fall_mask,
                                              s_face_stops_per_chip_r);
     -- Runtime VDMA geometry is observational/programming metadata, not part
-    -- of the stream datapath. Two short registered stages replace the former
-    -- long combinational max_hits x cell_slots x align path. Values settle two
-    -- AXIS clocks after a new Face snapshot and remain stable for that Face.
+    -- of the stream datapath. Three bounded stages capture the 0..32 slot
+    -- count, derive the 0..40 payload-block count, then add the three header
+    -- blocks. Values settle three AXIS clocks after a new Face snapshot and
+    -- remain stable for that Face.
     p_vdma_geometry : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
@@ -573,22 +614,33 @@ begin
                 s_geometry_slots_fall_r <= (others => '0');
                 s_geometry_max_hits_r   <= (others => '0');
                 s_geometry_vsize_r      <= (others => '0');
+                s_geometry_blocks_rise_r <= (others => '0');
+                s_geometry_blocks_fall_r <= (others => '0');
+                s_geometry_vsize_pipe_r  <= (others => '0');
                 s_vdma_hsize_rise       <= (others => '0');
                 s_vdma_hsize_fall       <= (others => '0');
                 s_vdma_vsize            <= (others => '0');
             else
-                s_geometry_slots_rise_r <= s_cell_slots_rise;
-                s_geometry_slots_fall_r <= s_cell_slots_fall;
+                s_geometry_slots_rise_r <= resize(
+                    s_cell_slots_rise, s_geometry_slots_rise_r'length);
+                s_geometry_slots_fall_r <= resize(
+                    s_cell_slots_fall, s_geometry_slots_fall_r'length);
                 s_geometry_max_hits_r   <= s_cfg_face_r.max_hits_cfg;
                 s_geometry_vsize_r      <= s_face_cols_per_face_r;
 
-                s_vdma_hsize_rise <= fn_lane_hsize(
+                s_geometry_blocks_rise_r <= fn_lane_payload_blocks(
                     s_geometry_slots_rise_r, s_geometry_max_hits_r,
                     g_MAX_HITS_PER_STOP);
-                s_vdma_hsize_fall <= fn_lane_hsize(
+                s_geometry_blocks_fall_r <= fn_lane_payload_blocks(
                     s_geometry_slots_fall_r, s_geometry_max_hits_r,
                     g_MAX_HITS_PER_STOP);
-                s_vdma_vsize <= s_geometry_vsize_r;
+                s_geometry_vsize_pipe_r <= s_geometry_vsize_r;
+
+                s_vdma_hsize_rise <= fn_lane_hsize(
+                    s_geometry_blocks_rise_r);
+                s_vdma_hsize_fall <= fn_lane_hsize(
+                    s_geometry_blocks_fall_r);
+                s_vdma_vsize <= s_geometry_vsize_pipe_r;
             end if;
         end if;
     end process p_vdma_geometry;
