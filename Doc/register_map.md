@@ -44,7 +44,7 @@ window is never shortened.
 | Offset | Name         | Meaning                                               |
 |:------:|--------------|-------------------------------------------------------|
 | 0x40   | HW_VERSION   | `[31:0]` compile-time constant (default `0x00010000`) |
-| 0x44   | HW_CONFIG    | Selected build profile: `[3:0] popcount(g_PRESENT_CHIP_MASK)`, `[7:4] g_MAX_STOPS_PER_CHIP`, `[11:8] g_MAX_HITS_PER_STOP`, `[16:12] HIT_SLOT_DATA_WIDTH`, `[24:17] TDATA_WIDTH`, `[27:25] CELL_FMT` |
+| 0x44   | HW_CONFIG    | Selected build profile: `[3:0] popcount(g_PRESENT_CHIP_MASK)`, `[7:4] g_MAX_STOPS_PER_CHIP`, `[11:8] g_MAX_HITS_PER_STOP`, `[16:12] HIT_SLOT_DATA_WIDTH`, `[24:17] TDATA_WIDTH`, `[27:25] CELL_FMT`, `[28] HAS_FALLING`, `[31:29] 0` |
 | 0x48   | MAX_ROWS     | Build maximum rows: `popcount(g_PRESENT_CHIP_MASK) × g_MAX_STOPS_PER_CHIP` (default `32`) |
 | 0x4C   | CELL_SIZE    | Build maximum canonical cell bytes from `g_MAX_HITS_PER_STOP` (default `20 B`) |
 | 0x50   | MAX_HSIZE    | Build full-mask packed maximum: `48 + align16(MAX_ROWS × CELL_SIZE)` (default `688 B`) |
@@ -159,7 +159,7 @@ The handshake auto-retriggers on any source change, so SW sees:
 | 0x0C   | START_OFF1 | `[17:0]` |
 | 0x10   | CFG_REG7   | `[31:0]` |
 | 0x14–0x50 | CFG_IMAGE[0..15] | 16 × 32-bit TDC-GPX chip register mirror |
-| 0x54   | SCAN_TIMEOUT | `[15:0] max_scan_clks`, `[18:16] max_hits_cfg` |
+| 0x54   | SCAN_TIMEOUT | `[15:0] max_scan_clks`, `[18:16] max_hits_cfg`, `[19] falling_enable`; reset `0x00080000` |
 | others | reserved / unused (ctl0, ctl2, ctl22–31 owned by csr_pipeline) |
 
 `max_scan_clks` is an AXIS-domain cycle count, not the 5 ns reference-tick
@@ -167,6 +167,13 @@ field above. A value of zero disables the programmable deadline but is not an
 infinite wait: `face_assembler` still forces blank completion at the 16-bit
 hard cap (`0xFFFF`), approximately 1.31 ms / 655 us / 524 us / 437 us /
 328 us at 50 / 100 / 125 / 150 / 200 MHz respectively.
+
+`falling_enable=1` applies the compile-time `g_RISE_CHIP_MASK` and
+`g_FALL_CHIP_MASK`. `falling_enable=0` routes every active/present chip to the
+Rise lane and holds the Fall lane idle. A build with `g_FALL_CHIP_MASK=0000`
+reports `HW_CONFIG.HAS_FALLING=0`; in that build the Fall processing chain is
+removed at elaboration and software must leave `falling_enable=0`. In a
+Fall-capable build, clearing this bit only idles the existing Fall hardware.
 
 ### Status registers
 
@@ -197,7 +204,8 @@ hard cap (`0xFFFF`), approximately 1.31 ms / 655 us / 524 us / 437 us /
 1. Write config: CFG_IMAGE[0..15], BUS_TIMING, START_OFF1, CFG_REG7.
 2. Write MAIN_CTRL with desired pipeline config + `cmd_cfg_write` bit.
 3. Poll STATUS.busy until 0 — configuration programmed to chips.
-4. Write RANGE_COLS, SCAN_TIMEOUT.
+4. Write RANGE_COLS and SCAN_TIMEOUT, including `falling_enable` according to
+   the static capability reported by `HW_CONFIG[28]`.
 5. Write MAIN_CTRL with `cmd_start` pulse to begin measurement loop.
 
 ### Error recovery

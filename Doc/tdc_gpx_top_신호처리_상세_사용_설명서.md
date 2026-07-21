@@ -93,7 +93,7 @@ flowchart TD
 - `cols_per_face`는 이름과 달리 출력 관점에서 **Face당 line 수**, 즉 Face에 포함되는 accepted Shot 수이다.
 - `rows_per_face`라는 헤더 필드는 한 line의 **Cell 슬롯 수**이다. 이는 `popcount(lane_chip_mask) x stops_per_chip`이다.
 - `n_faces`는 Face ID의 modulo 순환 범위만 결정한다. `n_faces`개 Face 뒤 session을 자동 종료하지 않으며 실제 Shot 발생과 종료는 외부 `i_shot_start`/`cmd_stop`이 결정한다.
-- Rise와 Fall은 서로 다른 출력 메모리로 전달되며, 현재 top의 정상 Face 완료는 두 lane의 `frame_done`을 모두 기다린다. `face_seq`에는 slope abort 입력 논리가 남아 있지만 현재 top에서는 두 입력을 모두 `'0'`에 고정한다.
+- Rise와 Fall은 서로 다른 출력 메모리로 전달된다. Fall ON에서는 두 lane의 `frame_done`을 모두 기다리고, Fall OFF에서는 Fall 완료를 즉시 충족시켜 Rise만 기다린다. `face_seq`에는 slope abort 입력 논리가 남아 있지만 현재 top에서는 두 입력을 모두 `'0'`에 고정한다.
 
 ---
 
@@ -301,8 +301,9 @@ CDC 신호를 분석할 때는 다음을 구분한다.
 |---|---:|---|---|
 | `g_HW_VERSION` | `0x00010000` | HW 식별값 | 드라이버 호환성 |
 | `g_OUTPUT_WIDTH` | 32 | Rise/Fall AXIS 폭, 32/64/128 | VDMA stream 폭과 TB matrix |
-| `g_SLOPE_CHIP_MODE` | `DEDICATED_2X2` | chip-slope 물리 topology | 보드 배선과 GPX edge 설정 |
 | `g_PRESENT_CHIP_MASK` | `1111` | 합성할 물리 chip slot mask, chip 수는 `popcount(mask)`로 파생 | 실제 GPX 배치와 slope 그룹 |
+| `g_RISE_CHIP_MASK` | `0011` | Fall 활성 시 chip별 Rise 가능 역할; Fall mask와 중복 가능 | 보드 배선, GPX Reg0, 활성 mask 조합 |
+| `g_FALL_CHIP_MASK` | `1100` | chip별 Fall 가능 역할; `0000`이면 Fall datapath 합성 제거 | 보드 배선, Fall VDMA 필요 여부 |
 | `g_MAX_STOPS_PER_CHIP` | 8 | 빌드가 허용하는 chip당 최대 Stop 수, 2..8 | GPX 설정과 최대 Cell/VDMA geometry |
 | `g_MAX_HITS_PER_STOP` | 7 | 빌드가 허용하는 Stop당 최대 Hit 수, 1..7 | 거리 창, Cell 크기, 처리량 |
 | `g_AXIS_CLK_MHZ` | 150 | 처리 클럭 메타데이터 | 실제 클럭/XDC 일치 |
@@ -341,12 +342,44 @@ CSR 요청은 build profile 밖으로 나가지 못한다.
 
 ### 7.2 slope topology
 
-| 모드 | Rise lane | Fall lane | Cell builder 수 |
-|---|---|---|---:|
-| `DEDICATED_2X2` | active mask AND `0011` | active mask AND `1100` | 정적으로 불필요한 slope 제거, 총 4 |
-| `SHARED_DUAL_EDGE` | 전체 active mask | 전체 active mask | chip마다 Rise/Fall, 총 8 |
+고정 enum 모드 대신 세 개의 generic mask가 합성 전 물리 역할을 정의하고, Chip CSR `SCAN_TIMEOUT[19] falling_enable`이 실행 시 lane 구성을 선택한다.
 
-전용 모드에서는 start 시 활성 chip mask에 Rise 그룹 `chip0/1`과 Fall 그룹 `chip2/3`이 각각 최소 하나 존재해야 한다. 그렇지 않으면 `cfg_rejected`가 발생한다.
+| `falling_enable` | runtime Rise mask | runtime Fall mask | 의미 |
+|---:|---|---|---|
+| 0 | `active_chip_mask` | `0000` | 모든 활성 chip을 Rise로 사용 |
+| 1 | `active_chip_mask AND g_RISE_CHIP_MASK` | `active_chip_mask AND g_FALL_CHIP_MASK` | 합성 전 역할대로 Rise/Fall 분리; mask 중복 chip은 양 edge |
+
+합성 전 generic에는 다음 제약이 걸린다.
+
+1. `g_PRESENT_CHIP_MASK`는 0일 수 없다.
+2. 모든 present chip은 Rise 또는 Fall 역할을 하나 이상 가져야 한다.
+3. Rise-capable chip 수는 Fall-capable chip 수보다 작을 수 없다.
+4. `g_RISE_CHIP_MASK`와 `g_FALL_CHIP_MASK`의 같은 bit가 1이면 해당 chip은 양 edge를 독립 Cell로 만든다.
+
+start 시에도 현재 active subset에 동일한 원칙을 적용한다. Fall 활성 시 Rise/Fall lane이 각각 비어 있지 않고, 모든 active chip이 적어도 한 lane에 포함되며, runtime Rise 수가 Fall 수 이상이어야 한다. 위 조건을 만족하지 않으면 해당 start pulse는 `cfg_rejected`로 폐기된다.
+
+| 대표 build | Present | Rise capability | Fall capability | Fall ON runtime lane | 생성되는 Cell builder |
+|---|---:|---:|---:|---|---:|
+| 기본 2R+2F split | `1111` | `0011` | `1100` | Rise `0011`, Fall `1100` | Rise 4 + Fall 2 |
+| 4-chip Rise-only | `1111` | `1111` | `0000` | Fall 사용 불가 | Rise 4 + Fall 0 |
+| 3-chip 2R+1F | `0111` | `0011` | `0100` | Rise `0011`, Fall `0100` | Rise 3 + Fall 1 |
+| 1-chip dual-edge | `0001` | `0001` | `0001` | Rise/Fall 모두 `0001` | Rise 1 + Fall 1 |
+| 4-chip dual-edge | `1111` | `1111` | `1111` | Rise/Fall 모두 `1111` | Rise 4 + Fall 4 |
+
+Rise builder가 `g_RISE_CHIP_MASK` 수보다 많을 수 있는 이유는 runtime Fall OFF에서 **모든 present chip을 Rise로 전환**해야 하기 때문이다. 반면 Fall builder와 Fall assembler/FIFO/packer/header는 `g_FALL_CHIP_MASK AND g_PRESENT_CHIP_MASK`가 0이면 generate되지 않는다. 외부 Fall AXI/VDMA 포트 ABI는 유지되지만 `TVALID=0`, HSIZE=0, VSIZE=0의 idle/zero 계약으로 고정된다.
+
+Fall-capable build에서 `falling_enable=0`으로 바꾸는 것은 합성 제거가 아니다. 이미 생성된 Fall 회로를 실행 중 유휴화하고, HSIZE를 0으로 만들며, Face 완료가 Fall `frame_done`을 기다리지 않게 한다. 자원 절감이 목적이면 합성 전에 `g_FALL_CHIP_MASK=0000`으로 설정해야 한다.
+
+### 7.3 xc7z020 OOC 합성 확인
+
+`xc7z020clg484-2`, AXIS 150 MHz, TDC 200 MHz, 32-bit 출력의 clean OOC 결과는 다음과 같다.
+
+| Build | 생성 topology | LUT | FF | LUTRAM | AXIS WNS | TDC WNS |
+|---|---|---:|---:|---:|---:|---:|
+| split `P1111/R0011/F1100` | Rise builder 4, Fall builder 2, Fall output chain 1식 | 17,252 | 23,381 | 2,296 | 1.246 ns | 0.800 ns |
+| Rise-only `P1111/R1111/F0000` | Rise builder 4, Fall builder 0, Fall output chain 0 | 13,832 | 20,088 | 1,504 | 1.338 ns | 0.843 ns |
+
+Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 792개(34.5%)가 감소했다. netlist topology assertion으로 Fall assembler/FIFO/line-packer/header가 0개임도 확인했다. 즉 `g_FALL_CHIP_MASK=0000`의 합성 제거는 단순 기대가 아니라 생성 netlist와 utilization 양쪽에서 확인된 계약이다.
 
 ---
 
@@ -427,7 +460,7 @@ HSIZE/VSIZE 출력은 live CSR mirror가 아니라 **Face snapshot의 관측값*
 | `0x0C` | `START_OFF1` | `[17:0]` |
 | `0x10` | `CFG_REG7` | GPX register 7 image |
 | `0x14..0x50` | `CFG_IMAGE[0..15]` | GPX configuration mirror |
-| `0x54` | `SCAN_TIMEOUT` | max scan clocks, max hits |
+| `0x54` | `SCAN_TIMEOUT` | `[15:0]` max scan clocks, `[18:16]` max hits, `[19]` falling enable |
 | `0x80..0x8C` | chip result | chip0..3 register read result |
 
 > `tdc_gpx_cfg_pkg.vhd`의 공용 constant는 chip CSR 배치도 포함하므로 `c_ADDR_RANGE_COLS=0x08`로 보일 수 있다. 그러나 **published Pipeline CSR의 RANGE_COLS는 0x04**이며 `tdc_gpx_csr_pipeline.vhd`가 CTL1에 배치한다.
@@ -439,7 +472,7 @@ Pipeline의 compile-time status는 다음과 같다.
 | Offset | 이름 | 값/형식 |
 |---:|---|---|
 | `0x40` | `HW_VERSION` | `g_HW_VERSION`, 기본 `0x00010000` |
-| `0x44` | `HW_CONFIG` | build chip 수, build max stops/hits, hit width, AXIS width, Cell format |
+| `0x44` | `HW_CONFIG` | build chip 수, build max stops/hits, hit width, AXIS width, Cell format, `[28]` Fall 회로 존재 여부 |
 | `0x48` | `MAX_ROWS` | `popcount(g_PRESENT_CHIP_MASK) x g_MAX_STOPS_PER_CHIP`; 기본 32 |
 | `0x4C` | `CELL_SIZE` | build max hits 기준 canonical Cell bytes; 기본 20 B |
 | `0x50` | `MAX_HSIZE` | build profile full-mask 최대 line bytes; 기본 688 B |
@@ -487,7 +520,8 @@ write COMMAND bit = 0
 | stops `>8` | 8로 clamp |
 | cols `0` | 1로 clamp |
 | `max_hits=000` | 유효값 7로 해석 |
-| dedicated mode에서 한 slope 그룹이 비어 있음 | start reject |
+| Fall ON인데 runtime Rise/Fall 중 하나가 비거나 Rise chip 수가 Fall보다 작음 | start reject |
+| `HW_CONFIG[28]=0` build에서 `falling_enable=1` | start reject |
 
 설정은 `packet_start`에서 `s_cfg_face_r`로 snapshot된다. 따라서 Face 진행 중 소프트웨어가 CSR을 바꾸더라도 현재 Face의 geometry와 packing에는 즉시 섞이지 않는다.
 
@@ -501,19 +535,22 @@ write COMMAND bit = 0
 | Chip `START_OFF1 0x0C` | `0x00000000` | offset 0 |
 | Chip `CFG_REG7 0x10` | `0x00000000` | Reg7 image 0 |
 | Chip `CFG_IMAGE 0x14..0x50` | 모두 0 | 실제 GPX 운용값을 SW가 기록해야 함 |
-| Chip `SCAN_TIMEOUT 0x54` | `0x00000000` | max_scan=0, max_hits field 0은 유효값 7로 alias |
+| Chip `SCAN_TIMEOUT 0x54` | `0x00080000` | max_scan=0, max_hits=0은 build 최대값 alias, falling_enable=1 |
 
 Reset 기본값은 합성 가능한 안전 초기 상태일 뿐 보드/광학계용 완료 설정이 아니다. 특히 `CFG_IMAGE`와 GPX timing/calibration 필드는 반드시 시스템 값으로 덮어쓴다.
 
 ### 9.5 start reject와 pending의 현재 계약
 
-`face_seq`는 invalid geometry에서 내부 `cfg_rejected` pulse를 만들지만 이 필드는 현재 published `STAT5/6/7`에 packing되지 않는다. 또한 `csr_pipeline`의 바깥쪽 start pending은 `cmd_start_accepted`, `cmd_stop`, `cmd_soft_reset` 중 하나가 올 때까지 유지되므로 reject 자체로는 요청이 취소되지 않는다. 결과적으로 dedicated mode에서 한 slope 그룹이 빈 설정을 쓴 뒤 `cmd_start`하면 다음 현상이 가능하다.
+`face_seq`는 pipeline이 잠시 busy일 때만 `cmd_start`를 pending으로 보존한다. geometry 또는 slope 구성이 유효하지 않으면 `cfg_rejected`를 1 AXIS clock pulse로 만들고 내부 pending을 즉시 삭제한다. 따라서 설정을 나중에 고쳐도 과거 start가 자동 수락되지 않는다. 드라이버는 설정을 수정한 뒤 **새 `cmd_start` rising edge**를 내야 한다.
 
-1. 바깥쪽 start 요청이 유지되는 동안 내부 `cfg_rejected`가 high로 계속 관측될 수 있다. 이는 서로 분리된 반복 command edge가 아니다.
-2. SW는 published CSR에서 원인을 직접 읽을 수 없다.
-3. mask를 나중에 유효하게 바꾸면 이전 start 요청이 별도 command edge 없이 자동 수락될 수 있다.
+`cfg_rejected` 자체는 아직 published `STAT5/6/7`에 packing되지 않는다. 소프트웨어가 reject 이유를 직접 읽을 수 없으므로 start 전에 다음을 검사한다.
 
-현재 driver는 `DEDICATED_2X2`에서 `(mask AND 0011) != 0`, `(mask AND 1100) != 0`을 start 전에 검증해야 한다. 잘못된 start를 취소하려면 `cmd_stop` 또는 `cmd_soft_reset`을 pulse한 뒤 설정을 고치고 다시 start한다. 이는 문서상 주의점이자 향후 RTL에서 `cfg_rejected`를 CSR에 노출하고 outer pending을 명시적으로 취소할 후보이다.
+1. `active_chip_mask`가 `g_PRESENT_CHIP_MASK` 밖의 chip을 포함하지 않는다.
+2. Fall ON이면 `active AND g_RISE_CHIP_MASK`와 `active AND g_FALL_CHIP_MASK`가 모두 0이 아니다.
+3. Fall ON이면 모든 active chip이 적어도 한 slope 역할을 가지며 Rise 수가 Fall 수 이상이다.
+4. `HW_CONFIG[28]=0`이면 `falling_enable=0`으로 쓴다.
+
+이 검사를 통과했는데 session-active 전환이 보이지 않으면 ILA에서 `s_cfg_rejected_r`와 `s_cmd_start_accepted`를 함께 관측한다.
 
 ### 9.6 GPX 개별 register 접근
 
@@ -522,6 +559,22 @@ Reset 기본값은 합성 가능한 안전 초기 상태일 뿐 보드/광학계
 개별 write data는 별도 data register가 아니라 **최종 override가 반영된 `CFG_IMAGE[target_addr][27:0]`**에서 가져온다. 따라서 먼저 해당 image를 기록하고 CDC 완료 여유를 둔 뒤 write trigger를 발생시킨다. Reg5의 `start_off1`/ALU trigger bit와 Reg7은 각각 `START_OFF1`/`CFG_REG7` 값이 raw image보다 우선한다.
 
 read 결과는 chip별 `0x80/0x84/0x88/0x8C`에 `[31:28]=완료 address`, `[27:0]=read data`로 latch된다. `o_irq`의 source도 이 register operation 완료 pulse이다.
+
+### 9.7 GPX Reg0 Rise/Fall edge 설정
+
+Chip CSR `CFG_IMAGE[0]` (`0x14`)은 GPX Reg0의 기본 image이다. 이 image에서 `[18:10]`은 `TRiseEn[8:0]`, `[27:19]`는 `TFallEn[8:0]`이며 각 9비트에는 TStart와 Stop1..8 edge enable이 포함된다.
+
+`config_ctrl`은 이 image를 chip별로 전송하기 전에 다음 규칙으로 **허용되지 않은 edge group만 0으로 지운다**.
+
+| 조건 | chip의 TRiseEn | chip의 TFallEn |
+|---|---|---|
+| chip이 `g_PRESENT_CHIP_MASK` 밖 | 모두 0 | 모두 0 |
+| `falling_enable=0`, present chip | base image 값을 유지 | 모두 0 |
+| `falling_enable=1`, Rise capability 있음 | base image 값을 유지 | Fall capability가 없으면 모두 0 |
+| `falling_enable=1`, Fall capability만 있음 | 모두 0 | base image 값을 유지 |
+| 두 capability mask에 모두 포함 | base image 값을 유지 | base image 값을 유지 |
+
+RTL은 허용된 edge bit를 자동으로 1로 만들지 않는다. 소프트웨어가 `CFG_IMAGE[0]`에 실제 TStart/Stop edge enable 값을 먼저 기록해야 하며, generic/runtime 역할 필터는 그 값 중 금지된 방향을 제거하는 안전장치다. `active_chip_mask`는 어떤 chip이 현재 Shot에 참여하는지를 정하고 Reg0의 물리 역할 자체를 다시 쓰지 않는다.
 
 ---
 
@@ -567,8 +620,10 @@ sequenceDiagram
 첫 `packet_start` 전의 exported HSIZE/VSIZE는 새 CSR 설정의 Face snapshot이 아니다. 따라서 첫 VDMA buffer는 다음 산식으로 미리 설정한다.
 
 ```text
-lane_mask       = active_mask                 // SHARED_DUAL_EDGE
-                = active_mask AND 0011/1100   // DEDICATED rise/fall
+rise_lane_mask  = active_mask                                  // falling_enable=0
+                = active_mask AND g_RISE_CHIP_MASK             // falling_enable=1
+fall_lane_mask  = 0000                                         // falling_enable=0
+                = active_mask AND g_FALL_CHIP_MASK             // falling_enable=1
 cell_slots      = popcount(lane_mask) x stops_per_chip
 cell_bytes      = 4 x (ceil(effective_max_hits / 2) + 1)
 HSIZE           = 48 + align16(cell_slots x cell_bytes)
@@ -590,7 +645,7 @@ VSIZE           = cols_per_face
 
 `cmd_stop`이 `ST_CAPTURE`에서 들어오면 `chip_run`은 stop을 pending하고 `STOPDIS`를 활성화한 뒤 IrFlag를 기다려 정상 drain을 시도한다. IrFlag가 끝내 오지 않으면 fallback timeout cause `111`로 purge 경로에 진입한다. 이 graceful 동작의 목적은 GPX/bus를 정리하는 것이며 현재 Row/Face의 VDMA 보존을 보장하지 않는다. 같은 command가 `cell_pipe`, `face_assembler`, `header_inserter`에는 pipeline abort로 전달되고 header는 synthetic `TLAST` 없이 truncated line을 남길 수 있다.
 
-완전한 마지막 Face가 필요하면 새 Shot 생성을 먼저 멈추고, 양 slope에서 해당 Face의 예상 line 수와 마지막 `TLAST` 수신을 확인한 뒤 chip이 Shot 사이 `ST_ARMED`인 구간에서 `cmd_stop`을 내린다. `i_stop_tdc`는 이 session-stop 명령을 대체하지 않는다.
+완전한 마지막 Face가 필요하면 새 Shot 생성을 먼저 멈추고, 현재 활성화된 각 slope에서 해당 Face의 예상 line 수와 마지막 `TLAST` 수신을 확인한 뒤 chip이 Shot 사이 `ST_ARMED`인 구간에서 `cmd_stop`을 내린다. `i_stop_tdc`는 이 session-stop 명령을 대체하지 않는다.
 
 ---
 
@@ -643,11 +698,11 @@ shot_start_gated     __________|‾|__________
 
 - Rise abort는 Rise와 Fall을 모두 중단한다.
 - Fall-only abort는 Rise 출력을 중단하지 않는다.
-- Face 종료 회계는 두 lane의 done 또는 해당 lane abort를 모두 확인한다.
+- Face 종료 회계는 Fall ON이면 두 lane의 done 또는 해당 lane abort를 확인하고, Fall OFF이면 Fall lane을 이미 완료된 것으로 처리한다.
 
 그러나 **현재 `tdc_gpx_top`에서는 `i_face_abort`, `i_face_fall_abort`를 모두 `'0'`에 고정**하고 `output_stage`의 `o_face_abort`도 `open` 처리한다. `face_assembler`는 missing/late slice를 blank-fill해 Row를 self-complete하므로 data-path overrun이 이 abort 입력으로 승격되지 않는다. 현재 합성 top에서 실제 pipeline abort 원인은 `cmd_stop`, `cmd_soft_reset`, `force_reinit` 같은 system command이다.
 
-따라서 위 Rise-primary 비대칭은 `face_seq`의 latent 확장 정책이지 현재 top에서 slope별 data abort가 발생한다는 뜻이 아니다. 정상 Face 전환은 Rise/Fall 양쪽의 실제 `frame_done`을 기다린다.
+따라서 위 Rise-primary 비대칭은 `face_seq`의 latent 확장 정책이지 현재 top에서 slope별 data abort가 발생한다는 뜻이 아니다. 정상 Face 전환은 Fall ON일 때 Rise/Fall 양쪽의 실제 `frame_done`을 기다리고, Fall OFF일 때 Rise `frame_done`만 기다린다.
 
 ---
 
@@ -966,7 +1021,7 @@ stop ID가 `stops_per_chip` 이상이면 해당 event는 폐기되고 chip별 `s
 
 IFIFO1 done은 hit sequence counter를 초기화하지 않는다. IFIFO2 final done에서 모든 stop counter를 초기화한다. hit sequence는 slope별이 아니라 **같은 stop에서 Rise/Fall이 공유**한다.
 
-다만 `cell_builder`는 `tuser[10:8]`을 RAM write address로 사용하지 않는다. slope demux 뒤의 Rise/Fall builder가 각각 자신의 `hit_count_actual`로 수신 event를 0번 slot부터 연속 재색인한다. 따라서 `SHARED_DUAL_EDGE`에서도 Rise Cell과 Fall Cell의 저장 slot/count/max_hits 판정은 서로 독립적이고, raw-event의 shared `hit_seq_local`은 파형에서 원래 chip stream 순서를 추적하는 context tag이다.
+다만 `cell_builder`는 `tuser[10:8]`을 RAM write address로 사용하지 않는다. slope demux 뒤의 Rise/Fall builder가 각각 자신의 `hit_count_actual`로 수신 event를 0번 slot부터 연속 재색인한다. 따라서 같은 chip이 두 generic mask에 포함된 dual-edge 구성에서도 Rise Cell과 Fall Cell의 저장 slot/count/max_hits 판정은 서로 독립적이고, raw-event의 shared `hit_seq_local`은 파형에서 원래 chip stream 순서를 추적하는 context tag이다.
 
 ---
 
@@ -1147,7 +1202,7 @@ STRIDE           = HSIZE     // tight packing
 
 ### 19.3 예제
 
-`DEDICATED_2X2`, slope당 chip 2개, stops=8, max_hits=7:
+기본 split build `P1111/R0011/F1100`, Fall ON, slope당 chip 2개, stops=8, max_hits=7:
 
 ```text
 Cell slots = 2 x 8 = 16
@@ -1163,7 +1218,7 @@ HSIZE      = 48 + align16(320) = 368 B
 | 64 | 8 | 46 |
 | 128 | 16 | 23 |
 
-`SHARED_DUAL_EDGE`, 4 chips, stops=8, max_hits=7:
+같은 bitstream에서 Fall OFF 또는 정적 Rise-only build `P1111/R1111/F0000`, 4 Rise chips, stops=8, max_hits=7:
 
 ```text
 Cell slots = 4 x 8 = 32
@@ -1172,7 +1227,7 @@ HSIZE      = 48 + align16(32 x 20) = 688 B
 
 `p_vdma_geometry`는 Face snapshot 값을 두 단계 register로 계산한다. 따라서 새 Face snapshot 후 HSIZE/VSIZE가 안정되기까지 약 2 AXIS clocks를 허용한다. 활성 Face 동안에는 안정적으로 유지된다.
 
-`face_seq`에도 이름이 비슷한 `o_rows_per_face`, `o_hsize_bytes`가 남아 있지만 이는 full active mask 기준 legacy reference이고 top에서는 둘 다 `open`이다. VDMA의 authoritative contract는 top이 slope lane mask로 계산한 `o_vdma_hsize_bytes_rise/fall`과 `o_vdma_vsize_lines`이다. dedicated mode에서 legacy full-mask 값으로 VDMA를 설정하면 lane당 Cell 수를 두 배로 해석할 수 있다.
+`face_seq`에도 이름이 비슷한 `o_rows_per_face`, `o_hsize_bytes`가 남아 있지만 이는 full active mask 기준 legacy reference이고 top에서는 둘 다 `open`이다. VDMA의 authoritative contract는 top이 slope lane mask로 계산한 `o_vdma_hsize_bytes_rise/fall`과 `o_vdma_vsize_lines`이다. split topology에서 legacy full-mask 값으로 VDMA를 설정하면 lane당 Cell 수를 두 배로 해석할 수 있다.
 
 ### 19.4 line layout
 
@@ -1230,6 +1285,7 @@ Word 3 bit 구성:
 | `[28:26]` | dist_scale, header-only |
 | `[29]` | drain_mode |
 | `[30]` | Hit bit16 metadata 지원 표시 |
+| `[31]` | 해당 Face snapshot의 falling_enable |
 
 Word 5 bit 구성:
 
@@ -1665,7 +1721,7 @@ latency 보고서에는 평균값만 쓰지 말고 다음을 분리한다.
 - EF 기반 완료 / expected-count 기반 완료 / drain-cap 완료
 - 32/64/128비트 출력
 - no-stall / bounded stall / timeout stall
-- dedicated/shared slope topology
+- split/rise-only/3-chip/dual-edge slope mask topology
 
 ---
 
@@ -1677,9 +1733,11 @@ latency 보고서에는 평균값만 쓰지 말고 다음을 분리한다.
 |---|---|
 | `tb_tdc_gpx_top_int.vhd` | top 통합, CSR, 4-chip drain, Rise/Fall 출력, VDMA geometry |
 | `tb_tdc_gpx_top_int_c07_4chip_target.vhd` | 4-chip target configuration |
-| `tb_tdc_gpx_top_int_c08_dual_edge_shared.vhd` | shared dual-edge topology |
+| `tb_tdc_gpx_top_int_c08_dual_edge_shared.vhd` | legacy 이름을 유지한 all-chip dual-edge topology |
+| `tb_tdc_gpx_top_int_slope_profiles.vhd` | runtime Rise-only, 정적 Rise-only 32채널 순서, 3-chip 2R+1F, 1-chip dual-edge, chip별 GPX Reg0 역할 |
 | `tb_tdc_gpx_top_int_c08_vdma_widths.vhd` | 32/64/128 width contract |
 | `tb_tdc_gpx_top_int_masked_slope_stat.vhd` | 잘못된 slope event의 STAT7 관측 |
+| `tb_tdc_gpx_cell_pipe_lane_mask.vhd` | lane gating, masked hit sticky, 같은 chip의 Rise/Fall payload 독립 보존 |
 | `tb_tdc_gpx_bus_phy*.vhd` | GPX bus timing, C01 contract |
 | `tb_tdc_gpx_cell_builder_c07_direct.vhd` | Cell buffer/metadata/timeout |
 | `tb_tdc_gpx_face_assembler_c07_direct.vhd` | Row, blank-fill, fault propagation |
@@ -1750,7 +1808,7 @@ p_run_timeout_sticky
 
 ## 31. 현재 코드의 주의점과 기술 부채
 
-1. Top 머리말의 “pure structural / no processes”는 현재 코드와 다르다.
+1. Top은 구조 연결 외에도 geometry/snapshot/sticky process를 포함한다. 머리말은 현재 구조에 맞게 수정했지만 향후 process 이동 시 이 설명을 함께 갱신해야 한다.
 2. `timestamp_ns` 이름과 달리 값은 AXIS clock count이다.
 3. `hit_store_mode`, `dist_scale`, `pipeline_en`은 현재 header-only이고 `packet_scope`는 header에도 기록되지 않는 미사용 field이다.
 4. `bin_resolution_ps`, `k_dist_fixed`는 헤더 전용이며, `start_off1`은 GPX Reg5와 헤더에 반영되지만 FPGA Cell hit 산술에는 사용되지 않는다.
@@ -1760,7 +1818,7 @@ p_run_timeout_sticky
 8. `Doc/known_issues.md`의 config CDC와 quarantine 설명 일부는 현재 RTL보다 오래되었다.
 9. header error snapshot은 pre-Face이므로 현재 Face에서 난 post-drain 오류가 header에 즉시 보이지 않을 수 있다.
 10. 모든 내부 원인별 status가 CSR에 노출되지 않으므로 ILA 관측 계획이 필요하다.
-11. `cfg_rejected`는 published CSR에 없고 outer start pending도 reject에서 취소되지 않아 invalid start가 설정 수정 후 자동 수락될 수 있다.
+11. `cfg_rejected`는 published CSR에 없지만 invalid start pending은 즉시 삭제된다. 드라이버는 사전 검증하고 reject 후 설정을 고쳐 새 start edge를 내야 한다.
 12. `i_stop_tdc`는 session stop이나 물리 GPX stop 출력이 아니라 processing-deadline 순서 검사 표지이다.
 13. VDMA geometry 출력은 Face snapshot 후 갱신되므로 첫 Shot 전 software programming 값으로 바로 사용할 수 없다.
 14. `SYNC` mode의 generic equality assertion은 실제 clock-net 동기 관계까지 검증하지 않는다.
@@ -1783,12 +1841,13 @@ p_run_timeout_sticky
 
 - [ ] 두 AXI-Lite 주소 공간을 혼동하지 않는다.
 - [ ] command bit를 1->0으로 되돌려 다음 rising edge를 준비한다.
-- [ ] active chip mask와 slope topology가 맞다.
+- [ ] `g_PRESENT/Rise/Fall` mask가 PCB 배선과 맞고 모든 present chip에 역할이 있다.
 - [ ] stops, max_hits, cols, n_faces가 parser/VDMA 설정과 같다.
 - [ ] max_range의 단위가 5 ns tick임을 반영했다.
 - [ ] `max_scan_clks`는 AXIS clock count로 예산화했다.
 - [ ] power-up/recovery/ALU/bus timing count는 TDC clock 기준으로 재환산했다.
-- [ ] dedicated mask의 Rise/Fall 그룹을 driver가 start 전에 검증했다.
+- [ ] `HW_CONFIG[28]`과 `SCAN_TIMEOUT[19] falling_enable`이 일치한다.
+- [ ] Fall ON이면 runtime Rise/Fall lane이 모두 유효하고 Rise chip 수가 Fall보다 작지 않음을 start 전에 검증했다.
 
 ### 32.3 upstream 계약
 
@@ -1876,10 +1935,10 @@ p_run_timeout_sticky
 
 | 확인할 계약 | 1차 RTL 근거 | 함께 볼 지점 |
 |---|---|---|
-| 지원 clock/폭/topology assertion | [`tdc_gpx_top.vhd`](../tdc_gpx_top.vhd)의 concurrent assertion | `g_AXIS_CLK_MHZ`, `g_TDC_CLK_MHZ`, `g_STREAM_CLK_MODE` |
+| 지원 clock/폭/topology assertion | [`tdc_gpx_top.vhd`](../tdc_gpx_top.vhd)의 concurrent assertion | clock generic과 `g_PRESENT/Rise/Fall_CHIP_MASK` |
 | 5 ns range의 AXIS/TDC 변환 | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd)의 `s_max_range_axis_clks`, `s_max_range_tdc_clks` | [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd)의 AXIS 변환 |
 | start 수락, Face/Shot pulse, snapshot | [`tdc_gpx_face_seq.vhd`](../tdc_gpx_face_seq.vhd)의 `p_face_seq`, `p_packet_start_reg`, `p_face_cfg_latch` | `p_shot_raw_edge`, `p_start_output_reg` |
-| outer start pending/retry | [`tdc_gpx_csr_pipeline.vhd`](../tdc_gpx_csr_pipeline.vhd)의 `p_start_pending` | `o_cmd_start`, `i_cmd_start_accepted` |
+| outer start pending/retry/reject | [`tdc_gpx_csr_pipeline.vhd`](../tdc_gpx_csr_pipeline.vhd)의 `p_start_pending`, [`tdc_gpx_face_seq.vhd`](../tdc_gpx_face_seq.vhd)의 `s_cmd_start_pending_r` | `o_cmd_start`, `i_cmd_start_accepted`, `s_cfg_rejected_r` |
 | stop event 귀속과 expected count | [`tdc_gpx_stop_cfg_decode.vhd`](../tdc_gpx_stop_cfg_decode.vhd)의 `p_owned_evt_stage`, `p_runtime_state` | `p_monotonic_check`, `p_cfg_override` |
 | IFIFO 완료와 drain cap | [`tdc_gpx_chip_run.vhd`](../tdc_gpx_chip_run.vhd)의 `fn_drain_eval` | `p_fsm`, final control beat 생성부 |
 | raw word 문맥/Shot tag | [`tdc_gpx_raw_event_builder.vhd`](../tdc_gpx_raw_event_builder.vhd)의 `p_builder` | [`tdc_gpx_decoder_i_mode.vhd`](../tdc_gpx_decoder_i_mode.vhd) |

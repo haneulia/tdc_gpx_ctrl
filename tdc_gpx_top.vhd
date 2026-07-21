@@ -5,15 +5,17 @@
 --
 -- Purpose:
 --   Instantiates and connects the 4 cluster wrappers plus face_seq and
---   status_agg.  No processes -- pure structural + concurrent assignments.
+--   status_agg.  Most datapath ownership is structural; the top also contains
+--   small control, geometry, snapshot, and sticky-status processes.
 --
 --   [1] csr_pipeline    : Pipeline CSR (AXI4-Lite #2, 7-bit address)
 --   [2] config_ctrl     : Cluster 1 - Chip CSR + cmd_arb + stop_cfg_decode +
 --                         bus_phy x4 + chip_ctrl x4 + skid buffers
 --   [3] decode_pipe     : Cluster 2 - decoder_i_mode + raw_event_builder + skids
---   [4] cell_pipe       : Cluster 3 - slope demux + topology-selected
---                         cell_builder x4 (dedicated) or x8 (shared)
---   [5] output_stage    : Cluster 4 - face_asm x2 + sync_fifo x2 + header x2
+--   [4] cell_pipe       : Cluster 3 - slope demux + one rising builder per
+--                         present chip + fall builders selected by the static
+--                         fall-capability mask
+--   [5] output_stage    : Cluster 4 - rise output chain + optional fall chain
 --   [6] face_seq        : Face/shot sequencer
 --   [7] status_agg      : Status aggregation + timestamp + error counter
 --
@@ -853,10 +855,9 @@ begin
             -- Control / Config
             i_shot_start_per_chip   => s_shot_start_per_chip,
             -- CHAIN P1: slope lane masks (same source as output_stage's
-            -- face_rise/fall_mask). In DEDICATED_2X2 this keeps the
-            -- wrong-slope builders are absent at elaboration, while these
-            -- runtime masks retain active-chip selection and wrong-slope
-            -- hit diagnostics.
+            -- face_rise/fall_mask). Static generics decide which builders can
+            -- exist; these face-snapshotted masks select active lane members
+            -- and retain wrong-slope hit diagnostics at runtime.
             i_rise_chip_mask        => s_face_rise_mask,
             i_fall_chip_mask        => s_face_fall_mask,
             i_abort                 => s_pipeline_abort,       -- global (legacy)
