@@ -31,7 +31,10 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_output_stage is
     generic (
-        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
+        g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
     port (
         -- Clock / Reset
@@ -571,7 +574,10 @@ begin
     -- =========================================================================
     u_header_rise : entity work.tdc_gpx_header_inserter
         generic map (
-            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
+            g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
+            g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
+            g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP
         )
         port map (
             i_clk               => i_clk,
@@ -615,7 +621,10 @@ begin
     -- =========================================================================
     u_header_fall : entity work.tdc_gpx_header_inserter
         generic map (
-            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
+            g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
+            g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
+            g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP
         )
         port map (
             i_clk               => i_clk,

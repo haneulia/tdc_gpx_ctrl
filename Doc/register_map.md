@@ -44,10 +44,10 @@ window is never shortened.
 | Offset | Name         | Meaning                                               |
 |:------:|--------------|-------------------------------------------------------|
 | 0x40   | HW_VERSION   | `[31:0]` compile-time constant (default `0x00010000`) |
-| 0x44   | HW_CONFIG    | Packed generics: `[3:0] N_CHIPS`, `[7:4] MAX_STOPS_PER_CHIP`, `[11:8] MAX_HITS_PER_STOP`, `[16:12] HIT_SLOT_DATA_WIDTH`, `[24:17] TDATA_WIDTH`, `[27:25] CELL_FMT` |
-| 0x48   | MAX_ROWS     | `c_MAX_ROWS_PER_FACE`                                 |
-| 0x4C   | CELL_SIZE    | Maximum canonical serialized cell size: `20 B` (`max_hits=7`) |
-| 0x50   | MAX_HSIZE    | Conservative full-mask packed maximum: `688 B` = `48 + align16(32 × 20)` |
+| 0x44   | HW_CONFIG    | Selected build profile: `[3:0] popcount(g_PRESENT_CHIP_MASK)`, `[7:4] g_MAX_STOPS_PER_CHIP`, `[11:8] g_MAX_HITS_PER_STOP`, `[16:12] HIT_SLOT_DATA_WIDTH`, `[24:17] TDATA_WIDTH`, `[27:25] CELL_FMT` |
+| 0x48   | MAX_ROWS     | Build maximum rows: `popcount(g_PRESENT_CHIP_MASK) × g_MAX_STOPS_PER_CHIP` (default `32`) |
+| 0x4C   | CELL_SIZE    | Build maximum canonical cell bytes from `g_MAX_HITS_PER_STOP` (default `20 B`) |
+| 0x50   | MAX_HSIZE    | Build full-mask packed maximum: `48 + align16(MAX_ROWS × CELL_SIZE)` (default `688 B`) |
 | 0x54   | **STATUS**   | See STATUS (STAT5) layout below                       |
 | 0x58   | **STATUS_EXT** | See STATUS_EXT (STAT6) layout below — Round 5/6/7   |
 | 0x5C   | **STATUS_EXT2** | See STATUS_EXT2 (STAT7) layout below — Round 11 Cat C |
@@ -55,10 +55,17 @@ window is never shortened.
 Address contract: only `0x40..0x5C` is the published status window. The
 generated IP's native `0x20..0x3C` status placement is hidden by the wrapper,
 and `0x60..0x7F` remains reserved. Writes are accepted only for `0x00..0x1C`.
-`CELL_SIZE` and `MAX_HSIZE` are compile-time capacity maxima; the actual
+`MAX_ROWS`, `CELL_SIZE`, and `MAX_HSIZE` describe the selected compile-time
+build profile, not necessarily the package's absolute ABI capacities. The actual
 slope-specific runtime line sizes are exported by
 `o_vdma_hsize_bytes_rise/fall` and may be smaller (for example `368 B` for
 16 cells at `max_hits=7`).
+
+Build-profile enforcement on CSR writes:
+- `active_chip_mask` is ANDed with `g_PRESENT_CHIP_MASK`; an empty result falls
+  back to the lowest-index present chip.
+- `stops_per_chip` is clamped to `2..g_MAX_STOPS_PER_CHIP`.
+- `max_hits_cfg=0` aliases to `g_MAX_HITS_PER_STOP`; larger values clamp to it.
 
 ### STATUS (STAT5 @ 0x54) bit layout
 

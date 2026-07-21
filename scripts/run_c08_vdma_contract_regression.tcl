@@ -42,6 +42,11 @@ foreach tb $c08_tb_sources {
 update_compile_order -fileset sources_1
 update_compile_order -fileset sim_1
 
+# Package/interface changes can leave dependent wrapper VDB files stale even
+# after update_compile_order. Start the matrix from a clean simulation state so
+# every wrapper is rebuilt against the current tdc_gpx_pkg interface.
+reset_simulation
+
 set tops [list \
     tb_tdc_gpx_top_int_c08_vdma_w32 \
     tb_tdc_gpx_top_int_c08_vdma_w64 \

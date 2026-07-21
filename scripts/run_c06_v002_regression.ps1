@@ -125,6 +125,7 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_chip_init_cfg_owner.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
+    "$Hdl/tb_tdc_gpx_top_int_build_profile.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
     "$Hdl/tb_tdc_gpx_status_agg_c06_fix.vhd",
     "$Hdl/tb_tdc_gpx_cell_pipe_lane_mask.vhd",
@@ -242,6 +243,16 @@ try {
         Invoke-Checked "$Vivado/xsim.bat" @($snap, "-runall", "-log", "xsim_c06_v002_top_int_w${w}_$Stamp.log")
         Assert-SimLog "xsim_c06_v002_top_int_w${w}_$Stamp.log" "output streams emitted beats/tlast as expected - PASS"
     }
+
+    Invoke-Xelab "tb_c06_v002_build_profile_snap" "xelab_c06_v002_build_profile_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_top_int_build_profile"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_build_profile_snap", "-runall", "-log", "xsim_c06_v002_build_profile_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_build_profile_$Stamp.log" "output streams emitted beats/tlast as expected - PASS"
+
+    Invoke-Xelab "tb_c06_v002_build_profile_zero_alias_snap" "xelab_c06_v002_build_profile_zero_alias_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_top_int_build_profile_zero_alias"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_build_profile_zero_alias_snap", "-runall", "-log", "xsim_c06_v002_build_profile_zero_alias_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_build_profile_zero_alias_$Stamp.log" "output streams emitted beats/tlast as expected - PASS"
 
     $dualSnap = "tb_c06_v002_top_int_axis150_tdc200_snap"
     Invoke-Xelab $dualSnap "xelab_c06_v002_top_int_axis150_tdc200_$Stamp.log" `

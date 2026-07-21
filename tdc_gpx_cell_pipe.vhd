@@ -23,7 +23,8 @@ entity tdc_gpx_cell_pipe is
         -- Compile-time physical edge topology. The default preserves the
         -- direct-instantiation legacy behavior used by cell-pipe unit tests.
         -- Top-level integration passes its board topology explicitly.
-        g_SLOPE_CHIP_MODE : string := "SHARED_DUAL_EDGE"
+        g_SLOPE_CHIP_MODE : string := "SHARED_DUAL_EDGE";
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
     );
     port (
         -- Clock / Reset
@@ -49,8 +50,8 @@ entity tdc_gpx_cell_pipe is
         -- slope are consumed and dropped with a per-chip sticky (physical
         -- edge misconfiguration visibility). Defaults keep the legacy
         -- both-slopes-active behavior for existing instantiations.
-        i_rise_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
-        i_fall_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := (others => '1');
+        i_rise_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := c_ALL_CHIPS_MASK;
+        i_fall_chip_mask        : in  std_logic_vector(c_N_CHIPS-1 downto 0) := c_ALL_CHIPS_MASK;
         i_abort                 : in  std_logic;   -- legacy global abort (default)
         -- #22 Sprint 2: per-slope abort ports. Tie to i_abort if caller wants
         -- legacy coupling; drive separately when slope-independence is
@@ -144,9 +145,9 @@ architecture rtl of tdc_gpx_cell_pipe is
     end function;
 
     constant c_STATIC_RISE_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
-        fn_static_slope_mask(g_SLOPE_CHIP_MODE, true);
+        fn_static_slope_mask(g_SLOPE_CHIP_MODE, true) and g_PRESENT_CHIP_MASK;
     constant c_STATIC_FALL_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
-        fn_static_slope_mask(g_SLOPE_CHIP_MODE, false);
+        fn_static_slope_mask(g_SLOPE_CHIP_MODE, false) and g_PRESENT_CHIP_MASK;
 
     ---------------------------------------------------------------------------
     -- Input skid output (Cluster 2 -> Cluster 3 boundary)
@@ -225,6 +226,10 @@ begin
     assert g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
         or g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
         report "tdc_gpx_cell_pipe: g_SLOPE_CHIP_MODE must be DEDICATED_2X2 or SHARED_DUAL_EDGE"
+        severity failure;
+
+    assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
+        report "tdc_gpx_cell_pipe: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
         severity failure;
 
     s_max_range_axis_clks <= fn_range_5ns_ticks_to_clks(

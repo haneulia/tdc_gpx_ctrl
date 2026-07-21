@@ -103,7 +103,10 @@ use work.tdc_gpx_pkg.all;
 
 entity tdc_gpx_header_inserter is
     generic (
-        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
+        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
+        g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
     port (
         i_clk               : in  std_logic;
@@ -240,7 +243,8 @@ architecture rtl of tdc_gpx_header_inserter is
     signal s_rows_per_face_r     : unsigned(15 downto 0) := (others => '0');
     signal s_cols_per_face_r     : unsigned(15 downto 0) := (others => '0');
     signal s_stops_per_chip_r    : unsigned(3 downto 0)  := (others => '0');
-    signal s_max_hits_cfg_r      : unsigned(2 downto 0)  := to_unsigned(7, 3);
+    signal s_max_hits_cfg_r      : unsigned(2 downto 0)  :=
+        to_unsigned(g_MAX_HITS_PER_STOP, 3);
     signal s_hit_store_mode_r    : unsigned(1 downto 0)  := (others => '0');
 
     -- Measurement
@@ -378,15 +382,18 @@ begin
                     -- The shared helper keeps this field consistent with the
                     -- cell-size calculation below.
                     -- cell_builder's Round 9 #8 canonical 000 → 7 convention.
-                    v_max_hits := fn_effective_max_hits(s_max_hits_cfg_r);
+                    v_max_hits := fn_effective_max_hits(
+                        s_max_hits_cfg_r, g_MAX_HITS_PER_STOP);
                     word(7 downto 0) := std_logic_vector(to_unsigned(v_max_hits, 8));
                     -- Canonical 32-bit-word storage size, independent of the
                     -- external 32/64/128-bit AXIS width.
                     word(15 downto 8) := std_logic_vector(to_unsigned(
                         fn_canonical_cell_bytes(v_max_hits), 8));
                     word(23 downto 16) := std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 8));
-                    word(27 downto 24) := std_logic_vector(to_unsigned(c_N_CHIPS, 4));
-                    word(31 downto 28) := std_logic_vector(to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
+                    word(27 downto 24) := std_logic_vector(to_unsigned(
+                        fn_count_ones(g_PRESENT_CHIP_MASK), 4));
+                    word(31 downto 28) := std_logic_vector(to_unsigned(
+                        g_MAX_STOPS_PER_CHIP, 4));
                 when 6  =>
                     word(c_SHOT_SEQ_WIDTH - 1 downto 0) := std_logic_vector(s_shot_seq_start_r);
                     word(31 downto 16) := std_logic_vector(s_bin_resolution_ps_r);

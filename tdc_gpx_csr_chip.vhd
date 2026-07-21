@@ -64,6 +64,10 @@ library xpm;
 use xpm.vcomponents.all;
 
 entity tdc_gpx_csr_chip is
+    generic (
+        g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP :=
+            c_MAX_HITS_PER_STOP
+    );
     port (
         -- AXI4-Lite clock / reset
         s_axi_aclk          : in  std_logic;
@@ -940,10 +944,11 @@ begin
     -- SCAN_TIMEOUT + MAX_HITS -----------------------------------------------
     o_max_scan_clks <= unsigned(s_ctl21_out(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO));
 
-    -- max_hits_cfg: 0 -> c_MAX_HITS_PER_STOP (7), 1~7 = literal
-    o_max_hits_cfg  <= to_unsigned(c_MAX_HITS_PER_STOP, 3)
-                       when unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO)) = 0
-                       else unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO));
+    -- Zero aliases to the selected build maximum; larger SW requests clamp
+    -- to that same maximum before the value enters the processing pipeline.
+    o_max_hits_cfg <= to_unsigned(fn_effective_max_hits(
+        unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO)),
+        g_MAX_HITS_PER_STOP), o_max_hits_cfg'length);
 
     -- cfg_image output ------------------------------------------------------
     o_cfg_image <= s_img_out;

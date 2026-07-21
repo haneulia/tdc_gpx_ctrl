@@ -64,8 +64,11 @@ use xpm.vcomponents.all;
 
 entity tdc_gpx_csr_pipeline is
     generic (
-        g_HW_VERSION   : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
-        g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH
+        g_HW_VERSION          : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
+        g_OUTPUT_WIDTH        : natural := c_DEFAULT_OUTPUT_WIDTH;
+        g_PRESENT_CHIP_MASK   : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_MAX_STOPS_PER_CHIP  : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
+        g_MAX_HITS_PER_STOP   : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
     port (
         -- AXI4-Lite clock / reset
@@ -252,6 +255,14 @@ architecture rtl of tdc_gpx_csr_pipeline is
 
     -- HW_CONFIG constant (compile-time)
     signal s_hw_config : std_logic_vector(31 downto 0);
+    constant c_BUILD_CHIP_COUNT : natural := fn_count_ones(g_PRESENT_CHIP_MASK);
+    constant c_BUILD_MAX_ROWS   : natural := c_BUILD_CHIP_COUNT * g_MAX_STOPS_PER_CHIP;
+    constant c_BUILD_CELL_BYTES : natural := fn_canonical_cell_bytes(g_MAX_HITS_PER_STOP);
+    constant c_BUILD_VDMA_BYTES : natural :=
+        fn_vdma_line_bytes(c_BUILD_MAX_ROWS, g_MAX_HITS_PER_STOP);
+    constant c_ZERO_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal s_requested_chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_effective_chip_mask : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- Command edge detect (i_axis_aclk domain)
     signal s_cmd_prev_r  : std_logic_vector(3 downto 0) := (others => '0');
@@ -284,15 +295,19 @@ begin
         report "tdc_gpx_csr_pipeline: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
         severity failure;
 
+    assert c_BUILD_CHIP_COUNT > 0
+        report "tdc_gpx_csr_pipeline: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
+        severity failure;
+
     -- =========================================================================
     -- [1] HW_CONFIG constant assembly
     -- =========================================================================
     s_hw_config(c_HWCFG_N_CHIPS_HI downto c_HWCFG_N_CHIPS_LO)
-        <= std_logic_vector(to_unsigned(c_N_CHIPS, 4));
+        <= std_logic_vector(to_unsigned(c_BUILD_CHIP_COUNT, 4));
     s_hw_config(c_HWCFG_MAX_STOPS_HI downto c_HWCFG_MAX_STOPS_LO)
-        <= std_logic_vector(to_unsigned(c_MAX_STOPS_PER_CHIP, 4));
+        <= std_logic_vector(to_unsigned(g_MAX_STOPS_PER_CHIP, 4));
     s_hw_config(c_HWCFG_MAX_HITS_HI downto c_HWCFG_MAX_HITS_LO)
-        <= std_logic_vector(to_unsigned(c_MAX_HITS_PER_STOP, 4));
+        <= std_logic_vector(to_unsigned(g_MAX_HITS_PER_STOP, 4));
     s_hw_config(c_HWCFG_HIT_WIDTH_HI downto c_HWCFG_HIT_WIDTH_LO)
         <= std_logic_vector(to_unsigned(c_HIT_SLOT_DATA_WIDTH, 5));
     s_hw_config(c_HWCFG_TDATA_HI downto c_HWCFG_TDATA_LO)
@@ -369,9 +384,9 @@ begin
             -- STAT inputs: constants + CDC'd status
             stat0_in => g_HW_VERSION,
             stat1_in => s_hw_config,
-            stat2_in => std_logic_vector(to_unsigned(c_MAX_ROWS_PER_FACE, 32)),
-            stat3_in => std_logic_vector(to_unsigned(c_CANONICAL_CELL_BYTES_MAX, 32)),
-            stat4_in => std_logic_vector(to_unsigned(c_VDMA_LINE_BYTES_MAX, 32)),
+            stat2_in => std_logic_vector(to_unsigned(c_BUILD_MAX_ROWS, 32)),
+            stat3_in => std_logic_vector(to_unsigned(c_BUILD_CELL_BYTES, 32)),
+            stat4_in => std_logic_vector(to_unsigned(c_BUILD_VDMA_BYTES, 32)),
             stat5_in => s_stat_out,     -- STATUS (CDC'd from i_axis_aclk)
             stat6_in => s_stat6_out,    -- STATUS_EXT (Round 5 follow-up, CDC'd)
             stat7_in => s_stat7_out,    -- STATUS_EXT2 (Round 11 Category C, CDC'd)
@@ -792,9 +807,12 @@ begin
     -- [9] CSR output: t_tdc_cfg field extraction (i_axis_aclk domain)
     -- =========================================================================
     -- CTL0: MAIN_CTRL
-    o_cfg.active_chip_mask <= s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO)
-                              when s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO) /= "0000"
-                              else "0001";
+    s_requested_chip_mask <=
+        s_ctl_out(0)(c_MC_ACTIVE_MASK_HI downto c_MC_ACTIVE_MASK_LO);
+    s_effective_chip_mask <= s_requested_chip_mask and g_PRESENT_CHIP_MASK;
+    o_cfg.active_chip_mask <= s_effective_chip_mask
+                              when s_effective_chip_mask /= c_ZERO_CHIP_MASK
+                              else fn_first_one_mask(g_PRESENT_CHIP_MASK);
     o_cfg.packet_scope     <= s_ctl_out(0)(c_MC_PACKET_SCOPE);
     o_cfg.hit_store_mode   <= unsigned(s_ctl_out(0)(c_MC_HIT_STORE_HI downto c_MC_HIT_STORE_LO));
     o_cfg.dist_scale       <= unsigned(s_ctl_out(0)(c_MC_DIST_SCALE_HI downto c_MC_DIST_SCALE_LO));
@@ -807,9 +825,9 @@ begin
 
     o_cfg.stops_per_chip   <= unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO))
                               when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) >= 2
-                                   and unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) <= 8
-                              else to_unsigned(8, 4)
-                              when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) > 8
+                                   and unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) <= g_MAX_STOPS_PER_CHIP
+                              else to_unsigned(g_MAX_STOPS_PER_CHIP, 4)
+                              when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) > g_MAX_STOPS_PER_CHIP
                               else to_unsigned(2, 4);
 
     o_cfg.n_drain_cap      <= unsigned(s_ctl_out(0)(c_MC_N_DRAIN_CAP_HI downto c_MC_N_DRAIN_CAP_LO));
@@ -832,6 +850,6 @@ begin
     o_cfg.start_off1       <= (others => '0');       -- default, overridden
     o_cfg.cfg_reg7         <= (others => '0');       -- default, overridden
     o_cfg.max_scan_clks    <= (others => '0');       -- default, overridden
-    o_cfg.max_hits_cfg     <= to_unsigned(7, 3);     -- default, overridden
+    o_cfg.max_hits_cfg     <= to_unsigned(g_MAX_HITS_PER_STOP, 3); -- default, overridden
 
 end architecture rtl;

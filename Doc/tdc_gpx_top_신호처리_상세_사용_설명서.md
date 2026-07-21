@@ -302,6 +302,9 @@ CDC 신호를 분석할 때는 다음을 구분한다.
 | `g_HW_VERSION` | `0x00010000` | HW 식별값 | 드라이버 호환성 |
 | `g_OUTPUT_WIDTH` | 32 | Rise/Fall AXIS 폭, 32/64/128 | VDMA stream 폭과 TB matrix |
 | `g_SLOPE_CHIP_MODE` | `DEDICATED_2X2` | chip-slope 물리 topology | 보드 배선과 GPX edge 설정 |
+| `g_PRESENT_CHIP_MASK` | `1111` | 합성할 물리 chip slot mask, chip 수는 `popcount(mask)`로 파생 | 실제 GPX 배치와 slope 그룹 |
+| `g_MAX_STOPS_PER_CHIP` | 8 | 빌드가 허용하는 chip당 최대 Stop 수, 2..8 | GPX 설정과 최대 Cell/VDMA geometry |
+| `g_MAX_HITS_PER_STOP` | 7 | 빌드가 허용하는 Stop당 최대 Hit 수, 1..7 | 거리 창, Cell 크기, 처리량 |
 | `g_AXIS_CLK_MHZ` | 150 | 처리 클럭 메타데이터 | 실제 클럭/XDC 일치 |
 | `g_TDC_CLK_MHZ` | 200 | GPX 제어 클럭 메타데이터 | 실제 클럭/XDC 일치 |
 | `g_POWERUP_CLKS` | 48 | GPX power-up 단계 길이, TDC clocks | 데이터시트/보드 reset |
@@ -312,7 +315,31 @@ CDC 신호를 분석할 때는 다음을 구분한다.
 | `g_STREAM_CLK_MODE` | `ASYNC` | raw stream CDC 구조 | 두 clock 관계 |
 | stop/fire width generics | package 기본 | echo_receiver 인터페이스 폭 | 부모 모듈 포맷 |
 
-### 7.1 slope topology
+### 7.1 고정 ABI 상수와 build-profile generic의 경계
+
+`tdc_gpx_pkg.vhd`의 다음 세 값은 선택된 하드웨어 규모가 아니라 **인터페이스와 데이터 형식의 절대 상한**이다.
+
+| Package 상수 | 고정 이유 | 선택값 |
+|---|---|---|
+| `c_N_CHIPS=4` | top 포트 배열, chip ID 폭, CSR/header slot 형식 | `g_PRESENT_CHIP_MASK` |
+| `c_MAX_STOPS_PER_CHIP=8` | Stop ID/배열 및 canonical 형식의 상한 | `g_MAX_STOPS_PER_CHIP` |
+| `c_MAX_HITS_PER_STOP=7` | 17-bit GPX hit의 Cell metadata/slot 형식 상한 | `g_MAX_HITS_PER_STOP` |
+
+별도 `g_N_CHIPS`는 두지 않는다. chip 개수만으로는 실제 slot 위치를 표현할 수 없고 mask와 count가 서로 다를 위험이 있으므로, 구현 chip 수는 항상 `popcount(g_PRESENT_CHIP_MASK)`로 한 번만 계산한다.
+
+CSR 요청은 build profile 밖으로 나가지 못한다.
+
+| CSR 요청 | RTL 적용값 |
+|---|---|
+| `active_chip_mask` | `request AND g_PRESENT_CHIP_MASK`; 결과가 0이면 가장 낮은 present slot 하나 |
+| `stops_per_chip < 2` | 2 |
+| `stops_per_chip > g_MAX_STOPS_PER_CHIP` | `g_MAX_STOPS_PER_CHIP` |
+| `max_hits_cfg = 0` | `g_MAX_HITS_PER_STOP` alias |
+| `max_hits_cfg > g_MAX_HITS_PER_STOP` | `g_MAX_HITS_PER_STOP` |
+
+`g_PRESENT_CHIP_MASK`는 비존재 Cell builder를 elaboration에서 제거하고 해당 chip-control slot을 reset/비활성 상태로 고정한다. 합성기는 이 constant-disabled cone을 제거할 수 있다. 반면 Stop/Hit generic은 현재 CSR legality, header, Cell/VDMA geometry를 제한하지만 고정 ABI record와 일부 내부 배열은 package 상한 크기를 유지한다. 따라서 Stop/Hit 상한 축소에 따른 LUT/FF/BRAM 절감은 합성 utilization 비교로 확인해야 하며, 저장 배열 자체를 반드시 축소하려면 별도의 type/interface 구조 변경이 필요하다.
+
+### 7.2 slope topology
 
 | 모드 | Rise lane | Fall lane | Cell builder 수 |
 |---|---|---|---:|
@@ -412,12 +439,12 @@ Pipeline의 compile-time status는 다음과 같다.
 | Offset | 이름 | 값/형식 |
 |---:|---|---|
 | `0x40` | `HW_VERSION` | `g_HW_VERSION`, 기본 `0x00010000` |
-| `0x44` | `HW_CONFIG` | chips, max stops/hits, hit width, AXIS width, Cell format |
-| `0x48` | `MAX_ROWS` | full-mask 최대 Cell slots, 현재 32 |
-| `0x4C` | `CELL_SIZE` | 최대 canonical Cell bytes, 현재 20 B |
-| `0x50` | `MAX_HSIZE` | full-mask 보수적 최대 line bytes, 현재 688 B |
+| `0x44` | `HW_CONFIG` | build chip 수, build max stops/hits, hit width, AXIS width, Cell format |
+| `0x48` | `MAX_ROWS` | `popcount(g_PRESENT_CHIP_MASK) x g_MAX_STOPS_PER_CHIP`; 기본 32 |
+| `0x4C` | `CELL_SIZE` | build max hits 기준 canonical Cell bytes; 기본 20 B |
+| `0x50` | `MAX_HSIZE` | build profile full-mask 최대 line bytes; 기본 688 B |
 
-`MAX_ROWS/CELL_SIZE/MAX_HSIZE`는 capacity 상수이고 현재 Face의 slope별 runtime geometry가 아니다. 실제 VDMA 설정은 Face 설정으로 계산하거나 `o_vdma_hsize_bytes_rise/fall`, `o_vdma_vsize_lines`로 교차 확인한다.
+`MAX_ROWS/CELL_SIZE/MAX_HSIZE`는 선택된 build profile의 compile-time 상한이고 현재 Face의 slope별 runtime geometry가 아니다. 실제 VDMA 설정은 Face 설정으로 계산하거나 `o_vdma_hsize_bytes_rise/fall`, `o_vdma_vsize_lines`로 교차 확인한다.
 
 ### 9.2 `MAIN_CTRL` 비트
 
@@ -1203,6 +1230,16 @@ Word 3 bit 구성:
 | `[28:26]` | dist_scale, header-only |
 | `[29]` | drain_mode |
 | `[30]` | Hit bit16 metadata 지원 표시 |
+
+Word 5 bit 구성:
+
+| 비트 | 필드 |
+|---|---|
+| `[7:0]` | 현재 Face에 적용된 effective max hits |
+| `[15:8]` | 해당 max hits의 canonical Cell bytes |
+| `[23:16]` | hit slot data width, 현재 16 |
+| `[27:24]` | `popcount(g_PRESENT_CHIP_MASK)` build chip 수 |
+| `[31:28]` | `g_MAX_STOPS_PER_CHIP` build 상한 |
 
 헤더의 error 정보는 `face_start` 시점 snapshot이다. 현재 Face drain 중 새로 발생한 오류는 다음 Face header, Cell metadata 또는 CSR status에서 확인해야 한다.
 

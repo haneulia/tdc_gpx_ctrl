@@ -47,6 +47,13 @@ entity tdc_gpx_top is
         -- DEDICATED_2X2: chip0/1 rise, chip2/3 fall.
         -- SHARED_DUAL_EDGE: every active chip participates in both lanes.
         g_SLOPE_CHIP_MODE : string := c_DEFAULT_SLOPE_CHIP_MODE;
+        -- Compile-time build profile. The external 4-chip ABI remains fixed;
+        -- absent chip slots and geometry above these limits are not selectable.
+        -- The implemented chip count is derived from this mask, avoiding a
+        -- second count generic that could disagree with the physical mapping.
+        g_PRESENT_CHIP_MASK  : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
+        g_MAX_HITS_PER_STOP  : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP;
         -- Signal-processing clock contract. Supported values are
         -- 50/100/125/150/200 MHz. AXIS must not be faster than TDC; therefore
         -- end-to-end processing margin and throughput closure use AXIS timing.
@@ -215,7 +222,8 @@ architecture rtl of tdc_gpx_top is
 
     function fn_lane_hsize(
         cell_slots : unsigned(15 downto 0);
-        max_hits   : unsigned(2 downto 0)
+        max_hits   : unsigned(2 downto 0);
+        build_max_hits : positive
     ) return unsigned is
         variable v_slots          : natural;
         variable v_payload_blocks : natural;
@@ -227,7 +235,7 @@ architecture rtl of tdc_gpx_top is
         -- 1..2/3..4/5..6/7. Compute directly in 16-byte line blocks to
         -- avoid a general multiply followed by ceil-divide on this output
         -- timing path.
-        case fn_effective_max_hits(max_hits) is
+        case fn_effective_max_hits(max_hits, build_max_hits) is
             when 1 | 2 =>
                 v_payload_blocks := (v_slots + 1) / 2;
             when 3 | 4 =>
@@ -486,6 +494,16 @@ begin
         report "tdc_gpx_top: g_SLOPE_CHIP_MODE must be DEDICATED_2X2 or SHARED_DUAL_EDGE"
         severity failure;
 
+    assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
+        report "tdc_gpx_top: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
+        severity failure;
+
+    assert g_SLOPE_CHIP_MODE /= "DEDICATED_2X2"
+        or (g_PRESENT_CHIP_MASK(1 downto 0) /= "00"
+            and g_PRESENT_CHIP_MASK(3 downto 2) /= "00")
+        report "tdc_gpx_top: DEDICATED_2X2 requires at least one present chip in each slope group"
+        severity failure;
+
     s_face_rise_mask <= s_face_active_mask_r
         when g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
         else s_face_active_mask_r and "0011";
@@ -519,9 +537,11 @@ begin
                 s_geometry_vsize_r      <= s_face_cols_per_face_r;
 
                 s_vdma_hsize_rise <= fn_lane_hsize(
-                    s_geometry_slots_rise_r, s_geometry_max_hits_r);
+                    s_geometry_slots_rise_r, s_geometry_max_hits_r,
+                    g_MAX_HITS_PER_STOP);
                 s_vdma_hsize_fall <= fn_lane_hsize(
-                    s_geometry_slots_fall_r, s_geometry_max_hits_r);
+                    s_geometry_slots_fall_r, s_geometry_max_hits_r,
+                    g_MAX_HITS_PER_STOP);
                 s_vdma_vsize <= s_geometry_vsize_r;
             end if;
         end if;
@@ -577,8 +597,11 @@ begin
     -- =========================================================================
     u_csr_pipeline : entity work.tdc_gpx_csr_pipeline
         generic map (
-            g_HW_VERSION     => g_HW_VERSION,
-            g_OUTPUT_WIDTH   => g_OUTPUT_WIDTH
+            g_HW_VERSION         => g_HW_VERSION,
+            g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
+            g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
+            g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
+            g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP
         )
         port map (
             s_axi_aclk          => s_axi_aclk,
@@ -634,7 +657,9 @@ begin
             g_STREAM_CLK_MODE => g_STREAM_CLK_MODE,
             g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
             g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
-            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH
+            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH,
+            g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK,
+            g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP
         )
         port map (
             i_axis_aclk          => i_axis_aclk,
@@ -803,7 +828,8 @@ begin
         generic map (
             g_OUTPUT_WIDTH    => g_OUTPUT_WIDTH,
             g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
-            g_SLOPE_CHIP_MODE => g_SLOPE_CHIP_MODE
+            g_SLOPE_CHIP_MODE => g_SLOPE_CHIP_MODE,
+            g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK
         )
         port map (
             i_clk                   => i_axis_aclk,
@@ -883,7 +909,10 @@ begin
     -- =========================================================================
     u_output_stage : entity work.tdc_gpx_output_stage
         generic map (
-            g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
+            g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
+            g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
+            g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
+            g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP
         )
         port map (
             i_clk                => i_axis_aclk,
@@ -1014,6 +1043,9 @@ begin
     u_face_seq : entity work.tdc_gpx_face_seq
         generic map (
             g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
+            g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK,
+            g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
+            g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP,
             g_REQUIRE_DEDICATED_GROUPS =>
                 g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
         )

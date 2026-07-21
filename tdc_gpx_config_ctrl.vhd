@@ -71,7 +71,9 @@ entity tdc_gpx_config_ctrl is
         g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE;
         g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
         g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH
+        g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
     port (
         -- Clock / Reset: processing domain (g_AXIS_CLK_MHZ)
@@ -541,6 +543,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- Per-chip level and sticky status. One-cycle event signals are declared
     -- separately below and cross through xpm_cdc_pulse.
     signal s_chip_busy_axi         : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_chip_busy_effective   : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_drain_timeout_axi : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_sequence_axi      : std_logic_vector(c_N_CHIPS - 1 downto 0);
     signal s_err_rsp_mismatch_axi  : std_logic_vector(c_N_CHIPS - 1 downto 0);
@@ -571,6 +574,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- in the TDC domain, which is the standard pattern for cross-domain reset.
     -- =========================================================================
     signal s_tdc_aresetn : std_logic;
+    signal s_chip_rst_n   : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
     -- =========================================================================
     -- 2-FF synchronizer stages for quasi-static config bundles (Round 5 #7).
@@ -669,6 +673,14 @@ architecture rtl of tdc_gpx_config_ctrl is
 
 begin
 
+    assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
+        report "tdc_gpx_config_ctrl: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
+        severity failure;
+
+    gen_chip_present_reset : for i in 0 to c_N_CHIPS - 1 generate
+        s_chip_rst_n(i) <= s_tdc_aresetn and g_PRESENT_CHIP_MASK(i);
+    end generate gen_chip_present_reset;
+
     -- synthesis translate_off
     assert g_STREAM_CLK_MODE = "ASYNC" or g_STREAM_CLK_MODE = "SYNC"
         report "config_ctrl: unsupported g_STREAM_CLK_MODE"
@@ -736,7 +748,7 @@ begin
     -- =========================================================================
 
     -- Pipeline fields (from i_cfg_pipeline)
-    s_cfg_merged.active_chip_mask <= i_cfg_pipeline.active_chip_mask;
+    s_cfg_merged.active_chip_mask <= i_cfg_pipeline.active_chip_mask and g_PRESENT_CHIP_MASK;
     s_cfg_merged.packet_scope     <= i_cfg_pipeline.packet_scope;
     s_cfg_merged.hit_store_mode   <= i_cfg_pipeline.hit_store_mode;
     s_cfg_merged.dist_scale       <= i_cfg_pipeline.dist_scale;
@@ -772,7 +784,8 @@ begin
     -- =========================================================================
     o_cmd_start         <= i_cmd_start;
     o_reg_loop_resume   <= s_reg_loop_resume;
-    o_chip_busy         <= s_chip_busy_axi;
+    s_chip_busy_effective <= s_chip_busy_axi and g_PRESENT_CHIP_MASK;
+    o_chip_busy         <= s_chip_busy_effective;
     o_chip_shot_seq     <= s_chip_shot_seq_axi;
     o_errflag_sync      <= s_errflag_sync_axi;
     o_err_drain_timeout <= s_err_drain_timeout_axi;
@@ -938,6 +951,9 @@ begin
     -- [1] csr_chip: AXI-Lite CSR + SRM + CDC
     -- =========================================================================
     u_csr_chip : entity work.tdc_gpx_csr_chip
+        generic map (
+            g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP
+        )
         port map (
             s_axi_aclk      => s_axi_aclk,
             s_axi_aresetn   => s_axi_aresetn,
@@ -1002,7 +1018,7 @@ begin
             i_cmd_reg_chip       => s_cmd_reg_chip,
             i_cmd_reg_chip_address  => s_cmd_reg_chip_address_mux,
             i_cmd_reg_addr       => s_cmd_reg_addr_mux,
-            i_chip_busy          => s_chip_busy_axi,
+            i_chip_busy          => s_chip_busy_effective,
             i_face_asm_idle      => i_face_asm_idle,
             i_face_asm_fall_idle => i_face_asm_fall_idle,
             i_hdr_idle           => i_hdr_idle,
@@ -1031,7 +1047,7 @@ begin
             i_clk                => i_axis_aclk,
             i_rst_n              => i_axis_aresetn,
             i_errflag_sync       => s_errflag_sync_axi,
-            i_chip_busy          => s_chip_busy_axi,
+            i_chip_busy          => s_chip_busy_effective,
             i_reg11_data_0       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(0),
             i_reg11_data_1       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(1),
             i_reg11_data_2       => (31 downto c_TDC_BUS_WIDTH => '0') & s_cmd_reg_rdata_axi(2),
@@ -1470,7 +1486,7 @@ begin
             )
             port map (
                 i_clk           => i_tdc_clk,
-                i_rst_n         => s_tdc_aresetn,
+                i_rst_n         => s_chip_rst_n(i),
                 i_tick_en       => s_tick_en(i),
                 i_bus_ticks     => s_bus_ticks_snap(i),
                 i_bus_clk_div   => s_bus_clk_div_snap(i),
@@ -1692,7 +1708,7 @@ begin
             )
             port map (
                 i_src_clk     => i_tdc_clk,
-                i_src_rst_n   => s_tdc_aresetn,
+                i_src_rst_n   => s_chip_rst_n(i),
                 i_src_done    => s_cmd_reg_done(i),
                 i_src_rvalid  => s_cmd_reg_rvalid(i),
                 i_src_rdata   => s_cmd_reg_rdata(i),
@@ -1742,7 +1758,7 @@ begin
             )
             port map (
                 i_clk               => i_tdc_clk,
-                i_rst_n             => s_tdc_aresetn,
+                i_rst_n             => s_chip_rst_n(i),
                 i_cfg               => s_cfg_tdc,
                 i_cfg_image         => s_cfg_image_tdc,
                 i_cmd_start         => s_cmd_start_tdc,
@@ -1840,7 +1856,7 @@ begin
             p_raw_fifo_rst : process(i_tdc_clk)
             begin
                 if rising_edge(i_tdc_clk) then
-                    if s_tdc_aresetn = '0' then
+                    if s_chip_rst_n(i) = '0' then
                         s_raw_fifo_rst_cnt_r(i) <= (others => '0');
                     elsif s_cmd_soft_reset_tdc = '1'
                        or s_err_cmd_soft_reset_tdc(i) = '1' then
@@ -1857,7 +1873,7 @@ begin
             -- already lives in TDC domain; mixing an AXI-domain async reset
             -- into the same expression created an unnecessary CDC boundary.
             s_raw_fifo_rst(i) <= '1' when s_raw_fifo_rst_cnt_r(i) /= 0
-                                       or s_tdc_aresetn = '0'
+                                       or s_chip_rst_n(i) = '0'
                                  else '0';
 
             u_raw_cdc : xpm_fifo_async

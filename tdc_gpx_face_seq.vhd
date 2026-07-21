@@ -31,6 +31,9 @@ use work.tdc_gpx_pkg.all;
 entity tdc_gpx_face_seq is
     generic (
         g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
+        g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP;
         -- Dedicated topology must retain at least one active chip in each
         -- fixed group: chip0/1 rise and chip2/3 fall.
         g_REQUIRE_DEDICATED_GROUPS : boolean := false
@@ -118,6 +121,8 @@ end entity tdc_gpx_face_seq;
 architecture rtl of tdc_gpx_face_seq is
 
     constant C_ZEROS_CHIPS : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    constant c_BUILD_MAX_ROWS : natural :=
+        fn_count_ones(g_PRESENT_CHIP_MASK) * g_MAX_STOPS_PER_CHIP;
 
     type t_face_state is (ST_IDLE, ST_WAIT_SHOT, ST_IN_FACE);
     signal s_face_state_r     : t_face_state := ST_IDLE;
@@ -133,13 +138,15 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_frame_abort_cnt_r : unsigned(15 downto 0) := (others => '0');
     signal s_face_shot_cnt_r   : unsigned(15 downto 0) := (others => '0');
 
-    signal s_face_stops_per_chip_r : unsigned(3 downto 0)  := to_unsigned(8, 4);
-    signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '1');
+    signal s_face_stops_per_chip_r : unsigned(3 downto 0)  :=
+        to_unsigned(g_MAX_STOPS_PER_CHIP, 4);
+    signal s_face_active_mask_r    : std_logic_vector(c_N_CHIPS - 1 downto 0) := g_PRESENT_CHIP_MASK;
     signal s_face_cols_per_face_r  : unsigned(15 downto 0) := to_unsigned(1, 16);
     signal s_face_n_faces_r        : unsigned(3 downto 0)  := to_unsigned(1, 4);
     signal s_cfg_face_r            : t_tdc_cfg := c_TDC_CFG_INIT;
 
-    signal s_rows_per_face_r  : unsigned(15 downto 0) := to_unsigned(c_MAX_ROWS_PER_FACE, 16);
+    signal s_rows_per_face_r  : unsigned(15 downto 0) :=
+        to_unsigned(c_BUILD_MAX_ROWS, 16);
     signal s_hsize_bytes_r    : unsigned(15 downto 0) := (others => '0');  -- computed at packet_start
 
     signal s_frame_rise_done_r : std_logic := '0';
@@ -200,6 +207,10 @@ begin
         report "tdc_gpx_face_seq: g_OUTPUT_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
+    assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
+        report "tdc_gpx_face_seq: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
+        severity failure;
+
     -- =========================================================================
     -- p_face_seq: face FSM
     -- =========================================================================
@@ -224,9 +235,10 @@ begin
                         if i_cmd_start = '1' or s_cmd_start_pending_r = '1' then
                             -- Config validation: reject if geometry is degenerate
                             -- Round 11 item 7: upper bound check on stops_per_chip.
-                            -- The codebase assumes c_MAX_STOPS_PER_CHIP = 8:
-                            --   - face_seq p_geometry: v_rows is bounded by
-                            --     c_MAX_ROWS_PER_FACE (derived from 8)
+                            -- The fixed ABI supports at most eight stops, while
+                            -- this build may select a lower generic maximum:
+                            --   - face_seq p_geometry: v_rows remains bounded by
+                            --     the fixed c_MAX_ROWS_PER_FACE capacity
                             --   - cell_builder / face_assembler use
                             --     i_stops_per_chip(2 downto 0) — i.e. 3-bit
                             --     truncation — so values 9..15 wrap to 1..7
@@ -241,11 +253,14 @@ begin
                             -- logic at line 256). Policy is now: n_faces
                             -- must be in [1..7]; anything else is rejected.
                             if i_cfg.active_chip_mask = "0000"
+                               or (i_cfg.active_chip_mask and not g_PRESENT_CHIP_MASK) /= C_ZEROS_CHIPS
                                or (g_REQUIRE_DEDICATED_GROUPS
                                    and (i_cfg.active_chip_mask(1 downto 0) = "00"
                                         or i_cfg.active_chip_mask(3 downto 2) = "00"))
                                or i_cfg.stops_per_chip < 2
-                               or i_cfg.stops_per_chip > c_MAX_STOPS_PER_CHIP
+                               or i_cfg.stops_per_chip > g_MAX_STOPS_PER_CHIP
+                               or (i_cfg.max_hits_cfg /= 0
+                                   and to_integer(i_cfg.max_hits_cfg) > g_MAX_HITS_PER_STOP)
                                or i_cfg.cols_per_face < 1
                                or i_cfg.n_faces = 0 then
                                 -- Invalid config: reject start, pulse cfg_rejected
@@ -378,7 +393,7 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_rows_per_face_r <= to_unsigned(c_MAX_ROWS_PER_FACE, 16);
+                s_rows_per_face_r <= to_unsigned(c_BUILD_MAX_ROWS, 16);
                 s_hsize_bytes_r   <= (others => '0');
             elsif s_packet_start_r = '1' then
                 v_active_cnt := fn_count_ones(i_cfg.active_chip_mask);
@@ -388,7 +403,8 @@ begin
                 -- Canonical 32-bit cell words are packed across cell
                 -- boundaries. HSIZE therefore depends on semantic cell bytes,
                 -- not g_OUTPUT_WIDTH; only the line end is aligned to 16 B.
-                v_max_hits := fn_effective_max_hits(i_cfg.max_hits_cfg);
+                v_max_hits := fn_effective_max_hits(
+                    i_cfg.max_hits_cfg, g_MAX_HITS_PER_STOP);
                 s_hsize_bytes_r <= to_unsigned(
                     fn_vdma_line_bytes(v_rows, v_max_hits), 16);
             end if;
@@ -399,8 +415,8 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_face_stops_per_chip_r <= to_unsigned(8, 4);
-                s_face_active_mask_r    <= (others => '1');
+                s_face_stops_per_chip_r <= to_unsigned(g_MAX_STOPS_PER_CHIP, 4);
+                s_face_active_mask_r    <= g_PRESENT_CHIP_MASK;
                 s_face_cols_per_face_r  <= to_unsigned(1, 16);
                 s_face_n_faces_r        <= to_unsigned(1, 4);
                 s_cfg_face_r            <= i_cfg;

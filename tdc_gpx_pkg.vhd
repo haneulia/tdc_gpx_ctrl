@@ -60,9 +60,14 @@ package tdc_gpx_pkg is
     -- =========================================================================
     -- Fixed protocol/cell-format capacities
     -- =========================================================================
+    -- Fixed ABI/format capacities. These are not the selected build profile:
+    -- tdc_gpx_top generics may implement a subset without changing port widths
+    -- or the canonical cell/header format.
     constant c_N_CHIPS              : natural := 4;
     constant c_MAX_STOPS_PER_CHIP   : natural := 8;
     constant c_MAX_HITS_PER_STOP    : natural := 7;
+    constant c_ALL_CHIPS_MASK       : std_logic_vector(c_N_CHIPS - 1 downto 0) :=
+        (others => '1');
     -- Cell hit slots carry the lower 16 bits of each GPX raw hit. The 17th
     -- raw hit bit is preserved separately in the cell metadata beat as
     -- hit_msb_vec[6:0], so output beat count still scales only by
@@ -102,6 +107,10 @@ package tdc_gpx_pkg is
 
     -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
     function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural;
+    function fn_effective_max_hits(
+        cfg       : unsigned(2 downto 0);
+        build_max : positive
+    ) return natural;
     function fn_cell_size_rt(max_hits : natural) return natural;
     function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
     -- Canonical VDMA storage keeps the existing 32-bit cell word ABI:
@@ -194,6 +203,7 @@ package tdc_gpx_pkg is
     ) return natural;
 
     function fn_count_ones(v : std_logic_vector) return natural;
+    function fn_first_one_mask(v : std_logic_vector) return std_logic_vector;
 
     -- Stop event AXI-Stream helpers
     -- valid_bytes = ceil(n_stops * cnt_width / 8)
@@ -345,14 +355,14 @@ package tdc_gpx_pkg is
     end record;
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
-        active_chip_mask    => (others => '1'),         -- all 4 chips active
+        active_chip_mask    => c_ALL_CHIPS_MASK,
         packet_scope        => '0',                     -- face scope
         hit_store_mode      => "00",                    -- RAW
         dist_scale          => "000",                   -- 1mm
         drain_mode          => '0',                     -- SourceGating
         pipeline_en         => '0',                     -- sequential
         n_faces             => to_unsigned(5, 3),
-        stops_per_chip      => to_unsigned(8, 4),
+        stops_per_chip      => to_unsigned(c_MAX_STOPS_PER_CHIP, 4),
         n_drain_cap         => (others => '0'),         -- unlimited
         stopdis_override    => (others => '0'),
         bus_clk_div         => to_unsigned(2, 6),  -- safe default; min legal div is 1
@@ -362,7 +372,7 @@ package tdc_gpx_pkg is
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
         max_scan_clks       => to_unsigned(0, 16),          -- 0 = disabled (no timeout)
-        max_hits_cfg        => to_unsigned(7, 3)            -- default: 7 (full capacity)
+        max_hits_cfg        => to_unsigned(c_MAX_HITS_PER_STOP, 3)
     );
 
     -- =========================================================================
@@ -745,6 +755,20 @@ package body tdc_gpx_pkg is
         return cnt;
     end function;
 
+    -- Return a one-hot mask containing the lowest-index asserted bit.
+    -- This provides a deterministic fallback for an empty SW chip request.
+    function fn_first_one_mask(v : std_logic_vector) return std_logic_vector is
+        variable result : std_logic_vector(v'range) := (others => '0');
+    begin
+        for i in v'low to v'high loop
+            if v(i) = '1' then
+                result(i) := '1';
+                exit;
+            end if;
+        end loop;
+        return result;
+    end function;
+
     -- ceil(n_stops * cnt_width / 8)
     function fn_stop_evt_valid_bytes(
         n_stops   : natural;
@@ -893,6 +917,19 @@ package body tdc_gpx_pkg is
             -- also resolve conservatively to the protocol capacity.
             when others => return c_MAX_HITS_PER_STOP;
         end case;
+    end function;
+
+    function fn_effective_max_hits(
+        cfg       : unsigned(2 downto 0);
+        build_max : positive
+    ) return natural is
+        variable v_hits : natural;
+    begin
+        v_hits := fn_effective_max_hits(cfg);
+        if v_hits > build_max then
+            return build_max;
+        end if;
+        return v_hits;
     end function;
 
     -- Runtime cell size: same algorithm as fn_cell_size_bytes but with variable max_hits
