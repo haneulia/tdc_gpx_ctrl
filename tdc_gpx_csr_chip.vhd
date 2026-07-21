@@ -16,7 +16,7 @@
 --   CTL3  (0x0C) START_OFF1     [17:0]
 --   CTL4  (0x10) CFG_REG7       [31:0]
 --   CTL5~20 (0x14~0x50) CFG_IMAGE[0..15]  16 x 32-bit chip register mirrors
---   CTL21 (0x54) SCAN_TIMEOUT   [15:0] max_scan_clks, [18:16] max_hits_cfg,
+--   CTL21 (0x54) SCAN_TIMEOUT   [15:0] max_scan_5ns_ticks, [18:16] max_hits_cfg,
 --                                [19] falling_enable
 --
 -- Unused CTL outputs (owned by csr_pipeline via separate IP):
@@ -67,7 +67,10 @@ use xpm.vcomponents.all;
 entity tdc_gpx_csr_chip is
     generic (
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP :=
-            c_MAX_HITS_PER_STOP
+            c_MAX_HITS_PER_STOP;
+        -- Must match bus_phy. tdc_gpx_top derives this from the TDC clock
+        -- and one physical minimum period so CSR clamp and PHY agree.
+        g_BUS_READ_PERIOD_MIN_CLKS : positive := c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS
     );
     port (
         -- AXI4-Lite clock / reset
@@ -105,7 +108,7 @@ entity tdc_gpx_csr_chip is
         o_bus_ticks         : out unsigned(2 downto 0);
         o_start_off1        : out unsigned(17 downto 0);
         o_cfg_reg7          : out std_logic_vector(31 downto 0);
-        o_max_scan_clks     : out unsigned(15 downto 0);
+        o_max_scan_5ns_ticks : out unsigned(15 downto 0);
         o_max_hits_cfg      : out unsigned(2 downto 0);
         o_falling_enable    : out std_logic;
 
@@ -929,7 +932,7 @@ begin
 
     -- bus_ticks: absolute min is 4. At 200 MHz, div=1 also needs ticks>=5
     -- so the burst READ II stays >=25 ns (GPX datasheet 40 MHz max).
-    s_ticks_min   <= to_unsigned(c_BUS_READ_PERIOD_MIN_CLKS, 3)
+    s_ticks_min   <= to_unsigned(g_BUS_READ_PERIOD_MIN_CLKS, 3)
                      when s_div_clamped = to_unsigned(1, 6)
                      else to_unsigned(c_BUS_TICKS_MIN, 3);
     o_bus_ticks   <= unsigned(s_ctl1_out(c_BT_TICKS_HI downto c_BT_TICKS_LO))
@@ -944,7 +947,7 @@ begin
     o_cfg_reg7    <= s_ctl4_out;
 
     -- SCAN_TIMEOUT + MAX_HITS -----------------------------------------------
-    o_max_scan_clks <= unsigned(s_ctl21_out(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO));
+    o_max_scan_5ns_ticks <= unsigned(s_ctl21_out(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO));
 
     -- Zero aliases to the selected build maximum; larger SW requests clamp
     -- to that same maximum before the value enters the processing pipeline.

@@ -18,8 +18,9 @@
 --
 -- Bus Timing (per deep_analysis section 12.3):
 --   1 transaction = locally clamped i_bus_ticks ticks.
---   C01 contract at 200 MHz: div=1 requires ticks>=5 so the burst
---   initiation interval is not faster than the GPX 40 MHz readout limit.
+--   C01 contract: csr_chip and bus_phy receive the same clock-derived
+--   minimum. At 200 MHz, div=1 requires ticks>=5 so the burst initiation
+--   interval is not faster than the GPX 40 MHz readout limit.
 --   For div>=2 the legacy minimum ticks>=4 is retained.
 --   Phase A (1 tick):                address setup, strobe high
 --   Phase L (i_bus_ticks - 2 ticks): strobe low (RDN or WRN)
@@ -87,7 +88,7 @@ entity tdc_gpx_bus_phy is
     generic (
         g_BUS_DATA_WIDTH             : natural  := c_TDC_BUS_WIDTH;      -- 28
         g_OEN_MODE                   : string   := c_DEFAULT_OEN_MODE;
-        g_BUS_READ_PERIOD_MIN_CLKS   : positive := c_BUS_READ_PERIOD_MIN_CLKS
+        g_BUS_READ_PERIOD_MIN_CLKS   : positive := c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS
     );
     port (
         i_clk           : in  std_logic;

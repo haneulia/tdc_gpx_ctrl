@@ -91,8 +91,9 @@ entity tdc_gpx_stop_cfg_decode is
         -- margin. i_max_range_axis_clks is the 5 ns CSR range converted to
         -- this AXIS clock domain; the margin
         -- absorbs echo_receiver internal latency + pipeline stage delay on
-        -- the stop_evt path. Default 32 cycles is about 213 ns @150 MHz and
-        -- 160 ns @200 MHz; slower AXIS clocks intentionally give more time.
+        -- the stop_evt path. Production top derives this count from one
+        -- physical margin and g_AXIS_CLK_MHZ. Standalone default is 32 clocks
+        -- at the default 150 MHz AXIS clock.
         --
         -- Sizing guidance (see Doc/vdma_packet_structure.html §5 for the
         -- distance / max_hits / shot-period table):
@@ -106,7 +107,7 @@ entity tdc_gpx_stop_cfg_decode is
         --     counter safely covers the 16-bit range plus this margin.
         --     Use a generic override for slower pipelines but stay within
         --     this explicit elaboration bound.
-        g_WINDOW_MARGIN_CLKS : natural := 32
+        g_WINDOW_MARGIN_CLKS : natural := c_DEFAULT_STOP_WINDOW_MARGIN_CLKS
     );
     port (
         i_clk             : in  std_logic;

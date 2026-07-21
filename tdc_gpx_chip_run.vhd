@@ -69,17 +69,17 @@ entity tdc_gpx_chip_run is
         -- Drain/flush watchdog headroom above max_range_tdc_clks.
         -- The cap used by the shared registered wait-timeout detector is computed at
         -- shot_start as (i_max_range_tdc_clks + g_DRAIN_MARGIN_CLKS), saturating
-        -- at x"FFFF". At the fastest supported clock, 256 clocks @ 200 MHz
-        -- is about 1.28 us; slower TDC clocks provide a longer physical margin.
+        -- at x"FFFF". Production top preserves the requested physical margin
+        -- as g_TDC_CLK_MHZ changes; standalone default is 256 clocks @200 MHz.
         -- This covers bus
         -- roundtrip + ALU service + downstream backpressure jitter with
         -- generous margin while still tightening the timeout from the
         -- legacy fixed-65535 value that hid upstream hangs for ~327 µs.
-        g_DRAIN_MARGIN_CLKS : positive := 256;
+        g_DRAIN_MARGIN_CLKS : positive := c_DEFAULT_DRAIN_MARGIN_CLKS;
         -- C02: guard time after each IFIFO read before trusting synchronized
-        -- EF pins. Default 5 clocks @200 MHz covers Datasheet tS-EF
-        -- max 11.8 ns plus local 2-FF status synchronizer latency.
-        g_EF_SYNC_GUARD_CLKS : positive := 5
+        -- EF pins. Production top computes ceil(11.8 ns / TDC period) plus
+        -- the fixed local 2-FF status synchronizer latency.
+        g_EF_SYNC_GUARD_CLKS : positive := c_DEFAULT_EF_SYNC_GUARD_CLKS
     );
     port (
         i_clk               : in  std_logic;

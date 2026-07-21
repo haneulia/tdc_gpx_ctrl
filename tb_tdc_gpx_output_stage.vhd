@@ -312,7 +312,7 @@ begin
     -- =========================================================================
     cfg_face.active_chip_mask <= "0001";
     cfg_face.stops_per_chip   <= to_unsigned(2, 4);
-    cfg_face.max_scan_clks    <= to_unsigned(1000, 16);
+        cfg_face.max_scan_5ns_ticks <= to_unsigned(1000, 16);
     cfg_face.max_hits_cfg     <= cfg_max_hits_cfg;
     cfg_face.cols_per_face    <= to_unsigned(1, 16);  -- 1 col = 1 shot per frame
 

@@ -36,6 +36,8 @@
 library ieee;
 use ieee.std_logic_1164.all;
 
+use work.tdc_gpx_pkg.all;
+
 package tdc_gpx_cfg_pkg is
 
     -- =========================================================================
@@ -128,7 +130,7 @@ package tdc_gpx_cfg_pkg is
     -- CTL21: SCAN_TIMEOUT + MAX_HITS + FALLING_ENABLE
     -- =========================================================================
     constant c_ADDR_SCAN_TIMEOUT     : natural := 16#54#;   -- CTL21
-    constant c_ST_MAX_SCAN_HI        : natural := 15;   -- [15:0] max_scan_clks
+    constant c_ST_MAX_SCAN_HI        : natural := 15;   -- [15:0] max_scan_5ns_ticks
     constant c_ST_MAX_SCAN_LO        : natural := 0;
     constant c_ST_MAX_HITS_HI        : natural := 18;   -- [18:16] max_hits_cfg (1~7, 0=default 7)
     constant c_ST_MAX_HITS_LO        : natural := 16;
@@ -321,14 +323,6 @@ package tdc_gpx_cfg_pkg is
     -- =========================================================================
     constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum
     constant c_BUS_CLK_DIV_MIN      : natural := 1;     -- div=1 allowed when ticks>=5 at 200 MHz
-    constant c_BUS_READ_PERIOD_MIN_CLKS : natural := 5; -- 200 MHz: >=25 ns, GPX 40 MHz max
-
-    -- Design clock frequency assumption.
-    -- All timeout constants (x"FFFF" watchdogs, powerup/recovery clocks,
-    -- err_handler recovery timeout 9999) assume this frequency.
-    -- If the actual system clock differs, these must be rescaled.
-    constant c_ASSUMED_CLK_FREQ_HZ  : natural := 200_000_000;  -- 200 MHz
-
     -- =========================================================================
     -- Init values
     -- =========================================================================
@@ -353,7 +347,7 @@ package tdc_gpx_cfg_pkg is
     constant c_INIT_CFG_REG7         : std_logic_vector(31 downto 0) := x"00000000";
 
     -- Preserve the historical dual-lane default. Bit 19 is the runtime
-    -- falling-lane enable; max_scan_clks=0 and max_hits_cfg=0 retain their
+    -- falling-lane enable; max_scan_5ns_ticks=0 and max_hits_cfg=0 retain their
     -- existing aliases (watchdog disabled, build maximum hits).
     constant c_INIT_SCAN_TIMEOUT     : std_logic_vector(31 downto 0) := x"00080000";
 

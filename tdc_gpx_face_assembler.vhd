@@ -474,7 +474,9 @@ begin
     -- Concurrent signals
     -- =========================================================================
 
-    -- Timeout limit: max_scan_clks only (drain/ALU margins TBD after bench)
+    -- Programmable timeout limit: max_scan_clks only (drain/ALU margins TBD
+    -- after bench). Zero disables this threshold, not the 16-bit hard cap in
+    -- ST_SCAN below.
     s_timeout_limit <= i_max_scan_clks;
 
     -- Flush input FIFOs on shot_start (new shot) or abort (stop/reset).

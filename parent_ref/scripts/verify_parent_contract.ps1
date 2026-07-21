@@ -53,6 +53,8 @@ Assert-ContractValue 'fabric_irq_enabled' $ps.parameters.PCW_USE_FABRIC_INTERRUP
 Assert-ContractValue 'irq_f2p_enabled' $ps.parameters.PCW_IRQ_F2P_INTR.value '1'
 
 Assert-ContractValue 'output_width_bits' $tdc.parameters.g_OUTPUT_WIDTH.value '32'
+Assert-ContractValue 'hw_version_bits' $tdc.parameters.g_HW_VERSION.value `
+    '00000000000000010000000000000000'
 Assert-ContractValue 'present_chip_mask' $tdc.parameters.g_PRESENT_CHIP_MASK.value '1111'
 Assert-ContractValue 'rise_chip_mask' $tdc.parameters.g_RISE_CHIP_MASK.value '0011'
 Assert-ContractValue 'fall_chip_mask' $tdc.parameters.g_FALL_CHIP_MASK.value '1100'
@@ -64,6 +66,26 @@ Assert-ContractValue 'ctrl_clock_hz' $tdc.ports.i_ctrl_aclk.parameters.FREQ_HZ.v
 Assert-ContractValue 'axis_clock_busifs' $tdc.ports.i_axis_aclk.parameters.ASSOCIATED_BUSIF.value 'm_axis:m_axis_fall'
 Assert-ContractValue 'axis_clock_hz' $tdc.ports.i_axis_aclk.parameters.FREQ_HZ.value '150000000'
 Assert-ContractValue 'tdc_clock_hz' $tdc.ports.i_tdc_clk.parameters.FREQ_HZ.value '200000000'
+Assert-ContractValue 'powerup_time_ns' $tdc.parameters.g_POWERUP_TIME_NS.value '240'
+Assert-ContractValue 'recovery_time_ns' $tdc.parameters.g_RECOVERY_TIME_NS.value '40'
+Assert-ContractValue 'alu_pulse_time_ns' $tdc.parameters.g_ALU_PULSE_TIME_NS.value '20'
+Assert-ContractValue 'bus_read_period_min_time_ns' `
+    $tdc.parameters.g_BUS_READ_PERIOD_MIN_TIME_NS.value '25'
+Assert-ContractValue 'bus_idle_stable_time_ns' `
+    $tdc.parameters.g_BUS_IDLE_STABLE_TIME_NS.value '20480'
+Assert-ContractValue 'drain_margin_time_ns' $tdc.parameters.g_DRAIN_MARGIN_TIME_NS.value '1280'
+Assert-ContractValue 'stop_window_margin_time_ns' `
+    $tdc.parameters.g_STOP_WINDOW_MARGIN_TIME_NS.value '210'
+Assert-ContractValue 'err_debounce_time_ns' $tdc.parameters.g_ERR_DEBOUNCE_TIME_NS.value '25'
+Assert-ContractValue 'err_max_retries' $tdc.parameters.g_ERR_MAX_RETRIES.value '3'
+Assert-ContractValue 'cell_quarantine_margin_time_ns' `
+    $tdc.parameters.g_CELL_QUARANTINE_MARGIN_TIME_NS.value '3410'
+Assert-ContractValue 'cell_ififo2_margin_time_ns' `
+    $tdc.parameters.g_CELL_IFIFO2_MARGIN_TIME_NS.value '1705'
+Assert-ContractValue 'oen_mode' $tdc.parameters.g_OEN_MODE.value 'DYNAMIC_CONNECTED'
+Assert-ContractValue 'stop_event_data_width' $tdc.parameters.g_STOP_EVT_DWIDTH.value '32'
+Assert-ContractValue 'stop_event_user_width' $tdc.parameters.g_STOP_EVT_TUSER_WIDTH.value '32'
+Assert-ContractValue 'fire_count_data_width' $tdc.parameters.g_FIRE_COUNT_DWIDTH.value '32'
 
 foreach ($lane in @('m_axis', 'm_axis_fall')) {
     Assert-ContractValue "$lane.bytes_per_beat" $tdc.interface_ports.$lane.parameters.TDATA_NUM_BYTES.value '4'

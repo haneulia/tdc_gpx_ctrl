@@ -1,6 +1,6 @@
 -- =============================================================================
 -- tb_tdc_gpx_range_ticks.vhd
--- Unit test for the 5 ns reference-tick to local-clock conversion contract.
+-- Unit test for runtime 5 ns ticks and elaboration-time physical timing.
 -- =============================================================================
 
 library ieee;
@@ -33,6 +33,40 @@ begin
                     & " clk_mhz=" & integer'image(clk_mhz)
                     & " expected=" & integer'image(expected)
                     & " actual=" & integer'image(to_integer(v_actual))
+                severity failure;
+        end procedure;
+
+        procedure check_time_ns(
+            time_ns  : natural;
+            clk_mhz  : positive;
+            expected : natural
+        ) is
+            variable v_actual : natural;
+        begin
+            v_actual := fn_time_ns_to_clks_ceil(time_ns, clk_mhz);
+            assert v_actual = expected
+                report "ns conversion mismatch: time_ns="
+                    & integer'image(time_ns)
+                    & " clk_mhz=" & integer'image(clk_mhz)
+                    & " expected=" & integer'image(expected)
+                    & " actual=" & integer'image(v_actual)
+                severity failure;
+        end procedure;
+
+        procedure check_time_ps(
+            time_ps  : natural;
+            clk_mhz  : positive;
+            expected : natural
+        ) is
+            variable v_actual : natural;
+        begin
+            v_actual := fn_time_ps_to_clks_ceil(time_ps, clk_mhz);
+            assert v_actual = expected
+                report "ps conversion mismatch: time_ps="
+                    & integer'image(time_ps)
+                    & " clk_mhz=" & integer'image(clk_mhz)
+                    & " expected=" & integer'image(expected)
+                    & " actual=" & integer'image(v_actual)
                 severity failure;
         end procedure;
     begin
@@ -75,6 +109,33 @@ begin
         check_count(65535, 125, 40960);
         check_count(65535, 150, 49152);
         check_count(65535, 200, 65535);
+
+        -- Static timing conversion preserves physical duration as the clock
+        -- changes. Representative defaults also prove upward rounding.
+        check_time_ns(c_DEFAULT_POWERUP_TIME_NS,  50, 12);
+        check_time_ns(c_DEFAULT_POWERUP_TIME_NS, 100, 24);
+        check_time_ns(c_DEFAULT_POWERUP_TIME_NS, 125, 30);
+        check_time_ns(c_DEFAULT_POWERUP_TIME_NS, 150, 36);
+        check_time_ns(c_DEFAULT_POWERUP_TIME_NS, 200, 48);
+
+        check_time_ns(c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS,  50, 2);
+        check_time_ns(c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, 100, 3);
+        check_time_ns(c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, 125, 4);
+        check_time_ns(c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, 150, 4);
+        check_time_ns(c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, 200, 5);
+
+        check_time_ns(c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS, 150, 32);
+        check_time_ns(c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS, 150, 512);
+        check_time_ns(c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS, 150, 256);
+        check_time_ps(c_TDC_EF_DATA_VALID_MAX_PS,  50, 1);
+        check_time_ps(c_TDC_EF_DATA_VALID_MAX_PS, 100, 2);
+        check_time_ps(c_TDC_EF_DATA_VALID_MAX_PS, 125, 2);
+        check_time_ps(c_TDC_EF_DATA_VALID_MAX_PS, 150, 2);
+        check_time_ps(c_TDC_EF_DATA_VALID_MAX_PS, 200, 3);
+
+        assert c_DEFAULT_EF_SYNC_GUARD_CLKS = 5
+            report "default EF guard must include data-valid time plus 2-FF latency"
+            severity failure;
 
         report "5 ns range tick conversion matrix - PASS" severity note;
         finish;

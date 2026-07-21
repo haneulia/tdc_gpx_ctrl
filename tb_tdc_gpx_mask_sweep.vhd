@@ -96,7 +96,7 @@ architecture sim of tb_tdc_gpx_mask_sweep is
         cols_per_face       => to_unsigned(1, 16),
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
-        max_scan_clks       => to_unsigned(0, 16),
+        max_scan_5ns_ticks  => to_unsigned(0, 16),
         max_hits_cfg        => to_unsigned(C_MAX_HITS, 3),
         falling_enable      => '1'
     );
@@ -251,7 +251,7 @@ begin
             i_active_chip_mask    => face_active_mask,
             i_stops_per_chip      => face_stops_per_chip,
             i_max_hits_cfg        => cfg_face_out.max_hits_cfg,
-            i_max_scan_clks       => cfg_face_out.max_scan_clks,
+            i_max_scan_clks       => cfg_face_out.max_scan_5ns_ticks,
             o_m_axis_tdata        => fa_out_tdata,
             o_m_axis_tvalid       => fa_out_tvalid,
             o_m_axis_tlast        => fa_out_tlast,

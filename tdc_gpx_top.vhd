@@ -65,16 +65,25 @@ entity tdc_gpx_top is
         -- These values must match the real clocks and XDC constraints.
         g_AXIS_CLK_MHZ    : positive := c_DEFAULT_AXIS_CLK_MHZ;
         g_TDC_CLK_MHZ     : positive := c_DEFAULT_TDC_CLK_MHZ;
-        g_POWERUP_CLKS    : positive := c_DEFAULT_POWERUP_CLKS;
-        g_RECOVERY_CLKS   : positive := c_DEFAULT_RECOVERY_CLKS;
-        g_ALU_PULSE_CLKS  : positive := c_DEFAULT_ALU_PULSE_CLKS;
+        -- Physical timing policy. Values are expressed once in time units;
+        -- domain-local clock counts are elaboration-time derived constants.
+        g_POWERUP_TIME_NS             : positive := c_DEFAULT_POWERUP_TIME_NS;
+        g_RECOVERY_TIME_NS            : positive := c_DEFAULT_RECOVERY_TIME_NS;
+        g_ALU_PULSE_TIME_NS           : positive := c_DEFAULT_ALU_PULSE_TIME_NS;
+        g_BUS_READ_PERIOD_MIN_TIME_NS : positive := c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS;
+        g_BUS_IDLE_STABLE_TIME_NS     : positive := c_DEFAULT_BUS_IDLE_STABLE_TIME_NS;
+        g_DRAIN_MARGIN_TIME_NS        : positive := c_DEFAULT_DRAIN_MARGIN_TIME_NS;
+        g_STOP_WINDOW_MARGIN_TIME_NS  : positive := c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS;
+        g_ERR_DEBOUNCE_TIME_NS        : positive := c_DEFAULT_ERR_DEBOUNCE_TIME_NS;
+        g_ERR_MAX_RETRIES             : positive := c_DEFAULT_ERR_MAX_RETRIES;
+        g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS;
+        g_CELL_IFIFO2_MARGIN_TIME_NS  : positive := c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS;
         g_OEN_MODE        : string   := c_DEFAULT_OEN_MODE;
-        g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
         g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE;
         -- Stop event AXI-Stream interface parameters
-        g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
-        g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH
+        g_STOP_EVT_DWIDTH : positive := c_DEFAULT_STOP_EVT_DWIDTH;
+        g_STOP_EVT_TUSER_WIDTH : positive := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
+        g_FIRE_COUNT_DWIDTH : positive := c_DEFAULT_FIRE_COUNT_DWIDTH
     );
     port (
         -- Processing / AXI-Stream clock and reset (g_AXIS_CLK_MHZ)
@@ -261,6 +270,33 @@ architecture rtl of tdc_gpx_top is
         return to_unsigned(v_total_blocks * c_VDMA_LINE_ALIGN_BYTES, 16);
     end function;
 
+    -- Physical-time generics are converted exactly once per consuming clock
+    -- domain. All expressions are static at elaboration, so these constants
+    -- add no runtime arithmetic to the signal-processing datapath.
+    constant c_TDC_POWERUP_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_POWERUP_TIME_NS, g_TDC_CLK_MHZ);
+    constant c_TDC_RECOVERY_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_RECOVERY_TIME_NS, g_TDC_CLK_MHZ);
+    constant c_TDC_ALU_PULSE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_ALU_PULSE_TIME_NS, g_TDC_CLK_MHZ);
+    constant c_TDC_BUS_READ_PERIOD_MIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_BUS_READ_PERIOD_MIN_TIME_NS, g_TDC_CLK_MHZ);
+    constant c_TDC_BUS_IDLE_STABLE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_BUS_IDLE_STABLE_TIME_NS, g_TDC_CLK_MHZ);
+    constant c_TDC_DRAIN_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_DRAIN_MARGIN_TIME_NS, g_TDC_CLK_MHZ);
+    constant c_TDC_EF_SYNC_GUARD_CLKS : positive :=
+        fn_time_ps_to_clks_ceil(c_TDC_EF_DATA_VALID_MAX_PS, g_TDC_CLK_MHZ)
+        + c_TDC_STATUS_SYNC_CLKS;
+    constant c_AXIS_STOP_WINDOW_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_STOP_WINDOW_MARGIN_TIME_NS, g_AXIS_CLK_MHZ);
+    constant c_AXIS_ERR_DEBOUNCE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_ERR_DEBOUNCE_TIME_NS, g_AXIS_CLK_MHZ);
+    constant c_AXIS_CELL_QUARANTINE_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_CELL_QUARANTINE_MARGIN_TIME_NS, g_AXIS_CLK_MHZ);
+    constant c_AXIS_CELL_IFIFO2_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        g_CELL_IFIFO2_MARGIN_TIME_NS, g_AXIS_CLK_MHZ);
+
     -- =========================================================================
     -- Configuration signals
     -- =========================================================================
@@ -268,6 +304,7 @@ architecture rtl of tdc_gpx_top is
     signal s_cfg_pipeline     : t_tdc_cfg;
     signal s_cfg_image        : t_cfg_image;
     signal s_cfg_face_r       : t_tdc_cfg;
+    signal s_max_scan_axis_clks : unsigned(15 downto 0);
     signal s_cdc_idle         : std_logic;
 
     -- =========================================================================
@@ -569,6 +606,25 @@ begin
         report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
+    assert g_STOP_EVT_DWIDTH >= c_N_CHIPS * 8
+        and g_STOP_EVT_DWIDTH mod 8 = 0
+        report "tdc_gpx_top: g_STOP_EVT_DWIDTH must cover 8 bits/chip and be byte aligned"
+        severity failure;
+
+    assert g_STOP_EVT_TUSER_WIDTH >= c_N_CHIPS * 8
+        report "tdc_gpx_top: g_STOP_EVT_TUSER_WIDTH must cover 8 bits/chip"
+        severity failure;
+
+    assert g_FIRE_COUNT_DWIDTH >= 16
+        and g_FIRE_COUNT_DWIDTH mod 8 = 0
+        report "tdc_gpx_top: g_FIRE_COUNT_DWIDTH must be at least 16 bits and byte aligned"
+        severity failure;
+
+    assert g_OEN_MODE = "DYNAMIC_CONNECTED"
+        or g_OEN_MODE = "PULLUP_OR_NOT_CONNECTED"
+        report "tdc_gpx_top: g_OEN_MODE must be DYNAMIC_CONNECTED or PULLUP_OR_NOT_CONNECTED"
+        severity failure;
+
     assert fn_range_clk_mhz_supported(g_AXIS_CLK_MHZ)
         report "tdc_gpx_top: g_AXIS_CLK_MHZ must be 50, 100, 125, 150, or 200"
         severity failure;
@@ -588,6 +644,35 @@ begin
     assert g_STREAM_CLK_MODE /= "SYNC" or g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ
         report "tdc_gpx_top: SYNC stream mode requires identical AXIS and TDC clocks; use ASYNC for different clocks"
         severity failure;
+
+    assert c_TDC_POWERUP_CLKS <= 65535
+        and c_TDC_RECOVERY_CLKS <= 65535
+        and c_TDC_ALU_PULSE_CLKS <= 65535
+        and c_TDC_DRAIN_MARGIN_CLKS <= 65535
+        and c_TDC_EF_SYNC_GUARD_CLKS <= 65535
+        report "tdc_gpx_top: TDC-domain physical timing exceeds a 16-bit local counter"
+        severity failure;
+
+    assert c_TDC_BUS_READ_PERIOD_MIN_CLKS <= 7
+        report "tdc_gpx_top: bus read minimum exceeds the 3-bit BUS_TICKS field"
+        severity failure;
+
+    assert c_TDC_BUS_IDLE_STABLE_CLKS <= 16777215
+        report "tdc_gpx_top: bus idle-stable timing exceeds its 24-bit counter"
+        severity failure;
+
+    assert c_AXIS_STOP_WINDOW_MARGIN_CLKS <= 65535
+        and c_AXIS_CELL_QUARANTINE_MARGIN_CLKS <= 65535
+        and c_AXIS_CELL_IFIFO2_MARGIN_CLKS <= 65535
+        report "tdc_gpx_top: AXIS-domain physical timing exceeds a 16-bit watchdog margin"
+        severity failure;
+
+    -- CTL21[15:0] uses the same fixed 5 ns reference as max_range. Convert
+    -- the face snapshot to AXIS clocks before it reaches face_assembler.
+    -- Zero disables the programmable threshold only; face_assembler retains
+    -- its independent 16-bit hard safety cap.
+    s_max_scan_axis_clks <= fn_range_5ns_ticks_to_clks(
+        s_cfg_face_r.max_scan_5ns_ticks, g_AXIS_CLK_MHZ);
 
     -- =========================================================================
     -- Chip error merged (concurrent glue)
@@ -659,11 +744,17 @@ begin
         generic map (
             g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
             g_TDC_CLK_MHZ     => g_TDC_CLK_MHZ,
-            g_POWERUP_CLKS    => g_POWERUP_CLKS,
-            g_RECOVERY_CLKS   => g_RECOVERY_CLKS,
-            g_ALU_PULSE_CLKS  => g_ALU_PULSE_CLKS,
+            g_POWERUP_CLKS    => c_TDC_POWERUP_CLKS,
+            g_RECOVERY_CLKS   => c_TDC_RECOVERY_CLKS,
+            g_ALU_PULSE_CLKS  => c_TDC_ALU_PULSE_CLKS,
             g_OEN_MODE        => g_OEN_MODE,
-            g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS,
+            g_BUS_READ_PERIOD_MIN_CLKS => c_TDC_BUS_READ_PERIOD_MIN_CLKS,
+            g_BUS_IDLE_STABLE_CLKS => c_TDC_BUS_IDLE_STABLE_CLKS,
+            g_DRAIN_MARGIN_CLKS => c_TDC_DRAIN_MARGIN_CLKS,
+            g_EF_SYNC_GUARD_CLKS => c_TDC_EF_SYNC_GUARD_CLKS,
+            g_STOP_WINDOW_MARGIN_CLKS => c_AXIS_STOP_WINDOW_MARGIN_CLKS,
+            g_ERR_DEBOUNCE_CLKS => c_AXIS_ERR_DEBOUNCE_CLKS,
+            g_ERR_MAX_RETRIES => g_ERR_MAX_RETRIES,
             g_STREAM_CLK_MODE => g_STREAM_CLK_MODE,
             g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
             g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
@@ -842,7 +933,9 @@ begin
             g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
             g_RISE_CHIP_MASK  => g_RISE_CHIP_MASK,
             g_FALL_CHIP_MASK  => g_FALL_CHIP_MASK,
-            g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK
+            g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK,
+            g_QUARANTINE_MARGIN_CLKS => c_AXIS_CELL_QUARANTINE_MARGIN_CLKS,
+            g_IFIFO2_MARGIN_CLKS => c_AXIS_CELL_IFIFO2_MARGIN_CLKS
         )
         port map (
             i_clk                   => i_axis_aclk,
@@ -964,7 +1057,7 @@ begin
             -- and scan-timeout match header metadata and cell_builder within
             -- the same face (both driven by s_cfg_face_r).
             i_max_hits_cfg       => s_cfg_face_r.max_hits_cfg,
-            i_max_scan_clks      => s_cfg_face_r.max_scan_clks,
+            i_max_scan_clks      => s_max_scan_axis_clks,
             i_cell_slots_rise    => s_cell_slots_rise,
             i_cell_slots_fall    => s_cell_slots_fall,
             -- Header metadata

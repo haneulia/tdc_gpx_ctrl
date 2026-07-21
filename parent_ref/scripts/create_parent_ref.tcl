@@ -285,6 +285,7 @@ foreach {rst_name clk_pin} [list \
 set tdc [create_bd_cell -type module \
     -reference tdc_gpx_parent_core tdc_gpx_0]
 set_property -dict [list \
+    CONFIG.g_HW_VERSION 00000000000000010000000000000000 \
     CONFIG.g_OUTPUT_WIDTH 32 \
     CONFIG.g_PRESENT_CHIP_MASK 1111 \
     CONFIG.g_RISE_CHIP_MASK 0011 \
@@ -293,7 +294,22 @@ set_property -dict [list \
     CONFIG.g_MAX_HITS_PER_STOP 7 \
     CONFIG.g_AXIS_CLK_MHZ 150 \
     CONFIG.g_TDC_CLK_MHZ 200 \
-    CONFIG.g_STREAM_CLK_MODE ASYNC] $tdc
+    CONFIG.g_POWERUP_TIME_NS 240 \
+    CONFIG.g_RECOVERY_TIME_NS 40 \
+    CONFIG.g_ALU_PULSE_TIME_NS 20 \
+    CONFIG.g_BUS_READ_PERIOD_MIN_TIME_NS 25 \
+    CONFIG.g_BUS_IDLE_STABLE_TIME_NS 20480 \
+    CONFIG.g_DRAIN_MARGIN_TIME_NS 1280 \
+    CONFIG.g_STOP_WINDOW_MARGIN_TIME_NS 210 \
+    CONFIG.g_ERR_DEBOUNCE_TIME_NS 25 \
+    CONFIG.g_ERR_MAX_RETRIES 3 \
+    CONFIG.g_CELL_QUARANTINE_MARGIN_TIME_NS 3410 \
+    CONFIG.g_CELL_IFIFO2_MARGIN_TIME_NS 1705 \
+    CONFIG.g_OEN_MODE DYNAMIC_CONNECTED \
+    CONFIG.g_STREAM_CLK_MODE ASYNC \
+    CONFIG.g_STOP_EVT_DWIDTH 32 \
+    CONFIG.g_STOP_EVT_TUSER_WIDTH 32 \
+    CONFIG.g_FIRE_COUNT_DWIDTH 32] $tdc
 
 # Module-reference bus grouping is inferred from AXI/AXIS signal names. The
 # neutral clock names leave the multi-interface association writable here.

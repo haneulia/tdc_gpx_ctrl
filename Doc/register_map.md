@@ -34,10 +34,12 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
   `masked_slope_drop_any`, etc.). Does NOT clear HISTORICAL-category stickies.
 - Both are rising-edge detected in the i_axis_aclk domain.
 
-`max_range_5ns_ticks` is always encoded in the 200 MHz reference timebase:
-one tick is 5 ns regardless of `g_TDC_CLK_MHZ` or `g_AXIS_CLK_MHZ`. RTL uses
-ceiling conversion into each local clock domain, so the represented physical
-window is never shortened.
+`max_range_5ns_ticks` and `max_scan_5ns_ticks` are always encoded in the
+200 MHz reference timebase: one tick is 5 ns regardless of
+`g_TDC_CLK_MHZ` or `g_AXIS_CLK_MHZ`. RTL uses ceiling conversion into each
+consuming clock domain, so the represented physical window is never shortened.
+Range is consumed in both TDC and AXIS domains; scan timeout is consumed only
+in the AXIS domain.
 
 ### Status registers (R/O)
 
@@ -159,14 +161,15 @@ The handshake auto-retriggers on any source change, so SW sees:
 | 0x0C   | START_OFF1 | `[17:0]` |
 | 0x10   | CFG_REG7   | `[31:0]` |
 | 0x14–0x50 | CFG_IMAGE[0..15] | 16 × 32-bit TDC-GPX chip register mirror |
-| 0x54   | SCAN_TIMEOUT | `[15:0] max_scan_clks`, `[18:16] max_hits_cfg`, `[19] falling_enable`; reset `0x00080000` |
+| 0x54   | SCAN_TIMEOUT | `[15:0] max_scan_5ns_ticks`, `[18:16] max_hits_cfg`, `[19] falling_enable`; reset `0x00080000` |
 | others | reserved / unused (ctl0, ctl2, ctl22–31 owned by csr_pipeline) |
 
-`max_scan_clks` is an AXIS-domain cycle count, not the 5 ns reference-tick
-field above. A value of zero disables the programmable deadline but is not an
-infinite wait: `face_assembler` still forces blank completion at the 16-bit
-hard cap (`0xFFFF`), approximately 1.31 ms / 655 us / 524 us / 437 us /
-328 us at 50 / 100 / 125 / 150 / 200 MHz respectively.
+`max_scan_5ns_ticks` uses the same fixed timebase as range. RTL computes
+`ceil(max_scan_5ns_ticks * g_AXIS_CLK_MHZ / 200)` before `face_assembler`.
+A value of zero disables the programmable deadline but is not an infinite
+wait: `face_assembler` still forces blank completion at its 16-bit hard cap
+(`0xFFFF`), approximately 1.31 ms / 655 us / 524 us / 437 us / 328 us at
+50 / 100 / 125 / 150 / 200 MHz respectively.
 
 `falling_enable=1` applies the compile-time `g_RISE_CHIP_MASK` and
 `g_FALL_CHIP_MASK`. `falling_enable=0` routes every active/present chip to the

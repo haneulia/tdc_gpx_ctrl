@@ -232,7 +232,8 @@ flowchart LR
 
 `g_AXIS_CLK_MHZ`와 `g_TDC_CLK_MHZ`는 클럭을 만들지 않는다. 다음 용도에 쓰이는 **설계 메타데이터**이다.
 
-- 5 ns 단위 range 값을 각 도메인의 clock count로 변환
+- 5 ns 단위 range/scan 값을 소비 도메인의 clock count로 변환
+- ns 단위 top timing generic을 도메인별 clock count로 변환
 - elaboration assertion
 - timeout/throughput 계약 설명
 
@@ -285,13 +286,11 @@ CDC 신호를 분석할 때는 다음을 구분한다.
 | 값 | 입력 단위 | RTL 변환 | 실제 소비 domain |
 |---|---|---|---|
 | `max_range_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ`, `g_TDC_CLK_MHZ`별 ceiling 변환 | AXIS stop window/Cell watchdog, TDC capture/drain watchdog |
-| `max_scan_clks` | AXIS clock count | 없음 | `face_assembler`의 chip-slice 대기/blank-fill |
-| `g_POWERUP_CLKS` | TDC clock count | 없음 | `chip_init` |
-| `g_RECOVERY_CLKS` | TDC clock count | 없음 | `chip_run` ALU recovery |
-| `g_ALU_PULSE_CLKS` | TDC clock count | 없음 | `chip_run` ALU trigger 폭 |
+| `max_scan_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ` 기준 ceiling 변환 | `face_assembler`의 chip-slice 대기/blank-fill |
+| `g_*_TIME_NS` timing generic | ns | 해당 소비 domain 기준 ceiling 변환 | power/recovery/bus/drain/error/Cell margin |
 | `bus_clk_div`, `bus_ticks` | TDC clock count/분주 | legality clamp만 수행 | `bus_phy` |
 
-`max_range_5ns_ticks`만 물리 시간을 보존하도록 자동 변환된다. 나머지 raw clock-count 설정과 내부 hard cap은 clock 주파수가 바뀌면 실제 시간이 함께 바뀐다. 50/100/125/150/200 MHz 조합을 바꿀 때는 기본 count를 그대로 재사용하지 말고 원하는 ns/us 시간으로 다시 환산해야 한다.
+runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한다. 합성 전 timing policy는 top의 ns generic으로 관리하며, RTL이 `ceil(time_ns × clock_MHz / 1000)`으로 변환한다. 따라서 clock 조합을 바꿀 때 같은 시간 generic을 다시 환산할 필요는 없다. 단, `bus_clk_div`/`bus_ticks`와 일부 명시적인 hard cap은 구조상 cycle count이므로 별도 해석이 필요하다.
 
 ---
 
@@ -308,13 +307,38 @@ CDC 신호를 분석할 때는 다음을 구분한다.
 | `g_MAX_HITS_PER_STOP` | 7 | 빌드가 허용하는 Stop당 최대 Hit 수, 1..7 | 거리 창, Cell 크기, 처리량 |
 | `g_AXIS_CLK_MHZ` | 150 | 처리 클럭 메타데이터 | 실제 클럭/XDC 일치 |
 | `g_TDC_CLK_MHZ` | 200 | GPX 제어 클럭 메타데이터 | 실제 클럭/XDC 일치 |
-| `g_POWERUP_CLKS` | 48 | GPX power-up 단계 길이, TDC clocks | 데이터시트/보드 reset |
-| `g_RECOVERY_CLKS` | 8 | ALU 후 recovery, TDC clocks | Shot 간격 예산 |
-| `g_ALU_PULSE_CLKS` | 4 | ALU trigger 폭, TDC clocks | GPX timing |
+| `g_POWERUP_TIME_NS` | 240 ns | GPX power-up 단계 | 데이터시트/보드 reset |
+| `g_RECOVERY_TIME_NS` | 40 ns | ALU 후 recovery | Shot 간격 예산 |
+| `g_ALU_PULSE_TIME_NS` | 20 ns | ALU trigger 폭 | GPX timing |
+| `g_BUS_READ_PERIOD_MIN_TIME_NS` | 25 ns | CSR와 PHY가 공유하는 최소 read initiation 시간 | GPX 40 MHz 한계 |
+| `g_BUS_IDLE_STABLE_TIME_NS` | 20,480 ns | bus-fatal 후 자동 복구 전 연속 idle 시간 | PCB 안정성/복구 지연 |
+| `g_DRAIN_MARGIN_TIME_NS` | 1,280 ns | TDC drain watchdog의 range 이후 여유 | bus/ALU 지연 |
+| `g_STOP_WINDOW_MARGIN_TIME_NS` | 210 ns | AXIS stop-event close 여유 | echo_receiver 지연 |
+| `g_ERR_DEBOUNCE_TIME_NS` | 25 ns | ErrFlag debounce 시간 | board noise |
+| `g_ERR_MAX_RETRIES` | 3 | 자동 복구 retry 횟수 | 시스템 오류 정책 |
+| `g_CELL_QUARANTINE_MARGIN_TIME_NS` | 3,410 ns | Cell DROP/QUARANTINE 여유 | late drain bound |
+| `g_CELL_IFIFO2_MARGIN_TIME_NS` | 1,705 ns | Cell IFIFO2 대기 여유 | output-side bound |
 | `g_OEN_MODE` | `DYNAMIC_CONNECTED` | GPX OEN 연결 방식 | 실제 schematic |
-| `g_BUS_READ_PERIOD_MIN_CLKS` | package 기본 | read initiation 최소 간격 | 40 MHz readout 한계 |
 | `g_STREAM_CLK_MODE` | `ASYNC` | raw stream CDC 구조 | 두 clock 관계 |
-| stop/fire width generics | package 기본 | echo_receiver 인터페이스 폭 | 부모 모듈 포맷 |
+| `g_STOP_EVT_DWIDTH` | 32 | stop-event `TDATA/TKEEP` 폭 | 8-bit/chip 포함, byte 정렬 |
+| `g_STOP_EVT_TUSER_WIDTH` | 32 | stop-event chip별 보조정보 폭 | 최소 8-bit/chip |
+| `g_FIRE_COUNT_DWIDTH` | 32 | fire-count `TDATA/TKEEP` 폭 | 최소 16 bit, byte 정렬 |
+
+`parent_ref/rtl/tdc_gpx_parent_core.vhd`는 위 top generic을 모두 같은 이름으로 노출하고 그대로 전달한다. 따라서 parent에서 값을 바꾸면 `tdc_gpx_top`을 거쳐 실제 소비 하위 모듈까지 한 경로로 내려간다. `parent_ref/scripts/verify_parent_generic_parity.ps1`는 top 선언, parent 선언, generic map의 이름과 개수를 자동 대조하며 누락·개명·간접 매핑을 오류로 처리한다. 반대로 `g_CHIP_ID`, `g_SLOPE_VALUE`, FIFO data/depth, CDC synchronizer stage처럼 instance identity나 구조에서 파생되는 generic은 top에 중복 노출하지 않는다. 이 구분은 사용자가 정해야 하는 build policy만 최상위에서 관리하고, 서로 모순될 수 있는 중복 설정을 만들지 않기 위한 것이다.
+
+기본 시간값을 지원 주파수에 적용하면 다음처럼 사이클 수만 달라진다. 괄호 안 물리 시간은 동일하다.
+
+| Clock MHz | TDC power-up 240 ns | TDC bus-idle 20,480 ns | TDC drain 1,280 ns | AXIS stop margin 210 ns | AXIS Cell quarantine 3,410 ns |
+|---:|---:|---:|---:|---:|---:|
+| 50 | 12 | 1,024 | 64 | 11 | 171 |
+| 100 | 24 | 2,048 | 128 | 21 | 341 |
+| 125 | 30 | 2,560 | 160 | 27 | 427 |
+| 150 | 36 | 3,072 | 192 | 32 | 512 |
+| 200 | 48 | 4,096 | 256 | 42 | 682 |
+
+EF guard는 단순 고정 시간이 아니라 `ceil(11.8 ns / TDC period) + 2 synchronizer clocks`이며, 50/100/125/150/200 MHz에서 각각 3/4/4/4/5 clocks이다. 이 식의 `2`는 실제 `bus_phy` 2-FF 동기화 구조에 대응하므로 별도 top generic으로 중복 노출하지 않는다.
+
+예를 들어 `max_scan_5ns_ticks=1000`은 항상 5 us이고, AXIS 50/100/125/150/200 MHz에서 각각 250/500/625/750/1000 clocks로 변환된다.
 
 ### 7.1 고정 ABI 상수와 build-profile generic의 경계
 
@@ -460,7 +484,7 @@ HSIZE/VSIZE 출력은 live CSR mirror가 아니라 **Face snapshot의 관측값*
 | `0x0C` | `START_OFF1` | `[17:0]` |
 | `0x10` | `CFG_REG7` | GPX register 7 image |
 | `0x14..0x50` | `CFG_IMAGE[0..15]` | GPX configuration mirror |
-| `0x54` | `SCAN_TIMEOUT` | `[15:0]` max scan clocks, `[18:16]` max hits, `[19]` falling enable |
+| `0x54` | `SCAN_TIMEOUT` | `[15:0]` max scan 5 ns ticks, `[18:16]` max hits, `[19]` falling enable |
 | `0x80..0x8C` | chip result | chip0..3 register read result |
 
 > `tdc_gpx_cfg_pkg.vhd`의 공용 constant는 chip CSR 배치도 포함하므로 `c_ADDR_RANGE_COLS=0x08`로 보일 수 있다. 그러나 **published Pipeline CSR의 RANGE_COLS는 0x04**이며 `tdc_gpx_csr_pipeline.vhd`가 CTL1에 배치한다.
@@ -610,7 +634,7 @@ sequenceDiagram
 2. AXI/AXIS reset deassert
 3. Chip CSR에 bus timing과 GPX config image 기록
 4. Pipeline CSR에 active mask, stops, range, cols, Face 수 기록
-5. Chip CSR에 `max_scan_clks`, `max_hits_cfg` 기록
+5. Chip CSR에 `max_scan_5ns_ticks`, `max_hits_cfg` 기록
 6. `cmd_cfg_write` rising edge 발생
 7. `busy=0`, `err_fatal=0` 확인
 8. CSR 설정으로 Rise/Fall HSIZE와 VSIZE를 미리 계산해 VDMA 준비
@@ -814,7 +838,7 @@ shot_start                 max range             close margin       next shot
     |<----- valid echo ------->|< pipeline margin 32 >|< orphan zone --->|
 ```
 
-- 기본 close margin: AXIS 32 clocks
+- 기본 close margin: 210 ns (`150 MHz` 기본에서는 32 clocks)
 - `max_range=0`: distance close 비활성, 다음 Shot까지 window 유지
 - window 밖 stop event: orphan sticky
 - running total 감소: chip별 monotonic violation sticky
@@ -1146,8 +1170,8 @@ stateDiagram-v2
 
 Row 크기를 일정하게 유지하는 것이 우선 정책이다.
 
-- chip 데이터가 `max_scan_clks`까지 오지 않으면 해당 chip Cell을 blank로 생성한다.
-- `max_scan_clks=0`은 programmable timeout 비활성이지만 16비트 hard cap `0xFFFF`는 남는다.
+- chip 데이터가 `max_scan_5ns_ticks × 5 ns`까지 오지 않으면 해당 chip Cell을 blank로 생성한다.
+- `max_scan_5ns_ticks=0`은 programmable timeout 비활성이지만 16비트 hard cap `0xFFFF`는 남는다.
 - 현재 Row가 끝나기 전에 새 Shot이 오면 남은 부분을 blank-fill하여 기존 Row의 정확한 크기와 `TLAST`를 보존한다.
 - 다음 Shot은 pending되어 다음 line으로 처리된다.
 - `error_fill`, chip error mask, row fault pulse/sticky로 degraded Row임을 표시한다.
@@ -1532,7 +1556,7 @@ IDLE -> READ_REG12 -> WAIT_READ -> RECOVERY -> WAIT_RECOVERY
 ### 25.2 출력은 있으나 모두 blank인 경우
 
 1. Cell metadata `error_fill`을 확인한다.
-2. `max_scan_clks`가 GPX drain 지연보다 짧지 않은지 확인한다.
+2. `max_scan_5ns_ticks × 5 ns`가 GPX drain 지연보다 짧지 않은지 확인한다.
 3. chip lane mask와 actual slope가 일치하는지 확인한다.
 4. `STAT7[15] masked_slope_drop_any`를 확인한다.
 5. chip slice `TLAST`가 assembler 입력 FIFO에 도달하는지 확인한다.
@@ -1844,8 +1868,8 @@ p_run_timeout_sticky
 - [ ] `g_PRESENT/Rise/Fall` mask가 PCB 배선과 맞고 모든 present chip에 역할이 있다.
 - [ ] stops, max_hits, cols, n_faces가 parser/VDMA 설정과 같다.
 - [ ] max_range의 단위가 5 ns tick임을 반영했다.
-- [ ] `max_scan_clks`는 AXIS clock count로 예산화했다.
-- [ ] power-up/recovery/ALU/bus timing count는 TDC clock 기준으로 재환산했다.
+- [ ] `max_scan_5ns_ticks`를 5 ns 기준 물리 시간으로 예산화했다.
+- [ ] top의 `g_*_TIME_NS` 값이 보드/GPX/신호처리 margin과 맞다.
 - [ ] `HW_CONFIG[28]`과 `SCAN_TIMEOUT[19] falling_enable`이 일치한다.
 - [ ] Fall ON이면 runtime Rise/Fall lane이 모두 유효하고 Rise chip 수가 Fall보다 작지 않음을 start 전에 검증했다.
 
@@ -1927,6 +1951,7 @@ p_run_timeout_sticky
 | [`known_issues.md`](known_issues.md) | 과거 설계 판단 배경 | 일부 항목은 현재 RTL보다 오래됨 |
 | [`signoff_results/README.md`](../signoff_results/README.md) | OOC sign-off 실행 방법과 범위 | 현재 flow 참조 |
 | [C08 Slope Mask/Falling Simulator v015](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Contract_Simulator_v015.html) | Present/Rise/Fall generic, runtime Fall, APD coverage, HSIZE/DDR/Ethernet 상호작용 | 브라우저 계산/검증 도구 |
+| [C08 Clock/Timing Generic Simulator v016](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Contract_Simulator_v016.html) | ns generic의 TDC/AXIS clock 변환, 5 ns scan CSR 변환과 시간 margin | 현재 timing 계약 계산/검증 도구 |
 | [C08 Slope Mask/Falling Closure v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Closure_v017.md) | xsim, parent validate, OOC, HTML 검증 근거 | 현재 slope closure 기록 |
 
 ---
@@ -1938,7 +1963,9 @@ p_run_timeout_sticky
 | 확인할 계약 | 1차 RTL 근거 | 함께 볼 지점 |
 |---|---|---|
 | 지원 clock/폭/topology assertion | [`tdc_gpx_top.vhd`](../tdc_gpx_top.vhd)의 concurrent assertion | clock generic과 `g_PRESENT/Rise/Fall_CHIP_MASK` |
-| 5 ns range의 AXIS/TDC 변환 | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd)의 `s_max_range_axis_clks`, `s_max_range_tdc_clks` | [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd)의 AXIS 변환 |
+| 5 ns range/scan 변환 | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd)의 `s_max_range_axis_clks`, `s_max_range_tdc_clks` | `tdc_gpx_top`의 `s_max_scan_axis_clks`, [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd)의 AXIS 변환 |
+| top timing generic 전파 | `tdc_gpx_top`의 `c_TDC_*_CLKS`, `c_AXIS_*_CLKS` | `config_ctrl -> chip_ctrl -> chip_run`, `cell_pipe -> cell_builder` generic map |
+| top/parent generic 동등성 | [`verify_parent_generic_parity.ps1`](../parent_ref/scripts/verify_parent_generic_parity.ps1) | top 25개 선언, parent 25개 선언, same-name map 25개 자동 대조 |
 | start 수락, Face/Shot pulse, snapshot | [`tdc_gpx_face_seq.vhd`](../tdc_gpx_face_seq.vhd)의 `p_face_seq`, `p_packet_start_reg`, `p_face_cfg_latch` | `p_shot_raw_edge`, `p_start_output_reg` |
 | outer start pending/retry/reject | [`tdc_gpx_csr_pipeline.vhd`](../tdc_gpx_csr_pipeline.vhd)의 `p_start_pending`, [`tdc_gpx_face_seq.vhd`](../tdc_gpx_face_seq.vhd)의 `s_cmd_start_pending_r` | `o_cmd_start`, `i_cmd_start_accepted`, `s_cfg_rejected_r` |
 | stop event 귀속과 expected count | [`tdc_gpx_stop_cfg_decode.vhd`](../tdc_gpx_stop_cfg_decode.vhd)의 `p_owned_evt_stage`, `p_runtime_state` | `p_monotonic_check`, `p_cfg_override` |

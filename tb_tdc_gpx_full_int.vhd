@@ -812,9 +812,11 @@ begin
             g_OUTPUT_WIDTH    => C_OUTPUT_W,
             g_AXIS_CLK_MHZ    => C_DOMAIN_CLK_MHZ,
             g_TDC_CLK_MHZ     => C_DOMAIN_CLK_MHZ,
-            g_POWERUP_CLKS    => G_POWERUP_CLKS,
-            g_RECOVERY_CLKS   => G_RECOVERY_CLKS,
-            g_ALU_PULSE_CLKS  => G_ALU_PULSE_CLKS,
+            -- Convert accelerated TB cycle knobs to the top-level physical
+            -- time contract without changing the intended cycle count.
+            g_POWERUP_TIME_NS   => (G_POWERUP_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
+            g_RECOVERY_TIME_NS  => (G_RECOVERY_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
+            g_ALU_PULSE_TIME_NS => (G_ALU_PULSE_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
             g_STOP_EVT_DWIDTH => C_STOP_DW,
             g_FIRE_COUNT_DWIDTH => 32
         )

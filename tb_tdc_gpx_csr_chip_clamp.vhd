@@ -12,7 +12,7 @@
 -- register:
 --
 --   div >= c_BUS_CLK_DIV_MIN (=1)
---   if div = 1, ticks >= c_BUS_READ_PERIOD_MIN_CLKS (=5)
+--   if div = 1, ticks >= c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS (=5)
 --   else        ticks >= c_BUS_TICKS_MIN (=4)
 --
 -- BUS_TIMING register layout (CTL1 @ 0x04):
@@ -94,7 +94,7 @@ architecture sim of tb_tdc_gpx_csr_chip_clamp is
     signal o_bus_ticks            : unsigned(2 downto 0);
     signal o_start_off1           : unsigned(17 downto 0);
     signal o_cfg_reg7             : std_logic_vector(31 downto 0);
-    signal o_max_scan_clks        : unsigned(15 downto 0);
+    signal o_max_scan_5ns_ticks   : unsigned(15 downto 0);
     signal o_max_hits_cfg         : unsigned(2 downto 0);
 
     signal o_cmd_reg_read         : std_logic;
@@ -179,7 +179,7 @@ begin
             o_bus_ticks         => o_bus_ticks,
             o_start_off1        => o_start_off1,
             o_cfg_reg7          => o_cfg_reg7,
-            o_max_scan_clks     => o_max_scan_clks,
+            o_max_scan_5ns_ticks => o_max_scan_5ns_ticks,
             o_max_hits_cfg      => o_max_hits_cfg,
             o_falling_enable    => open,
             -- Reg access commands
@@ -311,7 +311,7 @@ begin
                 end if;
 
                 if v_exp_div = 1 then
-                    v_exp_ticks_min := c_BUS_READ_PERIOD_MIN_CLKS;
+                    v_exp_ticks_min := c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS;
                 else
                     v_exp_ticks_min := c_BUS_TICKS_MIN;
                 end if;

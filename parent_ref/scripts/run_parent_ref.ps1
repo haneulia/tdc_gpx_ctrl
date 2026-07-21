@@ -12,6 +12,7 @@ $HdlDir = Split-Path -Parent $ParentDir
 $BuildDir = Join-Path $HdlDir ".tmp_parent/$Stamp"
 $ResultDir = Join-Path $ParentDir "results/sessions/${Stamp}_ps_fclk_parent_ref"
 $TclScript = Join-Path $ScriptDir 'create_parent_ref.tcl'
+$GenericVerifyScript = Join-Path $ScriptDir 'verify_parent_generic_parity.ps1'
 $VerifyScript = Join-Path $ScriptDir 'verify_parent_contract.ps1'
 $SignoffScript = Join-Path $ScriptDir 'verify_parent_signoff.ps1'
 
@@ -36,6 +37,9 @@ $env:TCLLIBPATH = if ([string]::IsNullOrWhiteSpace($env:TCLLIBPATH)) {
 
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 New-Item -ItemType Directory -Force -Path $ResultDir | Out-Null
+
+$GenericReport = Join-Path $ResultDir 'parent_generic_parity.txt'
+& $GenericVerifyScript -HdlDir $HdlDir -ReportPath $GenericReport
 
 & $Vivado -mode batch -nojournal -nolog -source $TclScript `
     -tclargs $BuildDir $ResultDir $Mode

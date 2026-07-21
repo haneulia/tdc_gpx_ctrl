@@ -41,7 +41,7 @@
 --   After s_err_bus_fatal_r is latched (quarantine counter reached 65K
 --   with bus still active), a secondary observer tracks how long the bus
 --   has been stably idle. If it stays idle for g_BUS_IDLE_STABLE_CLKS
---   cycles (generic, default 4096 ≈ 20us @200MHz), the phase auto-
+--   cycles, the phase auto-
 --   transitions to PH_INIT. This reclaims liveness when the bus recovers
 --   on its own, without relying on SW force_reinit. The latched bus-fatal
 --   status remains the software-visible evidence of the recovery event.
@@ -67,10 +67,11 @@ entity tdc_gpx_chip_ctrl is
         -- auto-recover from PH_RESP_DRAIN quarantine. After s_err_bus_fatal_r
         -- latches, the bus must stay idle (busy='0' AND rsp_pending='0') for
         -- this many consecutive cycles before auto-transitioning to PH_INIT.
-        -- Default 4096 (~20us @200MHz). Tunable per PCB / TDC chip response
-        -- characteristics: raise for noisy buses, lower if recovery latency
-        -- matters more than stability confidence.
-        g_BUS_IDLE_STABLE_CLKS : positive := 4096
+        -- Production top derives this count from a physical-time generic and
+        -- g_TDC_CLK_MHZ. Standalone default is 4096 clocks at 200 MHz.
+        g_BUS_IDLE_STABLE_CLKS : positive := c_DEFAULT_BUS_IDLE_STABLE_CLKS;
+        g_DRAIN_MARGIN_CLKS    : positive := c_DEFAULT_DRAIN_MARGIN_CLKS;
+        g_EF_SYNC_GUARD_CLKS   : positive := c_DEFAULT_EF_SYNC_GUARD_CLKS
     );
     port (
         i_clk               : in  std_logic;
@@ -471,9 +472,9 @@ begin
         generic map (
             g_BUS_DATA_WIDTH => g_BUS_DATA_WIDTH,
             g_RECOVERY_CLKS  => g_RECOVERY_CLKS,
-            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
-            -- g_DRAIN_MARGIN_CLKS left at its default (256). Override at
-            -- this level if a future config needs a different headroom.
+            g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS,
+            g_DRAIN_MARGIN_CLKS => g_DRAIN_MARGIN_CLKS,
+            g_EF_SYNC_GUARD_CLKS => g_EF_SYNC_GUARD_CLKS
         )
         port map (
             i_clk               => i_clk,

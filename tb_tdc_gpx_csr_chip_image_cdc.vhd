@@ -51,7 +51,7 @@ architecture sim of tb_tdc_gpx_csr_chip_image_cdc is
     signal o_bus_ticks            : unsigned(2 downto 0);
     signal o_start_off1           : unsigned(17 downto 0);
     signal o_cfg_reg7             : std_logic_vector(31 downto 0);
-    signal o_max_scan_clks        : unsigned(15 downto 0);
+    signal o_max_scan_5ns_ticks   : unsigned(15 downto 0);
     signal o_max_hits_cfg         : unsigned(2 downto 0);
     signal o_cmd_reg_read         : std_logic;
     signal o_cmd_reg_write        : std_logic;
@@ -127,7 +127,7 @@ begin
             o_bus_ticks         => o_bus_ticks,
             o_start_off1        => o_start_off1,
             o_cfg_reg7          => o_cfg_reg7,
-            o_max_scan_clks     => o_max_scan_clks,
+            o_max_scan_5ns_ticks => o_max_scan_5ns_ticks,
             o_max_hits_cfg      => o_max_hits_cfg,
             o_falling_enable    => open,
             o_cmd_reg_read      => o_cmd_reg_read,

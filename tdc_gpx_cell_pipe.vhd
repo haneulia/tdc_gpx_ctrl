@@ -26,7 +26,12 @@ entity tdc_gpx_cell_pipe is
         -- every present chip. A zero fall mask removes all fall builders.
         g_RISE_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
+        g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        -- AXIS-domain watchdog margins. Production values are derived from
+        -- tdc_gpx_top physical-time generics; cycle generics remain here so
+        -- the builder datapath contains no runtime time conversion.
+        g_QUARANTINE_MARGIN_CLKS : positive := c_DEFAULT_CELL_QUARANTINE_MARGIN_CLKS;
+        g_IFIFO2_MARGIN_CLKS     : positive := c_DEFAULT_CELL_IFIFO2_MARGIN_CLKS
     );
     port (
         -- Clock / Reset
@@ -431,7 +436,9 @@ begin
                 generic map (
                     g_CHIP_ID      => i,
                     g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
-                    g_SLOPE_VALUE  => '1'
+                    g_SLOPE_VALUE  => '1',
+                    g_QUARANTINE_MARGIN_CLKS => g_QUARANTINE_MARGIN_CLKS,
+                    g_IFIFO2_MARGIN_CLKS     => g_IFIFO2_MARGIN_CLKS
                 )
                 port map (
                     i_clk               => i_clk,
@@ -477,7 +484,9 @@ begin
                 generic map (
                     g_CHIP_ID      => i,
                     g_OUTPUT_WIDTH => g_OUTPUT_WIDTH,
-                    g_SLOPE_VALUE  => '0'
+                    g_SLOPE_VALUE  => '0',
+                    g_QUARANTINE_MARGIN_CLKS => g_QUARANTINE_MARGIN_CLKS,
+                    g_IFIFO2_MARGIN_CLKS     => g_IFIFO2_MARGIN_CLKS
                 )
                 port map (
                     i_clk               => i_clk,

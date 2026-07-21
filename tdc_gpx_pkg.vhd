@@ -38,6 +38,18 @@ package tdc_gpx_pkg is
     -- Declared first so that derived constants below can use it.
     -- =========================================================================
     function fn_ceil_div(a : natural; b : positive) return natural;
+    -- Elaboration-time physical-time conversion. The result is rounded up so
+    -- a programmed guard/window is never shorter than the requested time.
+    -- These functions are used only with generics/constants; they do not infer
+    -- a runtime multiplier or divider in the datapath.
+    function fn_time_ns_to_clks_ceil(
+        time_ns : natural;
+        clk_mhz : positive
+    ) return natural;
+    function fn_time_ps_to_clks_ceil(
+        time_ps : natural;
+        clk_mhz : positive
+    ) return natural;
 
     -- =========================================================================
     -- Build defaults
@@ -56,9 +68,51 @@ package tdc_gpx_pkg is
     constant c_DEFAULT_FALLING_ENABLE   : std_logic := '1';
     constant c_DEFAULT_AXIS_CLK_MHZ     : positive := 150;
     constant c_DEFAULT_TDC_CLK_MHZ      : positive := 200;
-    constant c_DEFAULT_POWERUP_CLKS     : positive := 48;
-    constant c_DEFAULT_RECOVERY_CLKS    : positive := 8;
-    constant c_DEFAULT_ALU_PULSE_CLKS   : positive := 4;
+    -- Physical timing defaults. tdc_gpx_top owns the effective values and
+    -- converts them to the clock domain that consumes each policy.
+    constant c_DEFAULT_POWERUP_TIME_NS              : positive := 240;
+    constant c_DEFAULT_RECOVERY_TIME_NS             : positive := 40;
+    constant c_DEFAULT_ALU_PULSE_TIME_NS            : positive := 20;
+    constant c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS  : positive := 25;
+    constant c_DEFAULT_BUS_IDLE_STABLE_TIME_NS      : positive := 20_480;
+    constant c_DEFAULT_DRAIN_MARGIN_TIME_NS         : positive := 1_280;
+    constant c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS   : positive := 210;
+    constant c_DEFAULT_ERR_DEBOUNCE_TIME_NS         : positive := 25;
+    constant c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3_410;
+    constant c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS   : positive := 1_705;
+    constant c_DEFAULT_ERR_MAX_RETRIES              : positive := 3;
+
+    -- TDC-GPX status-pin timing. The 11.8 ns value is the device data-valid
+    -- maximum; two additional clocks model the fixed local 2-FF synchronizer.
+    constant c_TDC_EF_DATA_VALID_MAX_PS : positive := 11_800;
+    constant c_TDC_STATUS_SYNC_CLKS      : positive := 2;
+
+    -- Cycle aliases retain standalone child-module defaults while deriving
+    -- from one physical source of truth at the default clocks.
+    constant c_DEFAULT_POWERUP_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_POWERUP_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_RECOVERY_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_RECOVERY_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_ALU_PULSE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_ALU_PULSE_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_BUS_IDLE_STABLE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_BUS_IDLE_STABLE_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_DRAIN_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_DRAIN_MARGIN_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_EF_SYNC_GUARD_CLKS : positive :=
+        fn_time_ps_to_clks_ceil(c_TDC_EF_DATA_VALID_MAX_PS,
+                                c_DEFAULT_TDC_CLK_MHZ)
+        + c_TDC_STATUS_SYNC_CLKS;
+    constant c_DEFAULT_STOP_WINDOW_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
+    constant c_DEFAULT_ERR_DEBOUNCE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_ERR_DEBOUNCE_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
+    constant c_DEFAULT_CELL_QUARANTINE_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
+    constant c_DEFAULT_CELL_IFIFO2_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
     constant c_DEFAULT_OEN_MODE         : string := "DYNAMIC_CONNECTED";
     constant c_DEFAULT_STREAM_CLK_MODE  : string := "ASYNC";
 
@@ -356,7 +410,7 @@ package tdc_gpx_pkg is
         -- CTL4: CFG_REG7
         cfg_reg7            : std_logic_vector(31 downto 0);                -- CTL4[31:0]
         -- CTL21: SCAN_TIMEOUT + MAX_HITS + FALLING_ENABLE
-        max_scan_clks       : unsigned(15 downto 0);                        -- CTL21[15:0]
+        max_scan_5ns_ticks  : unsigned(15 downto 0);                        -- CTL21[15:0]
         max_hits_cfg        : unsigned(2 downto 0);                         -- CTL21[18:16] (1~7, 0→7)
         falling_enable      : std_logic;                                    -- CTL21[19]
     end record;
@@ -378,7 +432,7 @@ package tdc_gpx_pkg is
         cols_per_face       => to_unsigned(2400, 16),
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
-        max_scan_clks       => to_unsigned(0, 16),          -- 0 = disabled (no timeout)
+        max_scan_5ns_ticks  => to_unsigned(0, 16),          -- 0 = programmable timeout disabled; hard cap remains
         max_hits_cfg        => to_unsigned(c_MAX_HITS_PER_STOP, 3),
         falling_enable      => c_DEFAULT_FALLING_ENABLE
     );
@@ -407,7 +461,7 @@ package tdc_gpx_pkg is
         + 16           -- cols_per_face
         + 18           -- start_off1
         + 32           -- cfg_reg7
-        + 16           -- max_scan_clks
+        + 16           -- max_scan_5ns_ticks
         + 3            -- max_hits_cfg
         + 1;           -- falling_enable
 
@@ -729,6 +783,24 @@ package body tdc_gpx_pkg is
         return (a + b - 1) / b;
     end function;
 
+    function fn_time_ns_to_clks_ceil(
+        time_ns : natural;
+        clk_mhz : positive
+    ) return natural is
+    begin
+        -- MHz * ns / 1000 = clocks.
+        return fn_ceil_div(time_ns * clk_mhz, 1_000);
+    end function;
+
+    function fn_time_ps_to_clks_ceil(
+        time_ps : natural;
+        clk_mhz : positive
+    ) return natural is
+    begin
+        -- MHz * ps / 1,000,000 = clocks.
+        return fn_ceil_div(time_ps * clk_mhz, 1_000_000);
+    end function;
+
     -- Round up to next power of 2
     function fn_ceil_pow2(x : natural) return natural is
         variable result : natural := 1;
@@ -1016,7 +1088,7 @@ package body tdc_gpx_pkg is
         v(i + 15 downto i)            := std_logic_vector(cfg.cols_per_face);     i := i + 16;
         v(i + 17 downto i)            := std_logic_vector(cfg.start_off1);        i := i + 18;
         v(i + 31 downto i)            := cfg.cfg_reg7;            i := i + 32;
-        v(i + 15 downto i)            := std_logic_vector(cfg.max_scan_clks);     i := i + 16;
+        v(i + 15 downto i)            := std_logic_vector(cfg.max_scan_5ns_ticks); i := i + 16;
         v(i + 2 downto i)             := std_logic_vector(cfg.max_hits_cfg);      i := i + 3;
         v(i)                          := cfg.falling_enable;                       i := i + 1;
         -- assert i = c_TDC_CFG_BITS;
@@ -1043,7 +1115,7 @@ package body tdc_gpx_pkg is
         cfg.cols_per_face    := unsigned(v(i + 15 downto i));     i := i + 16;
         cfg.start_off1       := unsigned(v(i + 17 downto i));     i := i + 18;
         cfg.cfg_reg7         := v(i + 31 downto i);               i := i + 32;
-        cfg.max_scan_clks    := unsigned(v(i + 15 downto i));     i := i + 16;
+        cfg.max_scan_5ns_ticks := unsigned(v(i + 15 downto i));   i := i + 16;
         cfg.max_hits_cfg     := unsigned(v(i + 2 downto i));      i := i + 3;
         cfg.falling_enable   := v(i);                             i := i + 1;
         return cfg;

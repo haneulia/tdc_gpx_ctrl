@@ -17,6 +17,7 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_parent_core is
     generic (
+        g_HW_VERSION        : std_logic_vector(31 downto 0) := x"00010000";
         g_OUTPUT_WIDTH       : natural := 32;
         -- IP Integrator module-reference parsing does not resolve package
         -- constants in generic defaults/ranges. These literals mirror the
@@ -28,7 +29,24 @@ entity tdc_gpx_parent_core is
         g_MAX_HITS_PER_STOP  : positive range 1 to 7 := 7;
         g_AXIS_CLK_MHZ       : positive := 150;
         g_TDC_CLK_MHZ        : positive := 200;
-        g_STREAM_CLK_MODE    : string   := "ASYNC"
+        -- Physical timing policy passed through to tdc_gpx_top. Unit-bearing
+        -- generics keep this parent independent of the selected FCLK periods.
+        g_POWERUP_TIME_NS             : positive := 240;
+        g_RECOVERY_TIME_NS            : positive := 40;
+        g_ALU_PULSE_TIME_NS           : positive := 20;
+        g_BUS_READ_PERIOD_MIN_TIME_NS : positive := 25;
+        g_BUS_IDLE_STABLE_TIME_NS     : positive := 20480;
+        g_DRAIN_MARGIN_TIME_NS        : positive := 1280;
+        g_STOP_WINDOW_MARGIN_TIME_NS  : positive := 210;
+        g_ERR_DEBOUNCE_TIME_NS        : positive := 25;
+        g_ERR_MAX_RETRIES             : positive := 3;
+        g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3410;
+        g_CELL_IFIFO2_MARGIN_TIME_NS  : positive := 1705;
+        g_OEN_MODE           : string   := "DYNAMIC_CONNECTED";
+        g_STREAM_CLK_MODE    : string   := "ASYNC";
+        g_STOP_EVT_DWIDTH    : positive := 32;
+        g_STOP_EVT_TUSER_WIDTH : positive := 32;
+        g_FIRE_COUNT_DWIDTH  : positive := 32
     );
     port (
         i_axis_aclk    : in std_logic;
@@ -84,14 +102,14 @@ entity tdc_gpx_parent_core is
         i_stop_tdc   : in std_logic;
 
         i_stop_evt_valid : in  std_logic;
-        i_stop_evt_data  : in  std_logic_vector(c_DEFAULT_STOP_EVT_DWIDTH - 1 downto 0);
-        i_stop_evt_keep  : in  std_logic_vector(c_DEFAULT_STOP_EVT_DWIDTH/8 - 1 downto 0);
-        i_stop_evt_user  : in  std_logic_vector(c_DEFAULT_STOP_EVT_TUSER_WIDTH - 1 downto 0);
+        i_stop_evt_data  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
+        i_stop_evt_keep  : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
+        i_stop_evt_user  : in  std_logic_vector(g_STOP_EVT_TUSER_WIDTH - 1 downto 0);
         o_stop_evt_ready : out std_logic;
 
         i_fire_count_valid : in std_logic;
-        i_fire_count_data  : in std_logic_vector(c_DEFAULT_FIRE_COUNT_DWIDTH - 1 downto 0);
-        i_fire_count_keep  : in std_logic_vector(c_DEFAULT_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
+        i_fire_count_data  : in std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
+        i_fire_count_keep  : in std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
         i_fire_count_last  : in std_logic;
 
         io_tdc0_d : inout std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
@@ -185,6 +203,7 @@ begin
 
     u_tdc_gpx : entity work.tdc_gpx_top
         generic map (
+            g_HW_VERSION        => g_HW_VERSION,
             g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
             g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
             g_RISE_CHIP_MASK     => g_RISE_CHIP_MASK,
@@ -193,7 +212,22 @@ begin
             g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP,
             g_AXIS_CLK_MHZ       => g_AXIS_CLK_MHZ,
             g_TDC_CLK_MHZ        => g_TDC_CLK_MHZ,
-            g_STREAM_CLK_MODE    => g_STREAM_CLK_MODE
+            g_POWERUP_TIME_NS    => g_POWERUP_TIME_NS,
+            g_RECOVERY_TIME_NS   => g_RECOVERY_TIME_NS,
+            g_ALU_PULSE_TIME_NS  => g_ALU_PULSE_TIME_NS,
+            g_BUS_READ_PERIOD_MIN_TIME_NS => g_BUS_READ_PERIOD_MIN_TIME_NS,
+            g_BUS_IDLE_STABLE_TIME_NS => g_BUS_IDLE_STABLE_TIME_NS,
+            g_DRAIN_MARGIN_TIME_NS => g_DRAIN_MARGIN_TIME_NS,
+            g_STOP_WINDOW_MARGIN_TIME_NS => g_STOP_WINDOW_MARGIN_TIME_NS,
+            g_ERR_DEBOUNCE_TIME_NS => g_ERR_DEBOUNCE_TIME_NS,
+            g_ERR_MAX_RETRIES => g_ERR_MAX_RETRIES,
+            g_CELL_QUARANTINE_MARGIN_TIME_NS => g_CELL_QUARANTINE_MARGIN_TIME_NS,
+            g_CELL_IFIFO2_MARGIN_TIME_NS => g_CELL_IFIFO2_MARGIN_TIME_NS,
+            g_OEN_MODE           => g_OEN_MODE,
+            g_STREAM_CLK_MODE    => g_STREAM_CLK_MODE,
+            g_STOP_EVT_DWIDTH    => g_STOP_EVT_DWIDTH,
+            g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
+            g_FIRE_COUNT_DWIDTH  => g_FIRE_COUNT_DWIDTH
         )
         port map (
             i_axis_aclk    => i_axis_aclk,

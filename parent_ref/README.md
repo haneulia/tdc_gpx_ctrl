@@ -23,6 +23,19 @@ The parent uses two independent VDMA S2MM channels. Each accepts one 32-bit
 TDC output stream and writes through a 64-bit PS HP port. Runtime HSIZE and
 VSIZE are exposed to software through a read-only AXI GPIO snapshot.
 
+The wrapper exposes every public `tdc_gpx_top` build generic, including HW
+version, clock/time policy, OEN mode, and stop/fire stream widths, and passes
+them through without a second interpretation. The reference project script
+locks those generics to the profile above; another parent may override them at
+elaboration while retaining the same single-source hierarchy.
+
+Before Vivado starts, `verify_parent_generic_parity.ps1` compares the generic
+declarations of `tdc_gpx_top` and `tdc_gpx_parent_core` with the wrapper's
+generic map. A missing, renamed, extra, or indirectly mapped public generic
+fails the run. The generated block-design contract then exact-checks all 25
+configured values, so declaration parity and the selected integration profile
+are independently verified.
+
 Slope ownership is an explicit compile-time contract. `g_RISE_CHIP_MASK` and
 `g_FALL_CHIP_MASK` may overlap when one chip must collect both edges. With the
 default masks, CSR `CTL21[19]=1` selects the 2-rising/2-falling assignment;
@@ -83,11 +96,12 @@ change to the fixed 40-pin baseline is a sign-off failure.
 
 | Item | Result |
 |---|---|
-| Session | `260721172000_slope_masks_ps_fclk_parent_ref` |
+| Session | `260721_generic_parity_validate_ps_fclk_parent_ref` |
 | Slope contract | present `1111`, rise `0011`, fall `1100` |
 | Build limits | 8 stops/chip, 7 hits/stop |
+| Generic parity | top 25, parent 25, same-name map 25 |
 | Block design | generated and validated for `xc7z020clg484-2` |
-| Contract checks | 42 exact checks passed |
+| Contract checks | 58 exact checks passed |
 | Verdict | `PARENT_REF_VALIDATE_PASS` |
 
 The current generic-mask RTL has not yet inherited the older implementation

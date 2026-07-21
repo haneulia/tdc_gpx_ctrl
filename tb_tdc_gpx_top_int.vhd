@@ -888,9 +888,11 @@ begin
             g_MAX_HITS_PER_STOP => G_BUILD_MAX_HITS_PER_STOP,
             g_AXIS_CLK_MHZ   => C_DOMAIN_CLK_MHZ,
             g_TDC_CLK_MHZ    => C_TDC_DOMAIN_CLK_MHZ,
-            g_POWERUP_CLKS   => G_POWERUP_CLKS,
-            g_RECOVERY_CLKS  => G_RECOVERY_CLKS,
-            g_ALU_PULSE_CLKS => G_ALU_PULSE_CLKS,
+            -- Keep the accelerated simulation knobs cycle-based, then express
+            -- the equivalent physical time at the production top boundary.
+            g_POWERUP_TIME_NS   => (G_POWERUP_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
+            g_RECOVERY_TIME_NS  => (G_RECOVERY_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
+            g_ALU_PULSE_TIME_NS => (G_ALU_PULSE_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
             g_STREAM_CLK_MODE => G_STREAM_CLK_MODE,
             g_STOP_EVT_DWIDTH => C_STOP_DW
         )

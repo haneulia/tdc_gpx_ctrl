@@ -136,7 +136,7 @@ begin
 
     cfg_face.active_chip_mask <= "0001";
     cfg_face.stops_per_chip   <= to_unsigned(C_STOPS, 4);
-    cfg_face.max_scan_clks    <= to_unsigned(4000, 16);
+        cfg_face.max_scan_5ns_ticks <= to_unsigned(4000, 16);
     cfg_face.max_hits_cfg     <= to_unsigned(C_MAX_HITS, 3);
     cfg_face.cols_per_face    <= to_unsigned(C_COLS, 16);
 

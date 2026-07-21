@@ -67,7 +67,13 @@ entity tdc_gpx_config_ctrl is
         g_RECOVERY_CLKS   : positive := c_DEFAULT_RECOVERY_CLKS;
         g_ALU_PULSE_CLKS  : positive := c_DEFAULT_ALU_PULSE_CLKS;
         g_OEN_MODE        : string   := c_DEFAULT_OEN_MODE;
-        g_BUS_READ_PERIOD_MIN_CLKS : positive := c_BUS_READ_PERIOD_MIN_CLKS;
+        g_BUS_READ_PERIOD_MIN_CLKS : positive := c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS;
+        g_BUS_IDLE_STABLE_CLKS : positive := c_DEFAULT_BUS_IDLE_STABLE_CLKS;
+        g_DRAIN_MARGIN_CLKS     : positive := c_DEFAULT_DRAIN_MARGIN_CLKS;
+        g_EF_SYNC_GUARD_CLKS    : positive := c_DEFAULT_EF_SYNC_GUARD_CLKS;
+        g_STOP_WINDOW_MARGIN_CLKS : natural := c_DEFAULT_STOP_WINDOW_MARGIN_CLKS;
+        g_ERR_DEBOUNCE_CLKS     : positive := c_DEFAULT_ERR_DEBOUNCE_CLKS;
+        g_ERR_MAX_RETRIES       : positive := c_DEFAULT_ERR_MAX_RETRIES;
         g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE;
         g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
         g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
@@ -369,7 +375,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_bus_ticks       : unsigned(2 downto 0);
     signal s_start_off1      : unsigned(17 downto 0);
     signal s_cfg_reg7        : std_logic_vector(31 downto 0);
-    signal s_max_scan_clks   : unsigned(15 downto 0);
+    signal s_max_scan_5ns_ticks : unsigned(15 downto 0);
     signal s_max_hits_cfg    : unsigned(2 downto 0);
     signal s_falling_enable  : std_logic;
     signal s_cfg_image_raw   : t_cfg_image;
@@ -832,7 +838,7 @@ begin
     s_cfg_merged.bus_ticks        <= s_bus_ticks;
     s_cfg_merged.start_off1       <= s_start_off1;
     s_cfg_merged.cfg_reg7         <= s_cfg_reg7;
-    s_cfg_merged.max_scan_clks    <= s_max_scan_clks;
+    s_cfg_merged.max_scan_5ns_ticks <= s_max_scan_5ns_ticks;
     s_cfg_merged.max_hits_cfg     <= s_max_hits_cfg;
     -- A rise-only build has no falling datapath to enable. Clamp the runtime
     -- bit before the coherent config snapshot crosses into either processing
@@ -1022,7 +1028,8 @@ begin
     -- =========================================================================
     u_csr_chip : entity work.tdc_gpx_csr_chip
         generic map (
-            g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP
+            g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP,
+            g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS
         )
         port map (
             s_axi_aclk      => s_axi_aclk,
@@ -1053,7 +1060,7 @@ begin
             o_bus_ticks     => s_bus_ticks,
             o_start_off1    => s_start_off1,
             o_cfg_reg7      => s_cfg_reg7,
-            o_max_scan_clks => s_max_scan_clks,
+            o_max_scan_5ns_ticks => s_max_scan_5ns_ticks,
             o_max_hits_cfg  => s_max_hits_cfg,
             o_falling_enable => s_falling_enable,
             o_cmd_reg_read  => s_cmd_reg_read,
@@ -1114,6 +1121,10 @@ begin
     -- [2b] err_handler: automatic ErrFlag detection and recovery
     -- =========================================================================
     u_err_handler : entity work.tdc_gpx_err_handler
+        generic map (
+            g_DEBOUNCE_CLKS => g_ERR_DEBOUNCE_CLKS,
+            g_MAX_RETRIES   => g_ERR_MAX_RETRIES
+        )
         port map (
             i_clk                => i_axis_aclk,
             i_rst_n              => i_axis_aresetn,
@@ -1149,7 +1160,8 @@ begin
         generic map (
             g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
             g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
-            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH
+            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH,
+            g_WINDOW_MARGIN_CLKS => g_STOP_WINDOW_MARGIN_CLKS
         )
         port map (
             i_clk              => i_axis_aclk,
@@ -1835,7 +1847,10 @@ begin
                 g_CHIP_ID        => i,
                 g_POWERUP_CLKS   => g_POWERUP_CLKS,
                 g_RECOVERY_CLKS  => g_RECOVERY_CLKS,
-                g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS
+                g_ALU_PULSE_CLKS => g_ALU_PULSE_CLKS,
+                g_BUS_IDLE_STABLE_CLKS => g_BUS_IDLE_STABLE_CLKS,
+                g_DRAIN_MARGIN_CLKS     => g_DRAIN_MARGIN_CLKS,
+                g_EF_SYNC_GUARD_CLKS    => g_EF_SYNC_GUARD_CLKS
             )
             port map (
                 i_clk               => i_tdc_clk,

@@ -853,7 +853,7 @@ begin
     o_cfg.bus_ticks        <= to_unsigned(5, 3);     -- default, overridden
     o_cfg.start_off1       <= (others => '0');       -- default, overridden
     o_cfg.cfg_reg7         <= (others => '0');       -- default, overridden
-    o_cfg.max_scan_clks    <= (others => '0');       -- default, overridden
+    o_cfg.max_scan_5ns_ticks <= (others => '0');     -- default, overridden
     o_cfg.max_hits_cfg     <= to_unsigned(g_MAX_HITS_PER_STOP, 3); -- default, overridden
     o_cfg.falling_enable   <= c_DEFAULT_FALLING_ENABLE; -- default, overridden
 

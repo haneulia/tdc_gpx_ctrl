@@ -129,12 +129,13 @@ entity tdc_gpx_cell_builder is
         -- Compile-time builder role. cell_pipe instantiates separate rising
         -- and falling builders, so slope is not stored per hit.
         g_SLOPE_VALUE            : std_logic := '1';
-        -- Per-watchdog margins above max_range_axis_clks.
+        -- Per-watchdog margins above max_range_axis_clks. Production top
+        -- derives both from physical-time generics and g_AXIS_CLK_MHZ.
         -- QUARANTINE margin covers DROP + QUARANTINE absorb windows (upstream
         -- drain_done may arrive well after shot boundary in worst cases).
         -- IFIFO2 margin covers stop 3->4 boundary wait in ST_O_WAIT_IFIFO2.
-        g_QUARANTINE_MARGIN_CLKS : positive := 512;
-        g_IFIFO2_MARGIN_CLKS     : positive := 256
+        g_QUARANTINE_MARGIN_CLKS : positive := c_DEFAULT_CELL_QUARANTINE_MARGIN_CLKS;
+        g_IFIFO2_MARGIN_CLKS     : positive := c_DEFAULT_CELL_IFIFO2_MARGIN_CLKS
     );
     port (
         i_clk               : in  std_logic;
