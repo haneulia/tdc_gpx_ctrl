@@ -70,7 +70,11 @@ entity tb_tdc_gpx_top_int is
         G_TDC_CLK_MHZ     : real    := 200.0;   -- TDC bus/control clock (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (m)
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
-        G_SLOPE_CHIP_MODE : string  := "DEDICATED_2X2";
+        G_RISE_CHIP_MASK  : std_logic_vector(3 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
+        G_FALL_CHIP_MASK  : std_logic_vector(3 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
+        G_FALLING_ENABLE  : boolean := true;
+        G_CHECK_32CH_ORDER : boolean := false;
+        G_CHECK_EDGE_ROLE_WRITES : boolean := true;
         G_PRESENT_CHIP_MASK : std_logic_vector(3 downto 0) := c_ALL_CHIPS_MASK;
         G_BUILD_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP :=
             c_MAX_STOPS_PER_CHIP;
@@ -243,6 +247,9 @@ architecture sim of tb_tdc_gpx_top_int is
             std_logic_vector(to_unsigned(scan_clks, c_ST_MAX_SCAN_HI - c_ST_MAX_SCAN_LO + 1));
         v(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO) :=
             std_logic_vector(to_unsigned(max_hits, c_ST_MAX_HITS_HI - c_ST_MAX_HITS_LO + 1));
+        if G_FALLING_ENABLE then
+            v(c_ST_FALLING_ENABLE) := '1';
+        end if;
         return v;
     end function;
 
@@ -261,6 +268,9 @@ architecture sim of tb_tdc_gpx_top_int is
             std_logic_vector(to_unsigned(G_TDATA_WIDTH, 8));
         v(c_HWCFG_CELL_FMT_HI downto c_HWCFG_CELL_FMT_LO) :=
             std_logic_vector(to_unsigned(c_CELL_FORMAT, 3));
+        if fn_count_ones(G_FALL_CHIP_MASK and G_PRESENT_CHIP_MASK) > 0 then
+            v(c_HWCFG_HAS_FALLING) := '1';
+        end if;
         return v;
     end function;
 
@@ -270,6 +280,9 @@ architecture sim of tb_tdc_gpx_top_int is
                                 max_hits       : natural;
                                 tdata_width    : natural) return natural is
     begin
+        if active_chips = 0 then
+            return 0;
+        end if;
         return cols_per_face
              * fn_vdma_line_bytes(active_chips * stops_per_chip, max_hits)
              / (tdata_width / 8);
@@ -277,26 +290,18 @@ architecture sim of tb_tdc_gpx_top_int is
 
     function fn_slope_chip_mask(
         active_mask : std_logic_vector(3 downto 0);
-        mode        : string;
+        edge_mask   : std_logic_vector(3 downto 0);
+        fall_enable : boolean;
         rise_lane   : boolean
     ) return std_logic_vector is
     begin
-        if mode = "SHARED_DUAL_EDGE" then
+        if not fall_enable and rise_lane then
             return active_mask;
-        elsif rise_lane then
-            return active_mask and "0011";
+        elsif not fall_enable then
+            return (active_mask'range => '0');
         else
-            return active_mask and "1100";
+            return active_mask and edge_mask;
         end if;
-    end function;
-
-    function fn_slope_active_chips(
-        active_mask : std_logic_vector(3 downto 0);
-        mode        : string;
-        rise_lane   : boolean
-    ) return natural is
-    begin
-        return fn_count_ones(fn_slope_chip_mask(active_mask, mode, rise_lane));
     end function;
 
     function fn_expected_axis_beats(mode             : natural;
@@ -359,6 +364,27 @@ architecture sim of tb_tdc_gpx_top_int is
             when 2      => return "force_reinit";
             when others => return "invalid";
         end case;
+    end function;
+
+    function fn_expected_reg0(chip_id : natural) return std_logic_vector is
+        variable v_word : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) :=
+            x"0381C00";
+        variable v_rise_enable : boolean;
+        variable v_fall_enable : boolean;
+    begin
+        v_rise_enable := G_PRESENT_CHIP_MASK(chip_id) = '1'
+                         and (not G_FALLING_ENABLE
+                              or G_RISE_CHIP_MASK(chip_id) = '1');
+        v_fall_enable := G_PRESENT_CHIP_MASK(chip_id) = '1'
+                         and G_FALLING_ENABLE
+                         and G_FALL_CHIP_MASK(chip_id) = '1';
+        if not v_rise_enable then
+            v_word(c_REG0_TRISEEN_HI downto c_REG0_TRISEEN_LO) := (others => '0');
+        end if;
+        if not v_fall_enable then
+            v_word(c_REG0_TFALLEN_HI downto c_REG0_TFALLEN_LO) := (others => '0');
+        end if;
+        return v_word;
     end function;
 
     -- =========================================================================
@@ -503,6 +529,8 @@ architecture sim of tb_tdc_gpx_top_int is
         of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     signal chip_d_out : t_chip_d_array := (others => (others => '0'));
     signal chip_d_oe  : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal reg0_write_seen : std_logic_vector(c_N_CHIPS - 1 downto 0) := (others => '0');
+    signal reg0_write_data : t_slv28_array := (others => (others => '0'));
 
     -- Monitor counters
     signal mon_rise_beats     : natural := 0;
@@ -559,13 +587,15 @@ architecture sim of tb_tdc_gpx_top_int is
         std_logic_vector(to_unsigned(C_MAX_RANGE_5NS_TICKS, 16));
     constant C_ACTIVE_CHIPS : natural := fn_count_ones(C_EFFECTIVE_ACTIVE_MASK);
     constant C_RISE_LANE_CHIP_MASK : std_logic_vector(3 downto 0) :=
-        fn_slope_chip_mask(C_EFFECTIVE_ACTIVE_MASK, G_SLOPE_CHIP_MODE, true);
+        fn_slope_chip_mask(C_EFFECTIVE_ACTIVE_MASK, G_RISE_CHIP_MASK,
+                           G_FALLING_ENABLE, true);
     constant C_FALL_LANE_CHIP_MASK : std_logic_vector(3 downto 0) :=
-        fn_slope_chip_mask(C_EFFECTIVE_ACTIVE_MASK, G_SLOPE_CHIP_MODE, false);
+        fn_slope_chip_mask(C_EFFECTIVE_ACTIVE_MASK, G_FALL_CHIP_MASK,
+                           G_FALLING_ENABLE, false);
     constant C_RISE_ACTIVE_CHIPS : natural :=
-        fn_slope_active_chips(C_EFFECTIVE_ACTIVE_MASK, G_SLOPE_CHIP_MODE, true);
+        fn_count_ones(C_RISE_LANE_CHIP_MASK);
     constant C_FALL_ACTIVE_CHIPS : natural :=
-        fn_slope_active_chips(C_EFFECTIVE_ACTIVE_MASK, G_SLOPE_CHIP_MODE, false);
+        fn_count_ones(C_FALL_LANE_CHIP_MASK);
     constant C_TOTAL_LINES  : natural := G_N_FACES * G_COLS_PER_FACE;
     constant C_TARGET_FACE_BEATS_RISE : natural :=
         fn_face_axis_beats(G_COLS_PER_FACE, C_RISE_ACTIVE_CHIPS, C_EFFECTIVE_STOPS_PER_CHIP,
@@ -758,9 +788,17 @@ begin
                     v_my_rd2   := 0;
                     chip_d_oe(i)  <= '0';
                     chip_d_out(i) <= (others => '0');
+                    reg0_write_seen(i) <= '0';
+                    reg0_write_data(i) <= (others => '0');
                 else
                     -- Default: D-bus hi-Z
                     chip_d_oe(i) <= '0';
+
+                    if o_tdc_csn(i) = '0' and o_tdc_wrn(i) = '0'
+                       and o_tdc_adr(i) = c_TDC_REG0 then
+                        reg0_write_seen(i) <= '1';
+                        reg0_write_data(i) <= io_tdc_d(i);
+                    end if;
 
                     -- FIFO load request (stim pulses prior to shot)
                     if fifo_load_req(i) = '1' and v_load_prev = '0' then
@@ -843,7 +881,8 @@ begin
         generic map (
             g_HW_VERSION     => x"00010000",
             g_OUTPUT_WIDTH   => C_OUTPUT_W,
-            g_SLOPE_CHIP_MODE => G_SLOPE_CHIP_MODE,
+            g_RISE_CHIP_MASK => G_RISE_CHIP_MASK,
+            g_FALL_CHIP_MASK => G_FALL_CHIP_MASK,
             g_PRESENT_CHIP_MASK => G_PRESENT_CHIP_MASK,
             g_MAX_STOPS_PER_CHIP => G_BUILD_MAX_STOPS_PER_CHIP,
             g_MAX_HITS_PER_STOP => G_BUILD_MAX_HITS_PER_STOP,
@@ -973,6 +1012,11 @@ begin
         variable v_nonzero_inc    : natural range 0 to 4 := 0;
         variable v_word           : std_logic_vector(31 downto 0);
         variable v_header_hits    : natural range 0 to 255 := 0;
+        variable v_cell_idx       : natural := 0;
+        variable v_word_in_cell   : natural := 0;
+        variable v_expected_chip  : natural range 0 to c_N_CHIPS - 1 := 0;
+        variable v_expected_stop  : natural range 0 to c_MAX_STOPS_PER_CHIP - 1 := 0;
+        variable v_expected_hit   : natural := 0;
         variable v_rise_first_line : boolean := false;
         variable v_fall_first_line : boolean := false;
     begin
@@ -1033,6 +1077,9 @@ begin
                                 assert v_word(11 downto 8) = C_RISE_LANE_CHIP_MASK
                                     report "top_int: rising header active-chip mask mismatch"
                                     severity failure;
+                                assert (v_word(31) = '1') = G_FALLING_ENABLE
+                                    report "top_int: rising header falling-enable mismatch"
+                                    severity failure;
                             elsif v_header_word_idx = 5 then
                                 v_word := m_rise_tdata(32 * lane + 31 downto 32 * lane);
                                 v_header_hits := to_integer(unsigned(v_word(7 downto 0)));
@@ -1072,13 +1119,56 @@ begin
                             v_data_word_idx :=
                                 (v_rise_line_beat - C_HDR_PREFIX_BEATS)
                                 * C_WORDS_PER_BEAT + lane;
-                            if v_data_word_idx < C_RISE_DATA_WORDS
+                             if v_data_word_idx < C_RISE_DATA_WORDS
                                and (v_data_word_idx mod C_CANONICAL_WORDS_PER_CELL)
                                    = C_CANONICAL_WORDS_PER_CELL - 1 then
                                 v_meta_inc := v_meta_inc + 1;
                                 v_word := m_rise_tdata(32 * lane + 31 downto 32 * lane);
-                                if v_word(6 downto 0) /= "0000000" then
-                                    v_nonzero_inc := v_nonzero_inc + 1;
+                                 if v_word(6 downto 0) /= "0000000" then
+                                     v_nonzero_inc := v_nonzero_inc + 1;
+                                 end if;
+                             end if;
+                            if G_CHECK_32CH_ORDER
+                               and v_data_word_idx < C_RISE_DATA_WORDS then
+                                assert C_OUTPUT_W = 32
+                                       and C_RISE_ACTIVE_CHIPS = 4
+                                       and C_EFFECTIVE_STOPS_PER_CHIP = 8
+                                       and C_MAX_HITS = 1
+                                    report "top_int: 32-channel order check requires 32b/4chip/8stop/max_hits=1"
+                                    severity failure;
+                                v_cell_idx := v_data_word_idx / C_CANONICAL_WORDS_PER_CELL;
+                                v_word_in_cell := v_data_word_idx mod C_CANONICAL_WORDS_PER_CELL;
+                                v_expected_chip := v_cell_idx / C_EFFECTIVE_STOPS_PER_CHIP;
+                                v_expected_stop := v_cell_idx mod C_EFFECTIVE_STOPS_PER_CHIP;
+                                v_word := m_rise_tdata(32 * lane + 31 downto 32 * lane);
+                                if v_expected_stop < 4 then
+                                    v_expected_hit := v_expected_chip * 256
+                                                      + v_expected_stop + 1;
+                                else
+                                    v_expected_hit := v_expected_chip * 256 + 128
+                                                      + (v_expected_stop - 4) + 1;
+                                end if;
+                                if v_word_in_cell = 0 then
+                                    assert unsigned(v_word(15 downto 0)) =
+                                           to_unsigned(v_expected_hit, 16)
+                                        report "top_int: 32-channel hit order mismatch at cell "
+                                               & integer'image(v_cell_idx)
+                                        severity failure;
+                                    assert v_word(31 downto 16) = x"0000"
+                                        report "top_int: unexpected upper hit slot in max_hits=1 cell"
+                                        severity failure;
+                                else
+                                    assert unsigned(v_word(9 downto 8)) =
+                                           to_unsigned(v_expected_chip, 2)
+                                        report "top_int: 32-channel metadata chip order mismatch at cell "
+                                               & integer'image(v_cell_idx)
+                                        severity failure;
+                                    assert unsigned(v_word(15 downto 12)) = 1
+                                           and v_word(25) = '1'
+                                           and v_word(18) = '1'
+                                        report "top_int: 32-channel metadata content mismatch at cell "
+                                               & integer'image(v_cell_idx)
+                                        severity failure;
                                 end if;
                             end if;
                         end loop;
@@ -1129,6 +1219,9 @@ begin
                                 v_word := m_fall_tdata(32 * lane + 31 downto 32 * lane);
                                 assert v_word(11 downto 8) = C_FALL_LANE_CHIP_MASK
                                     report "top_int: falling header active-chip mask mismatch"
+                                    severity failure;
+                                assert v_word(31) = '1'
+                                    report "top_int: falling header falling-enable mismatch"
                                     severity failure;
                             elsif v_header_word_idx = 5 then
                                 v_word := m_fall_tdata(32 * lane + 31 downto 32 * lane);
@@ -1683,7 +1776,7 @@ begin
         --   Reg6 : LF threshold = 4 -> 0x0000_0004
         ----------------------------------------------------------------
         pl("[S2] Chip CSR: cfg_image Reg0/Reg5/Reg6 write");
-        chip_wr(C_CHIP_CFG_REG0, x"00001C00");  -- Reg0: rise edge on start+stop1..2
+        chip_wr(C_CHIP_CFG_REG0, x"00381C00");  -- Reg0 template: both edges on start+stop1..2
         chip_wr(C_CHIP_CFG_REG5, x"01800000");  -- Reg5: ALU trig bits
         chip_wr(C_CHIP_CFG_REG6, x"00000004");  -- Reg6: LF threshold
         case G_MAX_HITS_WRITE_MODE is
@@ -1800,15 +1893,21 @@ begin
         assert mon_rise_beats > 0
             report "tb_tdc_gpx_top_int: no rising beats observed"
             severity error;
-        assert mon_fall_beats > 0
-            report "tb_tdc_gpx_top_int: no falling beats observed"
-            severity error;
         assert mon_rise_frame_end = C_EXPECTED_TOTAL_LINES
             report "tb_tdc_gpx_top_int: rising tlast count mismatch"
             severity error;
-        assert mon_fall_frame_end = C_EXPECTED_TOTAL_LINES
-            report "tb_tdc_gpx_top_int: falling tlast count mismatch"
-            severity error;
+        if C_FALL_ACTIVE_CHIPS > 0 then
+            assert mon_fall_beats > 0
+                report "tb_tdc_gpx_top_int: no falling beats observed"
+                severity error;
+            assert mon_fall_frame_end = C_EXPECTED_TOTAL_LINES
+                report "tb_tdc_gpx_top_int: falling tlast count mismatch"
+                severity error;
+        else
+            assert mon_fall_beats = 0 and mon_fall_frame_end = 0
+                report "tb_tdc_gpx_top_int: disabled falling lane emitted data"
+                severity error;
+        end if;
         assert mon_rise_beats = C_EXPECTED_TOTAL_AXIS_BEATS_RISE
             report "tb_tdc_gpx_top_int: rising beat count mismatch"
             severity error;
@@ -1821,11 +1920,17 @@ begin
                                       C_MAX_HITS)
                 report "tb_tdc_gpx_top_int: rising HSIZE mismatch"
                 severity error;
-            assert to_integer(vdma_hsize_fall) =
-                   fn_vdma_line_bytes(C_FALL_ACTIVE_CHIPS * C_EFFECTIVE_STOPS_PER_CHIP,
-                                      C_MAX_HITS)
-                report "tb_tdc_gpx_top_int: falling HSIZE mismatch"
-                severity error;
+            if C_FALL_ACTIVE_CHIPS > 0 then
+                assert to_integer(vdma_hsize_fall) =
+                       fn_vdma_line_bytes(C_FALL_ACTIVE_CHIPS * C_EFFECTIVE_STOPS_PER_CHIP,
+                                          C_MAX_HITS)
+                    report "tb_tdc_gpx_top_int: falling HSIZE mismatch"
+                    severity error;
+            else
+                assert vdma_hsize_fall = 0
+                    report "tb_tdc_gpx_top_int: disabled falling HSIZE must be zero"
+                    severity error;
+            end if;
         end if;
         assert to_integer(vdma_vsize_lines) = G_COLS_PER_FACE
             report "tb_tdc_gpx_top_int: VSIZE mismatch"
@@ -1844,6 +1949,26 @@ begin
                 report "tb_tdc_gpx_top_int: falling Hit[16] metadata preservation count below expected"
                 severity error;
             report "tb_tdc_gpx_top_int: Hit[16] final metadata preservation - PASS"
+                severity note;
+        end if;
+        if G_CHECK_EDGE_ROLE_WRITES then
+            for i in 0 to c_N_CHIPS - 1 loop
+                if G_PRESENT_CHIP_MASK(i) = '1' then
+                    assert reg0_write_seen(i) = '1'
+                        report "tb_tdc_gpx_top_int: GPX Reg0 write not observed on chip "
+                               & integer'image(i)
+                        severity error;
+                    assert reg0_write_data(i) = fn_expected_reg0(i)
+                        report "tb_tdc_gpx_top_int: GPX Reg0 edge-role mismatch on chip "
+                               & integer'image(i)
+                        severity error;
+                end if;
+            end loop;
+            report "tb_tdc_gpx_top_int: per-chip GPX Reg0 edge-role programming - PASS"
+                severity note;
+        end if;
+        if G_CHECK_32CH_ORDER then
+            report "tb_tdc_gpx_top_int: 32-channel chip/stop exact-data order - PASS"
                 severity note;
         end if;
         if G_BP_TREADY_GAP > 0 then

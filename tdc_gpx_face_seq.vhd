@@ -34,9 +34,10 @@ entity tdc_gpx_face_seq is
         g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP;
-        -- Dedicated topology must retain at least one active chip in each
-        -- fixed group: chip0/1 rise and chip2/3 fall.
-        g_REQUIRE_DEDICATED_GROUPS : boolean := false
+        -- Compile-time edge capabilities. Overlap means a chip can supply
+        -- both edges; a zero fall mask is a rise-only build.
+        g_RISE_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
     );
     port (
         i_clk                : in  std_logic;
@@ -200,6 +201,8 @@ architecture rtl of tdc_gpx_face_seq is
     -- events (packet_start_r, shot_pending_r, drop_cnt increments).
     signal s_shot_raw_d_r   : std_logic := '0';
     signal s_shot_raw_pulse : std_logic;
+    signal s_cfg_rise_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);
+    signal s_cfg_fall_mask  : std_logic_vector(c_N_CHIPS - 1 downto 0);
 
 begin
 
@@ -210,6 +213,13 @@ begin
     assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
         report "tdc_gpx_face_seq: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
         severity failure;
+
+    s_cfg_rise_mask <= i_cfg.active_chip_mask
+        when i_cfg.falling_enable = '0'
+        else i_cfg.active_chip_mask and g_RISE_CHIP_MASK;
+    s_cfg_fall_mask <= (others => '0')
+        when i_cfg.falling_enable = '0'
+        else i_cfg.active_chip_mask and g_FALL_CHIP_MASK;
 
     -- =========================================================================
     -- p_face_seq: face FSM
@@ -254,9 +264,13 @@ begin
                             -- must be in [1..7]; anything else is rejected.
                             if i_cfg.active_chip_mask = "0000"
                                or (i_cfg.active_chip_mask and not g_PRESENT_CHIP_MASK) /= C_ZEROS_CHIPS
-                               or (g_REQUIRE_DEDICATED_GROUPS
-                                   and (i_cfg.active_chip_mask(1 downto 0) = "00"
-                                        or i_cfg.active_chip_mask(3 downto 2) = "00"))
+                               or s_cfg_rise_mask = C_ZEROS_CHIPS
+                               or (i_cfg.falling_enable = '1'
+                                   and s_cfg_fall_mask = C_ZEROS_CHIPS)
+                               or (s_cfg_rise_mask or s_cfg_fall_mask) /= i_cfg.active_chip_mask
+                               or fn_count_ones(s_cfg_rise_mask) < fn_count_ones(s_cfg_fall_mask)
+                               or (i_cfg.falling_enable = '1'
+                                   and fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK) = 0)
                                or i_cfg.stops_per_chip < 2
                                or i_cfg.stops_per_chip > g_MAX_STOPS_PER_CHIP
                                or (i_cfg.max_hits_cfg /= 0
@@ -446,20 +460,31 @@ begin
         variable v_fall_done : std_logic;
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '0' or s_packet_start_r = '1' then
+            if i_rst_n = '0' then
                 s_frame_rise_done_r <= '0';
                 s_frame_fall_done_r <= '0';
+                s_frame_done_both_r <= '0';
+            elsif s_packet_start_r = '1' then
+                s_frame_rise_done_r <= '0';
+                -- A rise-only face has no secondary completion dependency.
+                s_frame_fall_done_r <= not i_cfg.falling_enable;
                 s_frame_done_both_r <= '0';
             else
                 v_rise_done := s_frame_rise_done_r or i_frame_done
                                or s_pipeline_abort_rise;
-                v_fall_done := s_frame_fall_done_r or i_frame_fall_done
-                               or s_pipeline_abort_fall;
+                if s_cfg_face_r.falling_enable = '0' then
+                    v_fall_done := '1';
+                else
+                    v_fall_done := s_frame_fall_done_r or i_frame_fall_done
+                                   or s_pipeline_abort_fall;
+                end if;
 
                 if i_frame_done = '1' or s_pipeline_abort_rise = '1' then
                     s_frame_rise_done_r <= '1';
                 end if;
-                if i_frame_fall_done = '1' or s_pipeline_abort_fall = '1' then
+                if s_cfg_face_r.falling_enable = '0'
+                   or i_frame_fall_done = '1'
+                   or s_pipeline_abort_fall = '1' then
                     s_frame_fall_done_r <= '1';
                 end if;
                 s_frame_done_both_r <= v_rise_done and v_fall_done;

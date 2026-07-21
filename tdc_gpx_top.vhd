@@ -43,10 +43,12 @@ entity tdc_gpx_top is
     generic (
         g_HW_VERSION      : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
         g_OUTPUT_WIDTH    : natural := c_DEFAULT_OUTPUT_WIDTH;
-        -- Compile-time board topology; no extra CSR is required.
-        -- DEDICATED_2X2: chip0/1 rise, chip2/3 fall.
-        -- SHARED_DUAL_EDGE: every active chip participates in both lanes.
-        g_SLOPE_CHIP_MODE : string := c_DEFAULT_SLOPE_CHIP_MODE;
+        -- Compile-time board edge capabilities. Masks may overlap for
+        -- same-chip dual-edge operation. g_FALL_CHIP_MASK="0000" builds a
+        -- rising-only datapath; runtime falling_enable can also disable fall
+        -- and use every active chip as rising in a fall-capable bitstream.
+        g_RISE_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
         -- Compile-time build profile. The external 4-chip ABI remains fixed;
         -- absent chip slots and geometry above these limits are not selectable.
         -- The implemented chip count is derived from this mask, avoiding a
@@ -230,6 +232,12 @@ architecture rtl of tdc_gpx_top is
         variable v_total_blocks   : natural;
     begin
         v_slots := to_integer(cell_slots);
+
+        -- Zero means this VDMA lane does not exist for the active Face. Do
+        -- not publish a header-only 48-byte line for a disabled slope.
+        if v_slots = 0 then
+            return to_unsigned(0, 16);
+        end if;
 
         -- Canonical cell bytes are 8/12/16/20 for effective max_hits
         -- 1..2/3..4/5..6/7. Compute directly in 16-byte line blocks to
@@ -489,27 +497,26 @@ architecture rtl of tdc_gpx_top is
 
 begin
 
-    assert g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
-        or g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
-        report "tdc_gpx_top: g_SLOPE_CHIP_MODE must be DEDICATED_2X2 or SHARED_DUAL_EDGE"
-        severity failure;
-
     assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
         report "tdc_gpx_top: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
         severity failure;
 
-    assert g_SLOPE_CHIP_MODE /= "DEDICATED_2X2"
-        or (g_PRESENT_CHIP_MASK(1 downto 0) /= "00"
-            and g_PRESENT_CHIP_MASK(3 downto 2) /= "00")
-        report "tdc_gpx_top: DEDICATED_2X2 requires at least one present chip in each slope group"
+    assert (g_PRESENT_CHIP_MASK and not (g_RISE_CHIP_MASK or g_FALL_CHIP_MASK)) =
+           (g_PRESENT_CHIP_MASK'range => '0')
+        report "tdc_gpx_top: every present chip needs a rise and/or fall role"
+        severity failure;
+
+    assert fn_count_ones(g_RISE_CHIP_MASK and g_PRESENT_CHIP_MASK) >=
+           fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK)
+        report "tdc_gpx_top: rising-capable chip count must be >= falling-capable chip count"
         severity failure;
 
     s_face_rise_mask <= s_face_active_mask_r
-        when g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
-        else s_face_active_mask_r and "0011";
-    s_face_fall_mask <= s_face_active_mask_r
-        when g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
-        else s_face_active_mask_r and "1100";
+        when s_cfg_face_r.falling_enable = '0'
+        else s_face_active_mask_r and g_RISE_CHIP_MASK;
+    s_face_fall_mask <= s_face_active_mask_r and g_FALL_CHIP_MASK
+        when s_cfg_face_r.falling_enable = '1'
+        else (others => '0');
 
     s_cell_slots_rise <= fn_lane_cell_slots(s_face_rise_mask,
                                              s_face_stops_per_chip_r);
@@ -600,6 +607,7 @@ begin
             g_HW_VERSION         => g_HW_VERSION,
             g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
             g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
+            g_FALL_CHIP_MASK     => g_FALL_CHIP_MASK,
             g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
             g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP
         )
@@ -659,6 +667,8 @@ begin
             g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
             g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH,
             g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK,
+            g_RISE_CHIP_MASK => g_RISE_CHIP_MASK,
+            g_FALL_CHIP_MASK => g_FALL_CHIP_MASK,
             g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP
         )
         port map (
@@ -828,7 +838,8 @@ begin
         generic map (
             g_OUTPUT_WIDTH    => g_OUTPUT_WIDTH,
             g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
-            g_SLOPE_CHIP_MODE => g_SLOPE_CHIP_MODE,
+            g_RISE_CHIP_MASK  => g_RISE_CHIP_MASK,
+            g_FALL_CHIP_MASK  => g_FALL_CHIP_MASK,
             g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK
         )
         port map (
@@ -911,6 +922,7 @@ begin
         generic map (
             g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
             g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
+            g_FALL_CHIP_MASK     => g_FALL_CHIP_MASK,
             g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
             g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP
         )
@@ -945,6 +957,7 @@ begin
             -- Configuration (latched at face_start)
             i_face_rise_mask     => s_face_rise_mask,
             i_face_fall_mask     => s_face_fall_mask,
+            i_falling_enable     => s_cfg_face_r.falling_enable,
             i_face_stops_per_chip => s_face_stops_per_chip_r,
             -- Round 11 item 2: use face snapshot so output_stage's beat count
             -- and scan-timeout match header metadata and cell_builder within
@@ -1046,8 +1059,8 @@ begin
             g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK,
             g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
             g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP,
-            g_REQUIRE_DEDICATED_GROUPS =>
-                g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
+            g_RISE_CHIP_MASK => g_RISE_CHIP_MASK,
+            g_FALL_CHIP_MASK => g_FALL_CHIP_MASK
         )
         port map (
             i_clk                  => i_axis_aclk,

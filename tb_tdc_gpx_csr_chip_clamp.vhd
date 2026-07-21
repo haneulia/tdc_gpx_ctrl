@@ -181,6 +181,7 @@ begin
             o_cfg_reg7          => o_cfg_reg7,
             o_max_scan_clks     => o_max_scan_clks,
             o_max_hits_cfg      => o_max_hits_cfg,
+            o_falling_enable    => open,
             -- Reg access commands
             o_cmd_reg_read      => o_cmd_reg_read,
             o_cmd_reg_write     => o_cmd_reg_write,

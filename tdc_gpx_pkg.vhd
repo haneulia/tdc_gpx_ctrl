@@ -48,7 +48,12 @@ package tdc_gpx_pkg is
     -- =========================================================================
     constant c_DEFAULT_HW_VERSION       : std_logic_vector(31 downto 0) := x"00010000";
     constant c_DEFAULT_OUTPUT_WIDTH     : natural := 32;
-    constant c_DEFAULT_SLOPE_CHIP_MODE  : string := "DEDICATED_2X2";
+    -- Slope-role masks used when falling capture is enabled. Overlap means
+    -- dual-edge capture for that chip. When falling capture is disabled at
+    -- runtime, every active/present chip is routed to the rising lane.
+    constant c_DEFAULT_RISE_CHIP_MASK   : std_logic_vector(3 downto 0) := "0011";
+    constant c_DEFAULT_FALL_CHIP_MASK   : std_logic_vector(3 downto 0) := "1100";
+    constant c_DEFAULT_FALLING_ENABLE   : std_logic := '1';
     constant c_DEFAULT_AXIS_CLK_MHZ     : positive := 150;
     constant c_DEFAULT_TDC_CLK_MHZ      : positive := 200;
     constant c_DEFAULT_POWERUP_CLKS     : positive := 48;
@@ -303,6 +308,7 @@ package tdc_gpx_pkg is
     -- cfg_image array type (TDC-GPX register image stored in CSR)
     -- =========================================================================
     type t_cfg_image is array(0 to 15) of std_logic_vector(31 downto 0);
+    type t_cfg_image_array is array(0 to c_N_CHIPS - 1) of t_cfg_image;
 
     -- =========================================================================
     -- t_tdc_cfg : CSR configuration (CSR -> submodules)
@@ -349,9 +355,10 @@ package tdc_gpx_pkg is
         start_off1          : unsigned(17 downto 0);                        -- CTL3[17:0]
         -- CTL4: CFG_REG7
         cfg_reg7            : std_logic_vector(31 downto 0);                -- CTL4[31:0]
-        -- CTL21: SCAN_TIMEOUT + MAX_HITS
+        -- CTL21: SCAN_TIMEOUT + MAX_HITS + FALLING_ENABLE
         max_scan_clks       : unsigned(15 downto 0);                        -- CTL21[15:0]
         max_hits_cfg        : unsigned(2 downto 0);                         -- CTL21[18:16] (1~7, 0→7)
+        falling_enable      : std_logic;                                    -- CTL21[19]
     end record;
 
     constant c_TDC_CFG_INIT : t_tdc_cfg := (
@@ -372,7 +379,8 @@ package tdc_gpx_pkg is
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
         max_scan_clks       => to_unsigned(0, 16),          -- 0 = disabled (no timeout)
-        max_hits_cfg        => to_unsigned(c_MAX_HITS_PER_STOP, 3)
+        max_hits_cfg        => to_unsigned(c_MAX_HITS_PER_STOP, 3),
+        falling_enable      => c_DEFAULT_FALLING_ENABLE
     );
 
     -- =========================================================================
@@ -400,7 +408,8 @@ package tdc_gpx_pkg is
         + 18           -- start_off1
         + 32           -- cfg_reg7
         + 16           -- max_scan_clks
-        + 3;           -- max_hits_cfg
+        + 3            -- max_hits_cfg
+        + 1;           -- falling_enable
 
     function fn_pack_tdc_cfg(cfg : t_tdc_cfg) return std_logic_vector;
     function fn_unpack_tdc_cfg(v  : std_logic_vector) return t_tdc_cfg;
@@ -1009,6 +1018,7 @@ package body tdc_gpx_pkg is
         v(i + 31 downto i)            := cfg.cfg_reg7;            i := i + 32;
         v(i + 15 downto i)            := std_logic_vector(cfg.max_scan_clks);     i := i + 16;
         v(i + 2 downto i)             := std_logic_vector(cfg.max_hits_cfg);      i := i + 3;
+        v(i)                          := cfg.falling_enable;                       i := i + 1;
         -- assert i = c_TDC_CFG_BITS;
         return v;
     end function;
@@ -1035,6 +1045,7 @@ package body tdc_gpx_pkg is
         cfg.cfg_reg7         := v(i + 31 downto i);               i := i + 32;
         cfg.max_scan_clks    := unsigned(v(i + 15 downto i));     i := i + 16;
         cfg.max_hits_cfg     := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.falling_enable   := v(i);                             i := i + 1;
         return cfg;
     end function;
 

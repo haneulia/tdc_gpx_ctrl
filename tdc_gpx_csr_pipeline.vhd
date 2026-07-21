@@ -67,6 +67,7 @@ entity tdc_gpx_csr_pipeline is
         g_HW_VERSION          : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
         g_OUTPUT_WIDTH        : natural := c_DEFAULT_OUTPUT_WIDTH;
         g_PRESENT_CHIP_MASK   : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK      : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
         g_MAX_STOPS_PER_CHIP  : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP   : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
@@ -314,7 +315,10 @@ begin
         <= std_logic_vector(to_unsigned(g_OUTPUT_WIDTH, 8));
     s_hw_config(c_HWCFG_CELL_FMT_HI downto c_HWCFG_CELL_FMT_LO)
         <= std_logic_vector(to_unsigned(c_CELL_FORMAT, 3));
-    s_hw_config(31 downto c_HWCFG_CELL_FMT_HI + 1) <= (others => '0');
+    s_hw_config(c_HWCFG_HAS_FALLING) <= '1'
+        when fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK) > 0
+        else '0';
+    s_hw_config(31 downto c_HWCFG_HAS_FALLING + 1) <= (others => '0');
 
     -- =========================================================================
     -- [2] tdc_gpx_axil_csr_pipeline instantiation (8 CTL, 8 STAT)
@@ -851,5 +855,6 @@ begin
     o_cfg.cfg_reg7         <= (others => '0');       -- default, overridden
     o_cfg.max_scan_clks    <= (others => '0');       -- default, overridden
     o_cfg.max_hits_cfg     <= to_unsigned(g_MAX_HITS_PER_STOP, 3); -- default, overridden
+    o_cfg.falling_enable   <= c_DEFAULT_FALLING_ENABLE; -- default, overridden
 
 end architecture rtl;

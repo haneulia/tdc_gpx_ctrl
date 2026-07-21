@@ -125,13 +125,14 @@ package tdc_gpx_cfg_pkg is
     constant c_ADDR_CFG_REG7         : natural := 16#10#;   -- CTL4 [31:0]
 
     -- =========================================================================
-    -- CTL21: SCAN_TIMEOUT
+    -- CTL21: SCAN_TIMEOUT + MAX_HITS + FALLING_ENABLE
     -- =========================================================================
     constant c_ADDR_SCAN_TIMEOUT     : natural := 16#54#;   -- CTL21
     constant c_ST_MAX_SCAN_HI        : natural := 15;   -- [15:0] max_scan_clks
     constant c_ST_MAX_SCAN_LO        : natural := 0;
     constant c_ST_MAX_HITS_HI        : natural := 18;   -- [18:16] max_hits_cfg (1~7, 0=default 7)
     constant c_ST_MAX_HITS_LO        : natural := 16;
+    constant c_ST_FALLING_ENABLE     : natural := 19;   -- [19] falling_enable
 
     -- CFG_REG7 bitfields
     constant c_REG7_HSDIV_HI        : natural := 7;
@@ -201,6 +202,7 @@ package tdc_gpx_cfg_pkg is
     constant c_HWCFG_TDATA_LO        : natural := 17;
     constant c_HWCFG_CELL_FMT_HI     : natural := 27;
     constant c_HWCFG_CELL_FMT_LO     : natural := 25;
+    constant c_HWCFG_HAS_FALLING     : natural := 28;
 
     -- =========================================================================
     -- Status-Live (R/O) : STAT5~STAT10 → 0x94 ~ 0xA8  (runtime, CDC)
@@ -349,5 +351,10 @@ package tdc_gpx_cfg_pkg is
 
     -- CTL4: CFG_REG7 init
     constant c_INIT_CFG_REG7         : std_logic_vector(31 downto 0) := x"00000000";
+
+    -- Preserve the historical dual-lane default. Bit 19 is the runtime
+    -- falling-lane enable; max_scan_clks=0 and max_hits_cfg=0 retain their
+    -- existing aliases (watchdog disabled, build maximum hits).
+    constant c_INIT_SCAN_TIMEOUT     : std_logic_vector(31 downto 0) := x"00080000";
 
 end package tdc_gpx_cfg_pkg;

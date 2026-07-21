@@ -23,6 +23,11 @@
 --     stall) and flagged in o_masked_slope_drop_*; the chip's own lane
 --     still completes its slice.
 --
+--   Scenario E (same-chip dual edge):
+--     One statically fall-capable chip receives distinct rising and falling
+--     hits in the same shot. Both first-cell payloads must emerge unchanged
+--     on their respective lanes.
+--
 --   Scenario C (sticky lifecycle):
 --     The masked-slope evidence survives abort/cmd_stop, clears only on the
 --     explicit diagnostic soft-clear, and stays clear through a nominal run.
@@ -38,11 +43,22 @@ use work.tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_cell_pipe_lane_mask is
     generic (
-        G_STATIC_MODE : string := "SHARED_DUAL_EDGE"
+        G_STATIC_RISE_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        G_STATIC_FALL_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
     );
 end entity;
 
 architecture sim of tb_tdc_gpx_cell_pipe_lane_mask is
+
+    function fn_first_set(mask : std_logic_vector) return natural is
+    begin
+        for i in mask'low to mask'high loop
+            if mask(i) = '1' then
+                return i;
+            end if;
+        end loop;
+        return mask'low;
+    end function;
 
     constant CLK_PERIOD   : time    := 5 ns;   -- 200 MHz
     constant OUTPUT_WIDTH : natural := 32;
@@ -51,6 +67,7 @@ architecture sim of tb_tdc_gpx_cell_pipe_lane_mask is
     -- Slice length: stops x beats/cell (runtime max_hits=1 @32b -> 2)
     constant C_SLICE_BEATS : natural :=
         C_STOPS * fn_beats_per_cell_rt(C_MAX_HITS, OUTPUT_WIDTH);
+    constant C_DUAL_CHIP : natural := fn_first_set(G_STATIC_FALL_MASK);
 
     signal clk   : std_logic := '0';
     signal rst_n : std_logic := '0';
@@ -81,6 +98,13 @@ architecture sim of tb_tdc_gpx_cell_pipe_lane_mask is
     signal masked_drop_rise  : std_logic_vector(c_N_CHIPS-1 downto 0);
     signal masked_drop_fall  : std_logic_vector(c_N_CHIPS-1 downto 0);
 
+    type t_cell_data_array is array (0 to c_N_CHIPS-1) of
+        std_logic_vector(OUTPUT_WIDTH-1 downto 0);
+    signal cell_rise_tdata : t_cell_data_array;
+    signal cell_fall_tdata : t_cell_data_array;
+    signal first_rise_data : t_cell_data_array := (others => (others => '0'));
+    signal first_fall_data : t_cell_data_array := (others => (others => '0'));
+
     -- Monitor counters (per lane)
     type t_nat_arr is array (0 to c_N_CHIPS-1) of natural;
     signal beat_rise  : t_nat_arr := (others => 0);
@@ -97,7 +121,8 @@ begin
         generic map (
             g_OUTPUT_WIDTH    => OUTPUT_WIDTH,
             g_AXIS_CLK_MHZ    => 200,
-            g_SLOPE_CHIP_MODE => G_STATIC_MODE
+            g_RISE_CHIP_MASK  => G_STATIC_RISE_MASK,
+            g_FALL_CHIP_MASK  => G_STATIC_FALL_MASK
         )
         port map (
             i_clk                 => clk,
@@ -114,17 +139,17 @@ begin
             i_face_stops_per_chip => face_stops,
             i_max_hits_cfg        => max_hits,
             i_max_range_5ns_ticks => (others => '0'),
-            o_cell_rise_tdata_0   => open,
-            o_cell_rise_tdata_1   => open,
-            o_cell_rise_tdata_2   => open,
-            o_cell_rise_tdata_3   => open,
+            o_cell_rise_tdata_0   => cell_rise_tdata(0),
+            o_cell_rise_tdata_1   => cell_rise_tdata(1),
+            o_cell_rise_tdata_2   => cell_rise_tdata(2),
+            o_cell_rise_tdata_3   => cell_rise_tdata(3),
             o_cell_rise_tvalid    => cell_rise_tvalid,
             o_cell_rise_tlast     => cell_rise_tlast,
             i_cell_rise_tready    => cell_rise_tready,
-            o_cell_fall_tdata_0   => open,
-            o_cell_fall_tdata_1   => open,
-            o_cell_fall_tdata_2   => open,
-            o_cell_fall_tdata_3   => open,
+            o_cell_fall_tdata_0   => cell_fall_tdata(0),
+            o_cell_fall_tdata_1   => cell_fall_tdata(1),
+            o_cell_fall_tdata_2   => cell_fall_tdata(2),
+            o_cell_fall_tdata_3   => cell_fall_tdata(3),
             o_cell_fall_tvalid    => cell_fall_tvalid,
             o_cell_fall_tlast     => cell_fall_tlast,
             i_cell_fall_tready    => cell_fall_tready,
@@ -152,12 +177,18 @@ begin
         if rising_edge(clk) then
             for i in 0 to c_N_CHIPS-1 loop
                 if cell_rise_tvalid(i) = '1' and cell_rise_tready(i) = '1' then
+                    if (beat_rise(i) mod C_SLICE_BEATS) = 0 then
+                        first_rise_data(i) <= cell_rise_tdata(i);
+                    end if;
                     beat_rise(i) <= beat_rise(i) + 1;
                     if cell_rise_tlast(i) = '1' then
                         tlast_rise(i) <= tlast_rise(i) + 1;
                     end if;
                 end if;
                 if cell_fall_tvalid(i) = '1' and cell_fall_tready(i) = '1' then
+                    if (beat_fall(i) mod C_SLICE_BEATS) = 0 then
+                        first_fall_data(i) <= cell_fall_tdata(i);
+                    end if;
                     beat_fall(i) <= beat_fall(i) + 1;
                     if cell_fall_tlast(i) = '1' then
                         tlast_fall(i) <= tlast_fall(i) + 1;
@@ -233,6 +264,7 @@ begin
         variable v_base_beat_fall  : t_nat_arr;
         variable v_base_tlast_rise : t_nat_arr;
         variable v_base_tlast_fall : t_nat_arr;
+        variable v_dual_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
         variable v_ok : boolean;
     begin
         rst_n <= '0';
@@ -243,9 +275,9 @@ begin
         wait until rising_edge(clk);
 
         -- =====================================================================
-        -- SCENARIO L: legacy masks "1111" -- every (chip, slope) builder
-        -- emits a slice (wrong-slope = all-blank). Pre-fix behavior evidence
-        -- AND default-compatibility check.
+        -- SCENARIO L: runtime masks "1111". Rising builders exist for every
+        -- present chip so a later falling-disable can promote all chips to
+        -- rise. Fall builders exist only where the static fall mask permits.
         -- =====================================================================
         report "===== LANE_MASK SCENARIO L: legacy masks 1111 =====" severity note;
         rise_mask <= (others => '1');
@@ -263,34 +295,27 @@ begin
                    & " tlast=" & integer'image(tlast_rise(i))
                    & " / fall beats=" & integer'image(beat_fall(i))
                    & " tlast=" & integer'image(tlast_fall(i)) severity note;
-            if G_STATIC_MODE = "SHARED_DUAL_EDGE" then
-                if tlast_rise(i) /= 1 or tlast_fall(i) /= 1
-                   or beat_rise(i) /= C_SLICE_BEATS
-                   or beat_fall(i) /= C_SLICE_BEATS then
-                    v_ok := false;
-                end if;
-            elsif i < 2 then
-                if tlast_rise(i) /= 1 or tlast_fall(i) /= 0
-                   or beat_rise(i) /= C_SLICE_BEATS
-                   or beat_fall(i) /= 0 then
+            if tlast_rise(i) /= 1 or beat_rise(i) /= C_SLICE_BEATS then
+                v_ok := false;
+            end if;
+            if G_STATIC_FALL_MASK(i) = '1' then
+                if tlast_fall(i) /= 1 or beat_fall(i) /= C_SLICE_BEATS then
                     v_ok := false;
                 end if;
             else
-                if tlast_rise(i) /= 0 or tlast_fall(i) /= 1
-                   or beat_rise(i) /= 0
-                   or beat_fall(i) /= C_SLICE_BEATS then
+                if tlast_fall(i) /= 0 or beat_fall(i) /= 0 then
                     v_ok := false;
                 end if;
             end if;
         end loop;
         if v_ok and masked_drop_rise = "0000" and masked_drop_fall = "0000" then
-            if G_STATIC_MODE = "SHARED_DUAL_EDGE" then
+            if G_STATIC_FALL_MASK = c_ALL_CHIPS_MASK then
                 report "*** LANE_MASK SCENARIO L PASS (shared: all 8 lanes emit"
                        & " a slice per shot; legacy compatibility confirmed) ***"
                     severity note;
             else
-                report "*** LANE_MASK SCENARIO L PASS (dedicated: runtime all-ones"
-                       & " cannot resurrect the 4 statically absent lanes) ***"
+                report "*** LANE_MASK SCENARIO L PASS (all rise builders plus"
+                       & " statically selected fall builders) ***"
                     severity note;
             end if;
         else
@@ -349,10 +374,56 @@ begin
         end if;
 
         -- =====================================================================
+        -- SCENARIO E: same chip receives distinct rising/falling hits.
+        -- This checks payload routing, not only slice/TLAST accounting.
+        -- =====================================================================
+        if G_STATIC_FALL_MASK /= (G_STATIC_FALL_MASK'range => '0') then
+            report "===== LANE_MASK SCENARIO E: same-chip dual-edge data ====="
+                severity note;
+            v_dual_mask := (others => '0');
+            v_dual_mask(C_DUAL_CHIP) := '1';
+            rise_mask <= v_dual_mask;
+            fall_mask <= v_dual_mask;
+            wait until rising_edge(clk);
+
+            v_base_tlast_rise := tlast_rise;
+            v_base_tlast_fall := tlast_fall;
+
+            shot_start <= v_dual_mask;
+            wait until rising_edge(clk);
+            shot_start <= (others => '0');
+            wait for 5 * CLK_PERIOD;
+            wait until rising_edge(clk);
+
+            send_beat(C_DUAL_CHIP, x"00010011",
+                      fn_tuser_data(1, C_DUAL_CHIP, 0, 0));
+            send_beat(C_DUAL_CHIP, x"00000022",
+                      fn_tuser_data(0, C_DUAL_CHIP, 0, 0));
+            send_beat(C_DUAL_CHIP, x"00000000", fn_tuser_drain(0));
+            send_beat(C_DUAL_CHIP, x"00000000", fn_tuser_drain(1));
+            wait for 4 us;
+            wait until rising_edge(clk);
+
+            assert (tlast_rise(C_DUAL_CHIP) - v_base_tlast_rise(C_DUAL_CHIP)) = 1
+                report "LANE_MASK E: rising slice did not complete" severity failure;
+            assert (tlast_fall(C_DUAL_CHIP) - v_base_tlast_fall(C_DUAL_CHIP)) = 1
+                report "LANE_MASK E: falling slice did not complete" severity failure;
+            assert first_rise_data(C_DUAL_CHIP)(15 downto 0) = x"0011"
+                report "LANE_MASK E: rising hit payload was not preserved" severity failure;
+            assert first_fall_data(C_DUAL_CHIP)(15 downto 0) = x"0022"
+                report "LANE_MASK E: falling hit payload was not preserved" severity failure;
+            report "*** LANE_MASK SCENARIO E PASS (same-chip rise/fall payloads preserved) ***"
+                severity note;
+        end if;
+
+        -- =====================================================================
         -- SCENARIO M: hit beat addressed to a masked slope (chip 0, fall).
         -- Must be consumed (no stall), flagged sticky, chip 0 rise slice OK.
         -- =====================================================================
         report "===== LANE_MASK SCENARIO M: masked-slope hit drop =====" severity note;
+        rise_mask <= "0011";
+        fall_mask <= "1100";
+        wait until rising_edge(clk);
         v_base_tlast_rise := tlast_rise;
         v_base_beat_fall  := beat_fall;
 
@@ -422,7 +493,7 @@ begin
         report "*** LANE_MASK SCENARIO C PASS (abort retain, soft clear, clean next run) ***"
             severity note;
 
-        report "*** TB_LANE_MASK ALL PASS: " & G_STATIC_MODE & " ***" severity note;
+        report "*** TB_LANE_MASK ALL PASS ***" severity note;
         done <= true;
         wait for 10 * CLK_PERIOD;
         std.env.finish;

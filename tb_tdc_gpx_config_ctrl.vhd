@@ -56,7 +56,8 @@ architecture sim of tb_tdc_gpx_config_ctrl is
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
         max_scan_clks       => to_unsigned(0, 16),
-        max_hits_cfg        => to_unsigned(7, 3)
+        max_hits_cfg        => to_unsigned(7, 3),
+        falling_enable      => '1'
     );
 
     -- =========================================================================

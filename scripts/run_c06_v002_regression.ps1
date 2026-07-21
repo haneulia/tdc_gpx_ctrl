@@ -125,6 +125,7 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_chip_init_cfg_owner.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_top_int.vhd",
+    "$Hdl/tb_tdc_gpx_top_int_slope_profiles.vhd",
     "$Hdl/tb_tdc_gpx_top_int_build_profile.vhd",
     "$Hdl/tb_tdc_gpx_face_seq.vhd",
     "$Hdl/tb_tdc_gpx_status_agg_c06_fix.vhd",
@@ -219,7 +220,7 @@ try {
     Invoke-Xelab "tb_c06_v002_lane_mask_dedicated_snap" "xelab_c06_v002_lane_mask_dedicated_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_cell_pipe_lane_mask_dedicated"
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_lane_mask_dedicated_snap", "-runall", "-log", "xsim_c06_v002_lane_mask_dedicated_$Stamp.log")
-    Assert-SimLog "xsim_c06_v002_lane_mask_dedicated_$Stamp.log" "TB_LANE_MASK ALL PASS: DEDICATED_2X2"
+    Assert-SimLog "xsim_c06_v002_lane_mask_dedicated_$Stamp.log" "TB_LANE_MASK ALL PASS"
 
     Invoke-Xelab "tb_c06_v002_reg_rsp_cdc_snap" "xelab_c06_v002_reg_rsp_cdc_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_reg_rsp_cdc"
@@ -242,6 +243,21 @@ try {
             "xil_defaultlib.tb_tdc_gpx_top_int" @("G_TDATA_WIDTH=$w")
         Invoke-Checked "$Vivado/xsim.bat" @($snap, "-runall", "-log", "xsim_c06_v002_top_int_w${w}_$Stamp.log")
         Assert-SimLog "xsim_c06_v002_top_int_w${w}_$Stamp.log" "output streams emitted beats/tlast as expected - PASS"
+    }
+
+    $slopeProfileCases = @(
+        @{ Name = "runtime_rise_only"; Top = "xil_defaultlib.tb_tdc_gpx_top_int_runtime_rise_only" },
+        @{ Name = "rise_only_build_32ch"; Top = "xil_defaultlib.tb_tdc_gpx_top_int_rise_only_build_32ch" },
+        @{ Name = "three_chip_2r1f"; Top = "xil_defaultlib.tb_tdc_gpx_top_int_three_chip_2r1f" },
+        @{ Name = "one_chip_dual_edge"; Top = "xil_defaultlib.tb_tdc_gpx_top_int_one_chip_dual_edge" }
+    )
+    foreach ($case in $slopeProfileCases) {
+        $snap = "tb_c06_v002_$($case.Name)_snap"
+        $xelabLog = "xelab_c06_v002_$($case.Name)_$Stamp.log"
+        $xsimLog = "xsim_c06_v002_$($case.Name)_$Stamp.log"
+        Invoke-Xelab $snap $xelabLog $case.Top
+        Invoke-Checked "$Vivado/xsim.bat" @($snap, "-runall", "-log", $xsimLog)
+        Assert-SimLog $xsimLog "output streams emitted beats/tlast as expected - PASS"
     }
 
     Invoke-Xelab "tb_c06_v002_build_profile_snap" "xelab_c06_v002_build_profile_$Stamp.log" `

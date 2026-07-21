@@ -11,6 +11,7 @@ architecture sim of tb_tdc_gpx_cell_pipe_lane_mask_dedicated is
 begin
     u_tb : entity work.tb_tdc_gpx_cell_pipe_lane_mask
         generic map (
-            G_STATIC_MODE => "DEDICATED_2X2"
+            G_STATIC_RISE_MASK => "0011",
+            G_STATIC_FALL_MASK => "1100"
         );
 end architecture;

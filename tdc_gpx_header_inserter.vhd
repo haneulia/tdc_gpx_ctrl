@@ -66,7 +66,8 @@
 --                   n_faces[14:12] | stops[18:15] |
 --                   ndcap[22:19] | pipe_en[23] |
 --                   hit_store[25:24] | dist_scale[28:26] |
---                   drain_mode[29] | hit_msb_meta_en[30]        31/32
+--                   drain_mode[29] | hit_msb_meta_en[30] |
+--                   falling_enable[31]                          32 full
 --       4   0x10    rows_per_face[15:0] | cols[31:16]   [31:0]  32 full
 --       5   0x14    max_hits[7:0] | cell_size[15:8] |
 --                   hit_slot_w[23:16] | n_chips[27:24] |
@@ -246,6 +247,7 @@ architecture rtl of tdc_gpx_header_inserter is
     signal s_max_hits_cfg_r      : unsigned(2 downto 0)  :=
         to_unsigned(g_MAX_HITS_PER_STOP, 3);
     signal s_hit_store_mode_r    : unsigned(1 downto 0)  := (others => '0');
+    signal s_falling_enable_r    : std_logic := c_DEFAULT_FALLING_ENABLE;
 
     -- Measurement
     signal s_shot_seq_start_r    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
@@ -374,6 +376,7 @@ begin
                     word(28 downto 26) := std_logic_vector(s_dist_scale_r);
                     word(29)           := s_drain_mode_r;
                     word(30)           := '1';  -- cell metadata [6:0] preserves Hit[16]
+                    word(31)           := s_falling_enable_r;
                 when 4  =>
                     word(15 downto 0)  := std_logic_vector(s_rows_per_face_r);
                     word(31 downto 16) := std_logic_vector(s_cols_per_face_r);
@@ -426,6 +429,7 @@ begin
                 s_vdma_frame_id_r   <= (others => '0');
                 s_face_id_r         <= (others => '0');
                 s_active_chip_mask_r <= (others => '0');
+                s_falling_enable_r   <= c_DEFAULT_FALLING_ENABLE;
                 s_n_faces_r         <= (others => '0');
                 s_stops_per_chip_r  <= (others => '0');
                 s_hit_store_mode_r  <= (others => '0');
@@ -679,6 +683,7 @@ begin
                     s_stops_per_chip_r    <= i_cfg.stops_per_chip;
                     s_max_hits_cfg_r      <= i_cfg.max_hits_cfg;
                     s_hit_store_mode_r    <= i_cfg.hit_store_mode;
+                    s_falling_enable_r    <= i_cfg.falling_enable;
 
                     -- Measurement
                     s_shot_seq_start_r    <= i_shot_seq_start;

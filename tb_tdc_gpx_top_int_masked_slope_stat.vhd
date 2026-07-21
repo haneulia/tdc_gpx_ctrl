@@ -19,7 +19,8 @@ architecture sim of tb_tdc_gpx_top_int_masked_slope_stat is
 begin
     u_tb : entity work.tb_tdc_gpx_top_int
         generic map (
-            G_SLOPE_CHIP_MODE          => "DEDICATED_2X2",
+            G_RISE_CHIP_MASK           => "0011",
+            G_FALL_CHIP_MASK           => "1100",
             G_CHIP_SLOPE_MASK          => "1111",  -- all chips emit RISING hits
             G_EXPECT_MASKED_SLOPE_DROP => true
         );

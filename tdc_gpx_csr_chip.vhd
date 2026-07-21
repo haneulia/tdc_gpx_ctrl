@@ -16,7 +16,8 @@
 --   CTL3  (0x0C) START_OFF1     [17:0]
 --   CTL4  (0x10) CFG_REG7       [31:0]
 --   CTL5~20 (0x14~0x50) CFG_IMAGE[0..15]  16 x 32-bit chip register mirrors
---   CTL21 (0x54) SCAN_TIMEOUT   [15:0] max_scan_clks, [18:16] max_hits_cfg
+--   CTL21 (0x54) SCAN_TIMEOUT   [15:0] max_scan_clks, [18:16] max_hits_cfg,
+--                                [19] falling_enable
 --
 -- Unused CTL outputs (owned by csr_pipeline via separate IP):
 --   CTL0  (MAIN_CTRL)   — left open
@@ -106,6 +107,7 @@ entity tdc_gpx_csr_chip is
         o_cfg_reg7          : out std_logic_vector(31 downto 0);
         o_max_scan_clks     : out unsigned(15 downto 0);
         o_max_hits_cfg      : out unsigned(2 downto 0);
+        o_falling_enable    : out std_logic;
 
         -- Reg access commands (i_axis_aclk domain)
         o_cmd_reg_read      : out std_logic;
@@ -419,7 +421,7 @@ begin
             reg15_init_val => C_ZERO32,   reg16_init_val => C_ZERO32,
             reg17_init_val => C_ZERO32,   reg18_init_val => C_ZERO32,
             reg19_init_val => C_ZERO32,   reg20_init_val => C_ZERO32,
-            reg21_init_val => C_ZERO32,   reg22_init_val => C_ZERO32,
+            reg21_init_val => c_INIT_SCAN_TIMEOUT, reg22_init_val => C_ZERO32,
             reg23_init_val => C_ZERO32,   reg24_init_val => C_ZERO32,
             reg25_init_val => C_ZERO32,   reg26_init_val => C_ZERO32,
             reg27_init_val => C_ZERO32,   reg28_init_val => C_ZERO32,
@@ -949,6 +951,7 @@ begin
     o_max_hits_cfg <= to_unsigned(fn_effective_max_hits(
         unsigned(s_ctl21_out(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO)),
         g_MAX_HITS_PER_STOP), o_max_hits_cfg'length);
+    o_falling_enable <= s_ctl21_out(c_ST_FALLING_ENABLE);
 
     -- cfg_image output ------------------------------------------------------
     o_cfg_image <= s_img_out;

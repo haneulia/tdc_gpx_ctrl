@@ -20,10 +20,12 @@ entity tdc_gpx_cell_pipe is
     generic (
         g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
         g_AXIS_CLK_MHZ : positive := c_DEFAULT_AXIS_CLK_MHZ;
-        -- Compile-time physical edge topology. The default preserves the
-        -- direct-instantiation legacy behavior used by cell-pipe unit tests.
-        -- Top-level integration passes its board topology explicitly.
-        g_SLOPE_CHIP_MODE : string := "SHARED_DUAL_EDGE";
+        -- Compile-time edge capabilities. A set bit allows that chip to feed
+        -- the named lane when falling_enable='1'. Runtime falling disable
+        -- promotes every present chip to rising, so rising builders exist for
+        -- every present chip. A zero fall mask removes all fall builders.
+        g_RISE_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK
     );
     port (
@@ -128,26 +130,12 @@ architecture rtl of tdc_gpx_cell_pipe is
     type t_out_tdata_array is array(0 to c_N_CHIPS-1)
         of std_logic_vector(g_OUTPUT_WIDTH-1 downto 0);
 
-    function fn_static_slope_mask(
-        mode    : string;
-        is_rise : boolean
-    ) return std_logic_vector is
-        variable v_mask : std_logic_vector(c_N_CHIPS-1 downto 0);
-    begin
-        if mode = "SHARED_DUAL_EDGE" then
-            v_mask := (others => '1');
-        elsif is_rise then
-            v_mask := "0011";
-        else
-            v_mask := "1100";
-        end if;
-        return v_mask;
-    end function;
-
+    -- All present chips need a rising builder because falling_enable='0'
+    -- means "all active chips are rising" without rebuilding the bitstream.
     constant c_STATIC_RISE_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
-        fn_static_slope_mask(g_SLOPE_CHIP_MODE, true) and g_PRESENT_CHIP_MASK;
+        g_PRESENT_CHIP_MASK;
     constant c_STATIC_FALL_MASK : std_logic_vector(c_N_CHIPS-1 downto 0) :=
-        fn_static_slope_mask(g_SLOPE_CHIP_MODE, false) and g_PRESENT_CHIP_MASK;
+        g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK;
 
     ---------------------------------------------------------------------------
     -- Input skid output (Cluster 2 -> Cluster 3 boundary)
@@ -223,13 +211,18 @@ begin
         report "tdc_gpx_cell_pipe: g_AXIS_CLK_MHZ must be 50, 100, 125, 150, or 200"
         severity failure;
 
-    assert g_SLOPE_CHIP_MODE = "DEDICATED_2X2"
-        or g_SLOPE_CHIP_MODE = "SHARED_DUAL_EDGE"
-        report "tdc_gpx_cell_pipe: g_SLOPE_CHIP_MODE must be DEDICATED_2X2 or SHARED_DUAL_EDGE"
-        severity failure;
-
     assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
         report "tdc_gpx_cell_pipe: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
+        severity failure;
+
+    assert (g_PRESENT_CHIP_MASK and not (g_RISE_CHIP_MASK or g_FALL_CHIP_MASK)) =
+           (g_PRESENT_CHIP_MASK'range => '0')
+        report "tdc_gpx_cell_pipe: every present chip needs a rise and/or fall role"
+        severity failure;
+
+    assert fn_count_ones(g_RISE_CHIP_MASK and g_PRESENT_CHIP_MASK) >=
+           fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK)
+        report "tdc_gpx_cell_pipe: rising-capable chip count must be >= falling-capable chip count"
         severity failure;
 
     s_max_range_axis_clks <= fn_range_5ns_ticks_to_clks(
@@ -249,9 +242,9 @@ begin
     s_abort_rise <= i_abort or i_abort_rise;
     s_abort_fall <= i_abort or i_abort_fall;
 
-    -- The compile-time mask removes physically impossible builders in
-    -- DEDICATED_2X2. Runtime masks still select active chips per face and
-    -- retain consume-and-flag diagnostics for wrong-slope input beats.
+    -- Runtime masks select the active lane membership for this face. Static
+    -- masks still eliminate absent chips and physically unavailable fall
+    -- builders at elaboration.
     s_effective_rise_mask <= i_rise_chip_mask and c_STATIC_RISE_MASK;
     s_effective_fall_mask <= i_fall_chip_mask and c_STATIC_FALL_MASK;
     s_shot_start_rise <= i_shot_start_per_chip and s_effective_rise_mask;

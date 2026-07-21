@@ -97,7 +97,8 @@ architecture sim of tb_tdc_gpx_mask_sweep is
         start_off1          => (others => '0'),
         cfg_reg7            => (others => '0'),
         max_scan_clks       => to_unsigned(0, 16),
-        max_hits_cfg        => to_unsigned(C_MAX_HITS, 3)
+        max_hits_cfg        => to_unsigned(C_MAX_HITS, 3),
+        falling_enable      => '1'
     );
 
     -- face_seq outputs

@@ -73,6 +73,8 @@ entity tdc_gpx_config_ctrl is
         g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
         g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH;
         g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_RISE_CHIP_MASK    : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
+        g_FALL_CHIP_MASK    : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
     port (
@@ -279,6 +281,9 @@ end entity tdc_gpx_config_ctrl;
 
 architecture rtl of tdc_gpx_config_ctrl is
 
+    constant c_HAS_FALLING : boolean :=
+        fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK) > 0;
+
     -- Reduce a wide payload comparison to one registered flag per 32-bit
     -- chunk. The source send FSM only sees the small flag vector, keeping
     -- wide CSR/image decode away from its clock-enable path at 200 MHz.
@@ -300,6 +305,60 @@ architecture rtl of tdc_gpx_config_ctrl is
         return v_diff;
     end function;
 
+    -- Apply the selected chip's slope role to GPX Reg0. The CSR image remains
+    -- the canonical channel-enable template; this function only clears edge
+    -- enables that the selected build/runtime topology cannot consume.
+    function fn_apply_edge_role_word(
+        base_word : std_logic_vector(31 downto 0);
+        chip_id   : natural;
+        cfg       : t_tdc_cfg
+    ) return std_logic_vector is
+        variable v_word        : std_logic_vector(31 downto 0) := base_word;
+        variable v_rise_enable : boolean;
+        variable v_fall_enable : boolean;
+    begin
+        v_rise_enable := g_PRESENT_CHIP_MASK(chip_id) = '1'
+                         and (cfg.falling_enable = '0'
+                              or g_RISE_CHIP_MASK(chip_id) = '1');
+        v_fall_enable := g_PRESENT_CHIP_MASK(chip_id) = '1'
+                         and cfg.falling_enable = '1'
+                         and g_FALL_CHIP_MASK(chip_id) = '1';
+
+        if not v_rise_enable then
+            v_word(c_REG0_TRISEEN_HI downto c_REG0_TRISEEN_LO) := (others => '0');
+        end if;
+        if not v_fall_enable then
+            v_word(c_REG0_TFALLEN_HI downto c_REG0_TFALLEN_LO) := (others => '0');
+        end if;
+        return v_word;
+    end function;
+
+    function fn_apply_edge_role_image(
+        base_image : t_cfg_image;
+        chip_id    : natural;
+        cfg        : t_tdc_cfg
+    ) return t_cfg_image is
+        variable v_image : t_cfg_image := base_image;
+    begin
+        v_image(0) := fn_apply_edge_role_word(base_image(0), chip_id, cfg);
+        return v_image;
+    end function;
+
+    function fn_apply_edge_role_wdata(
+        base_wdata : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        reg_addr   : std_logic_vector(3 downto 0);
+        chip_id    : natural;
+        cfg        : t_tdc_cfg
+    ) return std_logic_vector is
+        variable v_word : std_logic_vector(31 downto 0) := (others => '0');
+    begin
+        v_word(c_TDC_BUS_WIDTH - 1 downto 0) := base_wdata;
+        if reg_addr = "0000" then
+            v_word := fn_apply_edge_role_word(v_word, chip_id, cfg);
+        end if;
+        return v_word(c_TDC_BUS_WIDTH - 1 downto 0);
+    end function;
+
     attribute KEEP_HIERARCHY : string;
     attribute KEEP_HIERARCHY of rtl : architecture is "yes";
 
@@ -312,6 +371,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cfg_reg7        : std_logic_vector(31 downto 0);
     signal s_max_scan_clks   : unsigned(15 downto 0);
     signal s_max_hits_cfg    : unsigned(2 downto 0);
+    signal s_falling_enable  : std_logic;
     signal s_cfg_image_raw   : t_cfg_image;
 
     -- =========================================================================
@@ -531,11 +591,13 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     signal s_cfg_tdc             : t_tdc_cfg;
     signal s_cfg_image_tdc       : t_cfg_image;
+    signal s_cfg_image_tdc_per_chip : t_cfg_image_array;
     signal s_expected_ififo1_tdc : t_expected_array;
     signal s_expected_ififo2_tdc : t_expected_array;
     signal s_expected_final_valid_tdc : std_logic;
     signal s_cmd_reg_addr_tdc    : std_logic_vector(3 downto 0);
     signal s_cmd_reg_wdata_tdc   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+    signal s_cmd_reg_wdata_tdc_per_chip : t_slv28_array;
 
     -- =========================================================================
     -- CDC signals: TDC -> AXI-Stream domain (status)
@@ -727,9 +789,13 @@ begin
     p_frame_done_latch : process(i_axis_aclk)
     begin
         if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' or i_shot_start_gated = '1' then
+            if i_axis_aresetn = '0' then
                 s_frame_rise_seen_r <= '0';
                 s_frame_fall_seen_r <= '0';
+            elsif i_shot_start_gated = '1' then
+                s_frame_rise_seen_r <= '0';
+                -- A rise-only shot has no secondary completion pulse.
+                s_frame_fall_seen_r <= not s_cfg_merged.falling_enable;
             else
                 if i_frame_done = '1' then
                     s_frame_rise_seen_r <= '1';
@@ -768,6 +834,10 @@ begin
     s_cfg_merged.cfg_reg7         <= s_cfg_reg7;
     s_cfg_merged.max_scan_clks    <= s_max_scan_clks;
     s_cfg_merged.max_hits_cfg     <= s_max_hits_cfg;
+    -- A rise-only build has no falling datapath to enable. Clamp the runtime
+    -- bit before the coherent config snapshot crosses into either processing
+    -- domain; HW_CONFIG advertises the compile-time capability separately.
+    s_cfg_merged.falling_enable   <= s_falling_enable when c_HAS_FALLING else '0';
 
     -- Static-ratio shift/add conversion. g_*_CLK_MHZ are elaboration-time
     -- constants, so there is no general runtime multiplier or divider.
@@ -985,6 +1055,7 @@ begin
             o_cfg_reg7      => s_cfg_reg7,
             o_max_scan_clks => s_max_scan_clks,
             o_max_hits_cfg  => s_max_hits_cfg,
+            o_falling_enable => s_falling_enable,
             o_cmd_reg_read  => s_cmd_reg_read,
             o_cmd_reg_write => s_cmd_reg_write,
             o_cmd_reg_addr  => s_cmd_reg_addr,
@@ -1362,6 +1433,16 @@ begin
     gen_cfg_image_unpack : for i in 0 to 7 generate
         s_cfg_image_tdc(i) <= s_cfg_image_dst_packed(32 * (i + 1) - 1 downto 32 * i);
     end generate;
+
+    gen_edge_role_cfg : for i in 0 to c_N_CHIPS - 1 generate
+        s_cfg_image_tdc_per_chip(i) <=
+            fn_apply_edge_role_image(s_cfg_image_tdc, i, s_cfg_tdc);
+        s_cmd_reg_wdata_tdc_per_chip(i) <=
+            fn_apply_edge_role_wdata(s_cmd_reg_wdata_tdc,
+                                     s_cmd_reg_addr_tdc,
+                                     i,
+                                     s_cfg_tdc);
+    end generate gen_edge_role_cfg;
 
     -- =========================================================================
     -- Round 9 #5: cmd_reg bundle atomic transfer via xpm_cdc_handshake.
@@ -1760,7 +1841,7 @@ begin
                 i_clk               => i_tdc_clk,
                 i_rst_n             => s_chip_rst_n(i),
                 i_cfg               => s_cfg_tdc,
-                i_cfg_image         => s_cfg_image_tdc,
+                i_cfg_image         => s_cfg_image_tdc_per_chip(i),
                 i_cmd_start         => s_cmd_start_tdc,
                 i_cmd_stop          => s_cmd_stop_tdc,
                 i_cmd_soft_reset    => s_cmd_soft_reset_tdc,
@@ -1771,7 +1852,7 @@ begin
                 i_cmd_reg_read      => s_cmd_reg_read_tdc(i),
                 i_cmd_reg_write     => s_cmd_reg_write_tdc(i),
                 i_cmd_reg_addr      => s_cmd_reg_addr_tdc,
-                i_cmd_reg_wdata     => s_cmd_reg_wdata_tdc,
+                i_cmd_reg_wdata     => s_cmd_reg_wdata_tdc_per_chip(i),
                 o_cmd_reg_rdata     => s_cmd_reg_rdata(i),
                 o_cmd_reg_rvalid    => s_cmd_reg_rvalid(i),
                 o_cmd_reg_done      => s_cmd_reg_done(i),

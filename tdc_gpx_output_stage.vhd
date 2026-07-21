@@ -33,6 +33,7 @@ entity tdc_gpx_output_stage is
     generic (
         g_OUTPUT_WIDTH : natural := c_DEFAULT_OUTPUT_WIDTH;
         g_PRESENT_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
+        g_FALL_CHIP_MASK : std_logic_vector(c_N_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
         g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
         g_MAX_HITS_PER_STOP : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP
     );
@@ -81,6 +82,7 @@ entity tdc_gpx_output_stage is
         -- only the physical chips that produce that slope.
         i_face_rise_mask     : in  std_logic_vector(3 downto 0);
         i_face_fall_mask     : in  std_logic_vector(3 downto 0);
+        i_falling_enable     : in  std_logic := c_DEFAULT_FALLING_ENABLE;
         i_face_stops_per_chip: in  unsigned(3 downto 0);
         i_max_hits_cfg       : in  unsigned(2 downto 0);
         i_max_scan_clks      : in  unsigned(15 downto 0);
@@ -173,6 +175,9 @@ end entity tdc_gpx_output_stage;
 
 architecture rtl of tdc_gpx_output_stage is
 
+    constant c_HAS_FALLING : boolean :=
+        fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK) > 0;
+
     attribute KEEP_HIERARCHY : string;
     attribute KEEP_HIERARCHY of rtl : architecture is "yes";
 
@@ -241,6 +246,8 @@ architecture rtl of tdc_gpx_output_stage is
     -- Effective abort per slope (global OR slope-specific)
     signal s_abort_rise : std_logic;
     signal s_abort_fall : std_logic;
+    signal s_fall_shot_start : std_logic;
+    signal s_fall_face_start : std_logic;
 
 begin
 
@@ -251,7 +258,11 @@ begin
     -- Effective per-slope abort: global always aborts both; slope-specific
     -- aborts independently once Sprint 3 wires them.
     s_abort_rise <= i_pipeline_abort or i_pipeline_abort_rise;
-    s_abort_fall <= i_pipeline_abort or i_pipeline_abort_fall;
+    -- Runtime disable holds an implemented fall lane in abort/idle. A build
+    -- with no fall-capable chip removes that lane entirely below.
+    s_abort_fall <= i_pipeline_abort or i_pipeline_abort_fall or not i_falling_enable;
+    s_fall_shot_start <= i_shot_start_gated and i_falling_enable;
+    s_fall_face_start <= i_face_start_gated and i_falling_enable;
 
     -- FIFO flush: each slope has its own reset driven by its own abort.
     --
@@ -297,42 +308,14 @@ begin
                     s_face_fifo_cnt_rise_r <= s_face_fifo_cnt_rise_r - 1;
                 end if;
             end if;
-            if i_rst_n = '0' or s_abort_fall = '1' then
-                s_face_fifo_cnt_fall_r <= (others => '0');
-            else
-                v_wr := s_face_fall_tvalid and s_face_fall_tready;
-                v_rd := s_face_fall_buf_tvalid and s_face_fall_buf_tready;
-                -- synthesis translate_off
-                assert not (v_rd = '1' and v_wr = '0'
-                            and s_face_fifo_cnt_fall_r = 0)
-                    report "tdc_gpx_output_stage: fall face FIFO occupancy underflow"
-                    severity failure;
-                assert not (v_wr = '1' and v_rd = '0'
-                            and s_face_fifo_cnt_fall_r =
-                                to_unsigned(c_FACE_FIFO_OUTSTANDING_MAX, 5))
-                    report "tdc_gpx_output_stage: fall face FIFO outstanding counter overflow"
-                    severity failure;
-                -- synthesis translate_on
-                if v_wr = '1' and v_rd = '0' then
-                    s_face_fifo_cnt_fall_r <= s_face_fifo_cnt_fall_r + 1;
-                elsif v_wr = '0' and v_rd = '1' then
-                    s_face_fifo_cnt_fall_r <= s_face_fifo_cnt_fall_r - 1;
-                end if;
-            end if;
         end if;
     end process p_face_fifo_track;
 
     s_face_fifo_quiet_rise <= '1' when s_face_fifo_cnt_rise_r = 0
                                        and s_face_tvalid = '0'
                               else '0';
-    s_face_fifo_quiet_fall <= '1' when s_face_fifo_cnt_fall_r = 0
-                                       and s_face_fall_tvalid = '0'
-                              else '0';
-
     s_fifo_rst_n_rise <= i_rst_n and not (s_abort_rise
                              or (i_shot_start_gated and s_face_fifo_quiet_rise));
-    s_fifo_rst_n_fall <= i_rst_n and not (s_abort_fall
-                             or (i_shot_start_gated and s_face_fifo_quiet_fall));
 
     -- synthesis translate_off
     p_assert_shot_reset_guard : process(i_clk)
@@ -344,15 +327,62 @@ begin
                         report "tdc_gpx_output_stage: non-empty rise FIFO reset at shot boundary"
                         severity failure;
                 end if;
-                if s_face_fifo_quiet_fall = '0' and s_abort_fall = '0' then
+            end if;
+        end if;
+    end process p_assert_shot_reset_guard;
+    -- synthesis translate_on
+
+    gen_fall_fifo_control : if c_HAS_FALLING generate
+        p_face_fifo_track_fall : process(i_clk)
+            variable v_wr : std_logic;
+            variable v_rd : std_logic;
+        begin
+            if rising_edge(i_clk) then
+                if i_rst_n = '0' or s_abort_fall = '1' then
+                    s_face_fifo_cnt_fall_r <= (others => '0');
+                else
+                    v_wr := s_face_fall_tvalid and s_face_fall_tready;
+                    v_rd := s_face_fall_buf_tvalid and s_face_fall_buf_tready;
+                    -- synthesis translate_off
+                    assert not (v_rd = '1' and v_wr = '0'
+                                and s_face_fifo_cnt_fall_r = 0)
+                        report "tdc_gpx_output_stage: fall face FIFO occupancy underflow"
+                        severity failure;
+                    assert not (v_wr = '1' and v_rd = '0'
+                                and s_face_fifo_cnt_fall_r =
+                                    to_unsigned(c_FACE_FIFO_OUTSTANDING_MAX, 5))
+                        report "tdc_gpx_output_stage: fall face FIFO outstanding counter overflow"
+                        severity failure;
+                    -- synthesis translate_on
+                    if v_wr = '1' and v_rd = '0' then
+                        s_face_fifo_cnt_fall_r <= s_face_fifo_cnt_fall_r + 1;
+                    elsif v_wr = '0' and v_rd = '1' then
+                        s_face_fifo_cnt_fall_r <= s_face_fifo_cnt_fall_r - 1;
+                    end if;
+                end if;
+            end if;
+        end process p_face_fifo_track_fall;
+
+        s_face_fifo_quiet_fall <= '1' when s_face_fifo_cnt_fall_r = 0
+                                           and s_face_fall_tvalid = '0'
+                                  else '0';
+        s_fifo_rst_n_fall <= i_rst_n and not (s_abort_fall
+                                 or (s_fall_shot_start and s_face_fifo_quiet_fall));
+
+        -- synthesis translate_off
+        p_assert_fall_shot_reset_guard : process(i_clk)
+        begin
+            if rising_edge(i_clk) then
+                if i_rst_n = '1' and s_fall_shot_start = '1'
+                   and s_face_fifo_quiet_fall = '0' and s_abort_fall = '0' then
                     assert s_fifo_rst_n_fall = '1'
                         report "tdc_gpx_output_stage: non-empty fall FIFO reset at shot boundary"
                         severity failure;
                 end if;
             end if;
-        end if;
-    end process p_assert_shot_reset_guard;
-    -- synthesis translate_on
+        end process p_assert_fall_shot_reset_guard;
+        -- synthesis translate_on
+    end generate gen_fall_fifo_control;
 
     -- =========================================================================
     -- Rising face assembler
@@ -398,6 +428,7 @@ begin
     -- =========================================================================
     -- Falling face assembler
     -- =========================================================================
+    gen_fall_face_assembler : if c_HAS_FALLING generate
     u_face_asm_fall : entity work.tdc_gpx_face_assembler
         generic map (
             g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
@@ -413,7 +444,7 @@ begin
             i_s_axis_tlast     => i_cell_fall_tlast,
             o_s_axis_tready    => o_cell_fall_tready,
             i_s_axis_tuser     => i_cell_fall_tuser,
-            i_shot_start       => i_shot_start_gated,
+            i_shot_start       => s_fall_shot_start,
             i_abort            => s_abort_fall,
             i_active_chip_mask => i_face_fall_mask,
             i_stops_per_chip   => i_face_stops_per_chip,
@@ -435,6 +466,7 @@ begin
             o_shot_flush_drop_mask => o_shot_flush_drop_mask_fall,
             o_shot_overrun_count => o_shot_overrun_count_fall
         );
+    end generate gen_fall_face_assembler;
 
     -- =========================================================================
     -- Rising AXI-Stream FIFO (xpm_fifo_axis, 16-deep)
@@ -483,6 +515,7 @@ begin
     -- =========================================================================
     -- Falling AXI-Stream FIFO (xpm_fifo_axis, 16-deep)
     -- =========================================================================
+    gen_fall_fifo : if c_HAS_FALLING generate
     u_face_fall_fifo : xpm_fifo_axis
         generic map (
             CASCADE_HEIGHT    => 0,
@@ -523,6 +556,7 @@ begin
             injectsbiterr_axis => '0',
             injectdbiterr_axis => '0'
         );
+    end generate gen_fall_fifo;
 
     -- =========================================================================
     -- Canonical word line packers
@@ -548,6 +582,7 @@ begin
             o_idle          => open
         );
 
+    gen_fall_line_packer : if c_HAS_FALLING generate
     u_line_packer_fall : entity work.tdc_gpx_line_packer
         generic map (
             g_OUTPUT_WIDTH => g_OUTPUT_WIDTH
@@ -568,6 +603,7 @@ begin
             i_m_axis_tready => s_face_fall_pack_tready,
             o_idle          => open
         );
+    end generate gen_fall_line_packer;
 
     -- =========================================================================
     -- Rising header inserter
@@ -619,6 +655,7 @@ begin
     -- =========================================================================
     -- Falling header inserter
     -- =========================================================================
+    gen_fall_header : if c_HAS_FALLING generate
     u_header_fall : entity work.tdc_gpx_header_inserter
         generic map (
             g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
@@ -629,7 +666,7 @@ begin
         port map (
             i_clk               => i_clk,
             i_rst_n             => i_rst_n,
-            i_face_start        => i_face_start_gated,
+            i_face_start        => s_fall_face_start,
             i_face_abort        => s_abort_fall,
             i_cfg               => i_cfg_face,
             i_lane_chip_mask    => i_face_fall_mask,
@@ -662,6 +699,59 @@ begin
             o_abort_truncated_sticky     => o_hdr_abort_truncated_fall,
             o_frame_done_faulted         => o_frame_done_faulted_fall
         );
+    end generate gen_fall_header;
+
+    -- A rise-only build keeps the fixed external ABI but ties its unused fall
+    -- channel to an explicit idle contract. Because the complete fall chain is
+    -- inside false generate branches, Vivado does not synthesize its builders,
+    -- assembler, FIFO, packer, or header state.
+    gen_no_fall_path : if not c_HAS_FALLING generate
+        s_face_fifo_cnt_fall_r <= (others => '0');
+        s_face_fifo_quiet_fall <= '1';
+        s_fifo_rst_n_fall      <= '0';
+
+        s_face_fall_tdata  <= (others => '0');
+        s_face_fall_tvalid <= '0';
+        s_face_fall_tlast  <= '0';
+        s_face_fall_tready <= '1';
+
+        s_face_fall_buf_tdata  <= (others => '0');
+        s_face_fall_buf_tvalid <= '0';
+        s_face_fall_buf_tlast  <= '0';
+        s_face_fall_buf_tready <= '1';
+
+        s_face_fall_pack_tdata  <= (others => '0');
+        s_face_fall_pack_tvalid <= '0';
+        s_face_fall_pack_tlast  <= '0';
+        s_face_fall_pack_tready <= '1';
+
+        o_cell_fall_tready <= (others => '1');
+        o_m_axis_fall_tdata  <= (others => '0');
+        o_m_axis_fall_tkeep  <= (others => '0');
+        o_m_axis_fall_tstrb  <= (others => '0');
+        o_m_axis_fall_tvalid <= '0';
+        o_m_axis_fall_tlast  <= '0';
+        o_m_axis_fall_tuser  <= (others => '0');
+
+        o_row_fall_done      <= '0';
+        o_row_done_faulted_fall <= '0';
+        o_chip_fall_error    <= (others => '0');
+        o_chip_error_partial_fall <= (others => '0');
+        o_chip_error_blank_fall   <= (others => '0');
+        o_shot_fall_overrun  <= '0';
+        o_face_fall_abort    <= '0';
+        o_face_asm_fall_idle <= '1';
+        o_shot_flush_drop_fall <= '0';
+        o_shot_flush_drop_mask_fall <= (others => '0');
+        o_shot_overrun_count_fall <= (others => '0');
+        o_frame_fall_done    <= '0';
+        o_hdr_fall_draining  <= '0';
+        o_hdr_fall_idle      <= '1';
+        o_hdr_face_start_collapsed_fall <= (others => '0');
+        o_hdr_drain_timeout_fall    <= '0';
+        o_hdr_abort_truncated_fall  <= '0';
+        o_frame_done_faulted_fall   <= '0';
+    end generate gen_no_fall_path;
 
     -- =========================================================================
     -- Pipeline tvalid monitors
