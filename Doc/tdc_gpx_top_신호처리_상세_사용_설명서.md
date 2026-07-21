@@ -366,7 +366,7 @@ start 시에도 현재 active subset에 동일한 원칙을 적용한다. Fall �
 | 1-chip dual-edge | `0001` | `0001` | `0001` | Rise/Fall 모두 `0001` | Rise 1 + Fall 1 |
 | 4-chip dual-edge | `1111` | `1111` | `1111` | Rise/Fall 모두 `1111` | Rise 4 + Fall 4 |
 
-Rise builder가 `g_RISE_CHIP_MASK` 수보다 많을 수 있는 이유는 runtime Fall OFF에서 **모든 present chip을 Rise로 전환**해야 하기 때문이다. 반면 Fall builder와 Fall assembler/FIFO/packer/header는 `g_FALL_CHIP_MASK AND g_PRESENT_CHIP_MASK`가 0이면 generate되지 않는다. 외부 Fall AXI/VDMA 포트 ABI는 유지되지만 `TVALID=0`, HSIZE=0, VSIZE=0의 idle/zero 계약으로 고정된다.
+Rise builder가 `g_RISE_CHIP_MASK` 수보다 많을 수 있는 이유는 runtime Fall OFF에서 **모든 present chip을 Rise로 전환**해야 하기 때문이다. 반면 Fall builder와 Fall assembler/FIFO/packer/header는 `g_FALL_CHIP_MASK AND g_PRESENT_CHIP_MASK`가 0이면 generate되지 않는다. 외부 Fall AXI 포트 ABI는 유지되지만 `TVALID=0`, Fall HSIZE=0의 idle/zero 계약으로 고정된다. `o_vdma_vsize_lines`는 slope별 포트가 아니라 공통 Face VSIZE이므로 `cols_per_face`를 계속 나타낸다.
 
 Fall-capable build에서 `falling_enable=0`으로 바꾸는 것은 합성 제거가 아니다. 이미 생성된 Fall 회로를 실행 중 유휴화하고, HSIZE를 0으로 만들며, Face 완료가 Fall `frame_done`을 기다리지 않게 한다. 자원 절감이 목적이면 합성 전에 `g_FALL_CHIP_MASK=0000`으로 설정해야 한다.
 
@@ -1926,6 +1926,8 @@ p_run_timeout_sticky
 | [`TDC-GPX-Datasheet.pdf`](TDC-GPX-Datasheet.pdf) | GPX pin/register/timing 의미 | 칩 물리 계약의 원본 |
 | [`known_issues.md`](known_issues.md) | 과거 설계 판단 배경 | 일부 항목은 현재 RTL보다 오래됨 |
 | [`signoff_results/README.md`](../signoff_results/README.md) | OOC sign-off 실행 방법과 범위 | 현재 flow 참조 |
+| [C08 Slope Mask/Falling Simulator v015](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Contract_Simulator_v015.html) | Present/Rise/Fall generic, runtime Fall, APD coverage, HSIZE/DDR/Ethernet 상호작용 | 브라우저 계산/검증 도구 |
+| [C08 Slope Mask/Falling Closure v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Closure_v017.md) | xsim, parent validate, OOC, HTML 검증 근거 | 현재 slope closure 기록 |
 
 ---
 
