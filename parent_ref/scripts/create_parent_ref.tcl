@@ -118,7 +118,7 @@ set ip_repo_axil32 C:/Projects/my_sp/lib/IP/my_axil_csr32/ip_repo
 file mkdir $build_dir
 file mkdir $result_dir
 
-puts "PARENT_REF_CONFIG part=$part_name axi=100MHz axis=150MHz tdc=200MHz width=32 slope=DEDICATED_2X2 mode=$run_mode"
+puts "PARENT_REF_CONFIG part=$part_name axi=100MHz axis=150MHz tdc=200MHz width=32 present=1111 rise=0011 fall=1100 mode=$run_mode"
 
 create_project $project_name $project_dir -part $part_name -force
 set_property target_language VHDL [current_project]
@@ -286,7 +286,11 @@ set tdc [create_bd_cell -type module \
     -reference tdc_gpx_parent_core tdc_gpx_0]
 set_property -dict [list \
     CONFIG.g_OUTPUT_WIDTH 32 \
-    CONFIG.g_SLOPE_CHIP_MODE DEDICATED_2X2 \
+    CONFIG.g_PRESENT_CHIP_MASK 1111 \
+    CONFIG.g_RISE_CHIP_MASK 0011 \
+    CONFIG.g_FALL_CHIP_MASK 1100 \
+    CONFIG.g_MAX_STOPS_PER_CHIP 8 \
+    CONFIG.g_MAX_HITS_PER_STOP 7 \
     CONFIG.g_AXIS_CLK_MHZ 150 \
     CONFIG.g_TDC_CLK_MHZ 200 \
     CONFIG.g_STREAM_CLK_MODE ASYNC] $tdc
@@ -488,7 +492,9 @@ puts $summary "FCLK0_AXI_MHZ=100"
 puts $summary "FCLK1_AXIS_MHZ=150"
 puts $summary "FCLK2_TDC_MHZ=200"
 puts $summary "OUTPUT_WIDTH=32"
-puts $summary "SLOPE_MODE=DEDICATED_2X2"
+puts $summary "PRESENT_CHIP_MASK=1111"
+puts $summary "RISE_CHIP_MASK=0011"
+puts $summary "FALL_CHIP_MASK=1100"
 puts $summary "VDMA_CHANNELS=2"
 puts $summary "BOARD_PIN_XDC=OPEN"
 close $summary

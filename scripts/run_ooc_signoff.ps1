@@ -9,8 +9,20 @@ param(
     [ValidateSet(50, 100, 125, 150, 200)]
     [int]$TdcMhz = 200,
 
-    [ValidateSet("DEDICATED_2X2", "SHARED_DUAL_EDGE")]
-    [string]$SlopeMode = "DEDICATED_2X2",
+    [ValidatePattern('^[01]{4}$')]
+    [string]$PresentChipMask = "1111",
+
+    [ValidatePattern('^[01]{4}$')]
+    [string]$RiseChipMask = "0011",
+
+    [ValidatePattern('^[01]{4}$')]
+    [string]$FallChipMask = "1100",
+
+    [ValidateRange(2, 8)]
+    [int]$MaxStopsPerChip = 8,
+
+    [ValidateRange(1, 7)]
+    [int]$MaxHitsPerStop = 7,
 
     [ValidateSet("ASYNC", "SYNC")]
     [string]$StreamMode = "ASYNC",
@@ -33,11 +45,30 @@ if ($StreamMode -eq "SYNC" -and $AxisMhz -ne $TdcMhz) {
     throw "SYNC mode requires equal AXIS and TDC clock metadata"
 }
 
+$presentBits = [Convert]::ToInt32($PresentChipMask, 2)
+$riseBits = [Convert]::ToInt32($RiseChipMask, 2)
+$fallBits = [Convert]::ToInt32($FallChipMask, 2)
+$activeRiseBits = $riseBits -band $presentBits
+$activeFallBits = $fallBits -band $presentBits
+$roleCoverage = ($activeRiseBits -bor $activeFallBits)
+$riseActiveCount = ([Convert]::ToString($activeRiseBits, 2).ToCharArray() | Where-Object { $_ -eq '1' }).Count
+$fallActiveCount = ([Convert]::ToString($activeFallBits, 2).ToCharArray() | Where-Object { $_ -eq '1' }).Count
+
+if ($presentBits -eq 0) {
+    throw "g_PRESENT_CHIP_MASK must enable at least one chip"
+}
+if ($roleCoverage -ne $presentBits) {
+    throw "Every present chip must have a rising and/or falling role"
+}
+if ($riseActiveCount -lt $fallActiveCount) {
+    throw "Rising-capable chip count must be greater than or equal to falling-capable chip count"
+}
+
 $Hdl = "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL"
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin/vivado.bat"
 $Mode = if ($Implement) { "impl" } else { "synth" }
-$SafeSlope = $SlopeMode.ToLowerInvariant()
-$Session = "${Stamp}_${Label}_w${Width}_a${AxisMhz}_t${TdcMhz}_${SafeSlope}_${Mode}"
+$Topology = "p${PresentChipMask}_r${RiseChipMask}_f${FallChipMask}"
+$Session = "${Stamp}_${Label}_w${Width}_a${AxisMhz}_t${TdcMhz}_${Topology}_${Mode}"
 $OutDir = "$Hdl/signoff_results/sessions/$Session"
 $Log = "$OutDir/vivado.log"
 
@@ -108,7 +139,11 @@ New-Item -ItemType Directory -Path $OutDir | Out-Null
     "width=$Width"
     "axis_mhz=$AxisMhz"
     "tdc_mhz=$TdcMhz"
-    "slope_mode=$SlopeMode"
+    "present_chip_mask=$PresentChipMask"
+    "rise_chip_mask=$RiseChipMask"
+    "fall_chip_mask=$FallChipMask"
+    "max_stops_per_chip=$MaxStopsPerChip"
+    "max_hits_per_stop=$MaxHitsPerStop"
     "stream_mode=$StreamMode"
     "impl_strategy=$ImplStrategy"
     "implement=$($Implement.IsPresent)"
@@ -117,7 +152,9 @@ New-Item -ItemType Directory -Path $OutDir | Out-Null
 $DoImpl = if ($Implement) { "1" } else { "0" }
 & $Vivado -mode batch -nojournal -log $Log `
     -source "$Hdl/scripts/run_ooc_signoff.tcl" `
-    -tclargs $OutDir $Width $AxisMhz $TdcMhz $SlopeMode $StreamMode $DoImpl $ImplStrategy
+    -tclargs $OutDir $Width $AxisMhz $TdcMhz `
+    $PresentChipMask $RiseChipMask $FallChipMask `
+    $MaxStopsPerChip $MaxHitsPerStop $StreamMode $DoImpl $ImplStrategy
 
 if ($LASTEXITCODE -ne 0) {
     throw "Vivado OOC sign-off failed with exit code $LASTEXITCODE. See $Log"

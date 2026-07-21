@@ -5,18 +5,22 @@
 # written below HDL/signoff_results/sessions by the PowerShell wrapper.
 # =============================================================================
 
-if {$argc != 8} {
-    error "usage: run_ooc_signoff.tcl OUT_DIR WIDTH AXIS_MHZ TDC_MHZ SLOPE_MODE STREAM_MODE DO_IMPL IMPL_STRATEGY"
+if {$argc != 12} {
+    error "usage: run_ooc_signoff.tcl OUT_DIR WIDTH AXIS_MHZ TDC_MHZ PRESENT_MASK RISE_MASK FALL_MASK MAX_STOPS MAX_HITS STREAM_MODE DO_IMPL IMPL_STRATEGY"
 }
 
-set out_dir    [file normalize [lindex $argv 0]]
-set width      [lindex $argv 1]
-set axis_mhz   [lindex $argv 2]
-set tdc_mhz    [lindex $argv 3]
-set slope_mode [lindex $argv 4]
-set stream_mode [lindex $argv 5]
-set do_impl    [expr {[lindex $argv 6] eq "1"}]
-set impl_strategy [lindex $argv 7]
+set out_dir      [file normalize [lindex $argv 0]]
+set width        [lindex $argv 1]
+set axis_mhz     [lindex $argv 2]
+set tdc_mhz      [lindex $argv 3]
+set present_mask [lindex $argv 4]
+set rise_mask    [lindex $argv 5]
+set fall_mask    [lindex $argv 6]
+set max_stops    [lindex $argv 7]
+set max_hits     [lindex $argv 8]
+set stream_mode  [lindex $argv 9]
+set do_impl      [expr {[lindex $argv 10] eq "1"}]
+set impl_strategy [lindex $argv 11]
 
 if {$impl_strategy ni {DEFAULT TIMING_EXPLORE}} {
     error "unsupported implementation strategy: $impl_strategy"
@@ -28,7 +32,7 @@ set project_dir [file dirname $project_file]
 set gen_ip_dir  [file join $project_dir tdc_gpx_ctrl.gen sources_1 ip]
 file mkdir $out_dir
 
-puts "OOC_SIGNOFF_CONFIG width=$width axis_mhz=$axis_mhz tdc_mhz=$tdc_mhz slope=$slope_mode stream=$stream_mode impl=$do_impl strategy=$impl_strategy"
+puts "OOC_SIGNOFF_CONFIG width=$width axis_mhz=$axis_mhz tdc_mhz=$tdc_mhz present=$present_mask rise=$rise_mask fall=$fall_mask max_stops=$max_stops max_hits=$max_hits stream=$stream_mode impl=$do_impl strategy=$impl_strategy"
 
 set axis_period [expr {1000.0 / double($axis_mhz)}]
 set tdc_period  [expr {1000.0 / double($tdc_mhz)}]
@@ -76,9 +80,13 @@ read_xdc -unmanaged $xdc_file
 
 set generics [list \
     "g_OUTPUT_WIDTH=$width" \
+    "g_PRESENT_CHIP_MASK=$present_mask" \
+    "g_RISE_CHIP_MASK=$rise_mask" \
+    "g_FALL_CHIP_MASK=$fall_mask" \
+    "g_MAX_STOPS_PER_CHIP=$max_stops" \
+    "g_MAX_HITS_PER_STOP=$max_hits" \
     "g_AXIS_CLK_MHZ=$axis_mhz" \
     "g_TDC_CLK_MHZ=$tdc_mhz" \
-    "g_SLOPE_CHIP_MODE=$slope_mode" \
     "g_STREAM_CLK_MODE=$stream_mode"]
 
 synth_design \

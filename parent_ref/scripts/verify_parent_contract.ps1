@@ -53,7 +53,11 @@ Assert-ContractValue 'fabric_irq_enabled' $ps.parameters.PCW_USE_FABRIC_INTERRUP
 Assert-ContractValue 'irq_f2p_enabled' $ps.parameters.PCW_IRQ_F2P_INTR.value '1'
 
 Assert-ContractValue 'output_width_bits' $tdc.parameters.g_OUTPUT_WIDTH.value '32'
-Assert-ContractValue 'slope_mode' $tdc.parameters.g_SLOPE_CHIP_MODE.value 'DEDICATED_2X2'
+Assert-ContractValue 'present_chip_mask' $tdc.parameters.g_PRESENT_CHIP_MASK.value '1111'
+Assert-ContractValue 'rise_chip_mask' $tdc.parameters.g_RISE_CHIP_MASK.value '0011'
+Assert-ContractValue 'fall_chip_mask' $tdc.parameters.g_FALL_CHIP_MASK.value '1100'
+Assert-ContractValue 'max_stops_per_chip' $tdc.parameters.g_MAX_STOPS_PER_CHIP.value '8'
+Assert-ContractValue 'max_hits_per_stop' $tdc.parameters.g_MAX_HITS_PER_STOP.value '7'
 Assert-ContractValue 'stream_clock_mode' $tdc.parameters.g_STREAM_CLK_MODE.value 'ASYNC'
 Assert-ContractValue 'ctrl_clock_busifs' $tdc.ports.i_ctrl_aclk.parameters.ASSOCIATED_BUSIF.value 's_axi:s_axi_pipe'
 Assert-ContractValue 'ctrl_clock_hz' $tdc.ports.i_ctrl_aclk.parameters.FREQ_HZ.value '100000000'

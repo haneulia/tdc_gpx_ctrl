@@ -13,12 +13,23 @@ logic from `VIRTUAL_TDC_TEST_V003`.
 | PS FCLK1 | 150 MHz, event processing, AXIS, VDMA S2MM and HP clocks |
 | PS FCLK2 | 200 MHz, TDC bus/control clock |
 | TDC output width | 32 bits |
-| Slope topology | `DEDICATED_2X2` |
+| Present chips | `1111` (chip 0 through chip 3) |
+| Rising-capable mask | `0011` (chip 0 and chip 1 while falling is enabled) |
+| Falling-capable mask | `1100` (chip 2 and chip 3) |
+| Build limits | 8 stops/chip, 7 hits/stop |
 | DDR writers | rise VDMA to HP0, fall VDMA to HP1 |
 
 The parent uses two independent VDMA S2MM channels. Each accepts one 32-bit
 TDC output stream and writes through a 64-bit PS HP port. Runtime HSIZE and
 VSIZE are exposed to software through a read-only AXI GPIO snapshot.
+
+Slope ownership is an explicit compile-time contract. `g_RISE_CHIP_MASK` and
+`g_FALL_CHIP_MASK` may overlap when one chip must collect both edges. With the
+default masks, CSR `CTL21[19]=1` selects the 2-rising/2-falling assignment;
+`CTL21[19]=0` makes all four present chips rising and idles the falling lane.
+For a permanently rising-only product, set `g_RISE_CHIP_MASK=1111` and
+`g_FALL_CHIP_MASK=0000`; the falling builders and output chain are then removed
+by synthesis, while the fixed fall AXIS/geometry ports remain tied idle/zero.
 
 ## Address map
 
@@ -68,7 +79,22 @@ after both synthesis and implementation (`24/12/2/2`), all with
 stage-specific allowance for downstream-unobserved diagnostic logic; any
 change to the fixed 40-pin baseline is a sign-off failure.
 
-## Latest reference evidence
+## Current reference evidence
+
+| Item | Result |
+|---|---|
+| Session | `260721172000_slope_masks_ps_fclk_parent_ref` |
+| Slope contract | present `1111`, rise `0011`, fall `1100` |
+| Build limits | 8 stops/chip, 7 hits/stop |
+| Block design | generated and validated for `xc7z020clg484-2` |
+| Contract checks | 42 exact checks passed |
+| Verdict | `PARENT_REF_VALIDATE_PASS` |
+
+The current generic-mask RTL has not yet inherited the older implementation
+numbers below. They remain a historical physical baseline only and must not be
+used as current-route sign-off evidence.
+
+### Previous implementation baseline
 
 | Item | Result |
 |---|---|

@@ -17,16 +17,16 @@ if ($gitChanges.Count -ne 0) {
 $gitHead = (git -C $Hdl rev-parse HEAD).Trim()
 
 $cases = @(
-    [pscustomobject]@{ Label = "matrix_clk50_equal_dedicated_async";  Width = 32;  Axis = 50;  Tdc = 50;  Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
-    [pscustomobject]@{ Label = "matrix_clk100_equal_shared_async";    Width = 64;  Axis = 100; Tdc = 100; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
-    [pscustomobject]@{ Label = "matrix_clk125_equal_dedicated_async"; Width = 128; Axis = 125; Tdc = 125; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
-    [pscustomobject]@{ Label = "matrix_clk150_equal_shared_async";    Width = 32;  Axis = 150; Tdc = 150; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
-    [pscustomobject]@{ Label = "matrix_w32_200_dedicated_async";      Width = 32;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
-    [pscustomobject]@{ Label = "matrix_w64_200_dedicated_async";      Width = 64;  Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
-    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_async";     Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
-    [pscustomobject]@{ Label = "matrix_w128_200_shared_async";        Width = 128; Axis = 200; Tdc = 200; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $true;  ImplStrategy = "TIMING_EXPLORE" },
-    [pscustomobject]@{ Label = "matrix_w128_50_200_shared_async";     Width = 128; Axis = 50;  Tdc = 200; Slope = "SHARED_DUAL_EDGE"; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
-    [pscustomobject]@{ Label = "matrix_w128_200_dedicated_sync";      Width = 128; Axis = 200; Tdc = 200; Slope = "DEDICATED_2X2";    Stream = "SYNC";  Implement = $true;  ImplStrategy = "TIMING_EXPLORE" }
+    [pscustomobject]@{ Label = "matrix_clk50_equal_rise_only_async"; Width = 32; Axis = 50; Tdc = 50; Present = "1111"; Rise = "1111"; Fall = "0000"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_clk100_equal_shared_async"; Width = 64; Axis = 100; Tdc = 100; Present = "1111"; Rise = "1111"; Fall = "1111"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_clk125_equal_split_async"; Width = 128; Axis = 125; Tdc = 125; Present = "1111"; Rise = "0011"; Fall = "1100"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_clk150_equal_shared_async"; Width = 32; Axis = 150; Tdc = 150; Present = "1111"; Rise = "1111"; Fall = "1111"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_w32_200_split_async"; Width = 32; Axis = 200; Tdc = 200; Present = "1111"; Rise = "0011"; Fall = "1100"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $true; ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w64_200_split_async"; Width = 64; Axis = 200; Tdc = 200; Present = "1111"; Rise = "0011"; Fall = "1100"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $true; ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w128_200_split_async"; Width = 128; Axis = 200; Tdc = 200; Present = "1111"; Rise = "0011"; Fall = "1100"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $true; ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w128_200_shared_async"; Width = 128; Axis = 200; Tdc = 200; Present = "1111"; Rise = "1111"; Fall = "1111"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $true; ImplStrategy = "TIMING_EXPLORE" },
+    [pscustomobject]@{ Label = "matrix_w128_50_200_shared_async"; Width = 128; Axis = 50; Tdc = 200; Present = "1111"; Rise = "1111"; Fall = "1111"; MaxStops = 8; MaxHits = 7; Stream = "ASYNC"; Implement = $false; ImplStrategy = "DEFAULT" },
+    [pscustomobject]@{ Label = "matrix_w128_200_split_sync"; Width = 128; Axis = 200; Tdc = 200; Present = "1111"; Rise = "0011"; Fall = "1100"; MaxStops = 8; MaxHits = 7; Stream = "SYNC"; Implement = $true; ImplStrategy = "TIMING_EXPLORE" }
 )
 
 function Get-IntraClockWns {
@@ -61,10 +61,10 @@ New-Item -ItemType Directory -Force -Path $MatrixDir | Out-Null
 $results = @()
 
 foreach ($case in $cases) {
-    $safeSlope = $case.Slope.ToLowerInvariant()
+    $topology = "p$($case.Present)_r$($case.Rise)_f$($case.Fall)"
     $stageSuffix = if ($case.Implement) { "impl" } else { "synth" }
     $reportPrefix = if ($case.Implement) { "post_route" } else { "post_synth" }
-    $sessionName = "${Stamp}_$($case.Label)_w$($case.Width)_a$($case.Axis)_t$($case.Tdc)_${safeSlope}_${stageSuffix}"
+    $sessionName = "${Stamp}_$($case.Label)_w$($case.Width)_a$($case.Axis)_t$($case.Tdc)_${topology}_${stageSuffix}"
     $session = "$Hdl/signoff_results/sessions/$sessionName"
 
     Write-Host "=== OOC matrix: $($case.Label) ==="
@@ -76,7 +76,11 @@ foreach ($case in $cases) {
             "width=$($case.Width)"
             "axis_mhz=$($case.Axis)"
             "tdc_mhz=$($case.Tdc)"
-            "slope_mode=$($case.Slope)"
+            "present_chip_mask=$($case.Present)"
+            "rise_chip_mask=$($case.Rise)"
+            "fall_chip_mask=$($case.Fall)"
+            "max_stops_per_chip=$($case.MaxStops)"
+            "max_hits_per_stop=$($case.MaxHits)"
             "stream_mode=$($case.Stream)"
             "impl_strategy=$($case.ImplStrategy)"
             "implement=$($case.Implement)"
@@ -93,7 +97,11 @@ foreach ($case in $cases) {
             Width        = $case.Width
             AxisMhz      = $case.Axis
             TdcMhz       = $case.Tdc
-            SlopeMode    = $case.Slope
+            PresentChipMask = $case.Present
+            RiseChipMask = $case.Rise
+            FallChipMask = $case.Fall
+            MaxStopsPerChip = $case.MaxStops
+            MaxHitsPerStop = $case.MaxHits
             StreamMode   = $case.Stream
             ImplStrategy = $case.ImplStrategy
             Label        = $case.Label
@@ -131,7 +139,11 @@ foreach ($case in $cases) {
         Width          = $case.Width
         AxisMhz        = $case.Axis
         TdcMhz         = $case.Tdc
-        SlopeMode      = $case.Slope
+        PresentMask    = $case.Present
+        RiseMask       = $case.Rise
+        FallMask       = $case.Fall
+        MaxStops       = $case.MaxStops
+        MaxHits        = $case.MaxHits
         StreamMode     = $case.Stream
         SignoffStage   = $reportPrefix
         ImplStrategy   = $case.ImplStrategy
@@ -152,5 +164,5 @@ foreach ($case in $cases) {
     $results | Export-Csv -LiteralPath $SummaryPath -NoTypeInformation -Encoding ASCII
 }
 
-$results | Format-Table Label, Width, AxisMhz, TdcMhz, SlopeMode, StreamMode, SignoffStage, AxisWnsNs, TdcWnsNs, TotalLut, Ff, CellBuilders -AutoSize
+$results | Format-Table Label, Width, AxisMhz, TdcMhz, PresentMask, RiseMask, FallMask, StreamMode, SignoffStage, AxisWnsNs, TdcWnsNs, TotalLut, Ff, CellBuilders -AutoSize
 Write-Host "Representative OOC matrix PASS: $SummaryPath"

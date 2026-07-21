@@ -17,11 +17,18 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_parent_core is
     generic (
-        g_OUTPUT_WIDTH    : natural  := 32;
-        g_SLOPE_CHIP_MODE : string   := "DEDICATED_2X2";
-        g_AXIS_CLK_MHZ    : positive := 150;
-        g_TDC_CLK_MHZ     : positive := 200;
-        g_STREAM_CLK_MODE : string   := "ASYNC"
+        g_OUTPUT_WIDTH       : natural := 32;
+        -- IP Integrator module-reference parsing does not resolve package
+        -- constants in generic defaults/ranges. These literals mirror the
+        -- production core's fixed four-chip ABI and package maxima.
+        g_PRESENT_CHIP_MASK  : std_logic_vector(3 downto 0) := "1111";
+        g_RISE_CHIP_MASK     : std_logic_vector(3 downto 0) := "0011";
+        g_FALL_CHIP_MASK     : std_logic_vector(3 downto 0) := "1100";
+        g_MAX_STOPS_PER_CHIP : positive range 2 to 8 := 8;
+        g_MAX_HITS_PER_STOP  : positive range 1 to 7 := 7;
+        g_AXIS_CLK_MHZ       : positive := 150;
+        g_TDC_CLK_MHZ        : positive := 200;
+        g_STREAM_CLK_MODE    : string   := "ASYNC"
     );
     port (
         i_axis_aclk    : in std_logic;
@@ -178,11 +185,15 @@ begin
 
     u_tdc_gpx : entity work.tdc_gpx_top
         generic map (
-            g_OUTPUT_WIDTH    => g_OUTPUT_WIDTH,
-            g_SLOPE_CHIP_MODE => g_SLOPE_CHIP_MODE,
-            g_AXIS_CLK_MHZ    => g_AXIS_CLK_MHZ,
-            g_TDC_CLK_MHZ     => g_TDC_CLK_MHZ,
-            g_STREAM_CLK_MODE => g_STREAM_CLK_MODE
+            g_OUTPUT_WIDTH       => g_OUTPUT_WIDTH,
+            g_PRESENT_CHIP_MASK  => g_PRESENT_CHIP_MASK,
+            g_RISE_CHIP_MASK     => g_RISE_CHIP_MASK,
+            g_FALL_CHIP_MASK     => g_FALL_CHIP_MASK,
+            g_MAX_STOPS_PER_CHIP => g_MAX_STOPS_PER_CHIP,
+            g_MAX_HITS_PER_STOP  => g_MAX_HITS_PER_STOP,
+            g_AXIS_CLK_MHZ       => g_AXIS_CLK_MHZ,
+            g_TDC_CLK_MHZ        => g_TDC_CLK_MHZ,
+            g_STREAM_CLK_MODE    => g_STREAM_CLK_MODE
         )
         port map (
             i_axis_aclk    => i_axis_aclk,
