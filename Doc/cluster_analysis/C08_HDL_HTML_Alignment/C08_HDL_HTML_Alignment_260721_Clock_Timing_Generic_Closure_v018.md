@@ -65,7 +65,7 @@
 
 | Profile | AXI WNS | AXIS WNS | TDC WNS | 판정 |
 |---|---:|---:|---:|---|
-| 50/50 MHz SYNC | +5.957 ns | +14.579 ns | +15.404 ns | PASS |
+| 50/50 MHz SYNC, 최종 HEAD | +5.957 ns | +15.191 ns | +15.404 ns | PASS |
 | 150/200 MHz ASYNC, 최종 HEAD | +5.957 ns | +1.858 ns | +0.800 ns | PASS |
 | 200/200 MHz SYNC, 수정 전 | +5.957 ns | -0.399 ns | +0.820 ns | FAIL, 24 endpoints |
 | 200/200 MHz SYNC, 수정 후 | +5.957 ns | +0.205 ns | +0.820 ns | PASS |
@@ -76,7 +76,7 @@
 
 OOC session:
 
-- `260721230500_timing_generic_50_sync_w32_a50_t50_p1111_r0011_f1100_synth`
+- `260721234500_timing_generic_final50_w32_a50_t50_p1111_r0011_f1100_synth`
 - `260721233000_timing_generic_final_w32_a150_t200_p1111_r0011_f1100_synth`
 - `260721231000_timing_generic_200_sync_w32_a200_t200_p1111_r0011_f1100_synth`
 - `260721232000_timing_generic_200_sync_fix1_w32_a200_t200_p1111_r0011_f1100_synth`
