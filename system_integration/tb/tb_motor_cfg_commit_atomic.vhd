@@ -14,14 +14,11 @@ architecture sim of tb_motor_cfg_commit_atomic is
     signal clk               : std_logic := '0';
     signal rst_n             : std_logic := '0';
     signal cfg_apply         : std_logic := '0';
-    signal dec_mode          : std_logic_vector(1 downto 0) := "10";
-    signal enc_cpr           : std_logic_vector(15 downto 0) :=
-                               std_logic_vector(to_unsigned(18, 16));
+    signal dec_mode          : std_logic_vector(1 downto 0) := "00";
+    signal enc_cpr           : std_logic_vector(15 downto 0) := (others => '0');
     signal enc_dir           : std_logic := '0';
-    signal enc_ticks_lo      : std_logic_vector(31 downto 0) :=
-                               std_logic_vector(to_unsigned(138, 32));
-    signal enc_hi_count      : std_logic_vector(15 downto 0) :=
-                               std_logic_vector(to_unsigned(64, 16));
+    signal enc_ticks_lo      : std_logic_vector(31 downto 0) := (others => '0');
+    signal enc_hi_count      : std_logic_vector(15 downto 0) := (others => '0');
     signal z_offset          : std_logic_vector(c_POS_W-1 downto 0) := (others => '0');
     signal z_early           : std_logic := '0';
     signal z_width           : std_logic_vector(c_POS_W-1 downto 0) := (others => '0');
@@ -84,7 +81,21 @@ begin
         rst_n <= '1';
         wait for 5 * C_CLK_PERIOD;
 
+        assert enc_param_commit = '0' and cfg_busy = '0'
+            report "CSR values were committed without CFG_APPLY"
+            severity failure;
+        assert active_dec_mode = "10" and unsigned(active_enc_cpr) = 18
+            report "generic boot geometry was not retained"
+            severity failure;
+        assert unsigned(enc_cfg.ticks_lo) = 138 and
+               unsigned(enc_cfg.ticks_hi) = 139 and
+               unsigned(enc_cfg.hi_count) = 64 and
+               unsigned(enc_cfg.total_states) = 72
+            report "generic encoder boot epoch was overwritten by CSR reset values"
+            severity failure;
+
         -- Runtime request: all values belong to the CPR=20 configuration.
+        dec_mode    <= "10";
         enc_cpr      <= std_logic_vector(to_unsigned(20, enc_cpr'length));
         enc_dir      <= '1';
         enc_ticks_lo <= std_logic_vector(to_unsigned(37, enc_ticks_lo'length));

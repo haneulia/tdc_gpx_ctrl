@@ -2,7 +2,7 @@ param(
     [string]$SourceRoot = "C:/Projects/my_sp/lib/IP/motor_decoder/HDL",
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [int]$RunTimeMs = 50,
-    [ValidateSet("enc_top_tb", "tb_motor_cfg_commit_atomic")]
+    [ValidateSet("enc_top_tb", "tb_motor_cfg_commit_atomic", "tb_enc_timing_generator")]
     [string]$Top = "enc_top_tb"
 )
 
@@ -31,15 +31,15 @@ function Invoke-Checked {
 $Files = @(
     "$SourceRoot/enc_pkg.vhd",
     "$SourceRoot/enc_param_apply_ctrl.vhd",
-    "$SourceRoot/enc_fractional_scheduler.vhd",
-    "$SourceRoot/enc_tick_counter.vhd",
     "$SourceRoot/enc_phase_counter.vhd",
     "$SourceRoot/enc_position_counter.vhd",
+    "$SourceRoot/enc_timing_generator.vhd",
     "$SourceRoot/enc_top.vhd",
     "$SourceRoot/enc_top_tb.vhd",
     "$SourceRoot/motor_decoder_cfg_pkg.vhd",
     "$SourceRoot/motor_cfg_commit_ctrl.vhd",
-    "$Hdl/system_integration/tb/tb_motor_cfg_commit_atomic.vhd"
+    "$Hdl/system_integration/tb/tb_motor_cfg_commit_atomic.vhd",
+    "$Hdl/system_integration/tb/tb_enc_timing_generator.vhd"
 )
 
 foreach ($File in $Files) {
@@ -94,10 +94,10 @@ finally {
     Pop-Location
 }
 
-$PassPattern = if ($Top -eq "enc_top_tb") {
-    "Result\s*:\s*ALL PASS"
-} else {
-    "MOTOR_CFG_ATOMIC_PASS"
+$PassPattern = switch ($Top) {
+    "enc_top_tb" { "Result\s*:\s*ALL PASS" }
+    "tb_motor_cfg_commit_atomic" { "MOTOR_CFG_ATOMIC_PASS" }
+    "tb_enc_timing_generator" { "ENC_TIMING_GENERATOR_PASS" }
 }
 
 $SimText = Get-Content -Raw -LiteralPath $SimLog

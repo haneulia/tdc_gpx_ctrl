@@ -86,11 +86,10 @@ $GeneratedFiles = @(
 
 $MotorFiles = @(
     "$IpRoot/motor_decoder/HDL/enc_pkg.vhd",
-    "$IpRoot/motor_decoder/HDL/enc_fractional_scheduler.vhd",
     "$IpRoot/motor_decoder/HDL/enc_param_apply_ctrl.vhd",
     "$IpRoot/motor_decoder/HDL/enc_phase_counter.vhd",
     "$IpRoot/motor_decoder/HDL/enc_position_counter.vhd",
-    "$IpRoot/motor_decoder/HDL/enc_tick_counter.vhd",
+    "$IpRoot/motor_decoder/HDL/enc_timing_generator.vhd",
     "$IpRoot/motor_decoder/HDL/enc_top.vhd",
     "$IpRoot/motor_decoder/HDL/quad_decoder.vhd",
     "$IpRoot/motor_decoder/HDL/mirror_active_detect.vhd",

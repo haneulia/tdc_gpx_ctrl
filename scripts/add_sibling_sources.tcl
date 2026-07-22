@@ -22,8 +22,7 @@ set sibling_rtl [list \
     "$md_dir/enc_pkg.vhd" \
     "$md_dir/enc_phase_counter.vhd" \
     "$md_dir/enc_position_counter.vhd" \
-    "$md_dir/enc_tick_counter.vhd" \
-    "$md_dir/enc_fractional_scheduler.vhd" \
+    "$md_dir/enc_timing_generator.vhd" \
     "$md_dir/enc_param_apply_ctrl.vhd" \
     "$md_dir/enc_top.vhd" \
     "$md_dir/quad_decoder.vhd" \
