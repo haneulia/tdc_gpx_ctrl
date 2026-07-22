@@ -15,7 +15,6 @@
 --     fn_ceil_div          : integer ceiling division (replaces (a+b-1)/b)
 --     fn_cell_size_bytes   : cell size in bytes (ceil_pow2)
 --     fn_cell_beat         : cell-to-AXI beat serialization MUX
---     fn_stop_evt_valid_bytes : stop event AXI-Stream tkeep width
 --
 --   Each record has a matching c_*_INIT reset constant.
 --
@@ -76,7 +75,6 @@ package tdc_gpx_pkg is
     constant c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS  : positive := 25;
     constant c_DEFAULT_BUS_IDLE_STABLE_TIME_NS      : positive := 20_480;
     constant c_DEFAULT_DRAIN_MARGIN_TIME_NS         : positive := 1_280;
-    constant c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS   : positive := 210;
     constant c_DEFAULT_ERR_DEBOUNCE_TIME_NS         : positive := 25;
     constant c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3_410;
     constant c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS   : positive := 1_705;
@@ -105,8 +103,6 @@ package tdc_gpx_pkg is
         fn_time_ps_to_clks_ceil(c_TDC_EF_DATA_VALID_MAX_PS,
                                 c_DEFAULT_TDC_CLK_MHZ)
         + c_TDC_STATUS_SYNC_CLKS;
-    constant c_DEFAULT_STOP_WINDOW_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
-        c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
     constant c_DEFAULT_ERR_DEBOUNCE_CLKS : positive := fn_time_ns_to_clks_ceil(
         c_DEFAULT_ERR_DEBOUNCE_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
     constant c_DEFAULT_CELL_QUARANTINE_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
@@ -204,15 +200,6 @@ package tdc_gpx_pkg is
     constant c_EVT_AXIS_TUSER_WIDTH : natural := 16;
     constant c_EVT_AXIS_PACK_WIDTH  : natural := c_EVT_AXIS_TDATA_WIDTH + c_EVT_AXIS_TUSER_WIDTH;
 
-    -- Stop event AXI-Stream constants
-    constant c_DEFAULT_STOP_EVT_DWIDTH      : natural := 32;
-    constant c_DEFAULT_STOP_EVT_TUSER_WIDTH : natural := 32;
-    constant c_STOP_COUNT_FIELD_WIDTH       : natural := 4;
-    constant c_DEFAULT_FIRE_COUNT_DWIDTH    : natural := 32;
-    -- Layout: per-chip packed [chip3(8b)|chip2(8b)|chip1(8b)|chip0(8b)]
-    --   Each 8-bit chip slice: [IFIFO2(4b) | IFIFO1(4b)]
-    -- tkeep: reserved (always "1111", not consumed by p_stop_decode)
-
     constant c_SHOT_SEQ_WIDTH       : natural := 16;
     constant c_TDC_BUS_WIDTH        : natural := 28;
     constant c_TDC_ADR_WIDTH        : natural := 4;
@@ -276,20 +263,6 @@ package tdc_gpx_pkg is
         logical_chip : natural
     ) return natural;
     function fn_first_one_mask(v : std_logic_vector) return std_logic_vector;
-
-    -- Stop event AXI-Stream helpers
-    -- valid_bytes = ceil(n_stops * cnt_width / 8)
-    function fn_stop_evt_valid_bytes(
-        n_stops   : natural;
-        cnt_width : natural
-    ) return natural;
-
-    -- Generate tkeep mask: lower valid_bytes bits = '1', rest = '0'
-    function fn_stop_evt_tkeep(
-        n_stops    : natural;
-        cnt_width  : natural;
-        tkeep_width : natural
-    ) return std_logic_vector;
 
     -- (Round 11 item 9 pack/unpack helpers are declared below, after
     -- t_tdc_cfg is defined.)
@@ -410,7 +383,7 @@ package tdc_gpx_pkg is
         -- Software must calculate ceil(round_trip_time / 5 ns), regardless
         -- of the actual TDC or AXIS clock. Each processing domain converts
         -- this value to its local clock count with fn_range_5ns_ticks_to_clks.
-        -- Drives chip_run drain range check AND stop_cfg_decode orphan window.
+        -- Drives the chip_run physical drain watchdog and AXIS cell timeouts.
         -- SW operating
         -- contract: shot_period = 1.5 × round-trip (50% PRF headroom) — see
         -- Doc/vdma_packet_structure.html §5 and Doc/260419/task_distance_
@@ -571,8 +544,6 @@ package tdc_gpx_pkg is
         -- arrived within ~4.9ms — the chip's slice stream is out of sync.
         -- Cleared only by full i_rst_n (cell_builder has no soft-reset).
         quarantine_escape_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
-        -- Round 11 item 10: stop_cfg_decode monotonic violation sticky mask.
-        mono_violation_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 11 item 11: err_handler ST_WAIT_FRAME_DONE escape sticky
         -- (distinct from err_read_timeout so SW can tell the two failure
         -- modes apart).
@@ -597,8 +568,6 @@ package tdc_gpx_pkg is
         rise_chip_error_blank    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         fall_chip_error_partial  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         fall_chip_error_blank    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
-        -- Round 12 #16: stop_cfg_decode orphan-event sticky.
-        orphan_stop_evt_sticky   : std_logic;
         -- Round 13 axis 2: per-chip bus fatal sticky mask.
         bus_fatal_mask           : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         -- Round 13 axis 1b: header_inserter frame_done_faulted sticky
@@ -663,7 +632,6 @@ package tdc_gpx_pkg is
         rise_hdr_drain_timeout  => '0',
         fall_hdr_drain_timeout  => '0',
         quarantine_escape_mask  => (others => '0'),
-        mono_violation_mask     => (others => '0'),
         err_frame_wait_escape   => '0',
         init_cfg_coalesced_mask => (others => '0'),
         shot_flush_drop_mask    => (others => '0'),
@@ -678,7 +646,6 @@ package tdc_gpx_pkg is
         rise_chip_error_blank    => (others => '0'),
         fall_chip_error_partial  => (others => '0'),
         fall_chip_error_blank    => (others => '0'),
-        orphan_stop_evt_sticky   => '0',
         bus_fatal_mask           => (others => '0'),
         frame_done_faulted_sticky => '0',
         row_done_faulted_sticky  => '0'
@@ -895,34 +862,6 @@ package body tdc_gpx_pkg is
             end if;
         end loop;
         return result;
-    end function;
-
-    -- ceil(n_stops * cnt_width / 8)
-    function fn_stop_evt_valid_bytes(
-        n_stops   : natural;
-        cnt_width : natural
-    ) return natural is
-    begin
-        return fn_ceil_div(n_stops * cnt_width, 8);
-    end function;
-
-    -- Generate tkeep mask: lower valid_bytes bits set
-    function fn_stop_evt_tkeep(
-        n_stops    : natural;
-        cnt_width  : natural;
-        tkeep_width : natural
-    ) return std_logic_vector is
-        variable v_bytes : natural;
-        variable mask    : std_logic_vector(tkeep_width - 1 downto 0)
-                            := (others => '0');
-    begin
-        v_bytes := fn_stop_evt_valid_bytes(n_stops, cnt_width);
-        for i in 0 to tkeep_width - 1 loop
-            if i < v_bytes then
-                mask(i) := '1';
-            end if;
-        end loop;
-        return mask;
     end function;
 
     -- =========================================================================

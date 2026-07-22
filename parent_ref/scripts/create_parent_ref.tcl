@@ -144,7 +144,7 @@ set rtl_files [list \
     tdc_gpx_csr_chip.vhd \
     tdc_gpx_cmd_arb.vhd \
     tdc_gpx_err_handler.vhd \
-    tdc_gpx_stop_cfg_decode.vhd \
+    tdc_gpx_cfg_image_override.vhd \
     tdc_gpx_reg_rsp_cdc.vhd \
     tdc_gpx_config_ctrl.vhd \
     tdc_gpx_decoder_i_mode.vhd \
@@ -250,9 +250,6 @@ set_property -dict [list CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1] $const_one_1
 set const_zero_4 [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:xlconstant:* const_zero_4]
 set_property -dict [list CONFIG.CONST_WIDTH 4 CONFIG.CONST_VAL 0] $const_zero_4
-set const_ones_4 [create_bd_cell -type ip \
-    -vlnv xilinx.com:ip:xlconstant:* const_ones_4]
-set_property -dict [list CONFIG.CONST_WIDTH 4 CONFIG.CONST_VAL 15] $const_ones_4
 set const_zero_12 [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:xlconstant:* const_zero_12]
 set_property -dict [list CONFIG.CONST_WIDTH 12 CONFIG.CONST_VAL 0] $const_zero_12
@@ -301,16 +298,12 @@ set_property -dict [list \
     CONFIG.g_BUS_READ_PERIOD_MIN_TIME_NS 25 \
     CONFIG.g_BUS_IDLE_STABLE_TIME_NS 20480 \
     CONFIG.g_DRAIN_MARGIN_TIME_NS 1280 \
-    CONFIG.g_STOP_WINDOW_MARGIN_TIME_NS 210 \
     CONFIG.g_ERR_DEBOUNCE_TIME_NS 25 \
     CONFIG.g_ERR_MAX_RETRIES 3 \
     CONFIG.g_CELL_QUARANTINE_MARGIN_TIME_NS 3410 \
     CONFIG.g_CELL_IFIFO2_MARGIN_TIME_NS 1705 \
     CONFIG.g_OEN_MODE DYNAMIC_CONNECTED \
-    CONFIG.g_STREAM_CLK_MODE ASYNC \
-    CONFIG.g_STOP_EVT_DWIDTH 32 \
-    CONFIG.g_STOP_EVT_TUSER_WIDTH 32 \
-    CONFIG.g_FIRE_COUNT_DWIDTH 32] $tdc
+    CONFIG.g_STREAM_CLK_MODE ASYNC] $tdc
 
 # Module-reference bus grouping is inferred from AXI/AXIS signal names. The
 # neutral clock names leave the multi-interface association writable here.
@@ -345,25 +338,15 @@ connect_bd_net [get_bd_pins rst_axis_150/peripheral_aresetn] \
 connect_bd_net [get_bd_pins $ps7/FCLK_CLK2] \
     [get_bd_pins $tdc/i_tdc_clk]
 
-# Upstream laser/echo modules are not part of this first parent timing shell.
-# Keep their interface pins explicit at the module boundary and drive idle
-# values in the BD. Hierarchical module synthesis preserves the TDC core.
+# The upstream laser module is not part of this parent timing shell. Drive its
+# TDC-facing control inputs idle; GPX FIFO status enters on the physical pins.
 connect_bd_net [get_bd_pins $const_zero_1/dout] \
     [get_bd_pins $tdc/i_lsr_valid] \
     [get_bd_pins $tdc/i_shot_start] \
-    [get_bd_pins $tdc/i_stop_tdc] \
-    [get_bd_pins $tdc/i_stop_evt_valid] \
-    [get_bd_pins $tdc/i_fire_count_valid] \
-    [get_bd_pins $tdc/i_fire_count_last]
+    [get_bd_pins $tdc/i_stop_tdc]
 connect_bd_net [get_bd_pins $const_zero_32/dout] \
     [get_bd_pins $tdc/i_lsr_data] \
-    [get_bd_pins $tdc/i_stop_evt_data] \
-    [get_bd_pins $tdc/i_stop_evt_user] \
-    [get_bd_pins $tdc/i_fire_count_data] \
     [get_bd_pins $tdc/i_k_dist_fixed]
-connect_bd_net [get_bd_pins $const_ones_4/dout] \
-    [get_bd_pins $tdc/i_stop_evt_keep] \
-    [get_bd_pins $tdc/i_fire_count_keep]
 connect_bd_net [get_bd_pins $const_zero_16/dout] \
     [get_bd_pins $tdc/i_bin_resolution_ps]
 

@@ -461,14 +461,14 @@ begin
         <= i_status.run_drain_complete_mask;
 
     -- =========================================================================
-    -- [3c] STAT7 source packing (Round 11 Category C + Round 11 items 4/10/14)
+    -- [3c] STAT7 source packing (Round 11 Category C + items 4/14)
     --   [3:0]   reg_timeout_mask
     --   [7:4]   stop_id_error_mask
     --   [10:8]  run_timeout_cause_last
     --   [14:11] quarantine_escape_mask       (Round 11 item 4)
     --   [15]    masked_slope_drop_any        (CHAIN P1, 2026-07-16)
     --   [19:16] rise_face_start_collapsed_count (reduced from 8-bit; wrap-4)
-    --   [23:20] mono_violation_mask          (Round 11 item 10)
+    --   [23:20] reserved, reads as zero
     --   [27:24] fall_face_start_collapsed_count (reduced from 8-bit; wrap-4)
     --   [31:28] init_cfg_coalesced_mask      (Round 11 item 14)
     --
@@ -493,8 +493,8 @@ begin
     s_stat7_src(c_STAT7_MASKED_SLOPE_DROP) <= i_status.masked_slope_drop_any;
     s_stat7_src(c_STAT7_FS_COLL_RISE_HI downto c_STAT7_FS_COLL_RISE_LO)
         <= std_logic_vector(i_status.rise_face_start_collapsed_count(3 downto 0));
-    s_stat7_src(c_STAT7_MONO_MASK_HI downto c_STAT7_MONO_MASK_LO)
-        <= i_status.mono_violation_mask;
+    s_stat7_src(c_STAT7_RESERVED_HI downto c_STAT7_RESERVED_LO)
+        <= (others => '0');
     s_stat7_src(c_STAT7_FS_COLL_FALL_HI downto c_STAT7_FS_COLL_FALL_LO)
         <= std_logic_vector(i_status.fall_face_start_collapsed_count(3 downto 0));
     s_stat7_src(c_STAT7_INIT_COALESCE_HI downto c_STAT7_INIT_COALESCE_LO)

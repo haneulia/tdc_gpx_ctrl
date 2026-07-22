@@ -107,14 +107,6 @@ entity tdc_gpx_chip_run is
         -- "disabled" (fallback to the legacy x"FFFF" cap).
         i_max_range_tdc_clks : in unsigned(15 downto 0);
 
-        -- Deprecated compatibility inputs. Echo-receiver edge counts describe
-        -- activity before the GPX input and are not authoritative IFIFO word
-        -- counts. They are intentionally ignored by the drain FSM and will be
-        -- removed from the hierarchy after interface migration.
-        i_expected_ififo1   : in  unsigned(7 downto 0);
-        i_expected_ififo2   : in  unsigned(7 downto 0);
-        i_expected_final_valid : in std_logic;
-
         -- Bus request (to coordinator mux)
         o_bus_req_valid     : out std_logic;
         o_bus_req_rw        : out std_logic;

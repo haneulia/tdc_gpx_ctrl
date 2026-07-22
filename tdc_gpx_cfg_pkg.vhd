@@ -265,7 +265,7 @@ package tdc_gpx_cfg_pkg is
     --   [14:11] quarantine_escape_mask
     --   [15]    masked_slope_drop_any
     --   [19:16] rise_face_start_collapsed_count low nibble
-    --   [23:20] mono_violation_mask
+    --   [23:20] reserved (reads as zero)
     --   [27:24] fall_face_start_collapsed_count low nibble
     --   [31:28] init_cfg_coalesced_mask
     -- =========================================================================
@@ -281,8 +281,8 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT7_MASKED_SLOPE_DROP : natural := 15;
     constant c_STAT7_FS_COLL_RISE_HI   : natural := 19;
     constant c_STAT7_FS_COLL_RISE_LO   : natural := 16;
-    constant c_STAT7_MONO_MASK_HI      : natural := 23;
-    constant c_STAT7_MONO_MASK_LO      : natural := 20;
+    constant c_STAT7_RESERVED_HI       : natural := 23;
+    constant c_STAT7_RESERVED_LO       : natural := 20;
     constant c_STAT7_FS_COLL_FALL_HI   : natural := 27;
     constant c_STAT7_FS_COLL_FALL_LO   : natural := 24;
     constant c_STAT7_INIT_COALESCE_HI  : natural := 31;

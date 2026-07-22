@@ -30,7 +30,8 @@
 --     tdc_gpx_top.i_stop_tdc.
 --   laser_ctrl_top m_axis (result stream) drives tdc_gpx_top.i_lsr_tvalid /
 --     i_lsr_tdata.
---   echo_receiver_top o_stop_evt_* feeds tdc_gpx_top.i_stop_evt_*.
+--   echo_receiver_top o_stop_evt_* remains a read-only diagnostic stream.
+--   GPX FIFO ownership is observed through EF/LF/IrFlag and bus responses.
 --   A 4-chip behavioral TDC-GPX model (same as tb_tdc_gpx_top_int) fills the
 --   IFIFOs and drives EF / LF / IrFlag pins.
 --
@@ -79,12 +80,7 @@ entity tb_tdc_gpx_full_int is
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : natural := 1;        -- faces per frame
-        -- With the stop_evt path currently tied off in the DUT port map
-        -- (echo_receiver packing mismatch, see R4a notes), default back to
-        -- all four chips active so chip_run uses its EF-based drain
-        -- fallback uniformly. When the per-chip STAT packing is fixed we
-        -- can drop this to "0011" again to stay within the 16-channel
-        -- limit.
+        -- All four behavioral GPX chips are active in the default profile.
         G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
         G_POWERUP_CLKS    : positive := 16;      -- chip_ctrl powerup (short sim)
         G_RECOVERY_CLKS   : positive := 4;
@@ -201,14 +197,13 @@ architecture sim of tb_tdc_gpx_full_int is
         std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
         std_logic_vector(to_unsigned(C_MAX_RANGE_5NS_TICKS, 16));
 
-    -- Output width + stop-event width (for sub-module generic override)
+    -- Output and Echo diagnostic stream widths.
     constant C_OUTPUT_W   : natural := G_TDATA_WIDTH;
     constant C_KEEP_W     : natural := fn_axis_keep_width(C_OUTPUT_W);
-    constant C_STOP_DW    : natural := c_DEFAULT_STOP_EVT_DWIDTH;
+    constant C_STOP_DW    : natural := 32;
+    constant C_STOP_CNT_WIDTH : natural := 4;
 
-    -- Echo-receiver geometry matches tdc_gpx_pkg (c_MAX_CHIPS=4, c_MAX_STOPS=8).
-    -- These are package-level locked constants -- echo_receiver MUST see them
-    -- so the PD vector length and stop_evt packing line up with tdc_gpx_top.
+    -- Echo-receiver geometry for this integration profile.
     constant C_ER_N_STOPS : natural := c_MAX_STOPS_PER_CHIP;
     constant C_PD_WIDTH   : natural := c_MAX_CHIPS * C_ER_N_STOPS;
 
@@ -348,7 +343,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal er_stop_tdata  : std_logic_vector(C_STOP_DW - 1 downto 0);
     signal er_stop_tkeep  : std_logic_vector(C_STOP_DW/8 - 1 downto 0);
     signal er_stop_tuser  : std_logic_vector(C_STOP_DW - 1 downto 0);
-    signal er_stop_tready : std_logic;
+    signal er_stop_tready : std_logic := '1';
     signal er_fire_count_tvalid : std_logic;
     signal er_fire_count_tdata  : std_logic_vector(31 downto 0);
     signal er_fire_count_tkeep  : std_logic_vector(3 downto 0);
@@ -752,7 +747,7 @@ begin
             -- this integration profile consumes the shared logical ABI max.
             g_N_CHIPS         => c_MAX_CHIPS,
             g_STOPS_PER_CHIP  => C_ER_N_STOPS,
-            g_STOP_CNT_WIDTH  => c_STOP_COUNT_FIELD_WIDTH,
+            g_STOP_CNT_WIDTH  => C_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW,
             g_FIRE_COUNT_DWIDTH => 32
         )
@@ -817,9 +812,7 @@ begin
             -- time contract without changing the intended cycle count.
             g_POWERUP_TIME_NS   => (G_POWERUP_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
             g_RECOVERY_TIME_NS  => (G_RECOVERY_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
-            g_ALU_PULSE_TIME_NS => (G_ALU_PULSE_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
-            g_STOP_EVT_DWIDTH => C_STOP_DW,
-            g_FIRE_COUNT_DWIDTH => 32
+            g_ALU_PULSE_TIME_NS => (G_ALU_PULSE_CLKS * 1000) / C_DOMAIN_CLK_MHZ
         )
         port map (
             i_axis_aclk     => clk,
@@ -869,25 +862,6 @@ begin
             i_lsr_tdata       => lc_m_tdata,
             i_shot_start      => td_shot_start_mux,
             i_stop_tdc        => td_stop_tdc_mux,
-            -- NOTE (R4a workaround): echo_receiver packs stop_evt tdata per
-            -- stop (8 stops * 4 bits) while tdc_gpx_top's stop_cfg_decode
-            -- unpacks per chip ([chip3|chip2|chip1|chip0], 8 b each =
-            -- [IFIFO2|IFIFO1]). The two formats are incompatible, and
-            -- forwarding echo_receiver's stream produces only chip-3 drain
-            -- activity under default mask. Until the echo_receiver stop_evt
-            -- packing is reworked, we tie the TDC stop_evt input low so
-            -- chip_run falls back to EF-based drain (all chips symmetric).
-            i_stop_evt_tvalid => '0',
-            i_stop_evt_tdata  => (others => '0'),
-            i_stop_evt_tkeep  => (others => '0'),
-            i_stop_evt_tuser  => (others => '0'),
-            o_stop_evt_tready => er_stop_tready,
-            -- Keep fire_count final disconnected while stop_evt is tied off;
-            -- otherwise every shot would look like a known-zero stop shot.
-            i_fire_count_tvalid => '0',
-            i_fire_count_tdata  => (others => '0'),
-            i_fire_count_tkeep  => (others => '0'),
-            i_fire_count_tlast  => '0',
             io_tdc_d          => io_tdc_d,
             o_tdc_adr         => o_tdc_adr,
             o_tdc_csn         => o_tdc_csn,

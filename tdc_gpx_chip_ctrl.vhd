@@ -125,24 +125,6 @@ entity tdc_gpx_chip_ctrl is
         -- shot deadline arrived before the current shot finished.
         i_stop_tdc          : in  std_logic;
 
-        -- Per-IFIFO expected drain counts (from echo_receiver via tdc_gpx_top)
-        -- CONTRACT:
-        --   - IFIFO1 = stops 0~3 (rise+fall), IFIFO2 = stops 4~7 (rise+fall).
-        --   - Values are CUMULATIVE totals from echo_receiver, overwritten on
-        --     each tvalid. Reset by echo_receiver on new window start.
-        --   - chip_ctrl captures these at IrFlag rising edge (ST_CAPTURE).
-        --     By IrFlag time, MTimer has expired so all stop pulses are final.
-        --   - Max per IFIFO = 4 stops x max_hits x 2 edges (rise+fall).
-        --   - i_expected_final_valid='1' qualifies zero as a known final
-        --     count. If it is '0', both counts 0 keep EF-based fallback.
-        -- Per-chip expected IFIFO drain counts (from echo_receiver via top).
-        -- Each = rise_count + fall_count for that chip's IFIFO.
-        -- Used for burst sizing only (NOT drain completion — that uses EF).
-        -- 0 = EF-based drain fallback (no burst optimization).
-        i_expected_ififo1   : in  unsigned(7 downto 0);
-        i_expected_ififo2   : in  unsigned(7 downto 0);
-        i_expected_final_valid : in std_logic;
-
         -- bus_phy request interface
         o_bus_req_valid     : out std_logic;
         o_bus_req_rw        : out std_logic;          -- '0'=READ, '1'=WRITE
@@ -496,9 +478,6 @@ begin
             -- on the ST_ARMED→ST_CAPTURE edge, so passing the live
             -- value (rather than a coordinator-latched copy) is fine.
             i_max_range_tdc_clks => i_max_range_tdc_clks,
-            i_expected_ififo1   => i_expected_ififo1,
-            i_expected_ififo2   => i_expected_ififo2,
-            i_expected_final_valid => i_expected_final_valid,
             o_bus_req_valid     => s_run_bus_valid,
             o_bus_req_rw        => s_run_bus_rw,
             o_bus_req_addr      => s_run_bus_addr,

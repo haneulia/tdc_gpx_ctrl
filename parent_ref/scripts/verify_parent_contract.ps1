@@ -88,8 +88,6 @@ Assert-ContractValue 'bus_read_period_min_time_ns' `
 Assert-ContractValue 'bus_idle_stable_time_ns' `
     $tdc.parameters.g_BUS_IDLE_STABLE_TIME_NS.value '20480'
 Assert-ContractValue 'drain_margin_time_ns' $tdc.parameters.g_DRAIN_MARGIN_TIME_NS.value '1280'
-Assert-ContractValue 'stop_window_margin_time_ns' `
-    $tdc.parameters.g_STOP_WINDOW_MARGIN_TIME_NS.value '210'
 Assert-ContractValue 'err_debounce_time_ns' $tdc.parameters.g_ERR_DEBOUNCE_TIME_NS.value '25'
 Assert-ContractValue 'err_max_retries' $tdc.parameters.g_ERR_MAX_RETRIES.value '3'
 Assert-ContractValue 'cell_quarantine_margin_time_ns' `
@@ -97,10 +95,6 @@ Assert-ContractValue 'cell_quarantine_margin_time_ns' `
 Assert-ContractValue 'cell_ififo2_margin_time_ns' `
     $tdc.parameters.g_CELL_IFIFO2_MARGIN_TIME_NS.value '1705'
 Assert-ContractValue 'oen_mode' $tdc.parameters.g_OEN_MODE.value 'DYNAMIC_CONNECTED'
-Assert-ContractValue 'stop_event_data_width' $tdc.parameters.g_STOP_EVT_DWIDTH.value '32'
-Assert-ContractValue 'stop_event_user_width' $tdc.parameters.g_STOP_EVT_TUSER_WIDTH.value '32'
-Assert-ContractValue 'fire_count_data_width' $tdc.parameters.g_FIRE_COUNT_DWIDTH.value '32'
-
 foreach ($lane in @('m_axis', 'm_axis_fall')) {
     Assert-ContractValue "$lane.bytes_per_beat" $tdc.interface_ports.$lane.parameters.TDATA_NUM_BYTES.value '4'
     Assert-ContractValue "$lane.freq_hz" $tdc.interface_ports.$lane.parameters.FREQ_HZ.value '150000000'

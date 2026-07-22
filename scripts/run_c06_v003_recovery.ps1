@@ -43,13 +43,7 @@ function Assert-SoftResetProbe {
         Write-Host "soft_reset recovery PASS: $Log"
         return
     }
-    if (Select-String -Path $Log -Pattern "IFIFO1 expected-count drain mismatch" -Quiet) {
-        if (Select-String -Path $Log -Pattern "face_seq: cmd_start pending-latched \(pipeline busy\)" -Quiet) {
-            Write-Host "soft_reset recovery remains OPEN as expected for v003 probe: $Log"
-            return
-        }
-    }
-    throw "soft_reset probe ended in an unexpected state: $Log"
+    throw "soft_reset recovery did not reach the required PASS state: $Log"
 }
 
 function Invoke-Xelab {

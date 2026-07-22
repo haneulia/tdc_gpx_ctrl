@@ -15,9 +15,9 @@
 -- Test scenarios:
 --   [1] Powerup + cfg_write + master_reset sequence
 --   [2] Arm -> shot_start -> IrFlag -> Legacy drain (drain_mode='0')
---   [2b] EF-authoritative drain with external count absent
---   [2c] Empty GPX FIFOs complete cleanly with an external zero hint
---   [2d] External zero hint cannot suppress a physical GPX FIFO drain
+--   [2b] Repeated EF-authoritative nominal drain
+--   [2c] Empty GPX FIFOs complete without issuing a read
+--   [2d] Physical GPX contents alone determine the drain length
 --   [3] Arm -> shot_start -> IrFlag -> Burst drain (drain_mode='1')
 --   [4] n_drain_cap enforcement (per-IFIFO cap=n×4, e.g. cap=2 -> max 8/IFIFO)
 --   [5] Soft reset recovery
@@ -29,7 +29,7 @@
 --   [16a] No-backpressure first-data latency measurement
 --   [16b] Bounded raw AXI backpressure with T1a/T1b split timing
 --   [16c] Raw FIFO reserve-threshold backpressure (no data/control loss)
---   [17] External edge-count mismatch cannot alter EF-authoritative drain
+--   [17] Short asymmetric GPX drain completes without an empty read
 --   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
 --   [20] Forced pending response trips the secondary deadlock watchdog.
@@ -198,10 +198,6 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_err_bus_fatal      : std_logic;
     signal s_run_timeout        : std_logic;
     signal s_run_timeout_cause  : std_logic_vector(2 downto 0);
-    signal s_expected_ififo1    : unsigned(7 downto 0) := (others => '0');
-    signal s_expected_ififo2    : unsigned(7 downto 0) := (others => '0');
-    signal s_expected_final_valid : std_logic := '0';
-
     -- =========================================================================
     -- TDC-GPX Chip Model: FIFO state
     -- All fill/counter signals driven exclusively by p_chip_model.
@@ -326,9 +322,6 @@ begin
             i_max_range_tdc_clks => fn_range_5ns_ticks_to_clks(
                 s_cfg.max_range_5ns_ticks, 200),
             i_stop_tdc          => s_stop_tdc,
-            i_expected_ififo1   => s_expected_ififo1,
-            i_expected_ififo2   => s_expected_ififo2,
-            i_expected_final_valid => s_expected_final_valid,
             o_bus_req_valid     => s_bus_req_valid,
             o_bus_req_rw        => s_bus_req_rw,
             o_bus_req_addr      => s_bus_req_addr,
@@ -782,55 +775,11 @@ begin
             tb_wait_sig_value(s_clk, s_ctrl_busy, '0', timeout, found);
         end procedure;
 
-        procedure set_expected_unknown is
-        begin
-            s_expected_ififo1 <= (others => '0');
-            s_expected_ififo2 <= (others => '0');
-            s_expected_final_valid <= '0';
-        end procedure;
-
-        procedure set_expected_counts(n1 : natural; n2 : natural) is
-        begin
-            s_expected_ififo1 <= to_unsigned(n1, s_expected_ififo1'length);
-            s_expected_ififo2 <= to_unsigned(n2, s_expected_ififo2'length);
-            s_expected_final_valid <= '1';
-        end procedure;
-
-        -- Fill both FIFOs and publish a compatibility edge-count hint.
+        -- Fill both behavioral GPX FIFOs.
         procedure fill_fifos(n1 : natural; n2 : natural) is
         begin
-            set_expected_counts(n1, n2);
             s_fifo_load_n1  <= n1;
             s_fifo_load_n2  <= n2;
-            s_fifo_load_req <= '1';
-            wait_clk(2);
-            s_fifo_load_req <= '0';
-        end procedure;
-
-        -- Fill FIFOs while modeling an absent echo_receiver. EF remains the
-        -- only completion source regardless of the compatibility hint.
-        procedure fill_fifos_unknown(n1 : natural; n2 : natural) is
-        begin
-            set_expected_unknown;
-            s_fifo_load_n1  <= n1;
-            s_fifo_load_n2  <= n2;
-            s_fifo_load_req <= '1';
-            wait_clk(2);
-            s_fifo_load_req <= '0';
-        end procedure;
-
-        -- Load actual IFIFO fill while publishing a deliberately different
-        -- external edge-count hint. Used to prove the hint has no drain effect.
-        procedure fill_fifos_with_expected(
-            actual1 : natural;
-            actual2 : natural;
-            expected1 : natural;
-            expected2 : natural
-        ) is
-        begin
-            set_expected_counts(expected1, expected2);
-            s_fifo_load_n1  <= actual1;
-            s_fifo_load_n2  <= actual2;
             s_fifo_load_req <= '1';
             wait_clk(2);
             s_fifo_load_req <= '0';
@@ -903,7 +852,6 @@ begin
 
         if g_NEGATIVE_MODE = 1 then
             pr_info("[N1] NEGATIVE: forced empty IFIFO read monitor");
-            set_expected_unknown;
             fill_fifos(0, 0);
             wait_clk(5);
 
@@ -1000,14 +948,12 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [2b] EF-authoritative drain when the external count is absent
-        --   Use the same nominal 28/28 physical FIFO load and leave the
-        --   compatibility hint invalid.
+        -- [2b] Repeated EF-authoritative nominal drain
         -- =============================================================
-        pr_info("[2b] EF-authoritative drain (external count absent)");
+        pr_info("[2b] Repeated EF-authoritative nominal drain");
 
         s_cfg.drain_mode <= '0';
-        fill_fifos_unknown(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -1044,13 +990,12 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [2c] Empty GPX FIFOs complete cleanly with an external zero hint
-        --   The hint happens to agree, but EF alone proves completion.
+        -- [2c] Empty GPX FIFOs complete without issuing a read
         -- =============================================================
-        pr_info("[2c] Empty GPX FIFOs complete cleanly with zero hint");
+        pr_info("[2c] Empty GPX FIFOs complete without a read");
 
         s_cfg.drain_mode <= '0';
-        fill_fifos_with_expected(0, 0, 0, 0);
+        fill_fifos(0, 0);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -1092,14 +1037,12 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [2d] External zero hint cannot suppress GPX FIFO drain
-        --   Publish expected=0/0 while the behavioral FIFO is deliberately
-        --   non-empty. EF remains authoritative, so every word must drain.
+        -- [2d] Physical GPX contents alone determine the drain length
         -- =============================================================
-        pr_info("[2d] External zero hint cannot suppress EF drain");
+        pr_info("[2d] Physical GPX contents determine drain length");
 
         s_cfg.drain_mode <= '0';
-        fill_fifos_with_expected(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS, 0, 0);
+        fill_fifos(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -1119,7 +1062,7 @@ begin
             pr_fail("[2d] drain_done timeout", v_fail);
         else
             v_drain_done_cycle := s_clk_cnt;
-            pr_pass("[2d] zero-hint mismatch latency measured: output_done="
+            pr_pass("[2d] physical drain latency measured: output_done="
                     & nat_img(v_drain_done_cycle - v_t0_cycle) & "clk");
             wait_clk(1);
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
@@ -1132,9 +1075,9 @@ begin
             end if;
 
             if s_raw_faulted_ctrl_cnt = v_faulted_snap then
-                pr_pass("[2d] external count mismatch did not fault GPX drain");
+                pr_pass("[2d] full physical drain completed without a fault");
             else
-                pr_fail("[2d] external count incorrectly faulted GPX drain", v_fail);
+                pr_fail("[2d] physical EF drain incorrectly faulted", v_fail);
             end if;
         end if;
 
@@ -2308,14 +2251,14 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [17] External edge-count mismatch is not IFIFO authority
+        -- [17] Short asymmetric GPX drain
         -- =============================================================
-        pr_info("[17] External edge-count mismatch cannot alter GPX drain");
+        pr_info("[17] Short asymmetric GPX drain");
 
         s_cfg.drain_mode  <= '0';
         s_cfg.n_drain_cap <= (others => '0');
         s_raw_axis_tready <= '1';
-        fill_fifos_with_expected(2, 0, 4, 1);
+        fill_fifos(2, 0);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -2329,7 +2272,7 @@ begin
         wait_drain_done(c_TIMEOUT, v_found);
 
         if not v_found then
-            pr_fail("[17] drain_done timeout for external-count mismatch", v_fail);
+            pr_fail("[17] drain_done timeout for short asymmetric FIFO", v_fail);
         else
             wait_clk(1);
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
@@ -2341,9 +2284,9 @@ begin
             end if;
 
             if s_raw_faulted_ctrl_cnt = v_faulted_snap then
-                pr_pass("[17] mismatched external count remained diagnostic-only");
+                pr_pass("[17] short asymmetric drain remained clean");
             else
-                pr_fail("[17] external count incorrectly faulted the drain", v_fail);
+                pr_fail("[17] short asymmetric drain incorrectly faulted", v_fail);
             end if;
         end if;
 
@@ -2402,7 +2345,7 @@ begin
 
         s_cfg.drain_mode <= '0';
         s_raw_axis_tready <= '1';
-        fill_fifos_with_expected(0, 0, 0, 0);
+        fill_fifos(0, 0);
         wait_clk(5);
 
         pulse(s_shot_start);
@@ -2460,7 +2403,7 @@ begin
         s_cfg.drain_mode  <= '1';
         s_cfg.n_drain_cap <= (others => '0');
         s_raw_axis_tready <= '1';
-        fill_fifos_with_expected(1, 0, 1, 0);
+        fill_fifos(1, 0);
         wait_clk(5);
 
         pulse(s_cmd_start);

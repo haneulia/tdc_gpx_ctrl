@@ -124,7 +124,6 @@ begin
         check_time_ns(c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, 150, 4);
         check_time_ns(c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, 200, 5);
 
-        check_time_ns(c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS, 150, 32);
         check_time_ns(c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS, 150, 512);
         check_time_ns(c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS, 150, 256);
         check_time_ps(c_TDC_EF_DATA_VALID_MAX_PS,  50, 1);

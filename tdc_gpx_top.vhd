@@ -9,7 +9,7 @@
 --   small control, geometry, snapshot, and sticky-status processes.
 --
 --   [1] csr_pipeline    : Pipeline CSR (AXI4-Lite #2, 7-bit address)
---   [2] config_ctrl     : Cluster 1 - Chip CSR + cmd_arb + stop_cfg_decode +
+--   [2] config_ctrl     : Cluster 1 - Chip CSR + cmd_arb + cfg override +
 --                         bus_phy x4 + chip_ctrl x4 + skid buffers
 --   [3] decode_pipe     : Cluster 2 - decoder_i_mode + raw_event_builder + skids
 --   [4] cell_pipe       : Cluster 3 - slope demux + one rising builder per
@@ -76,17 +76,12 @@ entity tdc_gpx_top is
         g_BUS_READ_PERIOD_MIN_TIME_NS : positive := c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS;
         g_BUS_IDLE_STABLE_TIME_NS     : positive := c_DEFAULT_BUS_IDLE_STABLE_TIME_NS;
         g_DRAIN_MARGIN_TIME_NS        : positive := c_DEFAULT_DRAIN_MARGIN_TIME_NS;
-        g_STOP_WINDOW_MARGIN_TIME_NS  : positive := c_DEFAULT_STOP_WINDOW_MARGIN_TIME_NS;
         g_ERR_DEBOUNCE_TIME_NS        : positive := c_DEFAULT_ERR_DEBOUNCE_TIME_NS;
         g_ERR_MAX_RETRIES             : positive := c_DEFAULT_ERR_MAX_RETRIES;
         g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS;
         g_CELL_IFIFO2_MARGIN_TIME_NS  : positive := c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS;
         g_OEN_MODE        : string   := c_DEFAULT_OEN_MODE;
-        g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE;
-        -- Stop event AXI-Stream interface parameters
-        g_STOP_EVT_DWIDTH : positive := c_DEFAULT_STOP_EVT_DWIDTH;
-        g_STOP_EVT_TUSER_WIDTH : positive := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
-        g_FIRE_COUNT_DWIDTH : positive := c_DEFAULT_FIRE_COUNT_DWIDTH
+        g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE
     );
     port (
         -- Processing / AXI-Stream clock and reset (g_AXIS_CLK_MHZ)
@@ -153,20 +148,6 @@ entity tdc_gpx_top is
 
         -- Stop TDC pulse (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         i_stop_tdc        : in  std_logic;
-
-        -- Stop event AXI Stream slave (from echo_receiver, i_axis_aclk domain)
-        i_stop_evt_tvalid : in  std_logic;
-        i_stop_evt_tdata  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
-        i_stop_evt_tkeep  : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
-        i_stop_evt_tuser  : in  std_logic_vector(g_STOP_EVT_TUSER_WIDTH - 1 downto 0);
-        o_stop_evt_tready : out std_logic;
-
-        -- Fire-count sideband/final stream from echo_receiver.
-        -- tlast='1' marks expected count final, including known zero-stop.
-        i_fire_count_tvalid : in  std_logic;
-        i_fire_count_tdata  : in  std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
-        i_fire_count_tkeep  : in  std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
-        i_fire_count_tlast  : in  std_logic;
 
         -- TDC-GPX physical pins. The two buses are flattened as contiguous
         -- physical lanes for Vivado/IP Integrator compatibility.
@@ -325,8 +306,6 @@ architecture rtl of tdc_gpx_top is
     constant c_TDC_EF_SYNC_GUARD_CLKS : positive :=
         fn_time_ps_to_clks_ceil(c_TDC_EF_DATA_VALID_MAX_PS, g_TDC_CLK_MHZ)
         + c_TDC_STATUS_SYNC_CLKS;
-    constant c_AXIS_STOP_WINDOW_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
-        g_STOP_WINDOW_MARGIN_TIME_NS, g_AXIS_CLK_MHZ);
     constant c_AXIS_ERR_DEBOUNCE_CLKS : positive := fn_time_ns_to_clks_ceil(
         g_ERR_DEBOUNCE_TIME_NS, g_AXIS_CLK_MHZ);
     constant c_AXIS_CELL_QUARANTINE_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
@@ -470,7 +449,6 @@ architecture rtl of tdc_gpx_top is
     signal s_face_id_r              : unsigned(7 downto 0);
     signal s_frame_id_r             : unsigned(31 downto 0);
     signal s_global_shot_seq_r      : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
-    signal s_face_shot_count_r      : unsigned(15 downto 0);
     signal s_face_active_mask_r     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_face_rise_mask         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_face_fall_mask         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
@@ -529,9 +507,6 @@ architecture rtl of tdc_gpx_top is
     signal s_shot_overrun_count_fall : unsigned(7 downto 0);
     -- Round 11 C: Category C observability surface
     signal s_reg_timeout_mask        : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
-    -- Round 11 item 10: per-chip stop_cfg_decode monotonic violation sticky
-    signal s_mono_violation_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
-    signal s_orphan_stop_evt_sticky  : std_logic;  -- Round 12 #16
     -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
     signal s_init_cfg_coalesced_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
@@ -668,20 +643,6 @@ begin
         report "tdc_gpx_top: g_OUTPUT_WIDTH must be 32, 64, or 128 for canonical VDMA packing"
         severity failure;
 
-    assert g_STOP_EVT_DWIDTH >= c_MAX_CHIPS * 8
-        and g_STOP_EVT_DWIDTH mod 8 = 0
-        report "tdc_gpx_top: g_STOP_EVT_DWIDTH must cover 8 bits/chip and be byte aligned"
-        severity failure;
-
-    assert g_STOP_EVT_TUSER_WIDTH >= c_MAX_CHIPS * 8
-        report "tdc_gpx_top: g_STOP_EVT_TUSER_WIDTH must cover 8 bits/chip"
-        severity failure;
-
-    assert g_FIRE_COUNT_DWIDTH >= 16
-        and g_FIRE_COUNT_DWIDTH mod 8 = 0
-        report "tdc_gpx_top: g_FIRE_COUNT_DWIDTH must be at least 16 bits and byte aligned"
-        severity failure;
-
     assert g_OEN_MODE = "DYNAMIC_CONNECTED"
         or g_OEN_MODE = "PULLUP_OR_NOT_CONNECTED"
         report "tdc_gpx_top: g_OEN_MODE must be DYNAMIC_CONNECTED or PULLUP_OR_NOT_CONNECTED"
@@ -723,8 +684,7 @@ begin
         report "tdc_gpx_top: bus idle-stable timing exceeds its 24-bit counter"
         severity failure;
 
-    assert c_AXIS_STOP_WINDOW_MARGIN_CLKS <= 65535
-        and c_AXIS_CELL_QUARANTINE_MARGIN_CLKS <= 65535
+    assert c_AXIS_CELL_QUARANTINE_MARGIN_CLKS <= 65535
         and c_AXIS_CELL_IFIFO2_MARGIN_CLKS <= 65535
         report "tdc_gpx_top: AXIS-domain physical timing exceeds a 16-bit watchdog margin"
         severity failure;
@@ -815,13 +775,9 @@ begin
             g_BUS_IDLE_STABLE_CLKS => c_TDC_BUS_IDLE_STABLE_CLKS,
             g_DRAIN_MARGIN_CLKS => c_TDC_DRAIN_MARGIN_CLKS,
             g_EF_SYNC_GUARD_CLKS => c_TDC_EF_SYNC_GUARD_CLKS,
-            g_STOP_WINDOW_MARGIN_CLKS => c_AXIS_STOP_WINDOW_MARGIN_CLKS,
             g_ERR_DEBOUNCE_CLKS => c_AXIS_ERR_DEBOUNCE_CLKS,
             g_ERR_MAX_RETRIES => g_ERR_MAX_RETRIES,
             g_STREAM_CLK_MODE => g_STREAM_CLK_MODE,
-            g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
-            g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
-            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH,
             g_PRESENT_CHIP_MASK => g_PRESENT_CHIP_MASK,
             g_RISE_CHIP_MASK => g_RISE_CHIP_MASK,
             g_FALL_CHIP_MASK => g_FALL_CHIP_MASK,
@@ -869,16 +825,6 @@ begin
             i_tdc_lf2            => i_tdc_lf2,
             i_tdc_irflag         => i_tdc_irflag,
             i_tdc_errflag        => i_tdc_errflag,
-            -- Stop event stream
-            i_stop_evt_tvalid    => i_stop_evt_tvalid,
-            i_stop_evt_tdata     => i_stop_evt_tdata,
-            i_stop_evt_tkeep     => i_stop_evt_tkeep,
-            i_stop_evt_tuser     => i_stop_evt_tuser,
-            o_stop_evt_tready    => o_stop_evt_tready,
-            i_fire_count_tvalid  => i_fire_count_tvalid,
-            i_fire_count_tdata   => i_fire_count_tdata,
-            i_fire_count_tkeep   => i_fire_count_tkeep,
-            i_fire_count_tlast   => i_fire_count_tlast,
             i_stop_tdc           => i_stop_tdc,
             -- Control inputs
             i_cmd_start          => s_cmd_start,
@@ -890,7 +836,6 @@ begin
             i_err_soft_clear     => s_err_soft_clear,
             i_shot_start_per_chip => s_shot_start_per_chip,
             i_shot_start_gated   => s_shot_start_gated,
-            i_current_fire_count => s_face_shot_count_r,
             i_cfg_pipeline       => s_cfg_pipeline,
             -- Cluster 4 idle inputs (for cmd_arb)
             i_face_asm_idle      => s_face_asm_idle,
@@ -941,10 +886,6 @@ begin
             -- Round 11 C: Category C observability surface
             o_reg_timeout_mask   => s_reg_timeout_mask,
             o_run_timeout_cause  => s_run_timeout_cause_last,
-            -- Round 11 item 10: stop_cfg_decode monotonic violation sticky
-            o_mono_violation_mask => s_mono_violation_mask,
-            -- Round 12 #16: stop_cfg_decode orphan-event sticky
-            o_orphan_stop_evt_sticky => s_orphan_stop_evt_sticky,
             -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
             o_init_cfg_coalesced_mask => s_init_cfg_coalesced_mask,
             -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky
@@ -1264,7 +1205,7 @@ begin
             o_face_id              => s_face_id_r,
             o_frame_id             => s_frame_id_r,
             o_global_shot_seq      => s_global_shot_seq_r,
-            o_face_shot_count      => s_face_shot_count_r,
+            o_face_shot_count      => open,
             o_frame_abort_cnt      => s_frame_abort_cnt_r,
             o_frame_done_both      => s_frame_done_both,
             o_face_active_mask     => s_face_active_mask_r,
@@ -1405,8 +1346,6 @@ begin
     end process p_quarantine_escape_mask;
     s_status.quarantine_escape_mask <= s_quarantine_escape_mask_r;
 
-    -- Round 11 item 10: stop_cfg_decode monotonic violation sticky
-    s_status.mono_violation_mask <= s_mono_violation_mask;
     -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky
     s_status.init_cfg_coalesced_mask <= s_init_cfg_coalesced_mask;
     -- Round 11 item 15: per-chip shot_flush_drop mask (OR of rise+fall slopes)
@@ -1427,8 +1366,6 @@ begin
     s_status.rise_chip_error_blank   <= s_chip_error_blank_rise;
     s_status.fall_chip_error_partial <= s_chip_error_partial_fall;
     s_status.fall_chip_error_blank   <= s_chip_error_blank_fall;
-    -- Round 12 #16: stop_cfg_decode orphan-event sticky
-    s_status.orphan_stop_evt_sticky <= s_orphan_stop_evt_sticky;
     -- Round 13 axis 2: bus fatal sticky — mask and OR-folded into err_fatal
     s_status.bus_fatal_mask <= s_err_bus_fatal_mask;
 

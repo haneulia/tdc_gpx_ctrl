@@ -36,9 +36,8 @@
 --   * Targets Xilinx xsim (VHDL-2008).
 --   * Extends tb_tdc_gpx_chip_ctrl's behavioral chip model (FIFO fill, EF/LF,
 --     IrFlag) to an array of 4 chips.
---   * Drives the legacy stop_evt/fire_count ports with a deliberately stale
---     edge-count hint. The physical IFIFO contains one additional word; the
---     test proves that GPX EF, not the external hint, owns drain completion.
+--   * Loads the behavioral GPX FIFOs directly. Drain length is determined by
+--     the GPX EF pins and accepted read responses only.
 --   * AXI-Lite writes are driven by px_axi_lite_writer from px_utility_pkg.
 --   * ALL comments and text output are ASCII only (xsim rejects non-graphic
 --     literals; also keeps the source encoding-agnostic for any editor).
@@ -95,8 +94,7 @@ entity tb_tdc_gpx_top_int is
         --   3: write range max_hits after first packet_start; face0 keeps old
         --      value, later faces can use the new value after CDC settle
         G_MAX_HITS_WRITE_MODE : natural := 1;
-        -- All 4 chips active by default (top_int has no echo_receiver, so
-        -- the 16-channel STAT packing limit does not apply).
+        -- All 4 physical GPX chips are active by default.
         G_ACTIVE_CHIP_MASK: std_logic_vector(3 downto 0) := "1111";
         -- Bit i = 1 drives chip i raw events as rising slope; bit i = 0
         -- drives falling slope. Target 4-chip split is "0011":
@@ -219,7 +217,6 @@ architecture sim of tb_tdc_gpx_top_int is
     -- TDC sub-module generic override values
     constant C_OUTPUT_W     : natural := G_TDATA_WIDTH;
     constant C_KEEP_W       : natural := fn_axis_keep_width(C_OUTPUT_W);
-    constant C_STOP_DW      : natural := c_DEFAULT_STOP_EVT_DWIDTH;
 
     -- Chip model fixed
     constant C_FIFO_DEPTH   : natural := 32;
@@ -342,7 +339,7 @@ architecture sim of tb_tdc_gpx_top_int is
         end if;
     end function;
 
-    function fn_expected_words_per_ififo(
+    function fn_model_words_per_ififo(
         stops_per_chip : natural;
         echoes_per_stop : natural
     ) return natural is
@@ -480,19 +477,6 @@ architecture sim of tb_tdc_gpx_top_int is
     signal i_tdc_lf2        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal i_tdc_irflag     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal i_tdc_errflag    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
-
-    -- =========================================================================
-    -- Stop event AXI Stream (expected-count contract driver)
-    -- =========================================================================
-    signal stp_tvalid : std_logic := '0';
-    signal stp_tdata  : std_logic_vector(C_STOP_DW - 1 downto 0) := (others => '0');
-    signal stp_tkeep  : std_logic_vector(C_STOP_DW/8 - 1 downto 0) := (others => '0');
-    signal stp_tuser  : std_logic_vector(C_STOP_DW - 1 downto 0) := (others => '0');
-    signal stp_tready : std_logic;
-    signal fire_count_tvalid : std_logic := '0';
-    signal fire_count_tdata  : std_logic_vector(31 downto 0) := (others => '0');
-    signal fire_count_tkeep  : std_logic_vector(3 downto 0) := (others => '0');
-    signal fire_count_tlast  : std_logic := '0';
 
     -- =========================================================================
     -- VDMA AXI-Stream master (rising / falling) - sink holds tready='1'
@@ -644,8 +628,8 @@ architecture sim of tb_tdc_gpx_top_int is
         C_RISE_ACTIVE_CHIPS * C_EFFECTIVE_STOPS_PER_CHIP * C_CANONICAL_WORDS_PER_CELL;
     constant C_FALL_DATA_WORDS : natural :=
         C_FALL_ACTIVE_CHIPS * C_EFFECTIVE_STOPS_PER_CHIP * C_CANONICAL_WORDS_PER_CELL;
-    constant C_EXPECTED_WORDS_PER_IFIFO : natural :=
-        fn_expected_words_per_ififo(C_EFFECTIVE_STOPS_PER_CHIP, G_ECHOES_PER_STOP);
+    constant C_MODEL_WORDS_PER_IFIFO : natural :=
+        fn_model_words_per_ififo(C_EFFECTIVE_STOPS_PER_CHIP, G_ECHOES_PER_STOP);
     constant C_BUILD_MAX_ROWS : natural :=
         fn_count_ones(G_PRESENT_CHIP_MASK) * G_BUILD_MAX_STOPS_PER_CHIP;
     constant C_BUILD_CELL_BYTES : natural :=
@@ -983,8 +967,7 @@ begin
             g_POWERUP_TIME_NS   => (G_POWERUP_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
             g_RECOVERY_TIME_NS  => (G_RECOVERY_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
             g_ALU_PULSE_TIME_NS => (G_ALU_PULSE_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
-            g_STREAM_CLK_MODE => G_STREAM_CLK_MODE,
-            g_STOP_EVT_DWIDTH => C_STOP_DW
+            g_STREAM_CLK_MODE => G_STREAM_CLK_MODE
         )
         port map (
             -- AXIS/AXI-Lite and TDC clocks may run at different rates.
@@ -1039,16 +1022,6 @@ begin
             -- laser_ctrl pulses
             i_shot_start => lc_start_tdc,
             i_stop_tdc   => lc_stop_tdc,
-            -- Stop event stream (unused; sink tready only)
-            i_stop_evt_tvalid => stp_tvalid,
-            i_stop_evt_tdata  => stp_tdata,
-            i_stop_evt_tkeep  => stp_tkeep,
-            i_stop_evt_tuser  => stp_tuser,
-            o_stop_evt_tready => stp_tready,
-            i_fire_count_tvalid => fire_count_tvalid,
-            i_fire_count_tdata  => fire_count_tdata,
-            i_fire_count_tkeep  => fire_count_tkeep,
-            i_fire_count_tlast  => fire_count_tlast,
             -- TDC physical pins
             io_tdc_d         => io_tdc_d,
             o_tdc_adr        => p_o_tdc_adr,
@@ -1536,109 +1509,18 @@ begin
         end procedure;
 
         ----------------------------------------------------------------
-        -- Emit one per-chip expected-count update and its final qualifier.
-        -- Layout follows tdc_gpx_pkg.vhd:
-        --   tdata[chip*8+3:chip*8]   = IFIFO1 running total
-        --   tdata[chip*8+7:chip*8+4] = IFIFO2 running total
-        -- tuser is kept zero, so stop_cfg_decode observes exactly tdata.
-        ----------------------------------------------------------------
-        procedure emit_expected_counts(shot_count : natural;
-                                       ififo1_cnt : natural;
-                                       ififo2_cnt : natural) is
-            variable v_data : std_logic_vector(C_STOP_DW - 1 downto 0);
-            variable v_user : std_logic_vector(C_STOP_DW - 1 downto 0);
-            variable v_lo   : natural;
-            variable v_data_nib1 : natural;
-            variable v_user_nib1 : natural;
-            variable v_data_nib2 : natural;
-            variable v_user_nib2 : natural;
-        begin
-            assert ififo1_cnt <= 30 and ififo2_cnt <= 30
-                report "tb_tdc_gpx_top_int: expected-count field overflow"
-                severity failure;
-
-            v_data := (others => '0');
-            v_user := (others => '0');
-            if ififo1_cnt > 15 then
-                v_data_nib1 := 15;
-            else
-                v_data_nib1 := ififo1_cnt;
-            end if;
-            v_user_nib1 := ififo1_cnt - v_data_nib1;
-
-            if ififo2_cnt > 15 then
-                v_data_nib2 := 15;
-            else
-                v_data_nib2 := ififo2_cnt;
-            end if;
-            v_user_nib2 := ififo2_cnt - v_data_nib2;
-
-            for i in 0 to c_MAX_CHIPS - 1 loop
-                v_lo := i * 8;
-                if C_EFFECTIVE_ACTIVE_MASK(i) = '1' then
-                    v_data(v_lo + 3 downto v_lo) :=
-                        std_logic_vector(to_unsigned(v_data_nib1, 4));
-                    v_user(v_lo + 3 downto v_lo) :=
-                        std_logic_vector(to_unsigned(v_user_nib1, 4));
-                    v_data(v_lo + 7 downto v_lo + 4) :=
-                        std_logic_vector(to_unsigned(v_data_nib2, 4));
-                    v_user(v_lo + 7 downto v_lo + 4) :=
-                        std_logic_vector(to_unsigned(v_user_nib2, 4));
-                end if;
-            end loop;
-
-            wait until rising_edge(clk);
-            stp_tdata  <= v_data;
-            stp_tuser  <= v_user;
-            stp_tkeep  <= (others => '1');
-            stp_tvalid <= '1';
-            fire_count_tdata  <= std_logic_vector(to_unsigned(shot_count, 32));
-            fire_count_tkeep  <= (others => '1');
-            fire_count_tlast  <= '0';
-            fire_count_tvalid <= '1';
-
-            wait until rising_edge(clk);
-            assert stp_tready = '1'
-                report "tb_tdc_gpx_top_int: stop_evt_tready was not asserted"
-                severity failure;
-            stp_tvalid <= '0';
-            stp_tdata  <= (others => '0');
-            stp_tuser  <= (others => '0');
-            stp_tkeep  <= (others => '0');
-            fire_count_tvalid <= '0';
-
-            wait until rising_edge(clk);
-            fire_count_tdata  <= std_logic_vector(to_unsigned(shot_count, 32));
-            fire_count_tkeep  <= (others => '1');
-            fire_count_tlast  <= '1';
-            fire_count_tvalid <= '1';
-            pl("C06_MARKER T1_FIRE_COUNT_FINAL shot="
-               & integer'image(shot_count)
-               & " cycle=" & integer'image(sim_cycle)
-               & " time=" & time'image(now));
-
-            wait until rising_edge(clk);
-            fire_count_tvalid <= '0';
-            fire_count_tlast  <= '0';
-            fire_count_tkeep  <= (others => '0');
-            fire_count_tdata  <= (others => '0');
-        end procedure;
-
-        ----------------------------------------------------------------
         -- One I-Mode single-measurement shot
         --   1) i_shot_start (start_tdc) pulse
-        --   2) Preload physical IFIFO with external_hint+1 words
-        --   3) Emit a deliberately stale external edge-count hint
-        --   4) Assert IrFlag (emulates MTimer expiry)
-        --   5) Wait for EF-authoritative drain
-        --   6) Deassert IrFlag and assert all physical words were read
+        --   2) Preload each physical IFIFO
+        --   3) Assert IrFlag (emulates MTimer expiry)
+        --   4) Wait for EF-authoritative drain
+        --   5) Deassert IrFlag and assert all physical words were read
         ----------------------------------------------------------------
-        procedure do_shot(shot_count : natural; expected_hits : natural; tag : string) is
-            constant c_PHYSICAL_HITS : natural := expected_hits + 1;
+        procedure do_shot(shot_count : natural; base_fifo_words : natural; tag : string) is
+            constant c_PHYSICAL_HITS : natural := base_fifo_words + 1;
         begin
-            pl("  ---- shot [" & tag & "] start, expected="
-               & integer'image(expected_hits)
-               & " physical=" & integer'image(c_PHYSICAL_HITS));
+            pl("  ---- shot [" & tag & "] start, physical_words="
+               & integer'image(c_PHYSICAL_HITS));
 
             -- start_tdc (= i_shot_start), emulating laser_ctrl.o_start_tdc
             pl("C06_MARKER T0_START_TDC shot="
@@ -1649,15 +1531,12 @@ begin
             wait_clk(1);
             lc_start_tdc <= '0';
 
-            -- Preload IFIFO above the external hint. Correct RTL must read the
-            -- extra GPX-owned word and leave both IFIFOs empty.
+            -- The extra word keeps this regression sensitive to an early
+            -- fixed-count termination accidentally being reintroduced.
             wait_clk(4);
             load_all_fifos(c_PHYSICAL_HITS, c_PHYSICAL_HITS);
 
-            emit_expected_counts(shot_count, expected_hits, expected_hits);
-
-            -- Let the deprecated tuple cross its compatibility CDC. It must
-            -- not affect the following GPX drain.
+            -- Hold capture long enough for the behavioral GPX inputs to settle.
             wait_clk(80);
 
             -- Assert IrFlag after a few clk (MTimer expiry emulation)
@@ -1740,7 +1619,7 @@ begin
             for f in 0 to G_N_FACES - 1 loop
                 for c in 0 to G_COLS_PER_FACE - 1 loop
                     do_shot(c + 1,
-                            C_EXPECTED_WORDS_PER_IFIFO,
+                            C_MODEL_WORDS_PER_IFIFO,
                             "run" & integer'image(run_idx)
                             & "/face" & integer'image(f)
                             & "/col" & integer'image(c));
@@ -1949,7 +1828,7 @@ begin
            & "  requested_stops=" & integer'image(G_STOPS_PER_CHIP)
            & "  build_max_stops=" & integer'image(G_BUILD_MAX_STOPS_PER_CHIP)
            & "  echoes_per_stop=" & integer'image(G_ECHOES_PER_STOP)
-           & "  expected_words_per_ififo=" & integer'image(C_EXPECTED_WORDS_PER_IFIFO)
+           & "  model_words_per_ififo=" & integer'image(C_MODEL_WORDS_PER_IFIFO)
            & "  faces=" & integer'image(G_N_FACES)
            & "  cols=" & integer'image(G_COLS_PER_FACE)
            & "  expected_beats_per_run_rise=" & integer'image(C_EXPECTED_AXIS_BEATS_RISE)

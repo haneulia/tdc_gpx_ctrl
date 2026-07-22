@@ -102,7 +102,7 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_csr_chip.vhd",
     "$Hdl/tdc_gpx_cmd_arb.vhd",
     "$Hdl/tdc_gpx_err_handler.vhd",
-    "$Hdl/tdc_gpx_stop_cfg_decode.vhd",
+    "$Hdl/tdc_gpx_cfg_image_override.vhd",
     "$Hdl/tdc_gpx_reg_rsp_cdc.vhd",
     "$Hdl/tdc_gpx_config_ctrl.vhd",
     "$Hdl/tdc_gpx_decoder_i_mode.vhd",
@@ -120,7 +120,8 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_top.vhd",
     "$Hdl/tb_tdc_gpx_atomic_snapshot_cdc.vhd",
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
-    "$Hdl/tb_tdc_gpx_stop_cfg_decode.vhd",
+    "$Hdl/tb_tdc_gpx_cfg_image_override.vhd",
+    "$Hdl/tb_tdc_gpx_config_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_request_loss.vhd",
     "$Hdl/tb_tdc_gpx_chip_init_cfg_owner.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
@@ -170,10 +171,15 @@ try {
     Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_range_ticks_snap", "-runall", "-log", "xsim_c06_v002_range_ticks_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_range_ticks_$Stamp.log" "5 ns range tick conversion matrix - PASS"
 
-    Invoke-Xelab "tb_c06_v002_stop_cfg_decode_snap" "xelab_c06_v002_stop_cfg_decode_$Stamp.log" `
-        "xil_defaultlib.tb_tdc_gpx_stop_cfg_decode"
-    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_stop_cfg_decode_snap", "-runall", "-log", "xsim_c06_v002_stop_cfg_decode_$Stamp.log")
-    Assert-SimLog "xsim_c06_v002_stop_cfg_decode_$Stamp.log" "tb_tdc_gpx_stop_cfg_decode: ALL TESTS PASSED"
+    Invoke-Xelab "tb_c06_v002_cfg_image_override_snap" "xelab_c06_v002_cfg_image_override_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_cfg_image_override"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_cfg_image_override_snap", "-runall", "-log", "xsim_c06_v002_cfg_image_override_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_cfg_image_override_$Stamp.log" "tb_tdc_gpx_cfg_image_override: ALL TESTS PASSED"
+
+    Invoke-Xelab "tb_c06_v002_config_ctrl_snap" "xelab_c06_v002_config_ctrl_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_config_ctrl"
+    Invoke-Checked "$Vivado/xsim.bat" @("tb_c06_v002_config_ctrl_snap", "-runall", "-log", "xsim_c06_v002_config_ctrl_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_config_ctrl_$Stamp.log" "EF-authoritative config_ctrl integration completed"
 
     Invoke-Xelab "tb_c06_v002_request_loss_snap" "xelab_c06_v002_request_loss_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_request_loss"

@@ -35,8 +35,6 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     constant C_WATCHDOG        : time := 50 us;
     constant C_TIMEOUT_CLKS    : natural := 4000;
 
-    constant C_STOP_EVT_DWIDTH : natural := 32;
-
     -- Sensible pipeline config defaults (all fields initialised)
     constant C_CFG_PIPELINE : t_tdc_cfg := (
         active_chip_mask    => "1111",
@@ -125,18 +123,6 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     signal chip_d_out : t_chip_d_array := (others => (others => '0'));
     signal chip_d_oe  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
 
-    -- =========================================================================
-    -- Stop event stream / fire-count contract input
-    -- =========================================================================
-    signal i_stop_evt_tvalid : std_logic := '0';
-    signal i_stop_evt_tdata  : std_logic_vector(C_STOP_EVT_DWIDTH - 1 downto 0) := (others => '0');
-    signal i_stop_evt_tkeep  : std_logic_vector(C_STOP_EVT_DWIDTH/8 - 1 downto 0) := (others => '0');
-    signal i_stop_evt_tuser  : std_logic_vector(C_STOP_EVT_DWIDTH - 1 downto 0) := (others => '0');
-    signal o_stop_evt_tready : std_logic;
-    signal i_fire_count_tvalid : std_logic := '0';
-    signal i_fire_count_tdata  : std_logic_vector(31 downto 0) := (others => '0');
-    signal i_fire_count_tkeep  : std_logic_vector(3 downto 0) := (others => '0');
-    signal i_fire_count_tlast  : std_logic := '0';
     signal i_stop_tdc        : std_logic := '0';
 
     -- =========================================================================
@@ -149,7 +135,6 @@ architecture sim of tb_tdc_gpx_config_ctrl is
     signal i_cmd_cfg_write      : std_logic := '0';
     signal i_shot_start_per_chip : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
     signal i_shot_start_gated   : std_logic := '0';
-    signal i_current_fire_count : unsigned(15 downto 0) := (others => '0');
 
     -- Cluster 4 idle inputs
     signal i_face_asm_idle      : std_logic := '1';
@@ -383,16 +368,6 @@ begin
             i_tdc_lf2            => i_tdc_lf2,
             i_tdc_irflag         => i_tdc_irflag,
             i_tdc_errflag        => i_tdc_errflag,
-            -- Stop event stream
-            i_stop_evt_tvalid    => i_stop_evt_tvalid,
-            i_stop_evt_tdata     => i_stop_evt_tdata,
-            i_stop_evt_tkeep     => i_stop_evt_tkeep,
-            i_stop_evt_tuser     => i_stop_evt_tuser,
-            o_stop_evt_tready    => o_stop_evt_tready,
-            i_fire_count_tvalid  => i_fire_count_tvalid,
-            i_fire_count_tdata   => i_fire_count_tdata,
-            i_fire_count_tkeep   => i_fire_count_tkeep,
-            i_fire_count_tlast   => i_fire_count_tlast,
             i_stop_tdc           => i_stop_tdc,
             -- Control inputs
             i_cmd_start          => i_cmd_start,
@@ -402,7 +377,6 @@ begin
             i_cmd_cfg_write      => i_cmd_cfg_write,
             i_shot_start_per_chip => i_shot_start_per_chip,
             i_shot_start_gated   => i_shot_start_gated,
-            i_current_fire_count => i_current_fire_count,
             i_cfg_pipeline       => C_CFG_PIPELINE,
             -- Cluster 4 idle
             i_face_asm_idle      => i_face_asm_idle,
@@ -470,57 +444,6 @@ begin
             wait until rising_edge(clk_axis);
         end procedure;
 
-        procedure emit_expected_counts(shot_count : natural;
-                                       ififo1_cnt : natural;
-                                       ififo2_cnt : natural) is
-            variable v_data : std_logic_vector(C_STOP_EVT_DWIDTH - 1 downto 0);
-            variable v_user : std_logic_vector(C_STOP_EVT_DWIDTH - 1 downto 0);
-            variable v_lo   : natural;
-        begin
-            assert ififo1_cnt <= 15 and ififo2_cnt <= 15
-                report "TB: expected-count field overflow"
-                severity failure;
-
-            v_data := (others => '0');
-            v_user := (others => '0');
-            for i in 0 to c_MAX_CHIPS - 1 loop
-                v_lo := i * 8;
-                v_data(v_lo + 3 downto v_lo) :=
-                    std_logic_vector(to_unsigned(ififo1_cnt, 4));
-                v_data(v_lo + 7 downto v_lo + 4) :=
-                    std_logic_vector(to_unsigned(ififo2_cnt, 4));
-            end loop;
-
-            wait until rising_edge(clk_axis);
-            i_stop_evt_tdata <= v_data;
-            i_stop_evt_tuser <= v_user;
-            i_stop_evt_tkeep <= (others => '1');
-            i_stop_evt_tvalid <= '1';
-            i_fire_count_tdata <= std_logic_vector(to_unsigned(shot_count, 32));
-            i_fire_count_tkeep <= (others => '1');
-            i_fire_count_tlast <= '0';
-            i_fire_count_tvalid <= '1';
-
-            wait until rising_edge(clk_axis);
-            i_stop_evt_tvalid <= '0';
-            i_stop_evt_tdata <= (others => '0');
-            i_stop_evt_tuser <= (others => '0');
-            i_stop_evt_tkeep <= (others => '0');
-            i_fire_count_tvalid <= '0';
-
-            wait until rising_edge(clk_axis);
-            i_fire_count_tdata <= std_logic_vector(to_unsigned(shot_count, 32));
-            i_fire_count_tkeep <= (others => '1');
-            i_fire_count_tlast <= '1';
-            i_fire_count_tvalid <= '1';
-
-            wait until rising_edge(clk_axis);
-            i_fire_count_tvalid <= '0';
-            i_fire_count_tlast <= '0';
-            i_fire_count_tkeep <= (others => '0');
-            i_fire_count_tdata <= (others => '0');
-        end procedure;
-
         constant c_TEST_IFIFO_WORDS : natural := 2;
         constant c_EXPECTED_DATA_WORDS : natural :=
             c_MAX_CHIPS * c_TEST_IFIFO_WORDS * 2;
@@ -534,7 +457,7 @@ begin
 
         report "TB: g_DUT_STREAM_CLK_MODE = " & g_DUT_STREAM_CLK_MODE
             severity note;
-        report "TB: OP-C02-03 expected-count CDC/top integration scenario"
+        report "TB: EF-authoritative config_ctrl integration scenario"
             severity note;
 
         -- Arm chip_run through the same accepted-start pulse that face_seq
@@ -552,9 +475,7 @@ begin
         end if;
         wait_clk(20);
 
-        -- One I-Mode single shot. stop_cfg_decode owns counts by matching this
-        -- face-local fire count against the fire_count stream.
-        i_current_fire_count <= to_unsigned(1, 16);
+        -- One I-Mode single shot. GPX IrFlag starts the EF-authoritative drain.
         wait until rising_edge(clk_axis);
         i_shot_start_gated <= '1';
         i_shot_start_per_chip <= (others => '1');
@@ -569,9 +490,6 @@ begin
         end if;
 
         wait_clk(8);
-        emit_expected_counts(1, c_TEST_IFIFO_WORDS, c_TEST_IFIFO_WORDS);
-        wait_clk(80);
-
         load_all_fifos(c_TEST_IFIFO_WORDS, c_TEST_IFIFO_WORDS);
         wait_clk(10);
         i_tdc_irflag <= (others => '1');
@@ -586,7 +504,7 @@ begin
         end loop;
 
         if not v_found then
-            report "TB: FAIL -- expected-count drain did not emit all data words, got "
+            report "TB: FAIL -- EF drain did not emit all physical data words, got "
                    & integer'image(mon_raw_data_cnt)
                 severity failure;
         end if;
@@ -616,7 +534,7 @@ begin
                 severity failure;
         end if;
 
-        report "TB: PASS -- expected-count tuple CDC/top integration completed, data="
+        report "TB: PASS -- EF-authoritative config_ctrl integration completed, data="
                & integer'image(mon_raw_data_cnt)
                & " ctrl=" & integer'image(mon_raw_ctrl_cnt)
             severity note;

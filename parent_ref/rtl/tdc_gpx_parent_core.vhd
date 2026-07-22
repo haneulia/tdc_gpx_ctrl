@@ -38,16 +38,12 @@ entity tdc_gpx_parent_core is
         g_BUS_READ_PERIOD_MIN_TIME_NS : positive := 25;
         g_BUS_IDLE_STABLE_TIME_NS     : positive := 20480;
         g_DRAIN_MARGIN_TIME_NS        : positive := 1280;
-        g_STOP_WINDOW_MARGIN_TIME_NS  : positive := 210;
         g_ERR_DEBOUNCE_TIME_NS        : positive := 25;
         g_ERR_MAX_RETRIES             : positive := 3;
         g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3410;
         g_CELL_IFIFO2_MARGIN_TIME_NS  : positive := 1705;
         g_OEN_MODE           : string   := "DYNAMIC_CONNECTED";
-        g_STREAM_CLK_MODE    : string   := "ASYNC";
-        g_STOP_EVT_DWIDTH    : positive := 32;
-        g_STOP_EVT_TUSER_WIDTH : positive := 32;
-        g_FIRE_COUNT_DWIDTH  : positive := 32
+        g_STREAM_CLK_MODE    : string   := "ASYNC"
     );
     port (
         i_axis_aclk    : in std_logic;
@@ -101,17 +97,6 @@ entity tdc_gpx_parent_core is
         i_lsr_data  : in std_logic_vector(31 downto 0);
         i_shot_start : in std_logic;
         i_stop_tdc   : in std_logic;
-
-        i_stop_evt_valid : in  std_logic;
-        i_stop_evt_data  : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
-        i_stop_evt_keep  : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
-        i_stop_evt_user  : in  std_logic_vector(g_STOP_EVT_TUSER_WIDTH - 1 downto 0);
-        o_stop_evt_ready : out std_logic;
-
-        i_fire_count_valid : in std_logic;
-        i_fire_count_data  : in std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
-        i_fire_count_keep  : in std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
-        i_fire_count_last  : in std_logic;
 
         -- Compact physical lanes exported by tdc_gpx_top. Lane order follows
         -- ascending asserted bits in g_PRESENT_CHIP_MASK.
@@ -217,16 +202,12 @@ begin
             g_BUS_READ_PERIOD_MIN_TIME_NS => g_BUS_READ_PERIOD_MIN_TIME_NS,
             g_BUS_IDLE_STABLE_TIME_NS => g_BUS_IDLE_STABLE_TIME_NS,
             g_DRAIN_MARGIN_TIME_NS => g_DRAIN_MARGIN_TIME_NS,
-            g_STOP_WINDOW_MARGIN_TIME_NS => g_STOP_WINDOW_MARGIN_TIME_NS,
             g_ERR_DEBOUNCE_TIME_NS => g_ERR_DEBOUNCE_TIME_NS,
             g_ERR_MAX_RETRIES => g_ERR_MAX_RETRIES,
             g_CELL_QUARANTINE_MARGIN_TIME_NS => g_CELL_QUARANTINE_MARGIN_TIME_NS,
             g_CELL_IFIFO2_MARGIN_TIME_NS => g_CELL_IFIFO2_MARGIN_TIME_NS,
             g_OEN_MODE           => g_OEN_MODE,
-            g_STREAM_CLK_MODE    => g_STREAM_CLK_MODE,
-            g_STOP_EVT_DWIDTH    => g_STOP_EVT_DWIDTH,
-            g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
-            g_FIRE_COUNT_DWIDTH  => g_FIRE_COUNT_DWIDTH
+            g_STREAM_CLK_MODE    => g_STREAM_CLK_MODE
         )
         port map (
             i_axis_aclk    => i_axis_aclk,
@@ -279,17 +260,6 @@ begin
             i_lsr_tdata  => i_lsr_data,
             i_shot_start => i_shot_start,
             i_stop_tdc   => i_stop_tdc,
-
-            i_stop_evt_tvalid => i_stop_evt_valid,
-            i_stop_evt_tdata  => i_stop_evt_data,
-            i_stop_evt_tkeep  => i_stop_evt_keep,
-            i_stop_evt_tuser  => i_stop_evt_user,
-            o_stop_evt_tready => o_stop_evt_ready,
-
-            i_fire_count_tvalid => i_fire_count_valid,
-            i_fire_count_tdata  => i_fire_count_data,
-            i_fire_count_tkeep  => i_fire_count_keep,
-            i_fire_count_tlast  => i_fire_count_last,
 
             io_tdc_d            => io_tdc_d,
             o_tdc_adr           => o_tdc_adr,

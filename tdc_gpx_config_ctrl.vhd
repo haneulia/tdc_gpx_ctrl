@@ -9,7 +9,7 @@
 --     csr_chip       : AXI-Lite CSR + SRM + CDC for chip-owned registers
 --     cmd_arb        : command arbitration (cfg_write, reg read/write gating)
 --     err_handler    : automatic ErrFlag detection, Reg11 read, recovery FSM
---     stop_decode    : stop event decode + cfg_image override
+--     cfg override   : merged-config policy applied to the GPX image
 --     bus_phy x4     : TDC-GPX bus timing FSM and synchronized status input
 --     pin adapter    : compact physical-lane mapping and IOBUF ownership
 --     chip_ctrl x4   : chip FSM coordinator (powerup/cfg/arm/capture/drain)
@@ -17,7 +17,7 @@
 --     raw_cdc x4     : optional xpm_fifo_async chip_ctrl -> decode_pipe (40b)
 --
 --   Config merging: pipeline fields from i_cfg_pipeline, chip fields from
---   csr_chip outputs.  Merged config drives stop_decode and chip_ctrl.
+--   csr_chip outputs. Merged config drives cfg-image policy and chip_ctrl.
 --
 -- Clock domains:
 --   i_axis_aclk  : AXI-Stream processing domain (g_AXIS_CLK_MHZ)
@@ -34,7 +34,7 @@
 --   AXI-Stream clock (i_axis_aclk) uses i_axis_aresetn directly:
 --     - u_cmd_arb         (cmd_arb)
 --     - u_err_handler     (err_handler)
---     - u_stop_decode     (stop_cfg_decode)
+--     - u_cfg_override    (combinational cfg-image policy)
 --     - p_frame_done_latch, MUXes, per-chip CDC instances source sides
 --   TDC clock (i_tdc_clk) uses s_tdc_aresetn (xpm_cdc_async_rst of
 --   i_axis_aresetn, Round 5 #8):
@@ -75,13 +75,9 @@ entity tdc_gpx_config_ctrl is
         g_BUS_IDLE_STABLE_CLKS : positive := c_DEFAULT_BUS_IDLE_STABLE_CLKS;
         g_DRAIN_MARGIN_CLKS     : positive := c_DEFAULT_DRAIN_MARGIN_CLKS;
         g_EF_SYNC_GUARD_CLKS    : positive := c_DEFAULT_EF_SYNC_GUARD_CLKS;
-        g_STOP_WINDOW_MARGIN_CLKS : natural := c_DEFAULT_STOP_WINDOW_MARGIN_CLKS;
         g_ERR_DEBOUNCE_CLKS     : positive := c_DEFAULT_ERR_DEBOUNCE_CLKS;
         g_ERR_MAX_RETRIES       : positive := c_DEFAULT_ERR_MAX_RETRIES;
         g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE;
-        g_STOP_EVT_DWIDTH : natural := c_DEFAULT_STOP_EVT_DWIDTH;
-        g_STOP_EVT_TUSER_WIDTH : natural := c_DEFAULT_STOP_EVT_TUSER_WIDTH;
-        g_FIRE_COUNT_DWIDTH : natural := c_DEFAULT_FIRE_COUNT_DWIDTH;
         g_NUM_CHIPS         : positive range 1 to c_MAX_CHIPS := c_MAX_CHIPS;
         g_PRESENT_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
         g_RISE_CHIP_MASK    : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
@@ -146,18 +142,8 @@ entity tdc_gpx_config_ctrl is
         i_tdc_irflag         : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
         i_tdc_errflag        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
 
-        -- =====================================================================
-        -- External inputs (stop event stream + deadline pulse)
-        -- =====================================================================
-        i_stop_evt_tvalid    : in  std_logic;
-        i_stop_evt_tdata     : in  std_logic_vector(g_STOP_EVT_DWIDTH - 1 downto 0);
-        i_stop_evt_tkeep     : in  std_logic_vector(g_STOP_EVT_DWIDTH/8 - 1 downto 0);
-        i_stop_evt_tuser     : in  std_logic_vector(g_STOP_EVT_TUSER_WIDTH - 1 downto 0);
-        o_stop_evt_tready    : out std_logic;
-        i_fire_count_tvalid  : in  std_logic;
-        i_fire_count_tdata   : in  std_logic_vector(g_FIRE_COUNT_DWIDTH - 1 downto 0);
-        i_fire_count_tkeep   : in  std_logic_vector(g_FIRE_COUNT_DWIDTH/8 - 1 downto 0);
-        i_fire_count_tlast   : in  std_logic;
+        -- Deadline pulse from laser_ctrl. This is sequence-error detection,
+        -- not GPX FIFO drain ownership.
         i_stop_tdc           : in  std_logic;
 
         -- =====================================================================
@@ -177,9 +163,6 @@ entity tdc_gpx_config_ctrl is
         i_err_soft_clear     : in  std_logic := '0';
         i_shot_start_per_chip : in  std_logic_vector(c_MAX_CHIPS - 1 downto 0);
         i_shot_start_gated   : in  std_logic;
-        -- Face-local 1-base shot/fire count. Used to qualify
-        -- echo_receiver fire_count_tdata[15:0] before accepting stop counts.
-        i_current_fire_count : in  unsigned(15 downto 0);
         i_cfg_pipeline       : in  t_tdc_cfg;
 
         -- =====================================================================
@@ -261,12 +244,6 @@ entity tdc_gpx_config_ctrl is
         -- Round 11 C: Category C observability surface
         o_reg_timeout_mask   : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
         o_run_timeout_cause  : out std_logic_vector(2 downto 0);              -- chip_run last timeout cause (OR-aggregated)
-
-        -- Round 11 item 10: stop_cfg_decode monotonic violation sticky.
-        o_mono_violation_mask : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
-
-        -- Round 12 #16: stop_cfg_decode orphan-event sticky.
-        o_orphan_stop_evt_sticky : out std_logic;
 
         -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky.
         o_init_cfg_coalesced_mask : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
@@ -393,8 +370,7 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     signal s_cfg_merged      : t_tdc_cfg;
     -- The CSR stores one physical range in 5 ns reference ticks. Convert it
-    -- once per consuming domain; do not reuse a clock count across domains.
-    signal s_max_range_axis_clks : unsigned(15 downto 0);
+    -- for the TDC-domain watchdog; AXIS consumers convert it locally.
     signal s_max_range_tdc_clks  : unsigned(15 downto 0);
 
     -- =========================================================================
@@ -417,13 +393,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_done_chip    : unsigned(1 downto 0);
     signal s_reg_loop_resume      : std_logic;
     signal s_cmd_reg_addr_out     : std_logic_vector(3 downto 0);
-
-    -- =========================================================================
-    -- stop_decode outputs
-    -- =========================================================================
-    signal s_expected_ififo1 : t_expected_array;
-    signal s_expected_ififo2 : t_expected_array;
-    signal s_expected_final_valid : std_logic;
 
     -- =========================================================================
     -- Per-chip: bus_phy <-> chip_ctrl
@@ -624,9 +593,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cfg_tdc             : t_tdc_cfg;
     signal s_cfg_image_tdc       : t_cfg_image;
     signal s_cfg_image_tdc_per_chip : t_cfg_image_array;
-    signal s_expected_ififo1_tdc : t_expected_array;
-    signal s_expected_ififo2_tdc : t_expected_array;
-    signal s_expected_final_valid_tdc : std_logic;
     signal s_cmd_reg_addr_tdc    : std_logic_vector(3 downto 0);
     signal s_cmd_reg_wdata_tdc   : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     signal s_cmd_reg_wdata_tdc_per_chip : t_slv28_array;
@@ -748,22 +714,6 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cmd_reg_sample_r   : std_logic_vector(31 downto 0) := (others => '1');
     signal s_cmd_reg_diff_r     : std_logic := '0';
     signal s_cmd_reg_d1_r       : std_logic_vector(31 downto 0) := (others => '1');
-
-    -- Round 14 OP-C02-03: expected-count tuple transfer.
-    -- chip_run samples IFIFO1, IFIFO2, and final_valid together in
-    -- ST_DRAIN_LATCH. Keep the three fields in one CDC payload so a latch
-    -- cannot observe counts from one update and final_valid from another.
-    constant c_EXPECTED_IFIFO_BITS : natural := c_MAX_CHIPS * 8;
-    constant c_EXPECTED_IFIFO1_LO  : natural := 0;
-    constant c_EXPECTED_IFIFO2_LO  : natural := c_EXPECTED_IFIFO_BITS;
-    constant c_EXPECTED_FINAL_IDX  : natural := c_EXPECTED_IFIFO_BITS * 2;
-    constant c_EXPECTED_CDC_BITS   : natural := c_EXPECTED_FINAL_IDX + 1;
-    signal s_expected_src_packed : std_logic_vector(c_EXPECTED_CDC_BITS - 1 downto 0);
-    signal s_expected_dst_packed : std_logic_vector(c_EXPECTED_CDC_BITS - 1 downto 0) := (others => '0');
-    signal s_exp_src_send_r : std_logic := '0';
-    signal s_exp_src_rcv    : std_logic;
-    signal s_exp_dst_req    : std_logic;
-    signal s_exp_d1_r       : std_logic_vector(c_EXPECTED_CDC_BITS - 1 downto 0) := (others => '1');
 
 begin
 
@@ -923,10 +873,8 @@ begin
     -- domain; HW_CONFIG advertises the compile-time capability separately.
     s_cfg_merged.falling_enable   <= s_falling_enable when c_HAS_FALLING else '0';
 
-    -- Static-ratio shift/add conversion. g_*_CLK_MHZ are elaboration-time
-    -- constants, so there is no general runtime multiplier or divider.
-    s_max_range_axis_clks <= fn_range_5ns_ticks_to_clks(
-        s_cfg_merged.max_range_5ns_ticks, g_AXIS_CLK_MHZ);
+    -- Static-ratio shift/add conversion. g_TDC_CLK_MHZ is elaboration-time
+    -- constant, so there is no general runtime multiplier or divider.
     s_max_range_tdc_clks <= fn_range_5ns_ticks_to_clks(
         s_cfg_tdc.max_range_5ns_ticks, g_TDC_CLK_MHZ);
 
@@ -1232,36 +1180,13 @@ begin
         );
 
     -- =========================================================================
-    -- [3] stop_decode: stop event decode + cfg_image override
+    -- [3] GPX register-image policy override
     -- =========================================================================
-    u_stop_decode : entity work.tdc_gpx_stop_cfg_decode
-        generic map (
-            g_STOP_EVT_DWIDTH => g_STOP_EVT_DWIDTH,
-            g_STOP_EVT_TUSER_WIDTH => g_STOP_EVT_TUSER_WIDTH,
-            g_FIRE_COUNT_DWIDTH => g_FIRE_COUNT_DWIDTH,
-            g_WINDOW_MARGIN_CLKS => g_STOP_WINDOW_MARGIN_CLKS
-        )
+    u_cfg_override : entity work.tdc_gpx_cfg_image_override
         port map (
-            i_clk              => i_axis_aclk,
-            i_rst_n            => i_axis_aresetn,
-            i_stop_evt_tvalid  => i_stop_evt_tvalid,
-            i_stop_evt_tdata   => i_stop_evt_tdata,
-            i_stop_evt_tuser   => i_stop_evt_tuser,
-            o_stop_evt_tready  => o_stop_evt_tready,
-            i_fire_count_tvalid => i_fire_count_tvalid,
-            i_fire_count_tdata  => i_fire_count_tdata,
-            i_fire_count_tlast  => i_fire_count_tlast,
-            i_shot_start_gated => i_shot_start_gated,
-            i_current_fire_count => i_current_fire_count,
-            i_max_range_axis_clks => s_max_range_axis_clks,
-            o_expected_ififo1  => s_expected_ififo1,
-            o_expected_ififo2  => s_expected_ififo2,
-            o_expected_final_valid => s_expected_final_valid,
-            i_cfg              => s_cfg_merged,
-            i_cfg_image_raw    => s_cfg_image_raw,
-            o_cfg_image        => o_cfg_image,
-            o_monotonic_violation_mask => o_mono_violation_mask,
-            o_orphan_stop_evt_sticky   => o_orphan_stop_evt_sticky
+            i_cfg           => s_cfg_merged,
+            i_cfg_image_raw => s_cfg_image_raw,
+            o_cfg_image     => o_cfg_image
         );
 
     -- =========================================================================
@@ -1592,58 +1517,6 @@ begin
     end process p_cmd_reg_send;
 
     -- =========================================================================
-    -- Round 14 OP-C02-03: expected IFIFO tuple atomic CDC
-    -- =========================================================================
-    -- Pack 4 per-chip 8-bit IFIFO1 counts, 4 per-chip 8-bit IFIFO2 counts,
-    -- and the final_valid qualifier into one 65-bit handshake payload.
-    gen_exp_pack : for i in 0 to c_MAX_CHIPS - 1 generate
-        s_expected_src_packed(c_EXPECTED_IFIFO1_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO1_LO + 8 * i) <= std_logic_vector(s_expected_ififo1(i));
-        s_expected_src_packed(c_EXPECTED_IFIFO2_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO2_LO + 8 * i) <= std_logic_vector(s_expected_ififo2(i));
-        s_expected_ififo1_tdc(i) <= unsigned(s_expected_dst_packed(c_EXPECTED_IFIFO1_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO1_LO + 8 * i));
-        s_expected_ififo2_tdc(i) <= unsigned(s_expected_dst_packed(c_EXPECTED_IFIFO2_LO + 8 * (i + 1) - 1 downto c_EXPECTED_IFIFO2_LO + 8 * i));
-    end generate gen_exp_pack;
-
-    s_expected_src_packed(c_EXPECTED_FINAL_IDX) <= s_expected_final_valid;
-    s_expected_final_valid_tdc <= s_expected_dst_packed(c_EXPECTED_FINAL_IDX);
-
-    u_cdc_expected : xpm_cdc_handshake
-        generic map (
-            DEST_EXT_HSK    => 1,
-            DEST_SYNC_FF    => 4,
-            INIT_SYNC_FF    => 0,
-            SIM_ASSERT_CHK  => 0,
-            SRC_SYNC_FF     => 4,
-            WIDTH           => c_EXPECTED_CDC_BITS
-        )
-        port map (
-            src_clk  => i_axis_aclk,
-            src_in   => s_exp_d1_r,
-            src_send => s_exp_src_send_r,
-            src_rcv  => s_exp_src_rcv,
-            dest_clk => i_tdc_clk,
-            dest_req => s_exp_dst_req,
-            dest_ack => s_exp_dst_req,
-            dest_out => s_expected_dst_packed
-        );
-
-    p_exp_send : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_exp_src_send_r <= '0';
-                s_exp_d1_r       <= (others => '1');
-            else
-                if s_exp_src_send_r = '0' and s_expected_src_packed /= s_exp_d1_r then
-                    s_exp_src_send_r <= '1';
-                    s_exp_d1_r       <= s_expected_src_packed;
-                elsif s_exp_src_rcv = '1' then
-                    s_exp_src_send_r <= '0';
-                end if;
-            end if;
-        end if;
-    end process p_exp_send;
-
-    -- =========================================================================
     -- [4-19] Per-chip pipeline (generate x c_MAX_CHIPS logical slots)
     --   bus_phy + sk_brsp + chip_ctrl + sk_raw + per-chip CDC
     -- =========================================================================
@@ -1954,9 +1827,6 @@ begin
                 i_shot_start        => s_shot_start_tdc(i),
                 i_max_range_tdc_clks => s_max_range_tdc_clks,
                 i_stop_tdc          => s_stop_tdc_tdc,
-                i_expected_ififo1   => s_expected_ififo1_tdc(i),
-                i_expected_ififo2   => s_expected_ififo2_tdc(i),
-                i_expected_final_valid => s_expected_final_valid_tdc,
                 o_bus_req_valid     => s_bus_req_valid(i),
                 o_bus_req_rw        => s_bus_req_rw(i),
                 o_bus_req_addr      => s_bus_req_addr(i),

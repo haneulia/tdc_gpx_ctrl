@@ -127,7 +127,7 @@ Clear semantic notes:
 | `[14:11]`| `quarantine_escape_mask`        | sticky | per-chip cell_builder quarantine hard-cap escape |
 | `[15]`   | `masked_slope_drop_any`         | sticky | any hit addressed a disabled chip/slope lane |
 | `[19:16]`| `rise_face_start_collapsed[3:0]`| wrap   | rise non-IDLE face_start coalesce low nibble |
-| `[23:20]`| `mono_violation_mask`           | sticky | stop-count monotonic violation per chip |
+| `[23:20]`| Reserved (`0`)                  | RO     | retained to preserve the existing STAT7 ABI |
 | `[27:24]`| `fall_face_start_collapsed[3:0]`| wrap   | fall non-IDLE face_start coalesce low nibble |
 | `[31:28]`| `init_cfg_coalesced_mask`       | sticky | chip_init cfg-write coalesce per chip |
 
@@ -136,8 +136,8 @@ Clear semantics:
 - `stop_id_error_mask`: cleared on i_rst_n or i_err_soft_clear (top-level sticky aggregate).
 - `masked_slope_drop_any`: survives cmd_stop/abort for post-run read and
   clears on i_rst_n or `i_err_soft_clear`.
-- `quarantine_escape_mask`, `mono_violation_mask`, and
-  `init_cfg_coalesced_mask`: HISTORICAL, hard-reset clear.
+- `quarantine_escape_mask` and `init_cfg_coalesced_mask`: HISTORICAL,
+  hard-reset clear.
 - `run_timeout_cause_last`: latches the most-recent cause on any chip's run_timeout pulse; never auto-cleared.
 - Face_start collapsed counters: CSR exposes each low nibble; not an exact event tally.
 

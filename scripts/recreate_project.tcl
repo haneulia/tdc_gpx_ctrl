@@ -55,7 +55,7 @@ set rtl_files {
     tdc_gpx_cmd_arb.vhd
     tdc_gpx_csr_chip.vhd
     tdc_gpx_csr_pipeline.vhd
-    tdc_gpx_stop_cfg_decode.vhd
+    tdc_gpx_cfg_image_override.vhd
     tdc_gpx_reg_rsp_cdc.vhd
     tdc_gpx_config_ctrl.vhd
     tdc_gpx_decoder_i_mode.vhd
