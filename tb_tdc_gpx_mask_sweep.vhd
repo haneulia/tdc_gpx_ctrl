@@ -58,6 +58,7 @@ architecture sim of tb_tdc_gpx_mask_sweep is
     signal cmd_stop               : std_logic := '0';
     signal cmd_soft_reset         : std_logic := '0';
     signal shot_start_raw         : std_logic := '0';
+    signal shot_face_index_raw    : std_logic_vector(2 downto 0) := (others => '0');
     signal face_abort             : std_logic := '0';
     signal face_fall_abort        : std_logic := '0';
     signal hdr_idle               : std_logic := '1';
@@ -191,6 +192,7 @@ begin
             i_m_axis_tvalid      => m_axis_tvalid_dummy,
             i_m_axis_fall_tvalid => m_axis_fall_tvalid_dummy,
             i_shot_start_raw     => shot_start_raw,
+            i_shot_face_index_raw => shot_face_index_raw,
             i_frame_done         => frame_done_rise,
             i_frame_fall_done    => frame_done_fall,
             i_face_abort         => face_abort,

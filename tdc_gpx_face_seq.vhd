@@ -64,6 +64,9 @@ entity tdc_gpx_face_seq is
 
         -- Shot/frame events
         i_shot_start_raw     : in  std_logic;   -- from laser_ctrl
+        -- Payload qualified by the rising edge of i_shot_start_raw. The
+        -- source must hold it stable for the complete raw start pulse.
+        i_shot_face_index_raw : in std_logic_vector(2 downto 0);
         i_frame_done         : in  std_logic;   -- rising pipeline
         i_frame_fall_done    : in  std_logic;
         i_face_abort         : in  std_logic;   -- assembler overrun (rise)
@@ -159,6 +162,9 @@ architecture rtl of tdc_gpx_face_seq is
     signal s_face_active_r     : std_logic := '0';
     signal s_shot_pending_r    : std_logic := '0';
     signal s_shot_deferred_r   : std_logic := '0';
+    signal s_shot_pending_face_index_r : std_logic_vector(2 downto 0) := (others => '0');
+    signal s_shot_deferred_face_index_r : std_logic_vector(2 downto 0) := (others => '0');
+    signal s_packet_face_index_r : std_logic_vector(2 downto 0) := (others => '0');
     signal s_shot_drop_cnt_r   : unsigned(15 downto 0) := (others => '0');
     signal s_cfg_rejected_r    : std_logic := '0';
     signal s_face_start_gated_comb : std_logic := '0';
@@ -340,7 +346,21 @@ begin
                         if i_cmd_stop = '1' then
                             s_face_state_r <= ST_IDLE;
                         elsif s_packet_start_r = '1' then
+                            -- The mechanical Face identity travels with the
+                            -- accepted Laser shot. This avoids deriving Face
+                            -- identity from an independent local modulo count.
+                            s_face_id_r    <= resize(unsigned(s_packet_face_index_r), 8);
                             s_face_state_r <= ST_IN_FACE;
+                            -- synthesis translate_off
+                            assert not is_x(s_packet_face_index_r)
+                                report "face_seq: shot face_index contains unknown bits"
+                                severity failure;
+                            if not is_x(s_packet_face_index_r) then
+                                assert unsigned(s_packet_face_index_r) < i_cfg.n_faces
+                                    report "face_seq: shot face_index is outside motor n_faces"
+                                    severity failure;
+                            end if;
+                            -- synthesis translate_on
                         end if;
 
                     when ST_IN_FACE =>
@@ -601,9 +621,17 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or i_cmd_soft_reset = '1' then
-                s_packet_start_r <= '0';
+                s_packet_start_r      <= '0';
+                s_packet_face_index_r <= (others => '0');
             else
                 s_packet_start_r <= s_packet_start_comb;
+                if s_packet_start_comb = '1' then
+                    if s_shot_deferred_r = '1' then
+                        s_packet_face_index_r <= s_shot_deferred_face_index_r;
+                    else
+                        s_packet_face_index_r <= i_shot_face_index_raw;
+                    end if;
+                end if;
             end if;
         end if;
     end process;
@@ -660,12 +688,16 @@ begin
                 s_face_active_r   <= '0';
                 s_shot_pending_r  <= '0';
                 s_shot_deferred_r <= '0';
+                s_shot_pending_face_index_r  <= (others => '0');
+                s_shot_deferred_face_index_r <= (others => '0');
                 s_shot_drop_cnt_r <= (others => '0');
             elsif i_cmd_stop = '1' then
                 s_face_start_r    <= '0';
                 s_face_active_r   <= '0';
                 s_shot_pending_r  <= '0';
                 s_shot_deferred_r <= '0';
+                s_shot_pending_face_index_r  <= (others => '0');
+                s_shot_deferred_face_index_r <= (others => '0');
             else
                 s_face_start_r <= s_packet_start_r;
 
@@ -690,6 +722,9 @@ begin
                 if s_packet_start_r = '1' then
                     if s_shot_deferred_r = '1' and s_shot_raw_pulse = '1' then
                         s_shot_deferred_r <= '1';
+                        -- The queued shot starts this Face now; preserve a
+                        -- simultaneous new shot as the next queued payload.
+                        s_shot_deferred_face_index_r <= i_shot_face_index_raw;
                     else
                         s_shot_deferred_r <= '0';
                     end if;
@@ -699,6 +734,7 @@ begin
                            and s_packet_start_r = '0'
                            and s_packet_start_comb = '0') then
                         s_shot_deferred_r <= '1';
+                        s_shot_deferred_face_index_r <= i_shot_face_index_raw;
                     end if;
                 elsif s_shot_raw_pulse = '1' and s_shot_deferred_r = '1' then
                     s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
@@ -710,6 +746,7 @@ begin
                    and s_pipeline_abort = '0' then
                     if s_shot_deferred_r = '0' then
                         s_shot_deferred_r <= '1';
+                        s_shot_deferred_face_index_r <= s_shot_pending_face_index_r;
                     else
                         s_shot_drop_cnt_r <= s_shot_drop_cnt_r + 1;
                     end if;
@@ -724,13 +761,15 @@ begin
                 -- so p_global_shot_seq / p_face_shot_cnt cannot double-increment
                 -- regardless of raw pulse width.
                 if s_packet_start_r = '1' then
-                    s_shot_pending_r <= '1';
+                    s_shot_pending_r            <= '1';
+                    s_shot_pending_face_index_r <= s_packet_face_index_r;
                 elsif s_face_active_r = '1'
                       and s_frame_done_both_r = '0'
                       and s_face_closing_r = '0'
                       and i_cmd_stop = '0'
                       and s_shot_raw_pulse = '1' then
-                    s_shot_pending_r <= '1';
+                    s_shot_pending_r            <= '1';
+                    s_shot_pending_face_index_r <= i_shot_face_index_raw;
                 else
                     s_shot_pending_r <= '0';
                 end if;

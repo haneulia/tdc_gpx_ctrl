@@ -12,7 +12,7 @@
 --   CTL0  (0x00) MAIN_CTRL     packed: [3:0] active_chip_mask, [4] packet_scope,
 --                               [6:5] hit_store_mode, [9:7] dist_scale,
 --                               [10] drain_mode, [11] pipeline_en,
---                               [14:12] n_faces, [18:15] stops_per_chip,
+--                               [14:12] reserved, [18:15] stops_per_chip,
 --                               [22:19] n_drain_cap, [27:23] stopdis_override,
 --                               [31:28] COMMAND
 --   CTL1  (0x04) RANGE_COLS    [15:0] max_range_5ns_ticks, [31:16] cols_per_face
@@ -24,7 +24,7 @@
 --   CTL3..7 reserved
 --
 --   STAT0  (0x40) HW_VERSION   [31:0] (constant)
---   STAT1  (0x44) HW_CONFIG    packed generics (constant)
+--   STAT1  (0x44) HW_CONFIG    packed build profile, [31:29] motor n_faces
 --   STAT2  (0x48) MAX_ROWS     [15:0] (constant)
     --   STAT3  (0x4C) CELL_SIZE    packed canonical maximum bytes/cell
     --   STAT4  (0x50) MAX_HSIZE    packed full-mask maximum bytes/line
@@ -101,6 +101,11 @@ entity tdc_gpx_csr_pipeline is
         i_axis_aclk         : in  std_logic;
         i_axis_aresetn      : in  std_logic;
 
+        -- Static mechanical geometry sideband. This must be driven from the
+        -- motor decoder's g_N_FACES-derived output and remain constant while
+        -- the bitstream is active, so no runtime CDC handshake is required.
+        i_n_faces           : in  std_logic_vector(2 downto 0);
+
         -- chip CSR CDC idle input (from csr_chip)
         i_chip_csr_cdc_idle : in  std_logic;
 
@@ -130,6 +135,18 @@ entity tdc_gpx_csr_pipeline is
 end entity tdc_gpx_csr_pipeline;
 
 architecture rtl of tdc_gpx_csr_pipeline is
+
+    function fn_sanitize_n_faces(
+        value : std_logic_vector(2 downto 0)
+    ) return unsigned is
+    begin
+        case value is
+            when "001" | "010" | "011" | "100" | "101" =>
+                return unsigned(value);
+            when others =>
+                return to_unsigned(1, 3);
+        end case;
+    end function;
 
     -- =========================================================================
     -- tdc_gpx_axil_csr_pipeline component (Vivado IP: 8 CTL, 8 STAT, 1 IRQ)
@@ -252,6 +269,7 @@ architecture rtl of tdc_gpx_csr_pipeline is
 
     -- HW_CONFIG constant (compile-time)
     signal s_hw_config : std_logic_vector(31 downto 0);
+    signal s_n_faces_effective : unsigned(2 downto 0);
     constant c_BUILD_CHIP_COUNT : natural := fn_count_ones(g_PRESENT_CHIP_MASK);
     constant c_BUILD_MAX_ROWS   : natural := c_BUILD_CHIP_COUNT * g_MAX_STOPS_PER_CHIP;
     constant c_BUILD_CELL_BYTES : natural := fn_canonical_cell_bytes(g_MAX_HITS_PER_STOP);
@@ -284,6 +302,24 @@ architecture rtl of tdc_gpx_csr_pipeline is
 
 begin
 
+    s_n_faces_effective <= fn_sanitize_n_faces(i_n_faces);
+
+    -- A generic-derived output reaches this input after the initial VHDL
+    -- delta cycle. Validate only after reset release so a legal static
+    -- sideband is not rejected at time zero while its driver is still 'U'.
+    p_assert_n_faces : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '1' then
+                assert i_n_faces = "001" or i_n_faces = "010" or
+                       i_n_faces = "011" or i_n_faces = "100" or
+                       i_n_faces = "101"
+                    report "tdc_gpx_csr_pipeline: i_n_faces must be a static value in 1..5 from motor_decoder"
+                    severity failure;
+            end if;
+        end if;
+    end process p_assert_n_faces;
+
     assert fn_output_width_supported(g_OUTPUT_WIDTH)
         report "tdc_gpx_csr_pipeline: g_OUTPUT_WIDTH must be 32, 64, or 128 for full-keep Phase A"
         severity failure;
@@ -310,7 +346,8 @@ begin
     s_hw_config(c_HWCFG_HAS_FALLING) <= '1'
         when fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK) > 0
         else '0';
-    s_hw_config(31 downto c_HWCFG_HAS_FALLING + 1) <= (others => '0');
+    s_hw_config(c_HWCFG_N_FACES_HI downto c_HWCFG_N_FACES_LO)
+        <= std_logic_vector(s_n_faces_effective);
 
     -- =========================================================================
     -- [2] tdc_gpx_axil_csr_pipeline instantiation (8 CTL, 8 STAT)
@@ -794,9 +831,10 @@ begin
     o_cfg.drain_mode       <= s_ctl_out(0)(c_MC_DRAIN_MODE);
     o_cfg.pipeline_en      <= s_ctl_out(0)(c_MC_PIPELINE_EN);
 
-    o_cfg.n_faces          <= unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO))
-                              when unsigned(s_ctl_out(0)(c_MC_N_FACES_HI downto c_MC_N_FACES_LO)) >= 1
-                              else to_unsigned(1, 3);
+    -- Face count is a static optical/mechanical contract owned by
+    -- motor_decoder. MAIN_CTRL[14:12] is deliberately ignored so software
+    -- cannot create a second, divergent geometry owner.
+    o_cfg.n_faces          <= s_n_faces_effective;
 
     o_cfg.stops_per_chip   <= unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO))
                               when unsigned(s_ctl_out(0)(c_MC_STOPS_HI downto c_MC_STOPS_LO)) >= 2

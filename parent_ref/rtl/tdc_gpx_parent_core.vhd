@@ -93,8 +93,12 @@ entity tdc_gpx_parent_core is
         s_axi_pipe_rdata   : out std_logic_vector(31 downto 0);
         s_axi_pipe_rresp   : out std_logic_vector(1 downto 0);
 
-        i_shot_start : in std_logic;
-        i_stop_tdc   : in std_logic;
+        -- Static motor geometry plus runtime Laser shot metadata. The parent
+        -- must wire these from motor_decoder/laser_ctrl, respectively.
+        i_n_faces        : in std_logic_vector(2 downto 0);
+        i_shot_start      : in std_logic;
+        i_shot_face_index : in std_logic_vector(2 downto 0);
+        i_stop_tdc        : in std_logic;
 
         -- Compact physical lanes exported by tdc_gpx_top. Lane order follows
         -- ascending asserted bits in g_PRESENT_CHIP_MASK.
@@ -254,8 +258,10 @@ begin
             s_axi_pipe_rdata   => s_axi_pipe_rdata,
             s_axi_pipe_rresp   => s_axi_pipe_rresp,
 
-            i_shot_start => i_shot_start,
-            i_stop_tdc   => i_stop_tdc,
+            i_n_faces        => i_n_faces,
+            i_shot_start      => i_shot_start,
+            i_shot_face_index => i_shot_face_index,
+            i_stop_tdc        => i_stop_tdc,
 
             io_tdc_d            => io_tdc_d,
             o_tdc_adr           => o_tdc_adr,

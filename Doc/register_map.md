@@ -13,7 +13,7 @@ runtime domains via `xpm_cdc_handshake` — see sections CDC notes below.
 
 | Offset | Name       | Fields                                                |
 |:------:|------------|-------------------------------------------------------|
-| 0x00   | MAIN_CTRL  | `[3:0] active_chip_mask`, `[4] packet_scope`, `[6:5] hit_store_mode`, `[9:7] dist_scale`, `[10] drain_mode`, `[11] pipeline_en`, `[14:12] n_faces`, `[18:15] stops_per_chip`, `[22:19] n_drain_cap`, `[27:23] stopdis_override`, `[31:28] COMMAND` |
+| 0x00   | MAIN_CTRL  | `[3:0] active_chip_mask`, `[4] packet_scope`, `[6:5] hit_store_mode`, `[9:7] dist_scale`, `[10] drain_mode`, `[11] pipeline_en`, `[14:12] reserved` (writes ignored), `[18:15] stops_per_chip`, `[22:19] n_drain_cap`, `[27:23] stopdis_override`, `[31:28] COMMAND` |
 | 0x04   | RANGE_COLS | `[15:0] max_range_5ns_ticks`, `[31:16] cols_per_face` |
 | 0x08   | AUX_CMD    | `[0] force_reinit` (rising edge), `[1] err_soft_clear` (rising edge), `[31:2] reserved` |
 | 0x0C–0x1C | reserved  | —                                                  |
@@ -41,12 +41,18 @@ consuming clock domain, so the represented physical window is never shortened.
 Range is consumed in both TDC and AXIS domains; scan timeout is consumed only
 in the AXIS domain.
 
+`n_faces` is not a pipeline CSR setting. It is owned by the
+`motor_decoder_top.g_N_FACES` build profile and reaches this IP through the
+static `i_n_faces` sideband. Because the value is fixed for the active
+bitstream, it does not use a runtime handshake. Software reads the effective
+value from `HW_CONFIG[31:29]`; writing legacy `MAIN_CTRL[14:12]` has no effect.
+
 ### Status registers (R/O)
 
 | Offset | Name         | Meaning                                               |
 |:------:|--------------|-------------------------------------------------------|
 | 0x40   | HW_VERSION   | `[31:0]` compile-time constant (default `0x00010000`) |
-| 0x44   | HW_CONFIG    | Selected build profile: `[3:0] popcount(g_PRESENT_CHIP_MASK)`, `[7:4] g_MAX_STOPS_PER_CHIP`, `[11:8] g_MAX_HITS_PER_STOP`, `[16:12] HIT_SLOT_DATA_WIDTH`, `[24:17] TDATA_WIDTH`, `[27:25] CELL_FMT`, `[28] HAS_FALLING`, `[31:29] 0` |
+| 0x44   | HW_CONFIG    | Selected build/system profile: `[3:0] popcount(g_PRESENT_CHIP_MASK)`, `[7:4] g_MAX_STOPS_PER_CHIP`, `[11:8] g_MAX_HITS_PER_STOP`, `[16:12] HIT_SLOT_DATA_WIDTH`, `[24:17] TDATA_WIDTH`, `[27:25] CELL_FMT`, `[28] HAS_FALLING`, `[31:29] motor-owned n_faces` |
 | 0x48   | MAX_ROWS     | Build maximum rows: `popcount(g_PRESENT_CHIP_MASK) × g_MAX_STOPS_PER_CHIP` (default `32`) |
 | 0x4C   | CELL_SIZE    | Build maximum canonical cell bytes from `g_MAX_HITS_PER_STOP` (default `20 B`) |
 | 0x50   | MAX_HSIZE    | Build full-mask packed maximum: `48 + align16(MAX_ROWS × CELL_SIZE)` (default `688 B`) |

@@ -192,6 +192,20 @@ New-Item -ItemType Directory -Path $OutDir | Out-Null
     "implement=$($Implement.IsPresent)"
 ) | Set-Content -Encoding ASCII "$OutDir/session.properties"
 
+# The local TclStore catalog is damaged on this workstation. Match the parent
+# reference flow by exposing every installation pkgIndex directory explicitly.
+$TclStore = 'C:/AMDDesignTools/2025.2.1/Vivado/data/XilinxTclStore'
+$PackageDirs = Get-ChildItem -LiteralPath $TclStore -Recurse `
+    -File -Filter 'pkgIndex.tcl' | ForEach-Object {
+        $_.DirectoryName.Replace('\', '/')
+    } | Sort-Object -Unique
+$TclLibPath = $PackageDirs -join ' '
+$env:TCLLIBPATH = if ([string]::IsNullOrWhiteSpace($env:TCLLIBPATH)) {
+    $TclLibPath
+} else {
+    "$TclLibPath $env:TCLLIBPATH"
+}
+
 $DoImpl = if ($Implement) { "1" } else { "0" }
 & $Vivado -mode batch -nojournal -log $Log `
     -source "$Hdl/scripts/run_ooc_signoff.tcl" `

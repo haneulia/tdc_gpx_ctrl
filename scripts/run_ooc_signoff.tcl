@@ -1,8 +1,8 @@
 # =============================================================================
 # Reproducible out-of-context implementation sign-off for tdc_gpx_top.
 #
-# The source project is opened read-only. All generated reports/checkpoints are
-# written below HDL/signoff_results/sessions by the PowerShell wrapper.
+# The flow builds an in-memory project from the canonical RTL manifest. All
+# generated reports/checkpoints are written below HDL/signoff_results/sessions.
 # =============================================================================
 
 if {$argc != 12} {
@@ -32,9 +32,10 @@ if {$impl_strategy ni {DEFAULT TIMING_EXPLORE}} {
     error "unsupported implementation strategy: $impl_strategy"
 }
 
-set project_file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/tdc_gpx_ctrl.xpr"
 set part_name   "xc7z020clg484-2"
-set project_dir [file dirname $project_file]
+set script_dir  [file dirname [file normalize [info script]]]
+set hdl_dir     [file normalize [file join $script_dir ..]]
+set project_dir [file dirname $hdl_dir]
 set gen_ip_dir  [file join $project_dir tdc_gpx_ctrl.gen sources_1 ip]
 file mkdir $out_dir
 
@@ -56,13 +57,19 @@ if {$stream_mode eq "ASYNC"} {
 puts $xdc "set_false_path -from \[get_ports {i_axis_aresetn s_axi_aresetn}\]"
 close $xdc
 
-open_project -read_only $project_file
-read_vhdl -vhdl2008 -library xil_defaultlib \
-    [file join [file dirname [info script]] .. tdc_gpx_sync_fifo.vhd]
-read_vhdl -vhdl2008 -library xil_defaultlib \
-    [file join [file dirname [info script]] .. tdc_gpx_line_packer.vhd]
-read_vhdl -vhdl2008 -library xil_defaultlib \
-    [file join [file dirname [info script]] .. tdc_gpx_reg_rsp_cdc.vhd]
+create_project -in_memory -part $part_name
+set_property target_language VHDL [current_project]
+set_property simulator_language Mixed [current_project]
+set_property default_lib xil_defaultlib [current_project]
+
+source [file join $script_dir tdc_gpx_rtl_manifest.tcl]
+foreach file_name [tdc_gpx_rtl_manifest] {
+    set source [file join $hdl_dir $file_name]
+    if {![file exists $source]} {
+        error "canonical RTL source is missing: $source"
+    }
+    read_vhdl -vhdl2008 -library xil_defaultlib $source
+}
 
 # The source .xpr has no OOC DCPs for the two custom CSR IPs. Read their
 # generated implementation sources so a successful run cannot hide black boxes.
@@ -79,6 +86,9 @@ foreach source [list \
     [file join $gen_ip_dir tdc_gpx_axil_csr32_chip src axil_intr_32.vhd] \
     [file join $gen_ip_dir tdc_gpx_axil_csr32_chip src my_axil_csr32_top.vhd] \
     [file join $gen_ip_dir tdc_gpx_axil_csr32_chip synth tdc_gpx_axil_csr32_chip.vhd]] {
+    if {![file exists $source]} {
+        error "generated CSR source is missing: $source"
+    }
     read_vhdl -vhdl2008 -library xil_defaultlib $source
 }
 update_compile_order -fileset sources_1

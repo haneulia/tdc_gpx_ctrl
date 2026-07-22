@@ -377,7 +377,7 @@ package tdc_gpx_pkg is
         dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]  HEADER-ONLY
         drain_mode          : std_logic;                                    -- CTL0[10]
         pipeline_en         : std_logic;                                    -- CTL0[11]   HEADER-ONLY
-        n_faces             : unsigned(2 downto 0);                         -- CTL0[14:12]
+        n_faces             : unsigned(2 downto 0); -- static motor geometry sideband snapshot
         stops_per_chip      : unsigned(3 downto 0);                         -- CTL0[18:15]
         n_drain_cap         : unsigned(3 downto 0);                         -- CTL0[22:19]
         stopdis_override    : std_logic_vector(4 downto 0);                 -- CTL0[27:23]

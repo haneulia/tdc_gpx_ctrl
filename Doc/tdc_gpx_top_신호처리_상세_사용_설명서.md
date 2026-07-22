@@ -94,7 +94,7 @@ flowchart TD
 
 - `cols_per_face`는 이름과 달리 출력 관점에서 **Face당 line 수**, 즉 Face에 포함되는 accepted Shot 수이다.
 - `rows_per_face`라는 헤더 필드는 한 line의 **Cell 슬롯 수**이다. 이는 `popcount(lane_chip_mask) x stops_per_chip`이다.
-- `n_faces`는 Face ID의 modulo 순환 범위만 결정한다. `n_faces`개 Face 뒤 session을 자동 종료하지 않으며 실제 Shot 발생과 종료는 외부 `i_shot_start`/`cmd_stop`이 결정한다.
+- `n_faces`는 `motor_decoder_top.g_N_FACES`가 소유하는 정적 polygon geometry이다. TDC는 이를 `i_n_faces`로 받아 Face ID 범위를 검증하고 header/status에 기록할 뿐, 독립적으로 Face ID를 생성하지 않는다. `n_faces`개 Face 뒤 session을 자동 종료하지 않으며 실제 Shot 발생과 종료는 외부 `i_shot_start`/`cmd_stop`이 결정한다.
 - Rise와 Fall은 서로 다른 출력 메모리로 전달된다. Fall ON에서는 두 lane의 `frame_done`을 모두 기다리고, Fall OFF에서는 Fall 완료를 즉시 충족시켜 Rise만 기다린다. `face_seq`에는 slope abort 입력 논리가 남아 있지만 현재 top에서는 두 입력을 모두 `'0'`에 고정한다.
 
 ---
@@ -125,6 +125,7 @@ flowchart TB
 
     subgraph EXT["External blocks"]
         LASER["laser_ctrl"]
+        MOTOR["motor_decoder"]
         ECHO["echo_receiver"]
         DIAG["System diagnostics"]
         GPX["1..4 x TDC-GPX"]
@@ -133,7 +134,8 @@ flowchart TB
 
     SW -->|"AXI-Lite #2"| PCSR
     SW -->|"AXI-Lite #1"| CCSR
-    LASER -->|"shot_start marker"| SEQ
+    MOTOR -->|"static n_faces"| PCSR
+    LASER -->|"shot_start + face index"| SEQ
     LASER -->|"current measurement-window end"| CHIP
     LASER -.->|"physical TStart / laser timing\noutside this top"| GPX
     ECHO -.->|"edge count / pulse diagnostics"| DIAG
@@ -325,6 +327,8 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 
 `parent_ref/rtl/tdc_gpx_parent_core.vhd`는 위 top generic을 모두 같은 이름으로 노출하고 그대로 전달한다. 따라서 parent에서 값을 바꾸면 `tdc_gpx_top`을 거쳐 실제 소비 하위 모듈까지 한 경로로 내려간다. `parent_ref/scripts/verify_parent_generic_parity.ps1`는 top 선언, parent 선언, generic map의 이름과 개수를 자동 대조하며 누락·개명·간접 매핑을 오류로 처리한다. 반대로 `g_CHIP_ID`, `g_SLOPE_VALUE`, FIFO data/depth, CDC synchronizer stage처럼 instance identity나 구조에서 파생되는 generic은 top에 중복 노출하지 않는다. 이 구분은 사용자가 정해야 하는 build policy만 최상위에서 관리하고, 서로 모순될 수 있는 중복 설정을 만들지 않기 위한 것이다.
 
+`tdc_gpx_top`에는 의도적으로 `g_N_FACES`가 없다. polygon 면 수의 합성 전 소유자는 `motor_decoder_top.g_N_FACES` 하나이며, motor의 `o_n_faces`를 TDC의 `i_n_faces`에 직접 연결한다. 두 IP에 같은 의미의 generic을 각각 두면 서로 다른 값으로 합성될 수 있으므로 금지한다.
+
 기본 시간값을 지원 주파수에 적용하면 다음처럼 사이클 수만 달라진다. 괄호 안 물리 시간은 동일하다.
 
 | Clock MHz | TDC power-up 240 ns | TDC bus-idle 20,480 ns | TDC drain 1,280 ns | AXIS Cell quarantine 3,410 ns |
@@ -406,7 +410,7 @@ Fall-capable build에서 `falling_enable=0`으로 바꾸는 것은 합성 제거
 
 ### 7.3 xc7z020 OOC 합성 확인
 
-`xc7z020clg484-2`, AXIS 150 MHz, TDC 200 MHz, 32-bit 출력의 clean OOC 결과는 다음과 같다.
+`xc7z020clg484-2`, AXIS 150 MHz, TDC 200 MHz, 32-bit 출력의 2026-07-22 topology 최적화 비교 결과는 다음과 같다.
 
 | Build | 생성 topology | LUT | FF | LUTRAM | AXIS WNS | TDC WNS |
 |---|---|---:|---:|---:|---:|---:|
@@ -424,6 +428,20 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 | 3-chip 2R+1F | 3 / `0111` | 84 | 12 | 3 |
 | 4-chip 2R+2F | 4 / `1111` | 112 | 16 | 4 |
 
+2026-07-23에는 OOC와 parent가 함께 읽는 30-file canonical RTL manifest를 기준으로 4-chip split build를 다시 구현했다. 기본 implementation 전략은 WNS `-0.084 ns`였고, 동일 RTL/XDC의 `TIMING_EXPLORE`에서 다음과 같이 최종 closure됐다. 이 결과가 현재 source set의 물리 sign-off 기준이다.
+
+| 항목 | 최종 결과 |
+|---|---:|
+| Post-route LUT / FF / LUTRAM | 15,835 / 20,242 / 2,272 |
+| 전체 WNS / TNS | 0.041 ns / 0.000 ns |
+| AXIS 150 MHz WNS | 0.506 ns |
+| TDC 200 MHz WNS | 0.041 ns |
+| WHS / THS | 0.065 ns / 0.000 ns |
+| no-clock / unconstrained internal endpoint | 0 / 0 |
+| Critical unsafe CDC / routing error | 0 / 0 |
+
+최종 session은 `signoff_results/sessions/260723071000_ip_handoff_timing_explore_w32_a150_t200_p1111_r0011_f1100_impl`이다. 이 OOC 결과는 내부 clocked path를 검증하며, 실제 보드의 GPX I/O delay와 pin assignment는 parent/board XDC에서 별도로 닫아야 한다.
+
 ---
 
 ## 8. Top 포트 설명
@@ -432,14 +450,27 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 
 | 포트 | 도메인 | 의미 | 계약 |
 |---|---|---|---|
-| `i_shot_start` | AXIS | 실제 레이저/TStart 발생 표지 | level이 길어도 내부 edge detector가 1회 pulse로 변환; 물리 TStart 출력은 아님 |
+| `i_n_faces` | 정적 sideband | motor가 합성 전 확정한 polygon 면 수 | `motor_decoder_top.o_n_faces`에 직접 연결, bitstream 동작 중 1..5의 일정한 값이어야 함 |
+| `i_shot_start` | AXIS | 실제 레이저/TStart 발생 표지이자 `i_shot_face_index`의 valid | level이 길어도 내부 edge detector가 1회 pulse로 변환; 물리 TStart 출력은 아님 |
+| `i_shot_face_index` | AXIS | 수락된 Shot이 속한 face ID payload | `i_shot_start` pulse 전체에서 안정; direct/deferred Shot queue가 payload를 함께 보존 |
 | `i_stop_tdc` | AXIS | 현재 Shot의 측정 window 종료 표지 | TDC domain으로 pulse CDC; 동기화된 `IrFlag`보다 먼저 도착할 때만 `sequence_error`, IrFlag 이후 drain/ALU 중 도착은 정상이며 session 종료 명령은 아님 |
 | `i_bin_resolution_ps` | AXIS | bin 해상도 메타데이터 | 헤더 기록 전용 |
 | `i_k_dist_fixed` | AXIS | 외부 거리 scale 메타데이터 | 헤더 기록 전용, Q-format은 이 RTL이 정의하지 않음 |
 
 `tdc_gpx_top`에는 `stop_evt` 또는 `fire_count` 입력 포트가 없다. Echo pulse/count가 필요한 시스템은 이를 별도 진단 또는 광학 검증 경로로 수집할 수 있지만, 그 값을 GPX IFIFO read 개수로 변환해 이 모듈에 주입해서는 안 된다.
 
-현재 `laser_ctrl` 결과 스트림은 `tdata[15:0]=step_idx+1`, `tdata[31:16]=remaining` 계약이므로 GPX geometry 입력이 아니다. `tdc_gpx_top`은 이 스트림을 받지 않으며, `cols_per_face`는 Pipeline CSR `RANGE_COLS[31:16]`이 단독 소유한다. Laser 결과는 별도 진단/소프트웨어 경로로 라우팅해야 한다.
+현재 `laser_ctrl` 결과 스트림은 `tdata[15:0]=step_idx+1`, `tdata[31:16]=remaining` 계약이므로 GPX geometry 입력이 아니다. `tdc_gpx_top`은 이 스트림을 받지 않지만, 수락된 Shot의 face ID는 전용 `i_shot_face_index` payload로 받는다. `cols_per_face`는 Pipeline CSR `RANGE_COLS[31:16]`이 단독 소유하며 Laser 결과 스트림은 별도 진단/소프트웨어 경로로 라우팅해야 한다.
+
+#### IP 간 값 전달 방식
+
+| 값의 수명 | 예 | 연결 방식 | 이유 |
+|---|---|---|---|
+| bitstream 동안 불변 | `n_faces`, build capability | generic 파생 정적 sideband 직접 연결 | 변화가 없으므로 handshake 없이도 coherent |
+| 이벤트마다 변화 | `shot_face_index` | `i_shot_start`를 valid로 사용하는 payload 묶음 | Shot과 face ID를 같은 cycle 경계에서 원자적으로 capture |
+| 운용 중 장기 설정 변경 | motor center/half width, TDC CSR 설정 | request/apply 또는 `xpm_cdc_handshake` | multi-bit 값이 중간 상태로 관측되는 것을 방지 |
+| 연속 데이터 | raw hit, VDMA output | AXI4-Stream `TVALID/TREADY` | backpressure와 beat 보존 필요 |
+
+Laser가 이미 발사된 뒤 TDC가 `ready`를 낮추는 사후 backpressure는 광학 사건을 되돌릴 수 없으므로 추가하지 않는다. 현재 TDC는 경계 충돌에 대해 1-deep deferred Shot과 drop 진단을 가진다. 모든 Shot의 무손실 수락이 필수라면 향후 `laser_ctrl`이 발사 **전에** 확인하는 `tdc_ready/fire_admit` 핸드셰이크를 추가해야 한다.
 
 ### 8.2 GPX 물리 포트
 
@@ -516,7 +547,7 @@ Pipeline의 compile-time status는 다음과 같다.
 | Offset | 이름 | 값/형식 |
 |---:|---|---|
 | `0x40` | `HW_VERSION` | `g_HW_VERSION`, 기본 `0x00010000` |
-| `0x44` | `HW_CONFIG` | build chip 수, build max stops/hits, hit width, AXIS width, Cell format, `[28]` Fall 회로 존재 여부 |
+| `0x44` | `HW_CONFIG` | build chip 수, build max stops/hits, hit width, AXIS width, Cell format, `[28]` Fall 회로 존재 여부, `[31:29]` motor-owned n_faces |
 | `0x48` | `MAX_ROWS` | `popcount(g_PRESENT_CHIP_MASK) x g_MAX_STOPS_PER_CHIP`; 기본 32 |
 | `0x4C` | `CELL_SIZE` | build max hits 기준 canonical Cell bytes; 기본 20 B |
 | `0x50` | `MAX_HSIZE` | build profile full-mask 최대 line bytes; 기본 688 B |
@@ -533,7 +564,7 @@ Pipeline의 compile-time status는 다음과 같다.
 | `[9:7]` | `dist_scale` | 현재는 header-only |
 | `[10]` | `drain_mode` | IFIFO drain 방식 |
 | `[11]` | `pipeline_en` | 현재는 header-only |
-| `[14:12]` | `n_faces` | Face ID 순환 범위 |
+| `[14:12]` | reserved | legacy `n_faces` 위치; write해도 무시되며 `i_n_faces`가 단독 소유 |
 | `[18:15]` | `stops_per_chip` | Cell 개수와 stop ID 범위 |
 | `[22:19]` | `n_drain_cap` | 선택적 IFIFO별 drain cap 단위; 0=비활성, 각 IFIFO의 실제 cap=`4 x field` words |
 | `[27:23]` | `stopdis_override` | stop disable override |
@@ -559,7 +590,7 @@ write COMMAND bit = 0
 | 입력 | 적용 |
 |---|---|
 | active mask `0000` | CSR 출력에서 chip0 `0001`로 clamp |
-| `n_faces=0` | 1로 clamp; sequencer도 비정상 값 reject 방어 |
+| 정적 `i_n_faces`가 1..5 밖 | simulation assertion failure; 내부 방어값은 1로 sanitize |
 | stops `<2` | 2로 clamp |
 | stops `>8` | 8로 clamp |
 | cols `0` | 1로 clamp |
@@ -573,7 +604,7 @@ write COMMAND bit = 0
 
 | 주소 공간/offset | reset 값 | 해석 |
 |---|---:|---|
-| Pipeline `MAIN_CTRL 0x00` | `0x0004500F` | mask=`1111`, n_faces=5, stops=8, 명령=0 |
+| Pipeline `MAIN_CTRL 0x00` | `0x0004000F` | mask=`1111`, reserved `[14:12]=0`, stops=8, 명령=0 |
 | Pipeline `RANGE_COLS 0x04` | `0x0960010B` | cols=2400, max range=267 x 5 ns |
 | Chip `BUS_TIMING 0x04` | `0x00000142` | divider=2, ticks=5 |
 | Chip `START_OFF1 0x0C` | `0x00000000` | offset 0 |
@@ -634,7 +665,9 @@ sequenceDiagram
     participant GPX as 1..4 x GPX
     participant SEQ as face_seq
     participant LAS as laser_ctrl
+    participant MOT as motor_decoder
 
+    MOT-->>PCS: i_n_faces static sideband
     SW->>CCS: BUS_TIMING / CFG_IMAGE / START_OFF1 / REG7 write
     SW->>PCS: MAIN_CTRL + RANGE_COLS write
     SW->>CCS: SCAN_TIMEOUT / max_hits write
@@ -644,7 +677,7 @@ sequenceDiagram
     SW->>PCS: cmd_start rising edge
     PCS->>SEQ: start pending until accepted
     SEQ-->>PCS: cmd_start_accepted
-    LAS->>SEQ: first i_shot_start edge
+    LAS->>SEQ: first i_shot_start + face_index payload
     SEQ->>CCS: packet_start + shot_start_gated
 ```
 
@@ -653,7 +686,7 @@ sequenceDiagram
 1. 모든 reset을 assert한 뒤 clock 안정화
 2. AXI/AXIS reset deassert
 3. Chip CSR에 bus timing과 GPX config image 기록
-4. Pipeline CSR에 active mask, stops, range, cols, Face 수 기록
+4. Motor build의 `n_faces`와 TDC `HW_CONFIG[31:29]`가 같은지 확인하고 Pipeline CSR에 active mask, stops, range, cols 기록
 5. Chip CSR에 `max_scan_5ns_ticks`, `max_hits_cfg` 기록
 6. `cmd_cfg_write` rising edge 발생
 7. `busy=0`, `err_fatal=0` 확인
@@ -1310,6 +1343,8 @@ Word 3 bit 구성:
 | `[30]` | Hit bit16 metadata 지원 표시 |
 | `[31]` | 해당 Face snapshot의 falling_enable |
 
+Word 3의 face ID는 `laser_ctrl`이 `i_shot_start`와 함께 보낸 `i_shot_face_index`에서 오며, `n_faces`는 motor의 정적 `i_n_faces`에서 온다. 두 값은 Face 시작 시 함께 snapshot되므로 software가 별도의 TDC CSR face counter를 맞출 필요가 없다. `face_index >= n_faces`는 통합 연결 오류로 간주해야 한다.
+
 Word 5 bit 구성:
 
 | 비트 | 필드 |
@@ -1865,7 +1900,8 @@ p_run_timeout_sticky
 - [ ] 두 AXI-Lite 주소 공간을 혼동하지 않는다.
 - [ ] command bit를 1->0으로 되돌려 다음 rising edge를 준비한다.
 - [ ] `g_PRESENT/Rise/Fall` mask가 PCB 배선과 맞고 모든 present chip에 역할이 있다.
-- [ ] stops, max_hits, cols, n_faces가 parser/VDMA 설정과 같다.
+- [ ] stops, max_hits, cols가 parser/VDMA 설정과 같다.
+- [ ] motor의 `g_N_FACES`/`o_n_faces`와 TDC `i_n_faces`/`HW_CONFIG[31:29]`가 같은 1..5 값이다.
 - [ ] max_range의 단위가 5 ns tick임을 반영했다.
 - [ ] `max_scan_5ns_ticks`를 5 ns 기준 물리 시간으로 예산화했다.
 - [ ] top의 `g_*_TIME_NS` 값이 보드/GPX/신호처리 margin과 맞다.
@@ -1875,6 +1911,7 @@ p_run_timeout_sticky
 ### 32.3 upstream 계약
 
 - [ ] 물리 TStart와 `i_shot_start`의 지연/정렬을 정의했다.
+- [ ] `i_shot_face_index`가 `i_shot_start` 전체에서 안정하고 항상 `i_n_faces`보다 작다.
 - [ ] `i_stop_tdc`를 session stop으로 사용하지 않는다.
 - [ ] Echo edge count는 광학/배선 진단으로만 사용하고 GPX IFIFO read bound로 사용하지 않는다.
 - [ ] GPX `IrFlag`, `EF1/2`, `LF1/2`의 polarity와 보드 연결을 확인했다.
@@ -1927,12 +1964,13 @@ p_run_timeout_sticky
 
 ## 34. 최종 사용 원칙
 
-`tdc_gpx_top`을 안정적으로 사용하는 핵심은 다음 네 가지이다.
+`tdc_gpx_top`을 안정적으로 사용하는 핵심은 다음 다섯 가지이다.
 
-1. **Shot 정체성 보존:** laser Shot 표지, GPX raw data, drain control marker를 같은 Shot으로 상관한다. Echo edge 진단은 별도로 비교하되 제어 조건으로 쓰지 않는다.
-2. **고정 형식 보존:** 오류가 있어도 blank/fault metadata로 line 크기를 가능한 한 유지한다.
-3. **Face snapshot 사용:** 설정 변경이 진행 중 Face의 geometry에 섞이지 않게 한다.
-4. **raw와 engineering value 분리:** RTL이 출력하는 17비트 raw Hit와 후단의 보정 거리값을 혼동하지 않는다.
+1. **소유권 단일화:** `n_faces`는 motor, Shot face ID는 laser, TDC runtime geometry는 해당 CSR이 각각 한 번만 소유한다.
+2. **Shot 정체성 보존:** laser Shot 표지, face payload, GPX raw data, drain control marker를 같은 Shot으로 상관한다. Echo edge 진단은 별도로 비교하되 제어 조건으로 쓰지 않는다.
+3. **고정 형식 보존:** 오류가 있어도 blank/fault metadata로 line 크기를 가능한 한 유지한다.
+4. **Face snapshot 사용:** 설정 변경이 진행 중 Face의 geometry에 섞이지 않게 한다.
+5. **raw와 engineering value 분리:** RTL이 출력하는 17비트 raw Hit와 후단의 보정 거리값을 혼동하지 않는다.
 
 신호처리 분석은 `shot_start_gated -> chip_run drain -> raw event -> Cell metadata -> Row TLAST -> VDMA line` 순서로 진행하면 가장 빠르게 원인을 좁힐 수 있다.
 
@@ -1953,10 +1991,12 @@ p_run_timeout_sticky
 | [C08 Clock/Timing Generic Simulator v016](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Contract_Simulator_v016.html) | ns generic의 TDC/AXIS clock 변환, 5 ns scan CSR 변환과 시간 margin | 현재 timing 계약 계산/검증 도구 |
 | [C08 Physical Chip Pin Contract Simulator v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Simulator_v017.html) | `g_NUM_CHIPS`, sparse Present mask, compact physical lane과 D/ADR/control 핀 폭 | 현재 physical pin 계약 계산/검증 도구 |
 | [C08 GPX FIFO Ownership Simulator v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Simulator_v018.html) | Echo 진단 분리, EF 완료 권한, LF/Fill burst 힌트, cap fault/purge | 현재 FIFO 소유권과 전체 C08 계산/검증 도구 |
+| [C08 IP Handoff Contract Simulator v020](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_IP_Handoff_Contract_Simulator_v020.html) | motor 정적 `n_faces`, laser Shot face payload, runtime request/apply와 전체 계산 | 현재 IP 전달 계약과 전체 C08 계산/검증 도구 |
 | [C08 Slope Mask/Falling Closure v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Closure_v017.md) | xsim, parent validate, OOC, HTML 검증 근거 | 현재 slope closure 기록 |
 | [C08 Clock/Timing Generic Closure v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Closure_v018.md) | 시간 generic 전파, 5 ns CSR, 50~200 MHz 회귀와 OOC timing 근거 | 현재 clock/timing closure 기록 |
 | [C08 Physical Chip Pin Contract Closure v019](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Closure_v019.md) | `c_MAX_CHIPS` 전수 조사, compact physical pin 구현, 1/2/3/4-chip xsim/OOC/parent/HTML 검증 근거 | 현재 physical pin closure 기록 |
 | [C08 GPX FIFO Ownership Closure v020](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Closure_v020.md) | expected-count 경로 제거, EF-authoritative drain, 복구/parent/HTML 검증 근거 | 현재 FIFO 소유권 closure 기록 |
+| [C08 Static/Dynamic IP Handoff Closure v031](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_Static_Dynamic_IP_Handoff_Closure_v031.md) | IP별 값 소유권, 정적/event/runtime 전달 방식, 통합 회귀 근거 | 현재 IP 전달 closure 기록 |
 
 ---
 

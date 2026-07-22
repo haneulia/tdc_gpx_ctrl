@@ -26,6 +26,11 @@ function Join-InterfacePorts {
     return (@($InterfaceNet.interface_ports) -join '|')
 }
 
+function Join-NetPorts {
+    param([Parameter(Mandatory = $true)]$Net)
+    return (@($Net.ports) -join '|')
+}
+
 if (-not (Test-Path -LiteralPath $BdPath)) {
     throw "Parent block design was not generated: $BdPath"
 }
@@ -59,6 +64,24 @@ Assert-ContractValue 'physical_chip_count' $tdc.parameters.g_NUM_CHIPS.value '4'
 Assert-ContractValue 'present_chip_mask' $tdc.parameters.g_PRESENT_CHIP_MASK.value '1111'
 Assert-ContractValue 'rise_chip_mask' $tdc.parameters.g_RISE_CHIP_MASK.value '0011'
 Assert-ContractValue 'fall_chip_mask' $tdc.parameters.g_FALL_CHIP_MASK.value '1100'
+Assert-ContractValue 'n_faces_port_msb' $tdc.ports.i_n_faces.left '2'
+Assert-ContractValue 'n_faces_port_lsb' $tdc.ports.i_n_faces.right '0'
+Assert-ContractValue 'shot_face_index_port_msb' $tdc.ports.i_shot_face_index.left '2'
+Assert-ContractValue 'shot_face_index_port_lsb' $tdc.ports.i_shot_face_index.right '0'
+Assert-ContractValue 'n_faces_const_width' `
+    $design.components.const_n_faces_3.parameters.CONST_WIDTH.value '3'
+Assert-ContractValue 'n_faces_const_value' `
+    $design.components.const_n_faces_3.parameters.CONST_VAL.value '4'
+Assert-ContractValue 'shot_face_const_width' `
+    $design.components.const_zero_3.parameters.CONST_WIDTH.value '3'
+Assert-ContractValue 'shot_face_const_value' `
+    $design.components.const_zero_3.parameters.CONST_VAL.value '0'
+Assert-ContractValue 'n_faces_static_net' `
+    (Join-NetPorts $design.nets.const_n_faces_3_dout) `
+    'const_n_faces_3/dout|tdc_gpx_0/i_n_faces'
+Assert-ContractValue 'shot_face_payload_net' `
+    (Join-NetPorts $design.nets.const_zero_3_dout) `
+    'const_zero_3/dout|tdc_gpx_0/i_shot_face_index'
 Assert-ContractValue 'tdc_data_pin_width' $tdc.ports.io_tdc_d.left '111'
 Assert-ContractValue 'tdc_data_pin_lsb' $tdc.ports.io_tdc_d.right '0'
 Assert-ContractValue 'tdc_address_pin_width' $tdc.ports.o_tdc_adr.left '15'

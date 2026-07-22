@@ -79,7 +79,7 @@ entity tb_tdc_gpx_top_int is
             c_MAX_HITS_PER_STOP;
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
-        G_N_FACES         : natural := 1;
+        G_N_FACES         : positive range 1 to 5 := 1;
         -- Behavioral IFIFO load per stop/channel. Default 1 keeps the
         -- historical top_int smoke tests small; target 7 models 7 echoes
         -- per channel.
@@ -224,12 +224,10 @@ architecture sim of tb_tdc_gpx_top_int is
 
     -- Packed MAIN_CTRL / RANGE_COLS values for pipeline CSR
     function fn_pack_main_ctrl(mask  : std_logic_vector(3 downto 0);
-                               faces : natural;
                                stops : natural) return std_logic_vector is
         variable v : std_logic_vector(31 downto 0) := (others => '0');
     begin
         v( 3 downto  0) := mask;
-        v(14 downto 12) := std_logic_vector(to_unsigned(faces, 3));
         v(18 downto 15) := std_logic_vector(to_unsigned(stops, 4));
         return v;
     end function;
@@ -266,6 +264,8 @@ architecture sim of tb_tdc_gpx_top_int is
         if fn_count_ones(G_FALL_CHIP_MASK and G_PRESENT_CHIP_MASK) > 0 then
             v(c_HWCFG_HAS_FALLING) := '1';
         end if;
+        v(c_HWCFG_N_FACES_HI downto c_HWCFG_N_FACES_LO) :=
+            std_logic_vector(to_unsigned(G_N_FACES, 3));
         return v;
     end function;
 
@@ -440,6 +440,7 @@ architecture sim of tb_tdc_gpx_top_int is
     -- laser_ctrl output emulation (start_tdc / stop_tdc pulse)
     -- =========================================================================
     signal lc_start_tdc : std_logic := '0';   -- -> i_shot_start
+    signal lc_face_index : std_logic_vector(2 downto 0) := (others => '0');
     signal lc_stop_tdc  : std_logic := '0';   -- -> i_stop_tdc
 
     -- =========================================================================
@@ -556,7 +557,7 @@ architecture sim of tb_tdc_gpx_top_int is
     -- =========================================================================
     -- Pipeline CSR register offsets (csr_pipeline internal)
     --   CTL0 = 0x00 MAIN_CTRL   [31:28]=COMMAND, [22:19]=n_drain_cap,
-    --                            [18:15]=stops, [14:12]=n_faces, [3:0]=mask
+    --                            [18:15]=stops, [14:12]=reserved, [3:0]=mask
     --   CTL1 = 0x04 RANGE_COLS  [31:16]=cols_per_face,
     --                             [15:0]=max_range_5ns_ticks
     -- =========================================================================
@@ -575,10 +576,10 @@ architecture sim of tb_tdc_gpx_top_int is
     constant C_PIPE_HIGH_RESERVED : std_logic_vector(6 downto 0) := "1100000"; -- 0x60
 
     -- MAIN_CTRL + RANGE_COLS packed from the entity generics so changing
-    -- G_ACTIVE_CHIP_MASK / G_N_FACES / G_STOPS_PER_CHIP / G_COLS_PER_FACE /
+    -- G_ACTIVE_CHIP_MASK / G_STOPS_PER_CHIP / G_COLS_PER_FACE /
     -- G_MAX_RANGE_M at instantiation time consistently updates both CSRs.
     constant C_MAIN_CTRL_BASE : std_logic_vector(31 downto 0) :=
-        fn_pack_main_ctrl(G_ACTIVE_CHIP_MASK, G_N_FACES, G_STOPS_PER_CHIP);
+        fn_pack_main_ctrl(G_ACTIVE_CHIP_MASK, G_STOPS_PER_CHIP);
     constant C_RANGE_COLS_VAL : std_logic_vector(31 downto 0) :=
         std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
         std_logic_vector(to_unsigned(C_MAX_RANGE_5NS_TICKS, 16));
@@ -1015,8 +1016,10 @@ begin
             s_axi_pipe_rdata   => sp_rdata,
             s_axi_pipe_rresp   => sp_rresp,
             -- laser_ctrl pulses
-            i_shot_start => lc_start_tdc,
-            i_stop_tdc   => lc_stop_tdc,
+            i_n_faces        => std_logic_vector(to_unsigned(G_N_FACES, 3)),
+            i_shot_start      => lc_start_tdc,
+            i_shot_face_index => lc_face_index,
+            i_stop_tdc        => lc_stop_tdc,
             -- TDC physical pins
             io_tdc_d         => io_tdc_d,
             o_tdc_adr        => p_o_tdc_adr,
@@ -1134,8 +1137,16 @@ begin
                             v_header_word_idx := v_rise_line_beat * C_WORDS_PER_BEAT + lane;
                             if v_header_word_idx = 3 then
                                 v_word := m_rise_tdata(32 * lane + 31 downto 32 * lane);
+                                assert v_word(7 downto 0) = std_logic_vector(
+                                    resize(unsigned(lc_face_index), 8))
+                                    report "top_int: rising header motor face_index mismatch"
+                                    severity failure;
                                 assert v_word(11 downto 8) = C_RISE_LANE_CHIP_MASK
                                     report "top_int: rising header active-chip mask mismatch"
+                                    severity failure;
+                                assert v_word(14 downto 12) = std_logic_vector(
+                                    to_unsigned(G_N_FACES, 3))
+                                    report "top_int: rising header motor n_faces mismatch"
                                     severity failure;
                                 assert (v_word(31) = '1') = G_FALLING_ENABLE
                                     report "top_int: rising header falling-enable mismatch"
@@ -1277,8 +1288,16 @@ begin
                             v_header_word_idx := v_fall_line_beat * C_WORDS_PER_BEAT + lane;
                             if v_header_word_idx = 3 then
                                 v_word := m_fall_tdata(32 * lane + 31 downto 32 * lane);
+                                assert v_word(7 downto 0) = std_logic_vector(
+                                    resize(unsigned(lc_face_index), 8))
+                                    report "top_int: falling header motor face_index mismatch"
+                                    severity failure;
                                 assert v_word(11 downto 8) = C_FALL_LANE_CHIP_MASK
                                     report "top_int: falling header active-chip mask mismatch"
+                                    severity failure;
+                                assert v_word(14 downto 12) = std_logic_vector(
+                                    to_unsigned(G_N_FACES, 3))
+                                    report "top_int: falling header motor n_faces mismatch"
                                     severity failure;
                                 assert v_word(31) = '1'
                                     report "top_int: falling header falling-enable mismatch"
@@ -1613,6 +1632,7 @@ begin
         begin
             for f in 0 to G_N_FACES - 1 loop
                 for c in 0 to G_COLS_PER_FACE - 1 loop
+                    lc_face_index <= std_logic_vector(to_unsigned(f, 3));
                     do_shot(c + 1,
                             C_MODEL_WORDS_PER_IFIFO,
                             "run" & integer'image(run_idx)
@@ -1731,7 +1751,7 @@ begin
         pl("[S1] Pipeline CSR: RANGE_COLS / MAIN_CTRL write");
         pipe_wr(C_PIPE_RANGE_COLS, C_RANGE_COLS_VAL);   -- 500m / 2 cols
         wait_clk(4);
-        pipe_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);    -- mask=F, n_faces=1, stops=2
+        pipe_wr(C_PIPE_MAIN_CTRL, C_MAIN_CTRL_BASE);    -- mask=F, stops=2; faces are generic
         wait_clk(20);
 
         ----------------------------------------------------------------

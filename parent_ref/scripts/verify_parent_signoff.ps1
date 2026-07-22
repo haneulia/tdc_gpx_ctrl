@@ -11,6 +11,7 @@ $Stage = $Stage.ToUpperInvariant()
 $Prefix = if ($Stage -eq 'IMPL') { 'post_route' } else { 'post_synth' }
 $Report = [System.Collections.Generic.List[string]]::new()
 $MinimumSetupSlackNs = 0.100
+$ExpectedContractChecks = 95
 $ControlSetLimits = @{
     'SYNTH' = @{ Design = 1217; ConfigCtrl = 435 }
     'IMPL' = @{ Design = 1184; ConfigCtrl = 422 }
@@ -86,10 +87,11 @@ Assert-True (Test-Path -LiteralPath $ResultDir) "missing result directory $Resul
 $contractPath = Join-Path $ResultDir 'parent_ref_contract_verified.txt'
 Assert-True (Test-Path -LiteralPath $contractPath) "missing parent contract report"
 $contractLines = @(Get-Content -LiteralPath $contractPath | Where-Object { $_.Trim() })
-Assert-True ($contractLines.Count -eq 38) "expected 38 contract checks, got $($contractLines.Count)"
+Assert-True ($contractLines.Count -eq $ExpectedContractChecks) `
+    "expected $ExpectedContractChecks contract checks, got $($contractLines.Count)"
 Assert-True ((@($contractLines | Where-Object { $_ -notmatch '^PASS ' })).Count -eq 0) `
     'parent contract report contains a non-PASS line'
-$Report.Add('PASS contract_checks=38')
+$Report.Add("PASS contract_checks=$ExpectedContractChecks")
 
 $timing = Read-Report "${Prefix}_timing_summary.rpt"
 Assert-True ($timing -match 'All user specified timing constraints are met\.') `

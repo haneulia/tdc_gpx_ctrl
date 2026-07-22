@@ -71,8 +71,9 @@ package tdc_gpx_cfg_pkg is
     constant c_MC_DIST_SCALE_LO      : natural := 7;
     constant c_MC_DRAIN_MODE         : natural := 10;   -- [10]    drain_mode
     constant c_MC_PIPELINE_EN        : natural := 11;   -- [11]    pipeline_en    (HEADER-ONLY)
-    constant c_MC_N_FACES_HI         : natural := 14;   -- [14:12] n_faces
-    constant c_MC_N_FACES_LO         : natural := 12;
+    -- [14:12] reserved. Face count is owned by motor_decoder.g_N_FACES,
+    -- delivered through tdc_gpx_top.i_n_faces, and reported in
+    -- HW_CONFIG[31:29].
     constant c_MC_STOPS_HI           : natural := 18;   -- [18:15] stops_per_chip
     constant c_MC_STOPS_LO           : natural := 15;
     constant c_MC_N_DRAIN_CAP_HI     : natural := 22;   -- [22:19] n_drain_cap
@@ -205,6 +206,8 @@ package tdc_gpx_cfg_pkg is
     constant c_HWCFG_CELL_FMT_HI     : natural := 27;
     constant c_HWCFG_CELL_FMT_LO     : natural := 25;
     constant c_HWCFG_HAS_FALLING     : natural := 28;
+    constant c_HWCFG_N_FACES_HI      : natural := 31;
+    constant c_HWCFG_N_FACES_LO      : natural := 29;
 
     -- =========================================================================
     -- Status-Live (R/O) : STAT5~STAT10 → 0x94 ~ 0xA8  (runtime, CDC)
@@ -328,10 +331,9 @@ package tdc_gpx_cfg_pkg is
     -- =========================================================================
     -- CTL0: MAIN_CTRL init (packed)
     --   [3:0]=0xF, [4]=0, [6:5]=00, [9:7]=000, [10]=0, [11]=0,
-    --   [14:12]=5(101), [18:15]=8(1000), [22:19]=0, [27:23]=0, [31:28]=0
-    constant c_INIT_MAIN_CTRL        : std_logic_vector(31 downto 0) := x"0004500F";
-    -- breakdown: n_faces=5→[14:12]=101=0x5000, stops=8→[18:15]=1000_0=0x40000
-    --            0x00040000 + 0x00005000 + 0x0000000F = 0x0004500F
+    --   [14:12]=reserved(0), [18:15]=8(1000), [22:19]=0, [27:23]=0,
+    --   [31:28]=0
+    constant c_INIT_MAIN_CTRL        : std_logic_vector(31 downto 0) := x"0004000F";
 
     -- CTL1: BUS_TIMING init: clk_div=2→[5:0]=000010, ticks=5→[8:6]=101
     constant c_INIT_BUS_TIMING       : std_logic_vector(31 downto 0) := x"00000142";

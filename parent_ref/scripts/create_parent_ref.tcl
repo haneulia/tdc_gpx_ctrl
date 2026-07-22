@@ -127,37 +127,8 @@ set_property default_lib xil_defaultlib [current_project]
 set_property ip_repo_paths [list $ip_repo_axil $ip_repo_axil32] [current_project]
 update_ip_catalog -rebuild
 
-set rtl_files [list \
-    px_utility_pkg.vhd \
-    tdc_gpx_pkg.vhd \
-    tdc_gpx_cfg_pkg.vhd \
-    tdc_gpx_atomic_snapshot_cdc.vhd \
-    tdc_gpx_bus_phy.vhd \
-    tdc_gpx_skid_buffer.vhd \
-    tdc_gpx_sync_fifo.vhd \
-    tdc_gpx_cell_builder.vhd \
-    tdc_gpx_cell_pipe.vhd \
-    tdc_gpx_chip_init.vhd \
-    tdc_gpx_chip_run.vhd \
-    tdc_gpx_chip_reg.vhd \
-    tdc_gpx_chip_ctrl.vhd \
-    tdc_gpx_csr_chip.vhd \
-    tdc_gpx_cmd_arb.vhd \
-    tdc_gpx_err_handler.vhd \
-    tdc_gpx_cfg_image_override.vhd \
-    tdc_gpx_reg_rsp_cdc.vhd \
-    tdc_gpx_config_ctrl.vhd \
-    tdc_gpx_decoder_i_mode.vhd \
-    tdc_gpx_raw_event_builder.vhd \
-    tdc_gpx_decode_pipe.vhd \
-    tdc_gpx_face_assembler.vhd \
-    tdc_gpx_line_packer.vhd \
-    tdc_gpx_header_inserter.vhd \
-    tdc_gpx_face_seq.vhd \
-    tdc_gpx_output_stage.vhd \
-    tdc_gpx_csr_pipeline.vhd \
-    tdc_gpx_status_agg.vhd \
-    tdc_gpx_top.vhd]
+source [file join $hdl_dir scripts tdc_gpx_rtl_manifest.tcl]
+set rtl_files [tdc_gpx_rtl_manifest]
 
 foreach file_name $rtl_files {
     set source [file join $hdl_dir $file_name]
@@ -244,6 +215,12 @@ set_property name FIXED_IO [get_bd_intf_ports FIXED_IO_0]
 set const_zero_1 [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:xlconstant:* const_zero_1]
 set_property -dict [list CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 0] $const_zero_1
+set const_zero_3 [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:xlconstant:* const_zero_3]
+set_property -dict [list CONFIG.CONST_WIDTH 3 CONFIG.CONST_VAL 0] $const_zero_3
+set const_n_faces_3 [create_bd_cell -type ip \
+    -vlnv xilinx.com:ip:xlconstant:* const_n_faces_3]
+set_property -dict [list CONFIG.CONST_WIDTH 3 CONFIG.CONST_VAL 4] $const_n_faces_3
 set const_one_1 [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:xlconstant:* const_one_1]
 set_property -dict [list CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1] $const_one_1
@@ -338,11 +315,16 @@ connect_bd_net [get_bd_pins rst_axis_150/peripheral_aresetn] \
 connect_bd_net [get_bd_pins $ps7/FCLK_CLK2] \
     [get_bd_pins $tdc/i_tdc_clk]
 
-# The upstream laser module is not part of this parent timing shell. Drive its
-# TDC-facing control inputs idle; GPX FIFO status enters on the physical pins.
+# The motor/laser modules are not part of this parent timing shell. Model the
+# motor build as a fixed four-face profile and drive laser events idle. A real
+# parent replaces these constants with motor_decoder/laser_ctrl connections.
+connect_bd_net [get_bd_pins $const_n_faces_3/dout] \
+    [get_bd_pins $tdc/i_n_faces]
 connect_bd_net [get_bd_pins $const_zero_1/dout] \
     [get_bd_pins $tdc/i_shot_start] \
     [get_bd_pins $tdc/i_stop_tdc]
+connect_bd_net [get_bd_pins $const_zero_3/dout] \
+    [get_bd_pins $tdc/i_shot_face_index]
 connect_bd_net [get_bd_pins $const_zero_32/dout] \
     [get_bd_pins $tdc/i_k_dist_fixed]
 connect_bd_net [get_bd_pins $const_zero_16/dout] \

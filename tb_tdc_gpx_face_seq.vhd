@@ -52,6 +52,7 @@ architecture sim of tb_tdc_gpx_face_seq is
 
     -- events
     signal shot_start_raw         : std_logic := '0';
+    signal shot_face_index_raw    : std_logic_vector(2 downto 0) := (others => '0');
     signal frame_done             : std_logic := '0';
     signal frame_fall_done        : std_logic := '0';
     signal face_abort             : std_logic := '0';
@@ -69,7 +70,7 @@ architecture sim of tb_tdc_gpx_face_seq is
         dist_scale          => "000",
         drain_mode          => '0',
         pipeline_en         => '0',
-        n_faces             => to_unsigned(1, 3),
+        n_faces             => to_unsigned(3, 3),
         stops_per_chip      => to_unsigned(2, 4),
         n_drain_cap         => (others => '0'),
         stopdis_override    => (others => '0'),
@@ -145,6 +146,7 @@ begin
             i_m_axis_tvalid         => m_axis_tvalid,
             i_m_axis_fall_tvalid    => m_axis_fall_tvalid,
             i_shot_start_raw        => shot_start_raw,
+            i_shot_face_index_raw   => shot_face_index_raw,
             i_frame_done            => frame_done,
             i_frame_fall_done       => frame_fall_done,
             i_face_abort            => face_abort,
@@ -265,6 +267,7 @@ begin
         start_run;
         v_seq_before := global_shot_seq;
 
+        shot_face_index_raw <= "001";
         shot_start_raw <= '1';
         wait_clk(1);
         shot_start_raw <= '0';
@@ -275,9 +278,13 @@ begin
         assert global_shot_seq = v_seq_before + 1
             report "FAIL A: shot counter expected +1, got " & integer'image(to_integer(global_shot_seq))
             severity failure;
+        assert face_id = 1
+            report "FAIL A: direct shot face_index payload was not captured"
+            severity failure;
         report "PASS A: counter incremented by 1" severity note;
 
         end_run;
+        shot_face_index_raw <= (others => '0');
 
         -------------------------------------------------------------------------
         -- Scenario B: 3-cycle raw level, gating met
@@ -338,6 +345,7 @@ begin
         hdr_fall_idle <= '0';
         wait_clk(2);
 
+        shot_face_index_raw <= "010";
         shot_start_raw <= '1';
         wait_clk(1);
         shot_start_raw <= '0';
@@ -355,9 +363,13 @@ begin
         assert global_shot_seq = v_seq_before + 1
             report "FAIL D: deferred shot expected +1, got " & integer'image(to_integer(global_shot_seq - v_seq_before))
             severity failure;
+        assert face_id = 2
+            report "FAIL D: deferred shot lost its face_index payload"
+            severity failure;
         report "PASS D: deferred -> single 1-cycle pulse" severity note;
 
         end_run;
+        shot_face_index_raw <= (others => '0');
 
         -------------------------------------------------------------------------
         -- Scenario E: stops_per_chip > c_MAX_STOPS_PER_CHIP (=8) must reject

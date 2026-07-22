@@ -139,8 +139,16 @@ entity tdc_gpx_top is
         s_axi_pipe_rdata      : out std_logic_vector(31 downto 0);
         s_axi_pipe_rresp      : out std_logic_vector(1 downto 0);
 
-        -- Shot trigger (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
-        i_shot_start     : in  std_logic;
+        -- Static polygon geometry sideband from motor_decoder.o_n_faces.
+        -- It is derived from a build-time generic and must not change while
+        -- this bitstream is active.
+        i_n_faces        : in  std_logic_vector(2 downto 0);
+
+        -- Shot event from laser_ctrl in the i_axis_aclk domain. face_index is
+        -- payload qualified by the rising edge of i_shot_start and remains
+        -- stable for the complete start pulse.
+        i_shot_start      : in  std_logic;
+        i_shot_face_index : in  std_logic_vector(2 downto 0);
 
         -- Stop TDC pulse (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         i_stop_tdc        : in  std_logic;
@@ -740,6 +748,7 @@ begin
             s_axi_rresp         => s_axi_pipe_rresp,
             i_axis_aclk         => i_axis_aclk,
             i_axis_aresetn      => i_axis_aresetn,
+            i_n_faces           => i_n_faces,
             i_chip_csr_cdc_idle => s_cdc_idle,
             o_cfg               => s_cfg_pipeline,
             o_cmd_start         => s_cmd_start,
@@ -1173,6 +1182,7 @@ begin
             i_m_axis_tvalid        => o_m_axis_tvalid,        -- VHDL-2008: read output port
             i_m_axis_fall_tvalid   => o_m_axis_fall_tvalid,   -- VHDL-2008: read output port
             i_shot_start_raw       => i_shot_start,
+            i_shot_face_index_raw  => i_shot_face_index,
             i_frame_done           => s_frame_done,
             i_frame_fall_done      => s_frame_fall_done,
             -- Round 7 C-1: ground explicit (see removed signal comment above)
