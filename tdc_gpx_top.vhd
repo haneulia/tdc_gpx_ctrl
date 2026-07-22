@@ -139,10 +139,6 @@ entity tdc_gpx_top is
         s_axi_pipe_rdata      : out std_logic_vector(31 downto 0);
         s_axi_pipe_rresp      : out std_logic_vector(1 downto 0);
 
-        -- laser_ctrl_result stream input (i_axis_aclk domain)
-        i_lsr_tvalid     : in  std_logic;
-        i_lsr_tdata      : in  std_logic_vector(31 downto 0);
-
         -- Shot trigger (from laser_ctrl, 1-clk pulse, i_axis_aclk domain)
         i_shot_start     : in  std_logic;
 
@@ -744,8 +740,6 @@ begin
             s_axi_rresp         => s_axi_pipe_rresp,
             i_axis_aclk         => i_axis_aclk,
             i_axis_aresetn      => i_axis_aresetn,
-            i_lsr_tvalid        => i_lsr_tvalid,
-            i_lsr_tdata         => i_lsr_tdata,
             i_chip_csr_cdc_idle => s_cdc_idle,
             o_cfg               => s_cfg_pipeline,
             o_cmd_start         => s_cmd_start,

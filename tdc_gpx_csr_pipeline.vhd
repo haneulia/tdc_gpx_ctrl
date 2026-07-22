@@ -101,10 +101,6 @@ entity tdc_gpx_csr_pipeline is
         i_axis_aclk         : in  std_logic;
         i_axis_aresetn      : in  std_logic;
 
-        -- laser_ctrl_result stream input (i_axis_aclk domain)
-        i_lsr_tvalid        : in  std_logic;
-        i_lsr_tdata         : in  std_logic_vector(31 downto 0);
-
         -- chip CSR CDC idle input (from csr_chip)
         i_chip_csr_cdc_idle : in  std_logic;
 
@@ -285,10 +281,6 @@ architecture rtl of tdc_gpx_csr_pipeline is
 
     attribute ASYNC_REG : string;
     attribute ASYNC_REG of s_cdc_all_idle_ff : signal is "TRUE";
-
-    -- laser_ctrl cols_per_face latch (i_axis_aclk domain)
-    signal s_lsr_cols_r  : unsigned(15 downto 0) := (others => '0');
-    signal s_lsr_valid_r : std_logic := '0';
 
 begin
 
@@ -787,28 +779,7 @@ begin
                     or (s_cfg_write_pending_r and s_cdc_all_idle_ff(1));
 
     -- =========================================================================
-    -- [8] laser_ctrl cols_per_face latch (i_axis_aclk domain)
-    -- =========================================================================
-    p_lsr_latch : process(i_axis_aclk)
-    begin
-        if rising_edge(i_axis_aclk) then
-            if i_axis_aresetn = '0' then
-                s_lsr_cols_r  <= (others => '0');
-                s_lsr_valid_r <= '0';
-            else
-                if i_cmd_start_accepted = '1' then
-                    s_lsr_valid_r <= '0';
-                end if;
-                if i_lsr_tvalid = '1' then
-                    s_lsr_cols_r  <= unsigned(i_lsr_tdata(15 downto 0));
-                    s_lsr_valid_r <= '1';
-                end if;
-            end if;
-        end if;
-    end process p_lsr_latch;
-
-    -- =========================================================================
-    -- [9] CSR output: t_tdc_cfg field extraction (i_axis_aclk domain)
+    -- [8] CSR output: t_tdc_cfg field extraction (i_axis_aclk domain)
     -- =========================================================================
     -- CTL0: MAIN_CTRL
     s_requested_chip_mask <=
@@ -841,9 +812,9 @@ begin
     o_cfg.max_range_5ns_ticks <= unsigned(
         s_ctl_out(1)(c_RC_MAX_RANGE_5NS_HI downto c_RC_MAX_RANGE_5NS_LO));
 
-    o_cfg.cols_per_face    <= s_lsr_cols_r
-                              when s_lsr_valid_r = '1' and s_lsr_cols_r >= 1
-                              else unsigned(s_ctl_out(1)(c_RC_COLS_HI downto c_RC_COLS_LO))
+    -- Pipeline CSR is the sole geometry owner. The current laser_ctrl result
+    -- stream carries step_idx/remaining, not a columns-per-face value.
+    o_cfg.cols_per_face    <= unsigned(s_ctl_out(1)(c_RC_COLS_HI downto c_RC_COLS_LO))
                               when unsigned(s_ctl_out(1)(c_RC_COLS_HI downto c_RC_COLS_LO)) >= 1
                               else to_unsigned(1, 16);
 

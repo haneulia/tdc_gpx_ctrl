@@ -78,8 +78,8 @@ Build-profile enforcement on CSR writes:
 | `[2]`   | `err_fatal`         | sticky    | err_handler recovery-retry exhausted|
 | `[3]`   | reserved            | —         | —                                   |
 | `[7:4]` | `chip_error_mask`   | level     | per-chip chip_error merged          |
-| `[11:8]`| `drain_timeout_mask`| sticky    | per-chip chip_run drain timeout     |
-| `[15:12]`| `sequence_error_mask` | sticky | per-chip stop_tdc sequence error    |
+| `[11:8]`| `drain_timeout_mask`| sticky    | per-chip range + drain-margin acquisition budget timeout |
+| `[15:12]`| `sequence_error_mask` | sticky | per-chip stop_tdc-before-IrFlag ordering error |
 | `[31:16]`| reserved           | —         | —                                   |
 
 Clear semantic: `chip_error_mask` tracks live status; the sticky masks

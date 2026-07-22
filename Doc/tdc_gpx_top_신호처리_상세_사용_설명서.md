@@ -134,9 +134,8 @@ flowchart TB
     SW -->|"AXI-Lite #2"| PCSR
     SW -->|"AXI-Lite #1"| CCSR
     LASER -->|"shot_start marker"| SEQ
-    LASER -->|"stop_tdc deadline marker"| CHIP
+    LASER -->|"current measurement-window end"| CHIP
     LASER -.->|"physical TStart / laser timing\noutside this top"| GPX
-    LASER -->|"optional cols override"| PCSR
     ECHO -.->|"edge count / pulse diagnostics"| DIAG
     PCSR --> SEQ
     CCSR --> ARB
@@ -288,7 +287,7 @@ CDC 신호를 분석할 때는 다음을 구분한다.
 
 | 값 | 입력 단위 | RTL 변환 | 실제 소비 domain |
 |---|---|---|---|
-| `max_range_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ`, `g_TDC_CLK_MHZ`별 ceiling 변환 | AXIS Cell watchdog, TDC capture/drain watchdog |
+| `max_range_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ`, `g_TDC_CLK_MHZ`별 ceiling 변환 | AXIS Cell 계열 watchdog의 기준 window, TDC 측정 window 및 drain 예산의 기준값 |
 | `max_scan_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ` 기준 ceiling 변환 | `face_assembler`의 chip-slice 대기/blank-fill |
 | `g_*_TIME_NS` timing generic | ns | 해당 소비 domain 기준 ceiling 변환 | power/recovery/bus/drain/error/Cell margin |
 | `bus_clk_div`, `bus_ticks` | TDC clock count/분주 | legality clamp만 수행 | `bus_phy` |
@@ -433,15 +432,14 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 
 | 포트 | 도메인 | 의미 | 계약 |
 |---|---|---|---|
-| `i_lsr_tvalid`, `i_lsr_tdata` | AXIS | laser result | 유효한 `tdata[15:0]`이 다음 start까지 `cols_per_face`를 override |
 | `i_shot_start` | AXIS | 실제 레이저/TStart 발생 표지 | level이 길어도 내부 edge detector가 1회 pulse로 변환; 물리 TStart 출력은 아님 |
-| `i_stop_tdc` | AXIS | Shot deadline/외부 stop timing 표지 | TDC domain으로 pulse CDC; 측정 중 도착하면 `sequence_error`, session 종료 명령은 아님 |
+| `i_stop_tdc` | AXIS | 현재 Shot의 측정 window 종료 표지 | TDC domain으로 pulse CDC; 동기화된 `IrFlag`보다 먼저 도착할 때만 `sequence_error`, IrFlag 이후 drain/ALU 중 도착은 정상이며 session 종료 명령은 아님 |
 | `i_bin_resolution_ps` | AXIS | bin 해상도 메타데이터 | 헤더 기록 전용 |
 | `i_k_dist_fixed` | AXIS | 외부 거리 scale 메타데이터 | 헤더 기록 전용, Q-format은 이 RTL이 정의하지 않음 |
 
 `tdc_gpx_top`에는 `stop_evt` 또는 `fire_count` 입력 포트가 없다. Echo pulse/count가 필요한 시스템은 이를 별도 진단 또는 광학 검증 경로로 수집할 수 있지만, 그 값을 GPX IFIFO read 개수로 변환해 이 모듈에 주입해서는 안 된다.
 
-`i_lsr_*`에도 ready가 없다. 여러 유효값이 start 수락 전에 오면 마지막으로 latch된 `i_lsr_tdata[15:0]`이 `cols_per_face` override가 되고, start가 수락되면 override-valid가 지워진다.
+현재 `laser_ctrl` 결과 스트림은 `tdata[15:0]=step_idx+1`, `tdata[31:16]=remaining` 계약이므로 GPX geometry 입력이 아니다. `tdc_gpx_top`은 이 스트림을 받지 않으며, `cols_per_face`는 Pipeline CSR `RANGE_COLS[31:16]`이 단독 소유한다. Laser 결과는 별도 진단/소프트웨어 경로로 라우팅해야 한다.
 
 ### 8.2 GPX 물리 포트
 
@@ -835,7 +833,11 @@ optical echo
 physical_range_window = max_range_5ns_ticks x 5 ns
 local_axis_clocks      = ceil(physical_range_window x g_AXIS_CLK_MHZ / 1000)
 local_tdc_clocks       = ceil(physical_range_window x g_TDC_CLK_MHZ  / 1000)
+tdc_drain_margin_clks  = ceil(g_DRAIN_MARGIN_TIME_NS x g_TDC_CLK_MHZ / 1000)
+tdc_total_budget_clks  = min(65535, local_tdc_clocks + tdc_drain_margin_clks)
 ```
+
+`local_tdc_clocks`는 레이저 측정 window 자체이고, `tdc_total_budget_clks`는 GPX의 동기화된 `IrFlag` 이후 물리 IFIFO drain까지 허용하는 총 획득 예산이다. `i_stop_tdc`가 `IrFlag`보다 먼저 도착하면 측정 종료 순서가 맞지 않으므로 `sequence_error`가 발생한다. 반대로 `IrFlag`가 먼저 확인된 뒤 drain/ALU 중 `i_stop_tdc`가 도착하는 것은 정상 순서이며 오류가 아니다.
 
 TDC-domain 변환값은 capture/drain watchdog에, AXIS-domain 변환값은 Cell DROP/QUARANTINE watchdog에 사용된다. Echo receiver가 자체 관측 window를 필요로 한다면 그 모듈에서 별도로 정의해야 하며, `tdc_gpx_top`의 IFIFO 완료 조건에 합치지 않는다.
 
@@ -1840,7 +1842,7 @@ p_run_timeout_sticky
 9. header error snapshot은 pre-Face이므로 현재 Face에서 난 post-drain 오류가 header에 즉시 보이지 않을 수 있다.
 10. 모든 내부 원인별 status가 CSR에 노출되지 않으므로 ILA 관측 계획이 필요하다.
 11. `cfg_rejected`는 published CSR에 없지만 invalid start pending은 즉시 삭제된다. 드라이버는 사전 검증하고 reject 후 설정을 고쳐 새 start edge를 내야 한다.
-12. `i_stop_tdc`는 session stop이나 물리 GPX stop 출력이 아니라 processing-deadline 순서 검사 표지이다.
+12. `i_stop_tdc`는 session stop이나 물리 GPX stop 출력이 아니라 현재 Shot 측정 window 종료 표지이다. 동기화된 `IrFlag`보다 먼저 도착하면 순서 오류이고, IrFlag 이후 drain/ALU 중 도착하는 것은 정상 순서이다.
 13. VDMA geometry 출력은 Face snapshot 후 갱신되므로 첫 Shot 전 software programming 값으로 바로 사용할 수 없다.
 14. `SYNC` mode의 generic equality assertion은 실제 clock-net 동기 관계까지 검증하지 않는다.
 15. Shot 경계에서 assembler 입력 FIFO flush는 의도된 귀속 보호지만, 출력 FIFO reset은 occupancy=0일 때만 허용된다. 이 guard를 단순화하면 backpressure 중 이전 line이 손상된다.
@@ -1909,7 +1911,7 @@ p_run_timeout_sticky
 | Hit | GPX가 출력한 17비트 raw 시간 bin |
 | Slope | Rise=1, Fall=0 edge 구분 |
 | Shot | 레이저 발사 1회와 그에 대응하는 한 측정 주기 |
-| `i_stop_tdc` | 다음 Shot deadline/외부 stop timing 표지; active processing이면 sequence error를 발생시키는 감시 입력 |
+| `i_stop_tdc` | 현재 Shot의 측정 window 종료 표지; active capture에서 동기화된 IrFlag보다 먼저 도착할 때만 sequence error를 발생시키는 감시 입력 |
 | Cell | 한 Shot의 `(slope, chip, stop)` hit 집합 |
 | Chip slice | 한 chip의 모든 stop Cell 직렬 묶음 |
 | Row/Line | 한 Shot의 한 slope 전체 Cell, `TLAST`로 종료 |

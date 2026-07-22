@@ -160,6 +160,13 @@ package tdc_gpx_pkg is
         ticks_5ns : unsigned(15 downto 0);
         clk_mhz   : positive
     ) return unsigned;
+    -- Total acquisition budget: measurement range plus post-IrFlag drain
+    -- headroom. Zero max_range keeps the runtime range watchdog disabled;
+    -- nonzero sums saturate at the 16-bit counter limit.
+    function fn_range_budget_clks(
+        max_range_clks : unsigned(15 downto 0);
+        drain_margin   : natural
+    ) return unsigned;
 
     -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
     function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural;
@@ -969,6 +976,26 @@ package body tdc_gpx_pkg is
                 -- synthesis return for tools that still elaborate this arm.
                 return ticks_5ns;
         end case;
+    end function;
+
+    function fn_range_budget_clks(
+        max_range_clks : unsigned(15 downto 0);
+        drain_margin   : natural
+    ) return unsigned is
+        variable v_sum : unsigned(16 downto 0);
+    begin
+        if max_range_clks = 0 then
+            return to_unsigned(0, max_range_clks'length);
+        elsif drain_margin >= 65535 then
+            return to_unsigned(65535, max_range_clks'length);
+        end if;
+
+        v_sum := resize(max_range_clks, v_sum'length)
+                 + to_unsigned(drain_margin, v_sum'length);
+        if v_sum(v_sum'high) = '1' then
+            return to_unsigned(65535, max_range_clks'length);
+        end if;
+        return v_sum(max_range_clks'range);
     end function;
 
     function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural is

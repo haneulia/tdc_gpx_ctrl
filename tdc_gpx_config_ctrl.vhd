@@ -142,8 +142,8 @@ entity tdc_gpx_config_ctrl is
         i_tdc_irflag         : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
         i_tdc_errflag        : in  std_logic_vector(g_NUM_CHIPS - 1 downto 0);
 
-        -- Deadline pulse from laser_ctrl. This is sequence-error detection,
-        -- not GPX FIFO drain ownership.
+        -- Current measurement-window end pulse from laser_ctrl. This is used
+        -- for ordering diagnostics, not GPX FIFO drain ownership.
         i_stop_tdc           : in  std_logic;
 
         -- =====================================================================

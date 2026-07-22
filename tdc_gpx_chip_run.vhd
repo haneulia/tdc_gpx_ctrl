@@ -198,28 +198,6 @@ architecture rtl of tdc_gpx_chip_run is
     constant c_ALU_PULSE_LAST : unsigned(15 downto 0) := to_unsigned(g_ALU_PULSE_CLKS - 1, 16);
     constant c_FLAG_SETTLE_LAST : unsigned(15 downto 0) :=
         to_unsigned(g_EF_SYNC_GUARD_CLKS - 1, 16);
-    -- Phase B: shot-bounded watchdog cap.
-    -- Function: (max_range + margin), saturating at x"FFFF". max_range=0
-    -- is the "disabled" encoding and also returns x"FFFF" so pre-config
-    -- behavior matches the legacy fixed cap.
-    function fn_timeout_cap(
-        max_range : unsigned(15 downto 0);
-        margin    : natural
-    ) return unsigned is
-        variable v_sum : unsigned(16 downto 0);
-    begin
-        if max_range = 0 then
-            return x"FFFF";
-        else
-            v_sum := resize(max_range, 17) + to_unsigned(margin, 17);
-            if v_sum(16) = '1' then
-                return x"FFFF";  -- saturate
-            else
-                return v_sum(15 downto 0);
-            end if;
-        end if;
-    end function;
-
     type t_drain_eval is record
         ififo1_done     : std_logic;
         ififo2_done     : std_logic;
@@ -549,9 +527,15 @@ begin
                             -- SW max_range update cannot change this shot's
                             -- timeout horizon. One registered detector shares
                             -- the cap comparison across the drain/flush path.
-                            s_wait_cap_r         <= fn_timeout_cap(
-                                                       i_max_range_tdc_clks,
-                                                       g_DRAIN_MARGIN_CLKS);
+                            if i_max_range_tdc_clks = 0 then
+                                -- Runtime range watchdog disabled; retain the
+                                -- finite legacy fallback for a stuck bus state.
+                                s_wait_cap_r <= x"FFFF";
+                            else
+                                s_wait_cap_r <= fn_range_budget_clks(
+                                    i_max_range_tdc_clks,
+                                    g_DRAIN_MARGIN_CLKS);
+                            end if;
                             s_state_r            <= ST_CAPTURE;
                         end if;
 

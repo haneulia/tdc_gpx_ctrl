@@ -8,8 +8,8 @@
 | pipeline_overrun | face_seq | flag | shot overrun detected |
 | err_fatal | err_handler | sticky | recovery retry exhausted |
 | chip_error_mask | top glue | 4-bit | unmasked chip error flags |
-| drain_timeout_mask | chip_ctrl | 4-bit sticky | per-chip drain timeout |
-| sequence_error_mask | chip_ctrl | 4-bit sticky | per-chip stop_tdc sequence error |
+| drain_timeout_mask | chip_ctrl | 4-bit sticky | per-chip range + drain-margin acquisition budget timeout |
+| sequence_error_mask | chip_ctrl | 4-bit sticky | per-chip stop_tdc-before-IrFlag ordering error |
 | shot_seq_current | face_seq | 16-bit | current shot sequence number |
 | vdma_frame_count | face_seq | 32-bit | VDMA frame counter |
 | error_cycle_count | status_agg | 32-bit | accumulated error cycle count |

@@ -341,11 +341,9 @@ connect_bd_net [get_bd_pins $ps7/FCLK_CLK2] \
 # The upstream laser module is not part of this parent timing shell. Drive its
 # TDC-facing control inputs idle; GPX FIFO status enters on the physical pins.
 connect_bd_net [get_bd_pins $const_zero_1/dout] \
-    [get_bd_pins $tdc/i_lsr_valid] \
     [get_bd_pins $tdc/i_shot_start] \
     [get_bd_pins $tdc/i_stop_tdc]
 connect_bd_net [get_bd_pins $const_zero_32/dout] \
-    [get_bd_pins $tdc/i_lsr_data] \
     [get_bd_pins $tdc/i_k_dist_fixed]
 connect_bd_net [get_bd_pins $const_zero_16/dout] \
     [get_bd_pins $tdc/i_bin_resolution_ps]

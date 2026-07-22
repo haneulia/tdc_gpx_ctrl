@@ -503,8 +503,6 @@ architecture sim of tb_tdc_gpx_top_int is
     -- =========================================================================
     -- Calibration constants
     -- =========================================================================
-    signal i_lsr_tvalid       : std_logic := '0';
-    signal i_lsr_tdata        : std_logic_vector(31 downto 0) := (others => '0');
     signal i_bin_resolution_ps : unsigned(15 downto 0) := to_unsigned(81, 16);
     signal i_k_dist_fixed      : unsigned(31 downto 0) := to_unsigned(54321, 32);
     signal o_irq, o_irq_pipe   : std_logic;
@@ -1016,9 +1014,6 @@ begin
             s_axi_pipe_rready  => sp_rready,
             s_axi_pipe_rdata   => sp_rdata,
             s_axi_pipe_rresp   => sp_rresp,
-            -- laser_ctrl result stream (unused)
-            i_lsr_tvalid => i_lsr_tvalid,
-            i_lsr_tdata  => i_lsr_tdata,
             -- laser_ctrl pulses
             i_shot_start => lc_start_tdc,
             i_stop_tdc   => lc_stop_tdc,

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "scenario_id": "smoke_external_200m_v001",
+  "description": "Single-clock end-to-end smoke baseline through the physical A/B/Z path, including index acquisition and one full observed revolution",
+  "axis_clock_mhz": 200.0,
+  "max_range_m": 500.0,
+  "target_distance_m": 375.0,
+  "output_width_bits": 32,
+  "stops_per_chip": 2,
+  "columns_per_face": 2,
+  "faces_per_frame": 1,
+  "active_chip_mask": "1111",
+  "chip_slope_mask": "0011",
+  "encoder_source": "external",
+  "tdc_stimulus_mode": "lc",
+  "backpressure_gap_clocks": 0,
+  "encoder_observation_us": 220.0
+}

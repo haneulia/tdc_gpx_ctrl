@@ -93,8 +93,6 @@ entity tdc_gpx_parent_core is
         s_axi_pipe_rdata   : out std_logic_vector(31 downto 0);
         s_axi_pipe_rresp   : out std_logic_vector(1 downto 0);
 
-        i_lsr_valid : in std_logic;
-        i_lsr_data  : in std_logic_vector(31 downto 0);
         i_shot_start : in std_logic;
         i_stop_tdc   : in std_logic;
 
@@ -256,8 +254,6 @@ begin
             s_axi_pipe_rdata   => s_axi_pipe_rdata,
             s_axi_pipe_rresp   => s_axi_pipe_rresp,
 
-            i_lsr_tvalid => i_lsr_valid,
-            i_lsr_tdata  => i_lsr_data,
             i_shot_start => i_shot_start,
             i_stop_tdc   => i_stop_tdc,
 

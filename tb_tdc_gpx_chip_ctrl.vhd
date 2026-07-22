@@ -33,6 +33,7 @@
 --   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
 --   [20] Forced pending response trips the secondary deadlock watchdog.
+--   [21] stop_tdc window-end semantics + max_range/drain-margin contract.
 --   Negative modes:
 --     g_NEGATIVE_MODE=1: force empty IFIFO read monitor and fail intentionally.
 --     g_NEGATIVE_MODE=2: force raw tuser monitor and fail intentionally.
@@ -191,6 +192,8 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_stop_tdc           : std_logic := '0';
     signal s_err_drain_timeout  : std_logic;
     signal s_err_sequence       : std_logic;
+    signal s_err_drain_timeout_cnt : natural := 0;
+    signal s_err_sequence_cnt      : natural := 0;
     signal s_run_drain_complete : std_logic;
     signal s_err_raw_overflow   : std_logic;
     signal s_err_raw_drop       : std_logic;
@@ -552,6 +555,23 @@ begin
         end if;
     end process p_cycle_counter;
 
+    p_window_contract_error_count : process(s_clk)
+    begin
+        if rising_edge(s_clk) then
+            if s_rst_n = '0' then
+                s_err_drain_timeout_cnt <= 0;
+                s_err_sequence_cnt      <= 0;
+            else
+                if s_err_drain_timeout = '1' then
+                    s_err_drain_timeout_cnt <= s_err_drain_timeout_cnt + 1;
+                end if;
+                if s_err_sequence = '1' then
+                    s_err_sequence_cnt <= s_err_sequence_cnt + 1;
+                end if;
+            end if;
+        end if;
+    end process p_window_contract_error_count;
+
     -- =========================================================================
     -- Raw word monitor + debug trace
     -- =========================================================================
@@ -752,6 +772,8 @@ begin
         variable v_ififo2_max_ii : natural;
         variable v_faulted_snap : natural;
         variable v_gap          : natural;
+        variable v_drain_timeout_snap : natural;
+        variable v_sequence_snap      : natural;
 
         procedure wait_clk(n : natural) is
         begin
@@ -2451,6 +2473,86 @@ begin
         else
             pr_fail("[20] controller did not recover after timeout", v_fail);
         end if;
+
+        -- =============================================================
+        -- [21] Laser/TDC range-window contract
+        --   stop_tdc is the current measurement-window end.  It is a
+        --   sequence fault only while capture still waits for IrFlag.
+        --   Post-IrFlag drain may consume the configured physical margin.
+        -- =============================================================
+        pr_info("[21] stop_tdc window-end and drain-margin contract");
+
+        pulse(s_cmd_soft_reset);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[21] setup soft reset did not return to idle", v_fail);
+        end if;
+
+        s_cfg.drain_mode <= '0';
+        s_cfg.n_drain_cap <= (others => '0');
+        s_cfg.max_range_5ns_ticks <= to_unsigned(20, 16);
+        fill_fifos(2, 0);
+        wait_clk(5);
+
+        v_drain_timeout_snap := s_err_drain_timeout_cnt;
+        v_sequence_snap      := s_err_sequence_cnt;
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+
+        -- Model IrFlag at the end of the configured acquisition window.
+        wait_clk(16);
+        s_irflag_pin <= '1';
+        wait_clk(5);
+
+        -- Normal laser_ctrl stop_tdc arrives at the range-window end, while
+        -- GPX words are being drained. This must not be called a sequence
+        -- error, and the drain may use g_DRAIN_MARGIN_CLKS headroom.
+        pulse(s_stop_tdc);
+        wait_drain_done(c_TIMEOUT, v_found);
+        wait_clk(2);
+        if not v_found then
+            pr_fail("[21a] post-IrFlag drain did not complete", v_fail);
+        elsif s_err_sequence_cnt /= v_sequence_snap then
+            pr_fail("[21a] normal post-IrFlag stop_tdc raised sequence error",
+                    v_fail);
+        elsif s_err_drain_timeout_cnt /= v_drain_timeout_snap then
+            pr_fail("[21a] normal max_range + drain-margin path timed out",
+                    v_fail);
+        else
+            pr_pass("[21a] post-IrFlag stop_tdc and margin-bounded drain clean");
+        end if;
+
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+        pulse(s_cmd_stop);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+
+        -- Early stop_tdc before IrFlag means the GPX capture timer did not
+        -- close within the Laser range window and must remain diagnosable.
+        s_cfg.max_range_5ns_ticks <= to_unsigned(100, 16);
+        fill_fifos(0, 0);
+        wait_clk(5);
+        v_sequence_snap := s_err_sequence_cnt;
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(5);
+        pulse(s_stop_tdc);
+        wait_clk(2);
+
+        if s_err_sequence_cnt = v_sequence_snap + 1 then
+            pr_pass("[21b] pre-IrFlag stop_tdc raised sequence error");
+        else
+            pr_fail("[21b] pre-IrFlag stop_tdc was not diagnosed", v_fail);
+        end if;
+
+        s_irflag_pin <= '1';
+        wait_drain_done(c_TIMEOUT, v_found);
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+        pulse(s_cmd_stop);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
 
         -- =============================================================
         -- Summary

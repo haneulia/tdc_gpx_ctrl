@@ -112,17 +112,19 @@ entity tdc_gpx_chip_ctrl is
         -- Shot start (from laser_ctrl, 1-clk pulse)
         i_shot_start        : in  std_logic;
 
-        -- Max range budget converted from CSR 5 ns ticks to TDC-local clocks.
+        -- Measurement-window budget converted from CSR 5 ns ticks to
+        -- TDC-local clocks. The controller adds g_DRAIN_MARGIN_CLKS for the
+        -- post-IrFlag physical FIFO drain.
         i_max_range_tdc_clks : in unsigned(15 downto 0);
 
         -- External stop signal (from laser_ctrl, already CDC'd to TDC domain).
         -- #13: wrapper config_ctrl.u_cdc_stop_tdc (xpm_cdc_pulse, DEST_SYNC_FF=4)
         -- converts the i_axis_aclk-domain source pulse into a clean 1-cycle
         -- pulse in i_clk (TDC) domain before it reaches this port.
-        -- Used for ERROR DETECTION ONLY — NOT a drain trigger.
-        -- Signals a sequence error during any active run phase (capture +
-        -- drain + ALU), i.e. while armed='0' and busy='1', meaning the next
-        -- shot deadline arrived before the current shot finished.
+        -- Used for error detection only; it is not a drain trigger.
+        -- stop_tdc is the current measurement-window end. It is a sequence
+        -- error only if GPX capture is still waiting for IrFlag; arrival
+        -- during post-IrFlag drain/ALU is normal.
         i_stop_tdc          : in  std_logic;
 
         -- bus_phy request interface
@@ -185,8 +187,8 @@ entity tdc_gpx_chip_ctrl is
         o_busy              : out std_logic;
 
         -- Error flags (1-clk pulses)
-        o_err_drain_timeout : out std_logic;    -- max_range_tdc_clks expired before drain_done
-        o_err_sequence      : out std_logic;    -- IrFlag expected but not yet received
+        o_err_drain_timeout : out std_logic;    -- range + drain-margin budget expired before completion
+        o_err_sequence      : out std_logic;    -- stop_tdc arrived before synchronized IrFlag
         o_err_rsp_mismatch  : out std_logic;    -- bus response tuser mismatch (sticky)
         o_err_raw_overflow  : out std_logic;    -- sticky: OR of raw-drop + drain-cap (legacy, retained)
         -- Distinguish a raw FIFO beat loss from the response-drain hard cap.
@@ -363,7 +365,7 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_n_drain_cap_snap_r : unsigned(3 downto 0) := (others => '0');
     signal s_bus_clk_div_snap_r : unsigned(5 downto 0) := to_unsigned(2, 6);
     signal s_bus_ticks_snap_r   : unsigned(2 downto 0) := to_unsigned(5, 3);
-    signal s_max_range_tdc_snap_r : unsigned(15 downto 0) := (others => '0');
+    signal s_range_budget_tdc_snap_r : unsigned(15 downto 0) := (others => '0');
     signal s_cfg_image_snap_r   : t_cfg_image := (others => (others => '0'));
 
     -- =========================================================================
@@ -643,7 +645,7 @@ begin
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_bus_idle_stable_cnt_r  <= (others => '0');
                 s_force_reinit_start_pending_r <= '0';
-                s_max_range_tdc_snap_r <= (others => '0');
+                s_range_budget_tdc_snap_r <= (others => '0');
                 s_cfg_image_snap_r   <= i_cfg_image;  -- use live image at power-up (not zeros)
             else
                 -- Default: clear 1-clk dispatch pulses
@@ -701,7 +703,9 @@ begin
                             s_n_drain_cap_snap_r <= i_cfg.n_drain_cap;
                             s_bus_clk_div_snap_r <= i_cfg.bus_clk_div;
                             s_bus_ticks_snap_r   <= i_cfg.bus_ticks;
-                            s_max_range_tdc_snap_r <= i_max_range_tdc_clks;
+                            s_range_budget_tdc_snap_r <= fn_range_budget_clks(
+                                i_max_range_tdc_clks,
+                                g_DRAIN_MARGIN_CLKS);
                             s_run_start          <= '1';
                             s_phase_r            <= PH_RUN;
                         elsif i_cmd_cfg_write = '1' then
@@ -982,8 +986,8 @@ begin
                     s_range_cnt_r          <= (others => '0');
                     s_err_drain_to_fired_r <= '0';
                 elsif s_range_active_r = '1' then
-                    if s_max_range_tdc_snap_r /= 0
-                       and s_range_cnt_r >= s_max_range_tdc_snap_r then
+                    if s_range_budget_tdc_snap_r /= 0
+                       and s_range_cnt_r >= s_range_budget_tdc_snap_r then
                         if s_err_drain_to_fired_r = '0' then
                             s_err_drain_timeout_r  <= '1';
                             s_err_drain_to_fired_r <= '1';
@@ -993,15 +997,17 @@ begin
                     end if;
                 end if;
 
-                -- Sequence error: stop_tdc pulse while run is active (armed already cleared).
-                -- Covers capture + drain + ALU: any stop_tdc during active processing
-                -- means the next shot deadline arrived before current shot finished.
+                -- Sequence error: the Laser measurement window ended before
+                -- the synchronized GPX IrFlag closed capture. Once IrFlag is
+                -- visible, stop_tdc during drain/ALU is the normal ordering.
                 -- #13: i_stop_tdc is now a clean 1-cycle pulse from xpm_cdc_pulse in
                 -- config_ctrl (no internal 2-FF / edge detect needed).
-                if s_phase_r = PH_RUN and s_run_armed = '0' and s_run_busy = '1' then
-                    if i_stop_tdc = '1' then
-                        s_err_sequence_r <= '1';
-                    end if;
+                if s_phase_r = PH_RUN
+                   and s_run_armed = '0'
+                   and s_run_range_active = '1'
+                   and i_irflag_sync = '0'
+                   and i_stop_tdc = '1' then
+                    s_err_sequence_r <= '1';
                 end if;
             end if;
         end if;
@@ -1011,7 +1017,7 @@ begin
     -- StopDis output: override OR FSM-controlled
     --
     -- Policy (#24, documented intent):
-    --   INTENTIONALLY LIVE — debug/emergency override must take effect
+    --   INTENTIONALLY LIVE: debug/emergency override must take effect
     --   immediately, even mid-run. NOT snapshotted at cmd_start.
     --   SW implication: asserting i_cfg.stopdis_override(4) mid-shot forces
     --   the stops pin state on the next clock, independently of the internal
