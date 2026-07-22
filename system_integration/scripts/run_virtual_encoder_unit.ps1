@@ -9,7 +9,8 @@ param(
         "tb_enc_timing_generator",
         "tb_enc_startup_ab",
         "tb_enc_z_long_interval",
-        "tb_enc_param_boundary"
+        "tb_enc_param_boundary",
+        "tb_enc_apply_hold"
     )]
     [string]$Top = "enc_top_tb"
 )
@@ -47,7 +48,8 @@ $Files = switch ($Top) {
         "enc_top_tb",
         "tb_enc_startup_ab",
         "tb_enc_z_long_interval",
-        "tb_enc_param_boundary"
+        "tb_enc_param_boundary",
+        "tb_enc_apply_hold"
     ) } {
         "$SourceRoot/enc_pkg.vhd"
         "$SourceRoot/enc_param_apply_ctrl.vhd"
@@ -129,6 +131,7 @@ $PassPattern = switch ($Top) {
     "tb_enc_startup_ab" { "ENC_STARTUP_AB_PASS" }
     "tb_enc_z_long_interval" { "ENC_Z_LONG_INTERVAL_PASS" }
     "tb_enc_param_boundary" { "ENC_PARAM_BOUNDARY_PASS" }
+    "tb_enc_apply_hold" { "ENC_APPLY_HOLD_PASS" }
 }
 
 $SimText = Get-Content -Raw -LiteralPath $SimLog
