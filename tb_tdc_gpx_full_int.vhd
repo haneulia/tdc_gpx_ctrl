@@ -990,6 +990,16 @@ begin
         generic map (
             g_HW_VERSION      => x"00010000",
             g_OUTPUT_WIDTH    => C_OUTPUT_W,
+            -- Keep the build-time topology explicit in the integration TB.
+            -- The runtime active/slope masks reported below are derived from
+            -- these same values, so rtl_contract.json cannot silently assume
+            -- a topology that differs from the elaborated DUT.
+            g_NUM_CHIPS         => c_MAX_CHIPS,
+            g_PRESENT_CHIP_MASK => c_ALL_CHIPS_MASK,
+            g_RISE_CHIP_MASK    => c_DEFAULT_RISE_CHIP_MASK,
+            g_FALL_CHIP_MASK    => c_DEFAULT_FALL_CHIP_MASK,
+            g_MAX_STOPS_PER_CHIP => c_MAX_STOPS_PER_CHIP,
+            g_MAX_HITS_PER_STOP  => c_MAX_HITS_PER_STOP,
             g_AXIS_CLK_MHZ    => C_AXIS_DOMAIN_CLK_MHZ,
             g_TDC_CLK_MHZ     => C_TDC_DOMAIN_CLK_MHZ,
             g_STREAM_CLK_MODE => "ASYNC",
@@ -1986,8 +1996,13 @@ begin
              & " stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
              & " cols_per_face=" & integer'image(G_COLS_PER_FACE)
              & " faces_per_frame=" & integer'image(G_N_FACES)
+             & " present_chip_mask=" & to_hstring(c_ALL_CHIPS_MASK)
+             & " rise_capability_mask=" & to_hstring(c_DEFAULT_RISE_CHIP_MASK)
+             & " fall_capability_mask=" & to_hstring(c_DEFAULT_FALL_CHIP_MASK)
              & " active_chip_mask=" & to_hstring(G_ACTIVE_CHIP_MASK)
              & " chip_slope_mask=" & to_hstring(G_CHIP_SLOPE_MASK)
+             & " runtime_rise_chip_mask=" & to_hstring(C_RISE_ACTIVE_MASK)
+             & " runtime_fall_chip_mask=" & to_hstring(C_FALL_ACTIVE_MASK)
              & " encoder_ticks_lo=" & integer'image(C_ENC_TICKS_LO_LOCAL)
              & " encoder_ticks_hi=" & integer'image(C_ENC_TICKS_HI_LOCAL)
              & " encoder_hi_count=" & integer'image(C_ENC_HI_COUNT_LOCAL)

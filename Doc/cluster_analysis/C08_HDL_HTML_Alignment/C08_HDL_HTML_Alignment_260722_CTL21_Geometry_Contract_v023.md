@@ -3,7 +3,7 @@
 - Date: 2026-07-22
 - Stage: I3 runtime geometry truth source
 - Product reference: AXIS 150 MHz, TDC 200 MHz, output 32 bit
-- Verdict: **PASS, HTML contract importer remains OPEN**
+- Verdict: **PASS; the HTML importer is closed by the Stage S19 v024 result**
 
 ## 1. Problem found
 
@@ -91,11 +91,14 @@ Evidence:
 - `sim_results/vivado_xsim/sessions/260722_i3_final_internal_axis150_tdc200_v001_system_integration_smoke/`
 - `sim_results/vivado_xsim/sessions/260722_i3_final_external_axis150_tdc200_v001_system_integration_smoke/`
 
-## 6. Remaining work
+## 6. Handoff status
 
-1. Import schema-v2 `rtl_contract.json` into the C08 HTML.
-2. Make clock, range, CTL21 geometry, shot accounting, and status differences
-   visible as individual PASS/CHECK rows.
+The first two items below were completed in
+`C08_HDL_HTML_Alignment_260722_RTL_Contract_Comparison_v024.md`.
+
+1. ~~Import schema-v2 `rtl_contract.json` into the C08 HTML.~~
+2. ~~Make clock, range, CTL21 geometry, shot accounting, and status differences
+   visible as individual PASS/CHECK rows.~~
 3. Add a separate mid-Face abort scenario before defining partial-frame
    recovery as sign-off behavior.
 4. Keep independent AXI 100 MHz dynamic simulation, parent implementation,

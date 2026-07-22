@@ -76,6 +76,13 @@ strings. This preserves leading zeroes and gives HTML one stable data type.
 VDMA rise/fall HSIZE and shared VSIZE are sampled from the RTL output ports,
 not recalculated by the runner.
 
+The contract also carries the topology in two layers. The elaborated build
+profile is reported as `present_chip_mask`, `rise_capability_mask`, and
+`fall_capability_mask`; the CTL21/active-mask result is reported separately as
+`runtime_rise_chip_mask` and `runtime_fall_chip_mask`. `chip_slope_mask` is only
+the slope bit emitted by the behavioral GPX model. It is stimulus data and must
+not be used as a substitute for the DUT's build-time topology.
+
 The TB writes Chip CSR `CTL21` before `CFG_WRITE` and `START`. Its
 distance-derived `max_hits` value therefore controls the actual Cell payload;
 leaving this field at zero would select the safe build-maximum alias of seven
@@ -116,6 +123,22 @@ The 150/200 MHz scenarios prove the AXIS/TDC functional CDC path in simulation.
 The parent reference structurally validates the AXI 100 MHz clock, but this TB
 does not yet dynamically exercise an independent AXI clock. Board pin timing,
 long-stall behavior, and post-route closure remain separate sign-off gates.
+
+## C08 HTML comparison
+
+Open
+`Doc/cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_RTL_Contract_Comparison_Simulator_v019.html`
+and select either `rtl_contract.json` or the full `rtl_result.json` in the
+**RTL contract comparison** panel. With **Apply scenario** enabled, the HTML
+loads the clock pair, output width, range/scan CSR values, max hits, build and
+runtime slope masks, stops, Face geometry, and target distance before comparing
+the observed RTL metrics.
+
+PASS requires schema version 2, an RTL PASS marker, explicit build/runtime mask
+evidence, exact HSIZE/VSIZE and clock conversions, complete-line beat
+accounting, balanced Laser transactions, expected `STAT5/6/7`, and zero fault
+counters. A legacy or ambiguous contract remains readable but is intentionally
+shown as CHECK; inferred stimulus masks are not sign-off evidence.
 
 ## Run
 
