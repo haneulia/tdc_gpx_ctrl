@@ -76,6 +76,21 @@ strings. This preserves leading zeroes and gives HTML one stable data type.
 VDMA rise/fall HSIZE and shared VSIZE are sampled from the RTL output ports,
 not recalculated by the runner.
 
+The TB writes Chip CSR `CTL21` before `CFG_WRITE` and `START`. Its
+distance-derived `max_hits` value therefore controls the actual Cell payload;
+leaving this field at zero would select the safe build-maximum alias of seven
+hits and invalidate any width/throughput comparison. The current smoke keeps
+`max_scan_5ns_ticks=0` because a nonzero Face-assembler timeout must include
+separately justified GPX drain and AXIS service margins. Copying the range
+window alone into that field is not a safe timeout policy.
+
+Each accepted VDMA line is checked immediately against the exported HSIZE.
+The fixed observation interval is then extended only as needed to reach the
+next complete `columns_per_face` boundary before Motor-to-Laser requests are
+gated. This keeps the normal smoke free of an intentionally incomplete Face;
+mid-Face cancellation and partial-header behavior belong in a dedicated abort
+scenario.
+
 Pipeline CSR `RANGE_COLS[31:16]` is the sole owner of `cols_per_face`. The
 current Laser result stream carries `step_idx + 1` in bits 15:0 and the
 remaining step count in bits 31:16; it is not a geometry stream and is not

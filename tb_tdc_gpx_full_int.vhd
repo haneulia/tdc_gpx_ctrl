@@ -170,6 +170,12 @@ architecture sim of tb_tdc_gpx_full_int is
          + C_ENC_TOTAL_CLKS_LOCAL - 1) / C_ENC_TOTAL_CLKS_LOCAL;
     constant C_MD_COMMIT_TIMEOUT_CLKS : positive :=
         2 * C_ENC_TICKS_HI_LOCAL * C_MD_TOTAL_STATES + 100;
+    -- A fixed observation time can end halfway through a face. Allow enough
+    -- time for the current face to reach its configured column boundary before
+    -- gating new Motor-to-Laser requests, so the smoke produces closed VDMA
+    -- lines/frames. Mid-face cancellation belongs in an explicit abort test.
+    constant C_FACE_CLOSE_TIMEOUT_CLKS : positive :=
+        4 * C_STEP_INTERVAL * C_ENC_TICKS_HI_LOCAL * G_COLS_PER_FACE + 1000;
 
     -- max_hits table per distance memo (100m=1 / 250m=2 / 500m=3 / 750m=6 / 1000m=7)
     function fn_max_hits(r_m : real) return natural is
@@ -182,6 +188,31 @@ architecture sim of tb_tdc_gpx_full_int is
         end if;
     end function;
     constant C_MAX_HITS       : natural := fn_max_hits(G_MAX_RANGE_M);
+
+    -- The behavioral GPX model emits one slope bit per chip.  If every active
+    -- chip emits rising data, disable the runtime falling lane so all present
+    -- chips are routed to rising.  Otherwise use the product's static 2+2
+    -- capability masks and enable the falling lane.
+    function fn_has_active_fall(
+        active_mask : std_logic_vector(3 downto 0);
+        slope_mask  : std_logic_vector(3 downto 0)
+    ) return boolean is
+    begin
+        return (active_mask and (not slope_mask)) /= "0000";
+    end function;
+
+    function fn_bool_to_nat(value : boolean) return natural is
+    begin
+        if value then return 1; else return 0; end if;
+    end function;
+
+    constant C_FALLING_ENABLE : boolean :=
+        fn_has_active_fall(G_ACTIVE_CHIP_MASK, G_CHIP_SLOPE_MASK);
+    -- This integration smoke keeps the assembler's programmable per-chip
+    -- timeout disabled. The acquisition watchdog remains range-bounded in the
+    -- TDC domain. A nonzero scan timeout needs a separately budgeted drain and
+    -- AXIS service margin, so copying max_range directly would be unsafe.
+    constant C_MAX_SCAN_5NS_TICKS : natural := 0;
 
     -- pulse / trigger widths. Kept at tb_laser_ctrl_pkg values (1 clk) so
     -- lc_start_tdc matches the 1-clk pulse that face_seq edge-detects in
@@ -225,6 +256,69 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_RANGE_COLS_VAL : std_logic_vector(31 downto 0) :=
         std_logic_vector(to_unsigned(G_COLS_PER_FACE, 16)) &
         std_logic_vector(to_unsigned(C_MAX_RANGE_5NS_TICKS, 16));
+
+    function fn_pack_scan_timeout(
+        max_hits        : natural;
+        max_scan_ticks  : natural;
+        falling_enable  : boolean
+    ) return std_logic_vector is
+        variable v : std_logic_vector(31 downto 0) := (others => '0');
+    begin
+        v(c_ST_MAX_SCAN_HI downto c_ST_MAX_SCAN_LO) :=
+            std_logic_vector(to_unsigned(
+                max_scan_ticks, c_ST_MAX_SCAN_HI - c_ST_MAX_SCAN_LO + 1));
+        v(c_ST_MAX_HITS_HI downto c_ST_MAX_HITS_LO) :=
+            std_logic_vector(to_unsigned(
+                max_hits, c_ST_MAX_HITS_HI - c_ST_MAX_HITS_LO + 1));
+        if falling_enable then
+            v(c_ST_FALLING_ENABLE) := '1';
+        end if;
+        return v;
+    end function;
+
+    function fn_runtime_slope_mask(
+        active_mask   : std_logic_vector(3 downto 0);
+        edge_mask     : std_logic_vector(3 downto 0);
+        fall_enable   : boolean;
+        rise_lane     : boolean
+    ) return std_logic_vector is
+    begin
+        if not fall_enable and rise_lane then
+            return active_mask;
+        elsif not fall_enable then
+            return (active_mask'range => '0');
+        else
+            return active_mask and edge_mask;
+        end if;
+    end function;
+
+    function fn_expected_lane_hsize(
+        chip_mask : std_logic_vector(3 downto 0)
+    ) return natural is
+        variable v_cells : natural;
+    begin
+        v_cells := fn_count_ones(chip_mask) * G_STOPS_PER_CHIP;
+        if v_cells = 0 then
+            return 0;
+        end if;
+        return fn_vdma_line_bytes(v_cells, C_MAX_HITS);
+    end function;
+
+    constant C_SCAN_TIMEOUT_VAL : std_logic_vector(31 downto 0) :=
+        fn_pack_scan_timeout(
+            C_MAX_HITS, C_MAX_SCAN_5NS_TICKS, C_FALLING_ENABLE);
+    constant C_RISE_ACTIVE_MASK : std_logic_vector(3 downto 0) :=
+        fn_runtime_slope_mask(
+            G_ACTIVE_CHIP_MASK, c_DEFAULT_RISE_CHIP_MASK,
+            C_FALLING_ENABLE, true);
+    constant C_FALL_ACTIVE_MASK : std_logic_vector(3 downto 0) :=
+        fn_runtime_slope_mask(
+            G_ACTIVE_CHIP_MASK, c_DEFAULT_FALL_CHIP_MASK,
+            C_FALLING_ENABLE, false);
+    constant C_EXPECT_HSIZE_RISE : natural :=
+        fn_expected_lane_hsize(C_RISE_ACTIVE_MASK);
+    constant C_EXPECT_HSIZE_FALL : natural :=
+        fn_expected_lane_hsize(C_FALL_ACTIVE_MASK);
 
     -- Output and Echo diagnostic stream widths.
     constant C_OUTPUT_W   : natural := G_TDATA_WIDTH;
@@ -1229,6 +1323,8 @@ begin
         variable v_prev_cfg_rej, v_prev_pipe_abort     : std_logic := '0';
         variable v_prev_md_virt_pos  : std_logic_vector(14 downto 0) := (others => '0');
         variable v_prev_md_dec_count : std_logic_vector(14 downto 0) := (others => '0');
+        variable v_rise_line_beats   : natural := 0;
+        variable v_fall_line_beats   : natural := 0;
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
@@ -1267,6 +1363,8 @@ begin
                 v_prev_pipe_abort := '0';
                 v_prev_md_virt_pos := (others => '0');
                 v_prev_md_dec_count := (others => '0');
+                v_rise_line_beats := 0;
+                v_fall_line_beats := 0;
                 dbg_lc_start_ever <= '0';
                 dbg_lc_fire_ever  <= '0';
             else
@@ -1362,8 +1460,19 @@ begin
                         report "full_int: rising tstrb must be all ones on accepted output beats"
                         severity error;
                     mon_td_rise_beats <= mon_td_rise_beats + 1;
+                    v_rise_line_beats := v_rise_line_beats + 1;
                     if m_rise_tlast = '1' then
                         mon_td_rise_line_end <= mon_td_rise_line_end + 1;
+                        report "full_int: rising line beats="
+                             & integer'image(v_rise_line_beats)
+                             & " expected="
+                             & integer'image(C_EXPECT_HSIZE_RISE / (G_TDATA_WIDTH / 8))
+                            severity note;
+                        assert v_rise_line_beats =
+                               C_EXPECT_HSIZE_RISE / (G_TDATA_WIDTH / 8)
+                            report "full_int: rising line beat count diverged from HSIZE"
+                            severity failure;
+                        v_rise_line_beats := 0;
                     end if;
                 end if;
                 if m_fall_tvalid = '1' and m_fall_tready = '1' then
@@ -1374,8 +1483,19 @@ begin
                         report "full_int: falling tstrb must be all ones on accepted output beats"
                         severity error;
                     mon_td_fall_beats <= mon_td_fall_beats + 1;
+                    v_fall_line_beats := v_fall_line_beats + 1;
                     if m_fall_tlast = '1' then
                         mon_td_fall_line_end <= mon_td_fall_line_end + 1;
+                        report "full_int: falling line beats="
+                             & integer'image(v_fall_line_beats)
+                             & " expected="
+                             & integer'image(C_EXPECT_HSIZE_FALL / (G_TDATA_WIDTH / 8))
+                            severity note;
+                        assert v_fall_line_beats =
+                               C_EXPECT_HSIZE_FALL / (G_TDATA_WIDTH / 8)
+                            report "full_int: falling line beat count diverged from HSIZE"
+                            severity failure;
+                        v_fall_line_beats := 0;
                     end if;
                 end if;
             end if;
@@ -1577,6 +1697,7 @@ begin
         variable v_stat5 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_stat6 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_stat7 : std_logic_vector(31 downto 0) := (others => '0');
+        variable v_face_close_wait : natural := 0;
 
     begin
         wait until rst_n = '1';
@@ -1705,10 +1826,14 @@ begin
         lc_wr(C_LC_CTL0, C_LC_CTL0_EN);
         wait_clk(100);
 
-        pl("[S1] tdc_gpx chip CSR: cfg_image Reg0/Reg5/Reg6");
+        pl("[S1] tdc_gpx chip CSR: cfg_image Reg0/Reg5/Reg6 + CTL21");
         td_wr("0" & x"14", x"00001C00");  -- Reg0 TRiseEn
         td_wr("0" & x"28", x"01800000");  -- Reg5 ALU trig
         td_wr("0" & x"2C", x"00000004");  -- Reg6 LF threshold
+        -- CTL21 must be written before START/packet_start. Otherwise max_hits=0
+        -- aliases to the build maximum (7), while the test/report incorrectly
+        -- claims the distance-derived C_MAX_HITS value.
+        td_wr("0" & x"54", C_SCAN_TIMEOUT_VAL);
         wait_clk(20);
 
         pl("[S1] tdc_gpx pipeline CSR: RANGE_COLS / MAIN_CTRL");
@@ -1759,19 +1884,27 @@ begin
                 pl("[S4] observe motor_decoder internal encoder motion");
             end if;
             wait_clk(C_ENC_RUN_CLKS);
-            if G_ENCODER_SOURCE = "external" then
-                pl("[S5] stop external encoder");
-                enc_run <= '0';
-            else
-                pl("[S5] close observation window");
-            end if;
+            pl("[S5] close at the next complete face boundary");
+            v_face_close_wait := 0;
+            while (mon_lc_start_cnt mod G_COLS_PER_FACE) /= 0
+                  and v_face_close_wait < C_FACE_CLOSE_TIMEOUT_CLKS loop
+                wait_clk(1);
+                v_face_close_wait := v_face_close_wait + 1;
+            end loop;
+            assert (mon_lc_start_cnt mod G_COLS_PER_FACE) = 0
+                report "full_int: timed out waiting for a complete face boundary"
+                severity failure;
         end if;
 
-        -- Freeze only the upstream request stream.  LASER_EN remains asserted:
+        -- Freeze only the upstream request stream at a complete face boundary.
+        -- LASER_EN remains asserted:
         -- clearing it is an admission control, but it is also a live executor
         -- input and is therefore the wrong boundary for deterministic drain.
         pl("[S5] gate Motor-to-Laser requests and drain in-flight shot");
         lc_req_enable <= '0';
+        if G_ENCODER_SOURCE = "external" then
+            enc_run <= '0';
+        end if;
         wait_clk((3 * C_MAX_RANGE_AXIS_CLKS) + 200);
 
         --------------------------------------------------------------
@@ -1847,7 +1980,9 @@ begin
              & " max_range_5ns_ticks=" & integer'image(C_MAX_RANGE_5NS_TICKS)
              & " max_range_axis_clks=" & integer'image(C_MAX_RANGE_AXIS_CLKS)
              & " max_range_tdc_clks=" & integer'image(C_MAX_RANGE_TDC_CLKS)
+             & " max_scan_5ns_ticks=" & integer'image(C_MAX_SCAN_5NS_TICKS)
              & " max_hits=" & integer'image(C_MAX_HITS)
+             & " falling_enable=" & integer'image(fn_bool_to_nat(C_FALLING_ENABLE))
              & " stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
              & " cols_per_face=" & integer'image(G_COLS_PER_FACE)
              & " faces_per_frame=" & integer'image(G_N_FACES)
@@ -1919,6 +2054,20 @@ begin
             severity failure;
         assert to_integer(td_vdma_vsize) = G_COLS_PER_FACE
             report "full_int: VDMA VSIZE diverged from CSR cols_per_face"
+            severity failure;
+        assert to_integer(td_vdma_hsize_rise) = C_EXPECT_HSIZE_RISE
+            report "full_int: rising VDMA HSIZE diverged from CTL21 max_hits geometry"
+            severity failure;
+        assert to_integer(td_vdma_hsize_fall) = C_EXPECT_HSIZE_FALL
+            report "full_int: falling VDMA HSIZE diverged from CTL21 max_hits geometry"
+            severity failure;
+        assert mon_td_rise_beats =
+               mon_td_rise_line_end * C_EXPECT_HSIZE_RISE / (G_TDATA_WIDTH / 8)
+            report "full_int: rising beat count diverged from HSIZE/TLAST contract"
+            severity failure;
+        assert mon_td_fall_beats =
+               mon_td_fall_line_end * C_EXPECT_HSIZE_FALL / (G_TDATA_WIDTH / 8)
+            report "full_int: falling beat count diverged from HSIZE/TLAST contract"
             severity failure;
         assert mon_cfg_rejected = 0 and mon_pipe_abort = 0
             report "full_int: configuration reject or pipeline abort observed"

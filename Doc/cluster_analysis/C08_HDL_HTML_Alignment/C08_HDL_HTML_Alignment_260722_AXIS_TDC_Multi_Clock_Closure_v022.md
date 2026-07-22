@@ -5,6 +5,12 @@
 - Product reference: AXIS 150 MHz, TDC 200 MHz
 - Verdict: **I2 PASS, three-clock and board sign-off remain OPEN**
 
+> Correction, 2026-07-22: this checkpoint did not write Chip CSR
+> `CTL21.max_hits_cfg`. The reported `max_hits=3` was therefore a TB-derived
+> label while RTL used the reset alias of seven hits, producing 128 B HSIZE.
+> The clock-domain result remains valid, but the geometry evidence is
+> superseded by `C08_HDL_HTML_Alignment_260722_CTL21_Geometry_Contract_v023.md`.
+
 ## 1. Change
 
 `tb_tdc_gpx_full_int` now drives two physical clocks:
