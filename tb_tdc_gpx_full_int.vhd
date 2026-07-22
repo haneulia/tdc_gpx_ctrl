@@ -175,7 +175,10 @@ architecture sim of tb_tdc_gpx_full_int is
     -- gating new Motor-to-Laser requests, so the smoke produces closed VDMA
     -- lines/frames. Mid-face cancellation belongs in an explicit abort test.
     constant C_FACE_CLOSE_TIMEOUT_CLKS : positive :=
+        C_ENC_TOTAL_CLKS_LOCAL +
         4 * C_STEP_INTERVAL * C_ENC_TICKS_HI_LOCAL * G_COLS_PER_FACE + 1000;
+    constant C_PIPE_DRAIN_TIMEOUT_CLKS : positive :=
+        C_FACE_CLOSE_TIMEOUT_CLKS + 4 * C_MAX_RANGE_AXIS_CLKS;
 
     -- max_hits table per distance memo (100m=1 / 250m=2 / 500m=3 / 750m=6 / 1000m=7)
     function fn_max_hits(r_m : real) return natural is
@@ -385,7 +388,8 @@ architecture sim of tb_tdc_gpx_full_int is
     signal md_tuser_full : std_logic_vector(9 downto 0);
     signal md_tuser_laser : std_logic_vector(8 downto 0);
     signal md_tlast   : std_logic;
-    signal lc_req_enable : std_logic := '1';
+    -- Downstream configuration completes before encoder requests are admitted.
+    signal lc_req_enable : std_logic := '0';
     signal md_dbg_virt_pos   : std_logic_vector(14 downto 0);
     signal md_dbg_dec_count  : std_logic_vector(14 downto 0);
     signal md_dbg_active     : std_logic_vector(4 downto 0);
@@ -1708,6 +1712,7 @@ begin
         variable v_stat6 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_stat7 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_face_close_wait : natural := 0;
+        variable v_pipeline_drain_wait : natural := 0;
 
     begin
         wait until rst_n = '1';
@@ -1887,6 +1892,9 @@ begin
             tb_stop_tdc <= '1'; wait_clk(2); tb_stop_tdc <= '0';
             wait_clk(500);
         else
+            pl("[S4] admit Motor-to-Laser requests after TDC START");
+            lc_req_enable <= '1';
+            wait_clk(2);
             if G_ENCODER_SOURCE = "external" then
                 pl("[S4] enable external encoder motion (physical A/B/Z path)");
                 enc_run <= '1';
@@ -1915,7 +1923,21 @@ begin
         if G_ENCODER_SOURCE = "external" then
             enc_run <= '0';
         end if;
-        wait_clk((3 * C_MAX_RANGE_AXIS_CLKS) + 200);
+        v_pipeline_drain_wait := 0;
+        while (mon_lc_stop_cnt < mon_lc_start_cnt or
+               mon_lc_m_tlast < mon_lc_start_cnt or
+               mon_td_rise_line_end < mon_lc_start_cnt or
+               mon_td_fall_line_end < mon_lc_start_cnt) and
+              v_pipeline_drain_wait < C_PIPE_DRAIN_TIMEOUT_CLKS loop
+            wait_clk(1);
+            v_pipeline_drain_wait := v_pipeline_drain_wait + 1;
+        end loop;
+        assert mon_lc_stop_cnt = mon_lc_start_cnt and
+               mon_lc_m_tlast = mon_lc_start_cnt and
+               mon_td_rise_line_end = mon_lc_start_cnt and
+               mon_td_fall_line_end = mon_lc_start_cnt
+            report "full_int: timed out draining accepted shot outputs"
+            severity failure;
 
         --------------------------------------------------------------
         -- [S6] Diagnostic readback: pipeline CSR STAT5/STAT6/STAT7

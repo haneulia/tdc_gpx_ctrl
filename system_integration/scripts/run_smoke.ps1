@@ -85,12 +85,13 @@ $GeneratedFiles = @(
 )
 
 $MotorFiles = @(
-    "$IpRoot/motor_decoder/HDL/enc_pkg.vhd",
-    "$IpRoot/motor_decoder/HDL/enc_param_apply_ctrl.vhd",
-    "$IpRoot/motor_decoder/HDL/enc_phase_counter.vhd",
-    "$IpRoot/motor_decoder/HDL/enc_position_counter.vhd",
-    "$IpRoot/motor_decoder/HDL/enc_timing_generator.vhd",
-    "$IpRoot/motor_decoder/HDL/enc_top.vhd",
+    "$IpRoot/virtual_encoder/HDL/enc_pkg.vhd",
+    "$IpRoot/virtual_encoder/HDL/enc_param_apply_ctrl.vhd",
+    "$IpRoot/virtual_encoder/HDL/enc_phase_counter.vhd",
+    "$IpRoot/virtual_encoder/HDL/enc_position_tracker.vhd",
+    "$IpRoot/virtual_encoder/HDL/enc_index_pulse.vhd",
+    "$IpRoot/virtual_encoder/HDL/enc_timing_generator.vhd",
+    "$IpRoot/virtual_encoder/HDL/enc_top.vhd",
     "$IpRoot/motor_decoder/HDL/quad_decoder.vhd",
     "$IpRoot/motor_decoder/HDL/mirror_active_detect.vhd",
     "$IpRoot/motor_decoder/HDL/motor_irq_bridge.vhd",

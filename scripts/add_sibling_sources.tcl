@@ -15,16 +15,18 @@ open_project "$prj_dir/tdc_gpx_ctrl.xpr"
 # 이웃 HDL 경로
 # -----------------------------------------------------------------------------
 set md_dir  "C:/Projects/my_sp/lib/IP/motor_decoder/HDL"
+set ve_dir  "C:/Projects/my_sp/lib/IP/virtual_encoder/HDL"
 set lc_dir  "C:/Projects/my_sp/lib/IP/laser_ctrl/HDL"
 set er_dir  "C:/Projects/my_sp/lib/IP/echo_receiver/HDL"
 
 set sibling_rtl [list \
-    "$md_dir/enc_pkg.vhd" \
-    "$md_dir/enc_phase_counter.vhd" \
-    "$md_dir/enc_position_counter.vhd" \
-    "$md_dir/enc_timing_generator.vhd" \
-    "$md_dir/enc_param_apply_ctrl.vhd" \
-    "$md_dir/enc_top.vhd" \
+    "$ve_dir/enc_pkg.vhd" \
+    "$ve_dir/enc_param_apply_ctrl.vhd" \
+    "$ve_dir/enc_phase_counter.vhd" \
+    "$ve_dir/enc_position_tracker.vhd" \
+    "$ve_dir/enc_index_pulse.vhd" \
+    "$ve_dir/enc_timing_generator.vhd" \
+    "$ve_dir/enc_top.vhd" \
     "$md_dir/quad_decoder.vhd" \
     "$md_dir/mirror_active_detect.vhd" \
     "$md_dir/motor_irq_bridge.vhd" \

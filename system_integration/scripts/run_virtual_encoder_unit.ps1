@@ -3,7 +3,13 @@ param(
     [string]$MotorSourceRoot = "C:/Projects/my_sp/lib/IP/motor_decoder/HDL",
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [int]$RunTimeMs = 50,
-    [ValidateSet("enc_top_tb", "tb_motor_cfg_commit_atomic", "tb_enc_timing_generator")]
+    [ValidateSet(
+        "enc_top_tb",
+        "tb_motor_cfg_commit_atomic",
+        "tb_enc_timing_generator",
+        "tb_enc_startup_ab",
+        "tb_enc_z_long_interval"
+    )]
     [string]$Top = "enc_top_tb"
 )
 
@@ -36,14 +42,19 @@ $Files = switch ($Top) {
         "$SourceRoot/enc_timing_generator.vhd"
         "$Hdl/system_integration/tb/tb_enc_timing_generator.vhd"
     }
-    "enc_top_tb" {
+    { $_ -in @("enc_top_tb", "tb_enc_startup_ab", "tb_enc_z_long_interval") } {
         "$SourceRoot/enc_pkg.vhd"
         "$SourceRoot/enc_param_apply_ctrl.vhd"
         "$SourceRoot/enc_phase_counter.vhd"
-        "$SourceRoot/enc_position_counter.vhd"
+        "$SourceRoot/enc_position_tracker.vhd"
+        "$SourceRoot/enc_index_pulse.vhd"
         "$SourceRoot/enc_timing_generator.vhd"
         "$SourceRoot/enc_top.vhd"
-        "$SourceRoot/enc_top_tb.vhd"
+        if ($Top -eq "enc_top_tb") {
+            "$SourceRoot/enc_top_tb.vhd"
+        } else {
+            "$SourceRoot/${Top}.vhd"
+        }
     }
     "tb_motor_cfg_commit_atomic" {
         "$MotorSourceRoot/enc_pkg.vhd"
@@ -109,6 +120,8 @@ $PassPattern = switch ($Top) {
     "enc_top_tb" { "Result\s*:\s*ALL PASS" }
     "tb_motor_cfg_commit_atomic" { "MOTOR_CFG_ATOMIC_PASS" }
     "tb_enc_timing_generator" { "ENC_TIMING_GENERATOR_PASS" }
+    "tb_enc_startup_ab" { "ENC_STARTUP_AB_PASS" }
+    "tb_enc_z_long_interval" { "ENC_Z_LONG_INTERVAL_PASS" }
 }
 
 $SimText = Get-Content -Raw -LiteralPath $SimLog
