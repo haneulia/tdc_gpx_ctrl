@@ -8,7 +8,8 @@ param(
         "tb_motor_cfg_commit_atomic",
         "tb_enc_timing_generator",
         "tb_enc_startup_ab",
-        "tb_enc_z_long_interval"
+        "tb_enc_z_long_interval",
+        "tb_enc_param_boundary"
     )]
     [string]$Top = "enc_top_tb"
 )
@@ -42,7 +43,12 @@ $Files = switch ($Top) {
         "$SourceRoot/enc_timing_generator.vhd"
         "$Hdl/system_integration/tb/tb_enc_timing_generator.vhd"
     }
-    { $_ -in @("enc_top_tb", "tb_enc_startup_ab", "tb_enc_z_long_interval") } {
+    { $_ -in @(
+        "enc_top_tb",
+        "tb_enc_startup_ab",
+        "tb_enc_z_long_interval",
+        "tb_enc_param_boundary"
+    ) } {
         "$SourceRoot/enc_pkg.vhd"
         "$SourceRoot/enc_param_apply_ctrl.vhd"
         "$SourceRoot/enc_phase_counter.vhd"
@@ -122,6 +128,7 @@ $PassPattern = switch ($Top) {
     "tb_enc_timing_generator" { "ENC_TIMING_GENERATOR_PASS" }
     "tb_enc_startup_ab" { "ENC_STARTUP_AB_PASS" }
     "tb_enc_z_long_interval" { "ENC_Z_LONG_INTERVAL_PASS" }
+    "tb_enc_param_boundary" { "ENC_PARAM_BOUNDARY_PASS" }
 }
 
 $SimText = Get-Content -Raw -LiteralPath $SimLog
