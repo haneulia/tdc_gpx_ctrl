@@ -4,11 +4,11 @@
 >
 > 기준 RTL: `tdc_gpx_top.vhd` 및 직접 하위 모듈
 >
-> 기준 Git 리비전: `bb6861ce9c8ab4434193f901d2dcebf5f9d3c904` (`bb6861c`)
+> 기준 Git 리비전: `4c4fe96` (`refactor: decouple echo diagnostics from GPX drain`)
 >
-> 기준 일시: 2026-07-20
+> 기준 일시: 2026-07-22
 >
-> RTL 대조 재검토: 2026-07-20, top 배선과 직접 하위 모듈의 실제 소비 지점 기준
+> RTL 대조 재검토: 2026-07-22, GPX FIFO 소유권과 Echo 진단 경계 포함
 >
 > 언어/표준: VHDL-2008(일부 하위 모듈은 VHDL-93 호환 표기)
 
@@ -21,7 +21,7 @@
 1. 레이저 한 발(`Shot`)이 어떤 제어 신호를 거쳐 TDC-GPX 측정으로 연결되는가?
 2. GPX의 28비트 원시 데이터가 어떤 단계를 거쳐 VDMA용 Rise/Fall 스트림이 되는가?
 3. `Hit`, `Cell`, `Row`, `Face`, `Frame`은 각각 무엇이며 메모리에서는 어떻게 배치되는가?
-4. 예상 stop 개수, IFIFO drain, backpressure, timeout이 서로 어떻게 영향을 주는가?
+4. GPX FIFO flag, IFIFO drain, backpressure, timeout이 서로 어떻게 영향을 주는가?
 5. 오류가 발생했을 때 어떤 상태와 비트를 순서대로 확인해야 하는가?
 6. 현재 RTL이 수행하는 계산과 수행하지 않는 계산은 무엇인가?
 
@@ -36,9 +36,9 @@
 ```mermaid
 flowchart LR
     L["Laser controller\nShot trigger"] --> FS["Face / Shot sequencer"]
-    ER["Echo receiver\nStop event + fire count"] --> EC["Expected-count correlator"]
     FS --> CC["1..4 x GPX chip control"]
-    EC --> CC
+    G["TDC-GPX\nIrFlag / EF / LF"] --> CC
+    ER["Echo receiver\nLVDS edge diagnostics"] -.-> DG["System diagnostics\nnot drain control"]
     CC --> RB["28-bit raw IFIFO words"]
     RB --> DP["Decode + event context"]
     DP --> CB["Rise/Fall cell builders"]
@@ -65,6 +65,8 @@ flowchart LR
 > **핵심 주의:** `hit_store_mode`, `dist_scale`, `i_bin_resolution_ps`, `i_k_dist_fixed`가 존재해도 FPGA Cell 경로는 항상 GPX가 내보낸 **17비트 raw Hit**를 저장한다. `start_off1`은 GPX Reg5 설정에도 반영되지만 FPGA가 출력 Hit에서 다시 빼는 산술은 없다. 실제 거리 변환은 후단 DSP/소프트웨어의 책임이다.
 
 > **물리 trigger 경계:** `i_shot_start`는 외부에서 실제 TStart/레이저 trigger가 발생했다는 **동기화된 사건 표지**이다. 이 top에는 GPX TStart를 직접 구동하는 출력 포트가 없다. `i_shot_start`가 내부 acquisition/Shot bookkeeping을 시작할 뿐, 물리 trigger를 대신 생성하지 않는다.
+
+> **GPX FIFO 소유권:** `echo_receiver`가 세는 값은 GPX 입력 전단에서 관측한 LVDS edge 수이다. GPX가 실제로 받아 IFIFO에 저장한 word 수를 알 수 없으므로 drain 종료나 read 상한으로 사용할 수 없다. 현재 `tdc_gpx_top`은 Echo event/count 입력 포트를 갖지 않으며, 정상 drain 종료는 GPX `EF1/EF2`가 결정한다. `LF1/LF2`와 Reg6 Fill은 burst 크기 힌트이고 `n_drain_cap`은 출력 truncation 보호 경계이다.
 
 ---
 
@@ -108,7 +110,6 @@ flowchart TB
     subgraph AX["i_axis_aclk processing domain"]
         PCSR["Pipeline CSR"]
         SEQ["Face sequencer"]
-        STOP["Stop-event decoder"]
         DEC["Decode pipe"]
         CELL["Cell pipe"]
         OUT["Output stage"]
@@ -125,6 +126,7 @@ flowchart TB
     subgraph EXT["External blocks"]
         LASER["laser_ctrl"]
         ECHO["echo_receiver"]
+        DIAG["System diagnostics"]
         GPX["1..4 x TDC-GPX"]
         DMA["Rise/Fall VDMA"]
     end
@@ -135,10 +137,9 @@ flowchart TB
     LASER -->|"stop_tdc deadline marker"| CHIP
     LASER -.->|"physical TStart / laser timing\noutside this top"| GPX
     LASER -->|"optional cols override"| PCSR
-    ECHO -->|"stop events + fire count"| STOP
+    ECHO -.->|"edge count / pulse diagnostics"| DIAG
     PCSR --> SEQ
     CCSR --> ARB
-    STOP --> CHIP
     SEQ --> CHIP
     ARB --> CHIP
     CHIP --> PHY
@@ -161,7 +162,7 @@ flowchart TB
    - `g_NUM_CHIPS = popcount(g_PRESENT_CHIP_MASK)` 일치
    - compact physical lane과 실제 schematic chip의 대응
 3. `laser_ctrl`의 물리 TStart/레이저 timing과 이에 정렬된 `i_shot_start`/`i_stop_tdc` 표지
-4. `echo_receiver`의 stop-event/fire-count 포맷 준수
+4. `echo_receiver`의 LVDS/edge 진단 경로를 GPX IFIFO 제어와 분리
 5. Rise/Fall VDMA의 HSIZE, VSIZE, STRIDE, buffer 주소
 6. raw Hit를 거리로 바꾸는 후단 보정/변환 로직
 
@@ -174,7 +175,7 @@ flowchart TB
 | 순서 | 인스턴스 | 파일 | 책임 |
 |---:|---|---|---|
 | 1 | `u_csr_pipeline` | [`tdc_gpx_csr_pipeline.vhd`](../tdc_gpx_csr_pipeline.vhd) | Pipeline AXI-Lite, 명령 edge 검출, status CDC |
-| 2 | `u_config_ctrl` | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd) | Chip CSR, 예상 count, 명령 중재, 최대 4-slot chip 제어, compact physical pin mapping, raw CDC |
+| 2 | `u_config_ctrl` | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd) | Chip CSR, GPX 설정 image, 명령 중재, 최대 4-slot chip 제어, compact physical pin mapping, raw CDC |
 | 3 | `u_decode_pipe` | [`tdc_gpx_decode_pipe.vhd`](../tdc_gpx_decode_pipe.vhd) | GPX raw decode와 chip/shot 문맥 부여 |
 | 4 | `u_cell_pipe` | [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd) | slope demux, chip별 Cell 생성 |
 | 5 | `u_output_stage` | [`tdc_gpx_output_stage.vhd`](../tdc_gpx_output_stage.vhd) | Row 조립, canonical packing, header 삽입 |
@@ -188,7 +189,7 @@ flowchart LR
     CFG["config_ctrl"] --> CSR["csr_chip"]
     CFG --> CMD["cmd_arb"]
     CFG --> EH["err_handler"]
-    CFG --> SD["stop_cfg_decode"]
+    CFG --> CO["cfg_image_override"]
     CFG --> BC0["chip_ctrl 0"]
     CFG --> BC1["chip_ctrl 1"]
     CFG --> BC2["chip_ctrl 2"]
@@ -208,7 +209,7 @@ flowchart LR
 | `tdc_gpx_chip_ctrl.vhd` | INIT/RUN/REG 서브 FSM의 상위 phase 전환, raw FIFO, response quarantine |
 | `tdc_gpx_chip_run.vhd` | Shot capture, IFIFO1/2 drain, timeout, ALU trigger |
 | `tdc_gpx_bus_phy.vhd` | GPX 비동기 병렬 버스의 실제 strobe/OEN/turnaround timing |
-| `tdc_gpx_stop_cfg_decode.vhd` | stop event를 해당 Shot에 귀속하고 예상 IFIFO count 생성 |
+| `tdc_gpx_cfg_image_override.vhd` | merged config를 GPX Reg5/Reg7 image 정책에 반영 |
 | `tdc_gpx_decoder_i_mode.vhd` | GPX 28비트 word의 필드 해체 |
 | `tdc_gpx_raw_event_builder.vhd` | chip ID, stop ID, hit 순번, shot tag 추가 |
 | `tdc_gpx_cell_builder.vhd` | sparse hit를 dense Cell로 변환, ping-pong buffer |
@@ -256,7 +257,7 @@ flowchart LR
 flowchart LR
     AXIL["s_axi_aclk"] -->|"xpm_cdc_handshake\nCTL0..2"| AXIS["i_axis_aclk"]
     AXIS -->|"xpm_cdc_pulse"| TDC["i_tdc_clk"]
-    AXIS -->|"atomic handshake\nconfig / cfg_image / expected tuple"| TDC
+    AXIS -->|"atomic handshake\nconfig / cfg_image"| TDC
     TDC -->|"xpm_fifo_async or SYNC bypass"| AXIS
     TDC -->|"pulse, single, gray, mailbox"| AXIS
     AXIS -->|"status handshake"| AXIL
@@ -287,7 +288,7 @@ CDC 신호를 분석할 때는 다음을 구분한다.
 
 | 값 | 입력 단위 | RTL 변환 | 실제 소비 domain |
 |---|---|---|---|
-| `max_range_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ`, `g_TDC_CLK_MHZ`별 ceiling 변환 | AXIS stop window/Cell watchdog, TDC capture/drain watchdog |
+| `max_range_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ`, `g_TDC_CLK_MHZ`별 ceiling 변환 | AXIS Cell watchdog, TDC capture/drain watchdog |
 | `max_scan_5ns_ticks` | 항상 5 ns/tick | `g_AXIS_CLK_MHZ` 기준 ceiling 변환 | `face_assembler`의 chip-slice 대기/blank-fill |
 | `g_*_TIME_NS` timing generic | ns | 해당 소비 domain 기준 ceiling 변환 | power/recovery/bus/drain/error/Cell margin |
 | `bus_clk_div`, `bus_ticks` | TDC clock count/분주 | legality clamp만 수행 | `bus_phy` |
@@ -316,28 +317,24 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 | `g_BUS_READ_PERIOD_MIN_TIME_NS` | 25 ns | CSR와 PHY가 공유하는 최소 read initiation 시간 | GPX 40 MHz 한계 |
 | `g_BUS_IDLE_STABLE_TIME_NS` | 20,480 ns | bus-fatal 후 자동 복구 전 연속 idle 시간 | PCB 안정성/복구 지연 |
 | `g_DRAIN_MARGIN_TIME_NS` | 1,280 ns | TDC drain watchdog의 range 이후 여유 | bus/ALU 지연 |
-| `g_STOP_WINDOW_MARGIN_TIME_NS` | 210 ns | AXIS stop-event close 여유 | echo_receiver 지연 |
 | `g_ERR_DEBOUNCE_TIME_NS` | 25 ns | ErrFlag debounce 시간 | board noise |
 | `g_ERR_MAX_RETRIES` | 3 | 자동 복구 retry 횟수 | 시스템 오류 정책 |
 | `g_CELL_QUARANTINE_MARGIN_TIME_NS` | 3,410 ns | Cell DROP/QUARANTINE 여유 | late drain bound |
 | `g_CELL_IFIFO2_MARGIN_TIME_NS` | 1,705 ns | Cell IFIFO2 대기 여유 | output-side bound |
 | `g_OEN_MODE` | `DYNAMIC_CONNECTED` | GPX OEN 연결 방식 | 실제 schematic |
 | `g_STREAM_CLK_MODE` | `ASYNC` | raw stream CDC 구조 | 두 clock 관계 |
-| `g_STOP_EVT_DWIDTH` | 32 | stop-event `TDATA/TKEEP` 폭 | 8-bit/chip 포함, byte 정렬 |
-| `g_STOP_EVT_TUSER_WIDTH` | 32 | stop-event chip별 보조정보 폭 | 최소 8-bit/chip |
-| `g_FIRE_COUNT_DWIDTH` | 32 | fire-count `TDATA/TKEEP` 폭 | 최소 16 bit, byte 정렬 |
 
 `parent_ref/rtl/tdc_gpx_parent_core.vhd`는 위 top generic을 모두 같은 이름으로 노출하고 그대로 전달한다. 따라서 parent에서 값을 바꾸면 `tdc_gpx_top`을 거쳐 실제 소비 하위 모듈까지 한 경로로 내려간다. `parent_ref/scripts/verify_parent_generic_parity.ps1`는 top 선언, parent 선언, generic map의 이름과 개수를 자동 대조하며 누락·개명·간접 매핑을 오류로 처리한다. 반대로 `g_CHIP_ID`, `g_SLOPE_VALUE`, FIFO data/depth, CDC synchronizer stage처럼 instance identity나 구조에서 파생되는 generic은 top에 중복 노출하지 않는다. 이 구분은 사용자가 정해야 하는 build policy만 최상위에서 관리하고, 서로 모순될 수 있는 중복 설정을 만들지 않기 위한 것이다.
 
 기본 시간값을 지원 주파수에 적용하면 다음처럼 사이클 수만 달라진다. 괄호 안 물리 시간은 동일하다.
 
-| Clock MHz | TDC power-up 240 ns | TDC bus-idle 20,480 ns | TDC drain 1,280 ns | AXIS stop margin 210 ns | AXIS Cell quarantine 3,410 ns |
-|---:|---:|---:|---:|---:|---:|
-| 50 | 12 | 1,024 | 64 | 11 | 171 |
-| 100 | 24 | 2,048 | 128 | 21 | 341 |
-| 125 | 30 | 2,560 | 160 | 27 | 427 |
-| 150 | 36 | 3,072 | 192 | 32 | 512 |
-| 200 | 48 | 4,096 | 256 | 42 | 682 |
+| Clock MHz | TDC power-up 240 ns | TDC bus-idle 20,480 ns | TDC drain 1,280 ns | AXIS Cell quarantine 3,410 ns |
+|---:|---:|---:|---:|---:|
+| 50 | 12 | 1,024 | 64 | 171 |
+| 100 | 24 | 2,048 | 128 | 341 |
+| 125 | 30 | 2,560 | 160 | 427 |
+| 150 | 36 | 3,072 | 192 | 512 |
+| 200 | 48 | 4,096 | 256 | 682 |
 
 EF guard는 단순 고정 시간이 아니라 `ceil(11.8 ns / TDC period) + 2 synchronizer clocks`이며, 50/100/125/150/200 MHz에서 각각 3/4/4/4/5 clocks이다. 이 식의 `2`는 실제 `bus_phy` 2-FF 동기화 구조에 대응하므로 별도 top generic으로 중복 노출하지 않는다.
 
@@ -439,12 +436,10 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 | `i_lsr_tvalid`, `i_lsr_tdata` | AXIS | laser result | 유효한 `tdata[15:0]`이 다음 start까지 `cols_per_face`를 override |
 | `i_shot_start` | AXIS | 실제 레이저/TStart 발생 표지 | level이 길어도 내부 edge detector가 1회 pulse로 변환; 물리 TStart 출력은 아님 |
 | `i_stop_tdc` | AXIS | Shot deadline/외부 stop timing 표지 | TDC domain으로 pulse CDC; 측정 중 도착하면 `sequence_error`, session 종료 명령은 아님 |
-| `i_stop_evt_*` | AXIS | stop running-total event | `tready`는 항상 1, fire count와 동일 Shot ID로 상관되어야 함 |
-| `i_fire_count_*` | AXIS | face-local 1-based fire count | 별도 ready 없음, `tlast=1`은 expected count final이며 zero도 확정 가능 |
 | `i_bin_resolution_ps` | AXIS | bin 해상도 메타데이터 | 헤더 기록 전용 |
 | `i_k_dist_fixed` | AXIS | 외부 거리 scale 메타데이터 | 헤더 기록 전용, Q-format은 이 RTL이 정의하지 않음 |
 
-`i_stop_evt_tkeep`와 `i_fire_count_tkeep`는 top 포트에 존재하지만 현재 `stop_cfg_decode`의 유효성 판단에는 전달되지 않는다. 현재 RTL은 `TVALID`, payload, fire-count match, `TLAST`, Shot window를 사용한다. 부모 모듈은 유효한 beat에서 필요한 모든 byte를 제공해야 하며, `TKEEP`로 부분 payload를 표현하면 안 된다. stop event에는 one-cycle, II=1의 owned-event stage가 있지만 입력을 재정렬하는 elastic queue는 없고 fire-count에는 ready도 없다. 따라서 fire-count와 stop-event의 같은-cycle pairing 계약을 지켜야 한다.
+`tdc_gpx_top`에는 `stop_evt` 또는 `fire_count` 입력 포트가 없다. Echo pulse/count가 필요한 시스템은 이를 별도 진단 또는 광학 검증 경로로 수집할 수 있지만, 그 값을 GPX IFIFO read 개수로 변환해 이 모듈에 주입해서는 안 된다.
 
 `i_lsr_*`에도 ready가 없다. 여러 유효값이 start 수락 전에 오면 마지막으로 latch된 `i_lsr_tdata[15:0]`이 `cols_per_face` override가 되고, start가 수락되면 override-valid가 지워진다.
 
@@ -763,7 +758,7 @@ shot_start_gated     __________|‾|__________
 sequenceDiagram
     participant L as laser_ctrl
     participant S as face_seq
-    participant E as echo_receiver
+    participant G as TDC-GPX
     participant R as chip_run x4
     participant P as bus_phy x4
     participant D as decode_pipe
@@ -776,8 +771,8 @@ sequenceDiagram
     S->>R: shot_start_per_chip
     S->>C: shot_start_gated
     S->>A: shot_start_gated
-    E->>R: expected IFIFO counts via stop_cfg_decode
     R->>R: CAPTURE, wait IrFlag
+    G-->>R: IrFlag, EF1/2, LF1/2
     R->>P: read IFIFO1/2 requests
     P-->>R: raw 28-bit responses
     R->>D: raw data beats
@@ -792,62 +787,47 @@ sequenceDiagram
 신호처리 관점의 인과관계:
 
 1. Shot pulse가 Cell buffer와 Row assembler를 같은 shot 경계로 초기화한다.
-2. echo receiver는 같은 Shot의 stop running total과 fire count를 제공한다.
+2. Echo receiver는 GPX 입력 전단의 LVDS edge를 별도 진단할 수 있지만 이 drain 경로에는 개입하지 않는다.
 3. GPX IrFlag가 capture 종료를 알리면 IFIFO drain이 시작된다.
-4. 예상 count, EF flag, 선택적 drain cap 중 조건을 만족하면 IFIFO 완료로 본다.
-5. IFIFO1 완료 marker는 Cell의 앞쪽 stop 출력 시작을 허용한다.
-6. IFIFO2 최종 완료 marker가 전체 chip slice를 닫는다.
-7. 활성 chip 결과는 논리 chip 번호 오름차순으로 한 Row가 된다. 물리 lane이 compact여도 metadata chip ID와 Row 순서는 바뀌지 않는다.
-8. Row마다 48바이트 prefix를 붙여 VDMA line을 만든다.
+4. `LF1/LF2`와 Reg6 Fill은 안전한 burst 크기를 고르는 힌트이고, 실제 수신된 bus response마다 drain count가 증가한다.
+5. 정상 IFIFO 완료는 GPX `EF1/EF2`가 결정한다. cap에 도달했는데 EF가 낮으면 출력은 fault 처리되고 물리 tail은 purge된다.
+6. IFIFO1 완료 marker는 Cell의 앞쪽 stop 출력 시작을 허용한다.
+7. IFIFO2 최종 완료 marker가 전체 chip slice를 닫는다.
+8. 활성 chip 결과는 논리 chip 번호 오름차순으로 한 Row가 된다. 물리 lane이 compact여도 metadata chip ID와 Row 순서는 바뀌지 않는다.
+9. Row마다 48바이트 prefix를 붙여 VDMA line을 만든다.
 
 ---
 
-## 13. stop event와 expected-count 상관 처리
+## 13. Echo 관측과 GPX FIFO 소유권
 
-### 13.1 입력 계약
+### 13.1 두 카운트가 같다고 가정할 수 없는 이유
 
-`stop_cfg_decode`는 stop event를 delta가 아니라 현재 Shot에서 지금까지 관측된 **running total**로 해석한다.
-
-```text
-Shot #k 시작       stop 1회      stop 2회      final
-fire_count ID      k             k             k
-running total      0 ->          1 ->          2
-final_valid                                      1
-```
-
-유효한 event 조건:
+Echo receiver는 LVDS 입력을 single-ended pulse로 바꾸어 TDC-GPX의 Stop 입력으로 전달하고, 전단에서 관측한 rising/falling edge 수를 셀 수 있다. 그러나 그 뒤에 있는 GPX가 각 pulse를 유효 Stop으로 받아 어느 IFIFO에 실제 저장했는지는 알 수 없다.
 
 ```text
-owned_event = stop_evt_valid
-              AND fire_count_valid
-              AND fire_count[15:0] == current_face_local_fire_count
-              AND fire_count_tlast == 0
-              AND current_shot_window_active
+optical echo
+    -> LVDS receiver / edge counter       (전단 관측치)
+    -> GPX Stop input and internal logic
+    -> GPX IFIFO1/2 stored words          (GPX 소유 상태)
 ```
 
-`fire_count_tlast=1`은 “최종 기대 count가 확정되었다”는 뜻이다. 이 방식으로 expected count가 0인 Shot도 “아직 모름”과 구분된다.
+두 값은 GPX 설정, Stop disable, dead time, 입력 timing, 전기적 품질, 내부 overflow/error 때문에 달라질 수 있다. 따라서 Echo edge count는 광학/배선 진단에는 유용하지만 IFIFO read 종료 조건이나 hard bound가 될 수 없다. 현재 RTL은 이 잘못된 결합을 제거했고 `tdc_gpx_top` 포트에도 Echo count stream이 존재하지 않는다.
 
-### 13.2 IFIFO count 생성
+### 13.2 drain 판단 신호의 역할
 
-chip `i`의 시작 bit를 `b = 8 x i`라고 하면 expected count는 다음처럼 만들어진다.
+| 신호/값 | 실제 의미 | drain에서의 권한 |
+|---|---|---|
+| `IrFlag` | GPX capture/measurement 종료 | drain 시작 조건 |
+| `EF1`, `EF2` | 해당 GPX IFIFO가 empty | **정상 완료의 최종 권한** |
+| `LF1`, `LF2` | load flag가 보장하는 데이터 존재 구간 | burst 후보 선택 힌트 |
+| Reg6 `Fill` | LF 구간에서 안전하게 읽을 burst word 수 | burst 길이 힌트 |
+| accepted bus response | GPX에서 실제 반환된 28-bit word | 출력된 drain count 증가 |
+| `n_drain_cap` | IFIFO별 최대 출력 word 보호 경계, 실제 값은 `4 x field` | truncation 검출, empty 증거 아님 |
+| Echo edge count | GPX 입력 전단 관측치 | 외부 진단 전용, drain 제어권 없음 |
 
-```text
-expected_ififo1[i]
-  = unsigned(stop_evt_tdata[b+3:b])
-  + unsigned(stop_evt_tuser[b+3:b])
+`n_drain_cap`에 도달했는데 해당 EF가 여전히 낮으면 RTL은 “FIFO가 비었다”고 간주하지 않는다. bounded output을 닫고 fault를 기억한 뒤 남은 물리 IFIFO tail을 purge하여 다음 Shot과 섞이지 않게 하며, 최종 control beat에 `faulted=1`을 전달한다. 즉 cap은 성능 설정이면서 동시에 데이터 truncation을 드러내는 보호 장치이다.
 
-expected_ififo2[i]
-  = unsigned(stop_evt_tdata[b+7:b+4])
-  + unsigned(stop_evt_tuser[b+7:b+4])
-```
-
-즉 `TDATA`와 `TUSER`가 제공하는 두 성분을 IFIFO별로 합산한 값이 chip_run의 expected word count가 된다. 부모 `echo_receiver`가 어느 성분을 Rise/Fall로 배치하는지는 그 블록의 인터페이스 계약과 일치시켜야 한다. `stop_cfg_decode` 자체는 두 성분의 이름보다 위 합산 위치를 기준으로 동작한다.
-
-`fire_count_tvalid=1`, `TLAST=0`인데 같은 cycle에 `stop_evt_tvalid=0`인 경우도 orphan 계약 위반으로 기록된다. stop event와 non-final fire-count beat는 한 쌍으로 공급해야 한다.
-
-유효 판정된 stop event는 one-cycle owned-event register를 거쳐 다음 edge에 expected count와 monotonic history를 갱신한다. 이 stage는 back-to-back event를 II=1로 받을 수 있지만 fire-count와 stop-event의 cycle skew를 보정하지 않는다. final beat가 마지막 stop event 바로 다음 cycle에 오면 staged event commit과 final 확정이 같은 edge에서 함께 처리된다.
-
-### 13.3 거리 window
+### 13.3 거리와 처리 window
 
 `max_range_5ns_ticks`는 항상 5 ns 기준이다.
 
@@ -857,21 +837,9 @@ local_axis_clocks      = ceil(physical_range_window x g_AXIS_CLK_MHZ / 1000)
 local_tdc_clocks       = ceil(physical_range_window x g_TDC_CLK_MHZ  / 1000)
 ```
 
-stop event window는 대략 다음과 같다.
+TDC-domain 변환값은 capture/drain watchdog에, AXIS-domain 변환값은 Cell DROP/QUARANTINE watchdog에 사용된다. Echo receiver가 자체 관측 window를 필요로 한다면 그 모듈에서 별도로 정의해야 하며, `tdc_gpx_top`의 IFIFO 완료 조건에 합치지 않는다.
 
-```text
-shot_start                 max range             close margin       next shot
-    |--------------------------|----------------------|------------------|
-    |<----- valid echo ------->|< pipeline margin 32 >|< orphan zone --->|
-```
-
-- 기본 close margin: 210 ns (`150 MHz` 기본에서는 32 clocks)
-- `max_range=0`: distance close 비활성, 다음 Shot까지 window 유지
-- window 밖 stop event: orphan sticky
-- running total 감소: chip별 monotonic violation sticky
-- Shot 시작과 stop event가 같은 cycle이면 Shot 시작이 우선하고 event는 count하지 않음
-
-Shot 주기를 너무 촘촘하게 잡으면 orphan zone이 사라지고, 더 심하면 이전 Shot의 echo가 다음 Shot과 모호해진다. 따라서 `max_range`, 실제 광 왕복시간, GPX drain/ALU 시간, 출력 backpressure를 함께 예산화해야 한다.
+Shot 주기는 `max_range`, 실제 광 왕복시간, GPX drain/ALU 시간, 출력 backpressure를 함께 만족해야 한다. `max_range=0`은 거리 기반 watchdog 비활성 의미이지만 내부 legacy hard cap까지 무한대로 만드는 것은 아니다.
 
 ---
 
@@ -905,7 +873,7 @@ stateDiagram-v2
     ST_OFF --> ST_ARMED: cmd_start
     ST_ARMED --> ST_CAPTURE: shot_start
     ST_CAPTURE --> ST_DRAIN_LATCH: IrFlag rise
-    ST_DRAIN_LATCH --> ST_DRAIN_CHECK: expected counts snapshot
+    ST_DRAIN_LATCH --> ST_DRAIN_CHECK: initialize drain decision
     ST_DRAIN_CHECK --> ST_DRAIN_DECIDE
     ST_DRAIN_DECIDE --> ST_DRAIN_EF1: read IFIFO1
     ST_DRAIN_DECIDE --> ST_DRAIN_EF2: read IFIFO2
@@ -926,21 +894,23 @@ stateDiagram-v2
 
 ### 14.3 drain 완료 판단
 
-각 IFIFO1/IFIFO2는 서로 독립적으로 다음 중 하나로 완료될 수 있다.
+각 IFIFO1/IFIFO2의 **정상 물리 완료**는 동기화된 EF가 empty를 가리킬 때 성립한다.
 
 ```text
-done = EF_sync == empty
-       OR (expected_final_valid AND drained_count >= expected_count)
-       OR (n_drain_cap != 0 AND drained_count >= 4 x n_drain_cap)
+normal_done = EF_sync == empty
+
+cap_hit = n_drain_cap != 0
+          AND drained_count >= 4 x n_drain_cap
+          AND EF_sync != empty
 ```
 
-expected count는 `ST_DRAIN_LATCH`에서 한 번 snapshot한다. 그러므로 echo_receiver final 정보가 그 시점까지 일관되게 전달되어야 한다.
+`cap_hit`은 해당 IFIFO의 downstream 출력을 더 늘리지 않기 위한 bounded-output 조건이다. 양쪽 bounded output을 닫은 뒤 EF가 낮은 IFIFO는 purge mode에서 실제 empty까지 읽어 버리고, 최종 marker를 faulted로 만든다. `LF/Fill`은 burst 최적화에만 사용되며 완료를 선언하지 않는다.
 
 ### 14.4 중간/최종 control beat
 
 - IFIFO1 완료: `ififo_id=0`, `drain_done=1` control beat
 - IFIFO2 최종 완료: `ififo_id=1`, `drain_done=1` control beat
-- 최종 mismatch fallback이면 final marker의 `faulted=1`
+- cap-triggered truncation/purge이면 final marker의 `faulted=1`
 
 `o_run_drain_complete`는 chip_run 내부 drain 완료 시점이고, `o_drain_done`은 final control beat가 downstream handshake된 시점이다. 두 신호는 의미가 다르다.
 
@@ -1379,7 +1349,7 @@ raw_hit_17
    -> requested engineering unit scaling
 ```
 
-`start_off1`은 `stop_cfg_decode`에서 GPX configuration image의 Reg5 `[17:0]`에 강제로 반영되고 Face header에도 기록된다. 따라서 GPX 내부 측정값에 미치는 효과는 GPX 데이터시트의 Reg5 의미를 따라야 한다. 그러나 FPGA의 Cell datapath에는 `raw_hit - start_off1` 같은 별도 subtractor가 없다. 후단이 `start_off1`을 다시 적용할지는 시스템 calibration 계약으로 정해 이중 보정을 피해야 한다.
+`start_off1`은 `tdc_gpx_cfg_image_override`에서 GPX configuration image의 Reg5 `[17:0]`에 반영되고 Face header에도 기록된다. 따라서 GPX 내부 측정값에 미치는 효과는 GPX 데이터시트의 Reg5 의미를 따라야 한다. 그러나 FPGA의 Cell datapath에는 `raw_hit - start_off1` 같은 별도 subtractor가 없다. 후단이 `start_off1`을 다시 적용할지는 시스템 calibration 계약으로 정해 이중 보정을 피해야 한다.
 
 `start_off1`의 부호/후단 적용 방향과 `k_dist_fixed`의 Q-format은 현재 `tdc_gpx_top`이 정의하지 않는다. 인터페이스 문서 없이 임의로 다음과 같은 계산을 FPGA RTL 동작이라고 단정하면 안 된다.
 
@@ -1526,7 +1496,7 @@ IDLE -> READ_REG12 -> WAIT_READ -> RECOVERY -> WAIT_RECOVERY
 | `[14:11]` | Cell quarantine escape mask |
 | `[15]` | masked-slope hit drop 발생 여부 |
 | `[19:16]` | Rise face-start collapsed count low nibble |
-| `[23:20]` | expected-count monotonic violation mask |
+| `[23:20]` | Reserved, read as zero (기존 ABI 위치 유지) |
 | `[27:24]` | Fall face-start collapsed count low nibble |
 | `[31:28]` | init config-write coalesced mask |
 
@@ -1554,7 +1524,6 @@ IDLE -> READ_REG12 -> WAIT_READ -> RECOVERY -> WAIT_RECOVERY
 | `err_active`, `err_chip_mask`, `err_cause` | error-handler의 현재 recovery 상태/대상/분류 | `STAT5.err_fatal`은 결과 요약뿐이며 진행 중 세부 상태는 ILA 필요 |
 | `rsp_mismatch_mask`, `run_timeout_mask` | chip별 bus 응답 귀속 오류/run timeout history | 관련 timeout/fatal 요약과 ILA; 이 mask 자체의 직접 CSR 없음 |
 | `shot_drop_any`, `slice_timeout_any` | Cell builder drop/timeout OR 요약 | Cell metadata, Row fault, 관련 STAT와 ILA |
-| `orphan_stop_evt_sticky` | Shot window 밖/mismatch stop-fire contract | ILA/TB; published CSR bit 없음 |
 | `bus_fatal_mask` | chip별 bus quarantine fatal | `STAT5.err_fatal` OR-fold만 확인, chip 분리는 ILA |
 | `frame_done_faulted_sticky` | header drain watchdog로 synthetic frame done | 관련 header timeout bit와 ILA |
 | `row_done_faulted_sticky` | blank/partial Row 완료 | Cell `error_fill`, chip error, ILA |
@@ -1769,7 +1738,7 @@ T_total = T_trigger_align
 latency 보고서에는 평균값만 쓰지 말고 다음을 분리한다.
 
 - no-hit / nominal-hit / max-hit
-- EF 기반 완료 / expected-count 기반 완료 / drain-cap 완료
+- clean EF 완료 / cap-triggered fault+purge / timeout purge
 - 32/64/128비트 출력
 - no-stall / bounded stall / timeout stall
 - split/rise-only/3-chip/dual-edge slope mask topology
@@ -1794,7 +1763,8 @@ latency 보고서에는 평균값만 쓰지 말고 다음을 분리한다.
 | `tb_tdc_gpx_face_assembler_c07_direct.vhd` | Row, blank-fill, fault propagation |
 | `tb_tdc_gpx_line_packer*.vhd` | canonical packing과 폭 독립성 |
 | `tb_tdc_gpx_atomic_snapshot_cdc.vhd` | multi-bit atomic CDC |
-| `tb_tdc_gpx_stop_cfg_decode.vhd` | fire count ownership과 expected count |
+| `tb_tdc_gpx_cfg_image_override.vhd` | Echo 경로 없이 Reg5/Reg7 GPX image override 정책 검증 |
+| `tb_tdc_gpx_config_ctrl.vhd` | EF-authoritative drain의 config-control 통합 경계 |
 
 ### 29.2 실행 스크립트
 
@@ -1902,12 +1872,11 @@ p_run_timeout_sticky
 
 ### 32.3 upstream 계약
 
-- [ ] Shot pulse와 fire count가 face-local 1-based ID로 일치한다.
 - [ ] 물리 TStart와 `i_shot_start`의 지연/정렬을 정의했다.
 - [ ] `i_stop_tdc`를 session stop으로 사용하지 않는다.
-- [ ] stop event는 running total이며 delta가 아니다.
-- [ ] final zero-count Shot도 `fire_count_tlast=1`로 확정한다.
-- [ ] Shot 시작과 stop event가 같은 cycle에 오지 않는다.
+- [ ] Echo edge count는 광학/배선 진단으로만 사용하고 GPX IFIFO read bound로 사용하지 않는다.
+- [ ] GPX `IrFlag`, `EF1/2`, `LF1/2`의 polarity와 보드 연결을 확인했다.
+- [ ] `n_drain_cap` 도달은 정상 empty가 아니라 faulted truncation/purge임을 후단이 처리한다.
 - [ ] Shot 주기가 optical ambiguity와 processing latency를 모두 만족한다.
 
 ### 32.4 downstream 계약
@@ -1947,7 +1916,8 @@ p_run_timeout_sticky
 | Face | `cols_per_face`개의 line을 가진 한 slope VDMA frame |
 | Blank-fill | 데이터가 없거나 늦을 때 형식을 보존하기 위한 합성 Cell |
 | Drain | GPX IFIFO에서 raw word를 읽어 비우는 과정 |
-| Expected count | echo_receiver가 알려 준 해당 Shot의 예상 IFIFO word 개수 |
+| Echo edge count | GPX 입력 전단의 LVDS receiver가 관측한 edge 수, 외부 진단 전용 |
+| Drain cap | IFIFO별 출력 word 상한; EF가 낮은 채 도달하면 faulted truncation 후 물리 tail purge |
 | Quarantine | stale beat를 흡수하면서 Shot 경계를 재동기화하는 오류 상태 |
 | Canonical packing | output width와 무관하게 동일 DDR byte layout을 만드는 packing |
 
@@ -1957,7 +1927,7 @@ p_run_timeout_sticky
 
 `tdc_gpx_top`을 안정적으로 사용하는 핵심은 다음 네 가지이다.
 
-1. **Shot 정체성 보존:** laser Shot, fire count, stop event, GPX drain을 같은 Shot으로 상관한다.
+1. **Shot 정체성 보존:** laser Shot 표지, GPX raw data, drain control marker를 같은 Shot으로 상관한다. Echo edge 진단은 별도로 비교하되 제어 조건으로 쓰지 않는다.
 2. **고정 형식 보존:** 오류가 있어도 blank/fault metadata로 line 크기를 가능한 한 유지한다.
 3. **Face snapshot 사용:** 설정 변경이 진행 중 Face의 geometry에 섞이지 않게 한다.
 4. **raw와 engineering value 분리:** RTL이 출력하는 17비트 raw Hit와 후단의 보정 거리값을 혼동하지 않는다.
@@ -1980,9 +1950,11 @@ p_run_timeout_sticky
 | [C08 Slope Mask/Falling Simulator v015](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Contract_Simulator_v015.html) | Present/Rise/Fall generic, runtime Fall, APD coverage, HSIZE/DDR/Ethernet 상호작용 | 브라우저 계산/검증 도구 |
 | [C08 Clock/Timing Generic Simulator v016](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Contract_Simulator_v016.html) | ns generic의 TDC/AXIS clock 변환, 5 ns scan CSR 변환과 시간 margin | 현재 timing 계약 계산/검증 도구 |
 | [C08 Physical Chip Pin Contract Simulator v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Simulator_v017.html) | `g_NUM_CHIPS`, sparse Present mask, compact physical lane과 D/ADR/control 핀 폭 | 현재 physical pin 계약 계산/검증 도구 |
+| [C08 GPX FIFO Ownership Simulator v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Simulator_v018.html) | Echo 진단 분리, EF 완료 권한, LF/Fill burst 힌트, cap fault/purge | 현재 FIFO 소유권과 전체 C08 계산/검증 도구 |
 | [C08 Slope Mask/Falling Closure v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Closure_v017.md) | xsim, parent validate, OOC, HTML 검증 근거 | 현재 slope closure 기록 |
 | [C08 Clock/Timing Generic Closure v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Closure_v018.md) | 시간 generic 전파, 5 ns CSR, 50~200 MHz 회귀와 OOC timing 근거 | 현재 clock/timing closure 기록 |
 | [C08 Physical Chip Pin Contract Closure v019](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Closure_v019.md) | `c_MAX_CHIPS` 전수 조사, compact physical pin 구현, 1/2/3/4-chip xsim/OOC/parent/HTML 검증 근거 | 현재 physical pin closure 기록 |
+| [C08 GPX FIFO Ownership Closure v020](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Closure_v020.md) | expected-count 경로 제거, EF-authoritative drain, 복구/parent/HTML 검증 근거 | 현재 FIFO 소유권 closure 기록 |
 
 ---
 
@@ -1993,13 +1965,13 @@ p_run_timeout_sticky
 | 확인할 계약 | 1차 RTL 근거 | 함께 볼 지점 |
 |---|---|---|
 | 지원 clock/폭/topology assertion | [`tdc_gpx_top.vhd`](../tdc_gpx_top.vhd)의 concurrent assertion | clock generic과 `g_PRESENT/Rise/Fall_CHIP_MASK` |
-| 5 ns range/scan 변환 | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd)의 `s_max_range_axis_clks`, `s_max_range_tdc_clks` | `tdc_gpx_top`의 `s_max_scan_axis_clks`, [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd)의 AXIS 변환 |
+| 5 ns range/scan 변환 | [`tdc_gpx_config_ctrl.vhd`](../tdc_gpx_config_ctrl.vhd)의 `s_max_range_tdc_clks` | `tdc_gpx_top`의 `s_max_scan_axis_clks`, [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd)의 `s_max_range_axis_clks` |
 | top timing generic 전파 | `tdc_gpx_top`의 `c_TDC_*_CLKS`, `c_AXIS_*_CLKS` | `config_ctrl -> chip_ctrl -> chip_run`, `cell_pipe -> cell_builder` generic map |
-| top/parent generic 동등성 | [`verify_parent_generic_parity.ps1`](../parent_ref/scripts/verify_parent_generic_parity.ps1) | top 25개 선언, parent 25개 선언, same-name map 25개 자동 대조 |
+| top/parent generic 동등성 | [`verify_parent_generic_parity.ps1`](../parent_ref/scripts/verify_parent_generic_parity.ps1) | top 22개 선언, parent 22개 선언, same-name map 22개 자동 대조 |
 | start 수락, Face/Shot pulse, snapshot | [`tdc_gpx_face_seq.vhd`](../tdc_gpx_face_seq.vhd)의 `p_face_seq`, `p_packet_start_reg`, `p_face_cfg_latch` | `p_shot_raw_edge`, `p_start_output_reg` |
 | outer start pending/retry/reject | [`tdc_gpx_csr_pipeline.vhd`](../tdc_gpx_csr_pipeline.vhd)의 `p_start_pending`, [`tdc_gpx_face_seq.vhd`](../tdc_gpx_face_seq.vhd)의 `s_cmd_start_pending_r` | `o_cmd_start`, `i_cmd_start_accepted`, `s_cfg_rejected_r` |
-| stop event 귀속과 expected count | [`tdc_gpx_stop_cfg_decode.vhd`](../tdc_gpx_stop_cfg_decode.vhd)의 `p_owned_evt_stage`, `p_runtime_state` | `p_monotonic_check`, `p_cfg_override` |
-| IFIFO 완료와 drain cap | [`tdc_gpx_chip_run.vhd`](../tdc_gpx_chip_run.vhd)의 `fn_drain_eval` | `p_fsm`, final control beat 생성부 |
+| GPX 설정 image 정책 | [`tdc_gpx_cfg_image_override.vhd`](../tdc_gpx_cfg_image_override.vhd)의 combinational override | `config_ctrl`의 `u_cfg_override`, cfg-image atomic CDC |
+| IFIFO EF 완료와 drain cap/purge | [`tdc_gpx_chip_run.vhd`](../tdc_gpx_chip_run.vhd)의 `fn_drain_eval` | `ST_DRAIN_DECIDE`, `s_purge_mode_r`, final control beat 생성부 |
 | raw word 문맥/Shot tag | [`tdc_gpx_raw_event_builder.vhd`](../tdc_gpx_raw_event_builder.vhd)의 `p_builder` | [`tdc_gpx_decoder_i_mode.vhd`](../tdc_gpx_decoder_i_mode.vhd) |
 | slope lane gating | [`tdc_gpx_cell_pipe.vhd`](../tdc_gpx_cell_pipe.vhd)의 `s_effective_rise_mask`, `s_effective_fall_mask`, `p_slope_demux` | top의 `s_face_rise_mask`, `s_face_fall_mask` |
 | Cell 저장/metadata/dual buffer | [`tdc_gpx_cell_builder.vhd`](../tdc_gpx_cell_builder.vhd)의 `p_collect`, `p_payload_write`, `p_output` | package의 canonical Cell helper |
