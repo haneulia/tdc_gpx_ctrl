@@ -15,9 +15,9 @@
 -- Test scenarios:
 --   [1] Powerup + cfg_write + master_reset sequence
 --   [2] Arm -> shot_start -> IrFlag -> Legacy drain (drain_mode='0')
---   [2b] Legacy EF fallback when expected count is absent
---   [2c] Known-zero expected final completes cleanly with empty EF
---   [2d] Known-zero expected final blocks EF fallback reads on conflict
+--   [2b] EF-authoritative drain with external count absent
+--   [2c] Empty GPX FIFOs complete cleanly with an external zero hint
+--   [2d] External zero hint cannot suppress a physical GPX FIFO drain
 --   [3] Arm -> shot_start -> IrFlag -> Burst drain (drain_mode='1')
 --   [4] n_drain_cap enforcement (per-IFIFO cap=n×4, e.g. cap=2 -> max 8/IFIFO)
 --   [5] Soft reset recovery
@@ -29,7 +29,7 @@
 --   [16a] No-backpressure first-data latency measurement
 --   [16b] Bounded raw AXI backpressure with T1a/T1b split timing
 --   [16c] Raw FIFO reserve-threshold backpressure (no data/control loss)
---   [17] Stale expected-count mismatch -> faulted drain_done, no empty read
+--   [17] External edge-count mismatch cannot alter EF-authoritative drain
 --   [18] Global C02 monitors: no empty IFIFO reads, raw tuser contract clean
 --   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
 --   [20] Forced pending response trips the secondary deadlock watchdog.
@@ -796,7 +796,7 @@ begin
             s_expected_final_valid <= '1';
         end procedure;
 
-        -- Fill both FIFOs with test data and publish count-known expectations.
+        -- Fill both FIFOs and publish a compatibility edge-count hint.
         procedure fill_fifos(n1 : natural; n2 : natural) is
         begin
             set_expected_counts(n1, n2);
@@ -807,8 +807,8 @@ begin
             s_fifo_load_req <= '0';
         end procedure;
 
-        -- Fill FIFOs while modeling an absent echo_receiver. Expected counts
-        -- remain zero, so chip_run must use the EF fallback path.
+        -- Fill FIFOs while modeling an absent echo_receiver. EF remains the
+        -- only completion source regardless of the compatibility hint.
         procedure fill_fifos_unknown(n1 : natural; n2 : natural) is
         begin
             set_expected_unknown;
@@ -820,7 +820,7 @@ begin
         end procedure;
 
         -- Load actual IFIFO fill while publishing a deliberately different
-        -- expected count. Used to verify stale-count fault propagation.
+        -- external edge-count hint. Used to prove the hint has no drain effect.
         procedure fill_fifos_with_expected(
             actual1 : natural;
             actual2 : natural;
@@ -1000,11 +1000,11 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [2b] EF fallback drain when echo_receiver count is absent
-        --   Use the same nominal 28/28 physical FIFO load, but keep
-        --   expected_final_valid=0 so chip_run must fall back to EF.
+        -- [2b] EF-authoritative drain when the external count is absent
+        --   Use the same nominal 28/28 physical FIFO load and leave the
+        --   compatibility hint invalid.
         -- =============================================================
-        pr_info("[2b] EF fallback drain (expected count absent)");
+        pr_info("[2b] EF-authoritative drain (external count absent)");
 
         s_cfg.drain_mode <= '0';
         fill_fifos_unknown(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS);
@@ -1018,6 +1018,7 @@ begin
 
         v_raw_data_snap := s_raw_data_cnt;
         v_empty_read_snap := s_empty_read_cnt;
+        v_faulted_snap := s_raw_faulted_ctrl_cnt;
 
         wait_drain_done(c_TIMEOUT, v_found);
 
@@ -1028,13 +1029,13 @@ begin
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             if v_drain_words = c_IFIFO_NOMINAL_TOTAL
                and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[2b] EF fallback drained exact "
+                pr_pass("[2b] GPX EF drained exact "
                         & nat_img(c_IFIFO_NOMINAL_TOTAL)
                         & " data words without empty read");
             else
                 pr_fail("[2b] expected "
                         & nat_img(c_IFIFO_NOMINAL_TOTAL)
-                        & " fallback data words and no empty reads, got "
+                        & " physical data words and no empty reads, got "
                         & nat_img(v_drain_words), v_fail);
             end if;
         end if;
@@ -1043,12 +1044,10 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [2c] Known-zero expected final completes cleanly with empty EF
-        --   Publish final expected=0/0 while the behavioral FIFO is empty.
-        --   The controller must trust the final bound, avoid reads, and
-        --   finish without a fault.
+        -- [2c] Empty GPX FIFOs complete cleanly with an external zero hint
+        --   The hint happens to agree, but EF alone proves completion.
         -- =============================================================
-        pr_info("[2c] Known-zero expected final completes cleanly");
+        pr_info("[2c] Empty GPX FIFOs complete cleanly with zero hint");
 
         s_cfg.drain_mode <= '0';
         fill_fifos_with_expected(0, 0, 0, 0);
@@ -1085,7 +1084,7 @@ begin
             if s_raw_faulted_ctrl_cnt = v_faulted_snap then
                 pr_pass("[2c] known-zero empty shot completed without fault");
             else
-                pr_fail("[2c] unexpected fault indication for known-zero empty shot", v_fail);
+                pr_fail("[2c] unexpected fault indication for empty GPX shot", v_fail);
             end if;
         end if;
 
@@ -1093,12 +1092,11 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [2d] Known-zero expected final blocks EF fallback reads
-        --   Publish final expected=0/0 while the behavioral FIFO is
-        --   deliberately non-empty. The controller must trust the final
-        --   expected bound, avoid reads, and mark the shot as suspect.
+        -- [2d] External zero hint cannot suppress GPX FIFO drain
+        --   Publish expected=0/0 while the behavioral FIFO is deliberately
+        --   non-empty. EF remains authoritative, so every word must drain.
         -- =============================================================
-        pr_info("[2d] Known-zero expected final blocks EF fallback reads");
+        pr_info("[2d] External zero hint cannot suppress EF drain");
 
         s_cfg.drain_mode <= '0';
         fill_fifos_with_expected(c_IFIFO_NOMINAL_WORDS, c_IFIFO_NOMINAL_WORDS, 0, 0);
@@ -1121,21 +1119,22 @@ begin
             pr_fail("[2d] drain_done timeout", v_fail);
         else
             v_drain_done_cycle := s_clk_cnt;
-            pr_pass("[2d] zero-stop conflict latency measured: output_done="
+            pr_pass("[2d] zero-hint mismatch latency measured: output_done="
                     & nat_img(v_drain_done_cycle - v_t0_cycle) & "clk");
             wait_clk(1);
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
-            if v_drain_words = 0 and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[2d] known-zero final produced no IFIFO reads");
+            if v_drain_words = c_IFIFO_NOMINAL_TOTAL
+               and s_empty_read_cnt = v_empty_read_snap then
+                pr_pass("[2d] EF authority preserved all physical IFIFO words");
             else
-                pr_fail("[2d] expected zero reads/no empty reads, got "
-                        & nat_img(v_drain_words), v_fail);
+                pr_fail("[2d] expected full EF drain/no empty reads, got "
+                         & nat_img(v_drain_words), v_fail);
             end if;
 
-            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1 then
-                pr_pass("[2d] zero-count/EF conflict flagged via raw tuser fault");
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap then
+                pr_pass("[2d] external count mismatch did not fault GPX drain");
             else
-                pr_fail("[2d] missing fault indication for zero-count/EF conflict", v_fail);
+                pr_fail("[2d] external count incorrectly faulted GPX drain", v_fail);
             end if;
         end if;
 
@@ -1163,6 +1162,7 @@ begin
 
         v_raw_data_snap := s_raw_data_cnt;
         v_empty_read_snap := s_empty_read_cnt;
+        v_faulted_snap := s_raw_faulted_ctrl_cnt;
 
         -- Wait for drain_done
         wait_drain_done(c_TIMEOUT, v_found);
@@ -1218,6 +1218,7 @@ begin
 
         v_raw_data_snap := s_raw_data_cnt;
         v_empty_read_snap := s_empty_read_cnt;
+        v_faulted_snap := s_raw_faulted_ctrl_cnt;
 
         wait_drain_done(c_TIMEOUT, v_found);
 
@@ -1228,11 +1229,18 @@ begin
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             pr_pass("[4] drain_done, words=" & nat_img(v_drain_words));
 
-            if v_drain_words = 16 and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[4] drain capped exactly at 16 data words, no empty reads");
+            if v_drain_words = 16 and s_empty_read_cnt = v_empty_read_snap
+               and s_fifo1_fill = 0 and s_fifo2_fill = 0 then
+                pr_pass("[4] output capped at 16 words and physical tails purged");
             else
-                pr_fail("[4] expected 16 capped data words and no empty reads, got "
-                        & nat_img(v_drain_words), v_fail);
+                pr_fail("[4] expected 16 output words, empty physical FIFOs, got "
+                         & nat_img(v_drain_words), v_fail);
+            end if;
+
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1 then
+                pr_pass("[4] cap truncation propagated on final faulted marker");
+            else
+                pr_fail("[4] cap truncation was not marked faulted", v_fail);
             end if;
         end if;
 
@@ -2300,9 +2308,9 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
 
         -- =============================================================
-        -- [17] Stale expected-count mismatch fault propagation
+        -- [17] External edge-count mismatch is not IFIFO authority
         -- =============================================================
-        pr_info("[17] Stale expected-count mismatch -> faulted drain_done");
+        pr_info("[17] External edge-count mismatch cannot alter GPX drain");
 
         s_cfg.drain_mode  <= '0';
         s_cfg.n_drain_cap <= (others => '0');
@@ -2321,21 +2329,21 @@ begin
         wait_drain_done(c_TIMEOUT, v_found);
 
         if not v_found then
-            pr_fail("[17] drain_done timeout for stale expected-count case", v_fail);
+            pr_fail("[17] drain_done timeout for external-count mismatch", v_fail);
         else
             wait_clk(1);
             v_drain_words := s_raw_data_cnt - v_raw_data_snap;
             if v_drain_words = 2 and s_empty_read_cnt = v_empty_read_snap then
-                pr_pass("[17] stale expected count stopped at EF without empty read");
+                pr_pass("[17] GPX EF drained the actual two words without empty read");
             else
                 pr_fail("[17] expected 2 actual words and no empty read, got "
                         & nat_img(v_drain_words), v_fail);
             end if;
 
-            if s_raw_faulted_ctrl_cnt = v_faulted_snap + 1 then
-                pr_pass("[17] mismatch propagated via raw tuser fault flag");
+            if s_raw_faulted_ctrl_cnt = v_faulted_snap then
+                pr_pass("[17] mismatched external count remained diagnostic-only");
             else
-                pr_fail("[17] missing expected drain mismatch/faulted indication", v_fail);
+                pr_fail("[17] external count incorrectly faulted the drain", v_fail);
             end if;
         end if;
 

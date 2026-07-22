@@ -13,8 +13,7 @@
 --   * distance        = 500 m     -> max_range_5ns_ticks = 668 (ceil, 5 ns unit)
 --   * g_OUTPUT_WIDTH  = 64        -- default cell / VDMA stream width
 --   * active chip mask = 4'hF, stops_per_chip = 2, cols_per_face = 2, n_faces = 1
---   * drain_mode      = count-known expected drain, with EF fallback disabled
---                       by fire_count final ownership for this shot
+--   * drain_mode      = LF burst optimization with EF-authoritative completion
 --
 -- Flow (mirrors laser_ctrl tb's start_tdc / stop_tdc pattern)
 --   [S0] reset -> pipeline/chip CSR default values settle
@@ -37,10 +36,9 @@
 --   * Targets Xilinx xsim (VHDL-2008).
 --   * Extends tb_tdc_gpx_chip_ctrl's behavioral chip model (FIFO fill, EF/LF,
 --     IrFlag) to an array of 4 chips.
---   * Drives top-level stop_evt/fire_count ports directly with per-chip
---     expected counts. The physical IFIFO load is intentionally one word
---     larger than the expected count, proving chip_run stops by expected
---     count instead of merely draining to EF fallback.
+--   * Drives the legacy stop_evt/fire_count ports with a deliberately stale
+--     edge-count hint. The physical IFIFO contains one additional word; the
+--     test proves that GPX EF, not the external hint, owns drain completion.
 --   * AXI-Lite writes are driven by px_axi_lite_writer from px_utility_pkg.
 --   * ALL comments and text output are ASCII only (xsim rejects non-graphic
 --     literals; also keeps the source encoding-agnostic for any editor).
@@ -1629,11 +1627,11 @@ begin
         ----------------------------------------------------------------
         -- One I-Mode single-measurement shot
         --   1) i_shot_start (start_tdc) pulse
-        --   2) Preload physical IFIFO with expected+1 words
-        --   3) Emit expected counts + fire_count final for this shot
+        --   2) Preload physical IFIFO with external_hint+1 words
+        --   3) Emit a deliberately stale external edge-count hint
         --   4) Assert IrFlag (emulates MTimer expiry)
-        --   5) Wait for expected-count-bounded drain
-        --   6) Deassert IrFlag and assert exact read count
+        --   5) Wait for EF-authoritative drain
+        --   6) Deassert IrFlag and assert all physical words were read
         ----------------------------------------------------------------
         procedure do_shot(shot_count : natural; expected_hits : natural; tag : string) is
             constant c_PHYSICAL_HITS : natural := expected_hits + 1;
@@ -1651,15 +1649,15 @@ begin
             wait_clk(1);
             lc_start_tdc <= '0';
 
-            -- Preload IFIFO above expected. A fallback-to-EF drain would read
-            -- the extra word and fail the exact count check below.
+            -- Preload IFIFO above the external hint. Correct RTL must read the
+            -- extra GPX-owned word and leave both IFIFOs empty.
             wait_clk(4);
             load_all_fifos(c_PHYSICAL_HITS, c_PHYSICAL_HITS);
 
             emit_expected_counts(shot_count, expected_hits, expected_hits);
 
-            -- Let the expected tuple cross config_ctrl's xpm_cdc_handshake
-            -- before IrFlag makes chip_run snapshot it at ST_DRAIN_LATCH.
+            -- Let the deprecated tuple cross its compatibility CDC. It must
+            -- not affect the following GPX drain.
             wait_clk(80);
 
             -- Assert IrFlag after a few clk (MTimer expiry emulation)
@@ -1682,24 +1680,24 @@ begin
 
             for i in 0 to c_MAX_CHIPS - 1 loop
                 if C_EFFECTIVE_ACTIVE_MASK(i) = '1' then
-                    assert fifo1_rd_cnt(i) = expected_hits
-                        report "tb_tdc_gpx_top_int: IFIFO1 expected-count drain mismatch on chip "
+                    assert fifo1_rd_cnt(i) = c_PHYSICAL_HITS
+                        report "tb_tdc_gpx_top_int: IFIFO1 physical drain mismatch on chip "
                                & integer'image(i) & ", actual="
-                               & integer'image(fifo1_rd_cnt(i)) & ", expected="
-                               & integer'image(expected_hits)
+                               & integer'image(fifo1_rd_cnt(i)) & ", physical="
+                               & integer'image(c_PHYSICAL_HITS)
                         severity failure;
-                    assert fifo2_rd_cnt(i) = expected_hits
-                        report "tb_tdc_gpx_top_int: IFIFO2 expected-count drain mismatch on chip "
+                    assert fifo2_rd_cnt(i) = c_PHYSICAL_HITS
+                        report "tb_tdc_gpx_top_int: IFIFO2 physical drain mismatch on chip "
                                & integer'image(i) & ", actual="
-                               & integer'image(fifo2_rd_cnt(i)) & ", expected="
-                               & integer'image(expected_hits)
+                               & integer'image(fifo2_rd_cnt(i)) & ", physical="
+                               & integer'image(c_PHYSICAL_HITS)
                         severity failure;
-                    assert fifo1_fill(i) = c_PHYSICAL_HITS - expected_hits
-                        report "tb_tdc_gpx_top_int: IFIFO1 did not stop before EF fallback on chip "
+                    assert fifo1_fill(i) = 0
+                        report "tb_tdc_gpx_top_int: IFIFO1 not empty after drain on chip "
                                & integer'image(i)
                         severity failure;
-                    assert fifo2_fill(i) = c_PHYSICAL_HITS - expected_hits
-                        report "tb_tdc_gpx_top_int: IFIFO2 did not stop before EF fallback on chip "
+                    assert fifo2_fill(i) = 0
+                        report "tb_tdc_gpx_top_int: IFIFO2 not empty after drain on chip "
                                & integer'image(i)
                         severity failure;
                 else
@@ -1710,10 +1708,9 @@ begin
                 end if;
             end loop;
             pl("  ---- shot [" & tag
-               & "] expected-count bound PASS: read="
-               & integer'image(expected_hits)
-               & ", leftover="
-               & integer'image(c_PHYSICAL_HITS - expected_hits));
+               & "] EF authority PASS: read="
+               & integer'image(c_PHYSICAL_HITS)
+               & ", leftover=0");
             pl("  ---- shot [" & tag & "] drain done");
         end procedure;
 
