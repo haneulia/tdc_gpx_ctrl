@@ -1,5 +1,6 @@
 param(
-    [string]$SourceRoot = "C:/Projects/my_sp/lib/IP/motor_decoder/HDL",
+    [string]$SourceRoot = "C:/Projects/my_sp/lib/IP/virtual_encoder/HDL",
+    [string]$MotorSourceRoot = "C:/Projects/my_sp/lib/IP/motor_decoder/HDL",
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [int]$RunTimeMs = 50,
     [ValidateSet("enc_top_tb", "tb_motor_cfg_commit_atomic", "tb_enc_timing_generator")]
@@ -10,6 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $Hdl = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path.Replace('\', '/')
+$MotorSourceRoot = (Resolve-Path -LiteralPath $MotorSourceRoot).Path.Replace('\', '/')
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin"
 $Work = Join-Path $Hdl "tmp/virtual_encoder/$Stamp"
 $Archive = Join-Path $Hdl "sim_results/vivado_xsim/sessions/${Stamp}_${Top}"
@@ -28,19 +30,28 @@ function Invoke-Checked {
     }
 }
 
-$Files = @(
-    "$SourceRoot/enc_pkg.vhd",
-    "$SourceRoot/enc_param_apply_ctrl.vhd",
-    "$SourceRoot/enc_phase_counter.vhd",
-    "$SourceRoot/enc_position_counter.vhd",
-    "$SourceRoot/enc_timing_generator.vhd",
-    "$SourceRoot/enc_top.vhd",
-    "$SourceRoot/enc_top_tb.vhd",
-    "$SourceRoot/motor_decoder_cfg_pkg.vhd",
-    "$SourceRoot/motor_cfg_commit_ctrl.vhd",
-    "$Hdl/system_integration/tb/tb_motor_cfg_commit_atomic.vhd",
-    "$Hdl/system_integration/tb/tb_enc_timing_generator.vhd"
-)
+$Files = switch ($Top) {
+    "tb_enc_timing_generator" {
+        "$SourceRoot/enc_pkg.vhd"
+        "$SourceRoot/enc_timing_generator.vhd"
+        "$Hdl/system_integration/tb/tb_enc_timing_generator.vhd"
+    }
+    "enc_top_tb" {
+        "$SourceRoot/enc_pkg.vhd"
+        "$SourceRoot/enc_param_apply_ctrl.vhd"
+        "$SourceRoot/enc_phase_counter.vhd"
+        "$SourceRoot/enc_position_counter.vhd"
+        "$SourceRoot/enc_timing_generator.vhd"
+        "$SourceRoot/enc_top.vhd"
+        "$SourceRoot/enc_top_tb.vhd"
+    }
+    "tb_motor_cfg_commit_atomic" {
+        "$MotorSourceRoot/enc_pkg.vhd"
+        "$MotorSourceRoot/motor_decoder_cfg_pkg.vhd"
+        "$MotorSourceRoot/motor_cfg_commit_ctrl.vhd"
+        "$Hdl/system_integration/tb/tb_motor_cfg_commit_atomic.vhd"
+    }
+}
 
 foreach ($File in $Files) {
     if (-not (Test-Path -LiteralPath $File -PathType Leaf)) {
