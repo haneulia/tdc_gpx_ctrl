@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "scenario_id": "smoke_internal_200m_v001",
-  "description": "Single-clock end-to-end smoke baseline using motor_decoder's internal encoder",
-  "axis_clock_mhz": 200.0,
+  "scenario_id": "smoke_internal_axis150_tdc200_v001",
+  "description": "Product-reference AXIS 150 MHz / TDC 200 MHz CDC smoke using the internal encoder",
+  "axis_clock_mhz": 150.0,
   "tdc_clock_mhz": 200.0,
   "max_range_m": 500.0,
   "target_distance_m": 375.0,

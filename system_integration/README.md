@@ -40,6 +40,24 @@ would change the physical RPM and shot PRF. The external scenario observes
 220 us because the first revolution establishes the Z-index reference; the
 following revolution is the first complete measurement interval.
 
+## Clock profiles
+
+Motor, Laser, Echo, and the GPX processing path use `axis_clock_mhz`. The GPX
+physical-bus model and chip controller use the independent `tdc_clock_mhz`.
+Both values must be one of 50, 100, 125, 150, or 200 MHz and AXIS must not be
+faster than TDC. A scenario that omits `tdc_clock_mhz` remains a same-clock run
+for schema-v1 compatibility.
+
+The primary integration gates are:
+
+- 200/200 MHz: synchronous regression baseline;
+- 150/200 MHz: product-reference AXIS/TDC asynchronous boundary.
+
+The shared CSR range remains in 5 ns ticks. `rtl_contract.json` reports the two
+derived values separately as `max_range_axis_clks` and
+`max_range_tdc_clks`; there is no ambiguous `max_range_local_clks` field in
+schema version 2.
+
 ## Result contract
 
 Each run archives:
@@ -79,8 +97,10 @@ It is not the next-shot deadline or a GPX session-stop command. A sequence
 error is raised only when that pulse arrives before synchronized GPX IrFlag;
 arrival after IrFlag while the chip drains or runs the ALU is normal.
 
-This baseline uses one clock intentionally. It proves functional wiring only;
-100/150/200 MHz CDC is a later gate and must not be inferred from this result.
+The 150/200 MHz scenarios prove the AXIS/TDC functional CDC path in simulation.
+The parent reference structurally validates the AXI 100 MHz clock, but this TB
+does not yet dynamically exercise an independent AXI clock. Board pin timing,
+long-stall behavior, and post-route closure remain separate sign-off gates.
 
 ## Run
 
@@ -95,6 +115,14 @@ Run the physical A/B/Z input path with its explicit scenario:
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_smoke.ps1 `
   -Scenario system_integration/scenarios/smoke_external_200m_v001.json
+```
+
+Run the product-reference AXIS/TDC clock pair:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_smoke.ps1 `
+  -Scenario system_integration/scenarios/smoke_external_axis150_tdc200_v001.json
 ```
 
 `-EncoderSource` remains available for short experiments, but archived

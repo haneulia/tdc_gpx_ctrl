@@ -14,10 +14,10 @@
 --   pulses, echo stop_evt AXIS, TDC VDMA stream).
 --
 -- Architecture
---   Single 200 MHz clock for all domains (all modules use the same clock group
---   in this TB to keep wiring simple; the real board uses 3 domains which
---   the CDCs inside each module still exercise because async helpers fall back
---   gracefully when src/dest clocks tie together).
+--   Motor/Laser/Echo and GPX processing use G_AXIS_CLK_MHZ.  The GPX physical
+--   bus model and chip controller use the independent G_TDC_CLK_MHZ clock.
+--   Setting both generics to the same value preserves the single-clock smoke;
+--   150/200 MHz exercises the product-reference AXIS/TDC CDC boundary.
 --
 --   enc_top  drives A/B/Z pins of motor_decoder_top (virtual encoder).
 --   motor_decoder_top AXI-Stream output drives laser_ctrl_top slave port.
@@ -35,7 +35,7 @@
 --   A 4-chip behavioral TDC-GPX model (same as tb_tdc_gpx_top_int) fills the
 --   IFIFOs and drives EF / LF / IrFlag pins.
 --
--- CSR sequence (AXI-Lite writes via px_utility_pkg, 200 MHz)
+-- CSR sequence (AXI-Lite writes via px_utility_pkg, AXIS clock in this TB)
 --   - motor_decoder : SIM_EN = 1                                  (CTL0[0])
 --   - laser_ctrl    : LASER_EN + STREAM_EN + minimal sched config
 --   - echo_receiver : SIM_EN = 1, multi-hit limit default
@@ -73,7 +73,8 @@ entity tb_tdc_gpx_full_int is
         -- INDEPENDENT (primary) variables -- system specification inputs.
         -- User overrides these via xelab --generic_top or Vivado simset.
         -- =================================================================
-        G_AXIS_CLK_MHZ    : real    := 200.0;   -- common clock freq (MHz)
+        G_AXIS_CLK_MHZ    : real    := 200.0;   -- processing clock (MHz)
+        G_TDC_CLK_MHZ     : real    := 200.0;   -- GPX physical-bus clock (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (meters)
         G_SIM_TARGET_M    : real    := 375.0;   -- TB photodiode target (m)
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
@@ -121,24 +122,32 @@ architecture sim of tb_tdc_gpx_full_int is
     -- Physical constants
     constant C_LIGHT_M_PER_US : real    := 299.792;   -- speed of light (m/us)
 
-    -- Clock period (rounded to integer ps to keep xsim time arithmetic exact)
-    constant C_CLK_PERIOD_PS  : natural := natural(1000000.0 / G_AXIS_CLK_MHZ);
-    constant C_CLK_PERIOD     : time    := C_CLK_PERIOD_PS * 1 ps;
-    constant C_RST_HOLD       : time    := 30 * C_CLK_PERIOD;
+    -- Clock periods (rounded to integer ps to keep xsim arithmetic exact).
+    constant C_AXIS_CLK_PERIOD_PS : natural := natural(1000000.0 / G_AXIS_CLK_MHZ);
+    constant C_TDC_CLK_PERIOD_PS  : natural := natural(1000000.0 / G_TDC_CLK_MHZ);
+    constant C_AXIS_CLK_PERIOD    : time := C_AXIS_CLK_PERIOD_PS * 1 ps;
+    constant C_TDC_CLK_PERIOD     : time := C_TDC_CLK_PERIOD_PS * 1 ps;
+    -- AXIS is contractually no faster than TDC, so this covers both domains.
+    constant C_RST_HOLD           : time := 30 * C_AXIS_CLK_PERIOD;
 
-    -- Range-derived counters. The TDC CSR uses 5 ns reference ticks; local
-    -- laser/echo scheduling uses the selected common simulation clock.
-    constant C_DOMAIN_CLK_MHZ : positive := positive(integer(G_AXIS_CLK_MHZ));
+    -- Range-derived counters. The CSR stores one physical 5 ns reference
+    -- value, then each consumer converts it to its own domain clock count.
+    constant C_AXIS_DOMAIN_CLK_MHZ : positive := positive(integer(G_AXIS_CLK_MHZ));
+    constant C_TDC_DOMAIN_CLK_MHZ  : positive := positive(integer(G_TDC_CLK_MHZ));
     constant C_MAX_RANGE_5NS_TICKS : natural := natural(ceil(
         2.0 * G_MAX_RANGE_M / C_LIGHT_M_PER_US * real(c_RANGE_REF_CLK_MHZ)));
-    constant C_MAX_RANGE_CLKS : natural :=
+    constant C_MAX_RANGE_AXIS_CLKS : natural :=
         to_integer(fn_range_5ns_ticks_to_clks(
-            to_unsigned(C_MAX_RANGE_5NS_TICKS, 16), C_DOMAIN_CLK_MHZ));
+            to_unsigned(C_MAX_RANGE_5NS_TICKS, 16), C_AXIS_DOMAIN_CLK_MHZ));
+    constant C_MAX_RANGE_TDC_CLKS : natural :=
+        to_integer(fn_range_5ns_ticks_to_clks(
+            to_unsigned(C_MAX_RANGE_5NS_TICKS, 16), C_TDC_DOMAIN_CLK_MHZ));
     constant C_SIM_TARGET_CLKS: natural :=
         natural(2.0 * G_SIM_TARGET_M / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
 
     -- PRF headroom (shot_period = 1.5 x round-trip per TDC window design memo)
-    constant C_SHOT_PERIOD_CLKS : natural := (C_MAX_RANGE_CLKS * 3 + 1) / 2;
+    constant C_SHOT_PERIOD_AXIS_CLKS : natural :=
+        (C_MAX_RANGE_AXIS_CLKS * 3 + 1) / 2;
 
     -- TB photodiode echo delay (clk units)
     constant C_ECHO_DELAY     : natural := C_SIM_TARGET_CLKS;
@@ -157,7 +166,7 @@ architecture sim of tb_tdc_gpx_full_int is
     -- Convert the requested clock interval to position steps using the exact
     -- average revolution length, then round up for PRF safety.
     constant C_STEP_INTERVAL  : natural :=
-        (C_SHOT_PERIOD_CLKS * C_MD_TOTAL_STATES
+        (C_SHOT_PERIOD_AXIS_CLKS * C_MD_TOTAL_STATES
          + C_ENC_TOTAL_CLKS_LOCAL - 1) / C_ENC_TOTAL_CLKS_LOCAL;
     constant C_MD_COMMIT_TIMEOUT_CLKS : positive :=
         2 * C_ENC_TICKS_HI_LOCAL * C_MD_TOTAL_STATES + 100;
@@ -238,7 +247,8 @@ architecture sim of tb_tdc_gpx_full_int is
     -- =========================================================================
     -- Clock / Reset
     -- =========================================================================
-    signal clk       : std_logic := '0';
+    signal clk       : std_logic := '0';  -- AXIS / upstream integration clock
+    signal tdc_clk   : std_logic := '0';
     signal rst_n     : std_logic := '0';
     signal sim_done  : boolean   := false;
 
@@ -568,10 +578,23 @@ begin
         report "tb_tdc_gpx_full_int: G_TDC_STIM_MODE must be lc or direct"
         severity failure;
 
+    assert G_AXIS_CLK_MHZ = real(C_AXIS_DOMAIN_CLK_MHZ)
+        report "tb_tdc_gpx_full_int: G_AXIS_CLK_MHZ must be an integer MHz value"
+        severity failure;
+
+    assert G_TDC_CLK_MHZ = real(C_TDC_DOMAIN_CLK_MHZ)
+        report "tb_tdc_gpx_full_int: G_TDC_CLK_MHZ must be an integer MHz value"
+        severity failure;
+
+    assert G_AXIS_CLK_MHZ <= G_TDC_CLK_MHZ
+        report "tb_tdc_gpx_full_int: AXIS clock must not exceed TDC clock"
+        severity failure;
+
     -- =========================================================================
     -- Clock / Reset
     -- =========================================================================
-    clk <= not clk after C_CLK_PERIOD / 2 when not sim_done else '0';
+    clk <= not clk after C_AXIS_CLK_PERIOD / 2 when not sim_done else '0';
+    tdc_clk <= not tdc_clk after C_TDC_CLK_PERIOD / 2 when not sim_done else '0';
 
     -- i_shot_start / i_stop_tdc source mux. Default ("lc") routes from the
     -- laser_ctrl outputs; "direct" exposes a TB-controlled pulse for debug.
@@ -873,18 +896,19 @@ begin
         generic map (
             g_HW_VERSION      => x"00010000",
             g_OUTPUT_WIDTH    => C_OUTPUT_W,
-            g_AXIS_CLK_MHZ    => C_DOMAIN_CLK_MHZ,
-            g_TDC_CLK_MHZ     => C_DOMAIN_CLK_MHZ,
+            g_AXIS_CLK_MHZ    => C_AXIS_DOMAIN_CLK_MHZ,
+            g_TDC_CLK_MHZ     => C_TDC_DOMAIN_CLK_MHZ,
+            g_STREAM_CLK_MODE => "ASYNC",
             -- Convert accelerated TB cycle knobs to the top-level physical
-            -- time contract without changing the intended cycle count.
-            g_POWERUP_TIME_NS   => (G_POWERUP_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
-            g_RECOVERY_TIME_NS  => (G_RECOVERY_CLKS * 1000) / C_DOMAIN_CLK_MHZ,
-            g_ALU_PULSE_TIME_NS => (G_ALU_PULSE_CLKS * 1000) / C_DOMAIN_CLK_MHZ
+            -- time contract without changing the intended TDC cycle count.
+            g_POWERUP_TIME_NS   => (G_POWERUP_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
+            g_RECOVERY_TIME_NS  => (G_RECOVERY_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
+            g_ALU_PULSE_TIME_NS => (G_ALU_PULSE_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ
         )
         port map (
             i_axis_aclk     => clk,
             i_axis_aresetn  => rst_n,
-            i_tdc_clk       => clk,
+            i_tdc_clk       => tdc_clk,
             s_axi_aclk      => clk,
             s_axi_aresetn   => rst_n,
             s_axi_awvalid   => td_awvalid,
@@ -994,7 +1018,7 @@ begin
      -- =========================================================================
     gen_chip : for i in 0 to c_MAX_CHIPS - 1 generate
 
-        p_chip : process(clk)
+        p_chip : process(tdc_clk)
             -- Persistent state
             variable v_fill1      : natural := 0;
             variable v_fill2      : natural := 0;
@@ -1007,7 +1031,7 @@ begin
             -- Stop pulse slice index for this chip (8 channels)
             variable v_pd_slice_lo : natural := i * C_ER_N_STOPS;
         begin
-            if rising_edge(clk) then
+            if rising_edge(tdc_clk) then
                 if rst_n = '0' then
                     v_fill1 := 0; v_fill2 := 0; v_rd1 := 0; v_rd2 := 0;
                     v_mtimer := 0; v_irf := '0';
@@ -1042,7 +1066,7 @@ begin
                     if td_shot_start_mux = '1' then
                         v_fill1 := 0; v_fill2 := 0;
                         v_rd1   := 0; v_rd2   := 0;
-                        v_mtimer := C_MAX_RANGE_CLKS;
+                        v_mtimer := C_MAX_RANGE_TDC_CLKS;
                         v_irf    := '0';
                     end if;
 
@@ -1563,14 +1587,18 @@ begin
         pl(" (enc_top + motor_decoder + laser_ctrl + echo_receiver + tdc_gpx)");
         pl("======================================================");
         if G_PRINT_BANNER then
-            pl("  config :  clk=" & integer'image(integer(G_AXIS_CLK_MHZ))
+            pl("  config :  axis/tdc clk="
+               & integer'image(integer(G_AXIS_CLK_MHZ)) & "/"
+               & integer'image(integer(G_TDC_CLK_MHZ))
                & "MHz  range=" & integer'image(integer(G_MAX_RANGE_M)) & "m"
                & "  sim_tgt=" & integer'image(integer(G_SIM_TARGET_M)) & "m"
                & "  tdata=" & integer'image(G_TDATA_WIDTH) & "b");
             pl("  derived:  max_range_5ns_ticks=" & integer'image(C_MAX_RANGE_5NS_TICKS)
-               & "  local_range_clks=" & integer'image(C_MAX_RANGE_CLKS)
+               & "  axis/tdc_range_clks="
+               & integer'image(C_MAX_RANGE_AXIS_CLKS) & "/"
+               & integer'image(C_MAX_RANGE_TDC_CLKS)
                & "  sim_target_clks=" & integer'image(C_SIM_TARGET_CLKS)
-               & "  shot_period=" & integer'image(C_SHOT_PERIOD_CLKS)
+               & "  shot_period=" & integer'image(C_SHOT_PERIOD_AXIS_CLKS)
                & "  step_interval=" & integer'image(C_STEP_INTERVAL)
                & "  enc_ticks_lo/hi=" & integer'image(C_ENC_TICKS_LO_LOCAL)
                & "/" & integer'image(C_ENC_TICKS_HI_LOCAL)
@@ -1662,7 +1690,8 @@ begin
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
         lc_wr(C_LC_CTL1, std_logic_vector(to_unsigned(C_FIRE_WIDTH, 32)));
         -- CTL2 max_roundtrip -- derived from G_MAX_RANGE_M / G_AXIS_CLK_MHZ
-        lc_wr(C_LC_CTL2, std_logic_vector(to_unsigned(C_MAX_RANGE_CLKS, 32)));
+        lc_wr(C_LC_CTL2,
+              std_logic_vector(to_unsigned(C_MAX_RANGE_AXIS_CLKS, 32)));
         lc_wr(C_LC_CTL3, std_logic_vector(to_unsigned(C_CTL3_VAL_LOCAL, 32)));
         -- CTL4 sim target -- derived from G_SIM_TARGET_M / G_AXIS_CLK_MHZ
         lc_wr(C_LC_CTL4, std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
@@ -1717,7 +1746,7 @@ begin
                 -- as the sole drivers of i_tdc_irflag avoids a multi-driver
                 -- 'U' resolution bug that blocked IrFlag in lc mode.
                 wait_clk(1200);  -- cover capture + IrFlag + drain + ALU tail
-                if shot = 0 then wait_clk(C_SHOT_PERIOD_CLKS); end if;
+                if shot = 0 then wait_clk(C_SHOT_PERIOD_AXIS_CLKS); end if;
             end loop;
             wait_clk(2000);
             tb_stop_tdc <= '1'; wait_clk(2); tb_stop_tdc <= '0';
@@ -1743,7 +1772,7 @@ begin
         -- input and is therefore the wrong boundary for deterministic drain.
         pl("[S5] gate Motor-to-Laser requests and drain in-flight shot");
         lc_req_enable <= '0';
-        wait_clk((3 * C_MAX_RANGE_CLKS) + 200);
+        wait_clk((3 * C_MAX_RANGE_AXIS_CLKS) + 200);
 
         --------------------------------------------------------------
         -- [S6] Diagnostic readback: pipeline CSR STAT5/STAT6/STAT7
@@ -1813,9 +1842,11 @@ begin
 
         report "RTL_RESULT encoder_source=" & G_ENCODER_SOURCE
              & " axis_clk_mhz=" & integer'image(integer(G_AXIS_CLK_MHZ))
+             & " tdc_clk_mhz=" & integer'image(integer(G_TDC_CLK_MHZ))
              & " output_width=" & integer'image(G_TDATA_WIDTH)
              & " max_range_5ns_ticks=" & integer'image(C_MAX_RANGE_5NS_TICKS)
-             & " max_range_local_clks=" & integer'image(C_MAX_RANGE_CLKS)
+             & " max_range_axis_clks=" & integer'image(C_MAX_RANGE_AXIS_CLKS)
+             & " max_range_tdc_clks=" & integer'image(C_MAX_RANGE_TDC_CLKS)
              & " max_hits=" & integer'image(C_MAX_HITS)
              & " stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
              & " cols_per_face=" & integer'image(G_COLS_PER_FACE)

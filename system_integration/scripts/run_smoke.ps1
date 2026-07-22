@@ -18,6 +18,24 @@ if ([string]::IsNullOrWhiteSpace($Scenario)) {
 $Scenario = (Resolve-Path $Scenario).Path
 $Cfg = Get-Content -Raw -LiteralPath $Scenario | ConvertFrom-Json
 
+# Schema-v1 compatibility: an older scenario with one clock remains a
+# same-clock run. New scenarios state both domains explicitly.
+if ($null -eq $Cfg.tdc_clock_mhz) {
+    $Cfg | Add-Member -NotePropertyName tdc_clock_mhz `
+        -NotePropertyValue $Cfg.axis_clock_mhz
+}
+
+$SupportedClocksMhz = @(50, 100, 125, 150, 200)
+if ([double]$Cfg.axis_clock_mhz -notin $SupportedClocksMhz) {
+    throw "Unsupported axis_clock_mhz '$($Cfg.axis_clock_mhz)'"
+}
+if ([double]$Cfg.tdc_clock_mhz -notin $SupportedClocksMhz) {
+    throw "Unsupported tdc_clock_mhz '$($Cfg.tdc_clock_mhz)'"
+}
+if ([double]$Cfg.axis_clock_mhz -gt [double]$Cfg.tdc_clock_mhz) {
+    throw "axis_clock_mhz must not exceed tdc_clock_mhz"
+}
+
 if (-not [string]::IsNullOrWhiteSpace($EncoderSource)) {
     $Cfg.encoder_source = $EncoderSource
 }
@@ -192,6 +210,7 @@ try {
         "-L xpm",
         "--snapshot $Snapshot",
         "--generic_top `"G_AXIS_CLK_MHZ=$($Cfg.axis_clock_mhz)`"",
+        "--generic_top `"G_TDC_CLK_MHZ=$($Cfg.tdc_clock_mhz)`"",
         "--generic_top `"G_MAX_RANGE_M=$($Cfg.max_range_m)`"",
         "--generic_top `"G_SIM_TARGET_M=$($Cfg.target_distance_m)`"",
         "--generic_top `"G_TDATA_WIDTH=$($Cfg.output_width_bits)`"",
@@ -263,7 +282,7 @@ $TdcWorktreeDirty = -not [string]::IsNullOrWhiteSpace(
     ((& git -C $Hdl status --porcelain) -join "`n")
 )
 $Result = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     scenario_source = $Scenario.Replace('\', '/')
     scenario = $Cfg
     verdict = "PASS"
@@ -280,7 +299,7 @@ $Result | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath $Res
 # Compact machine contract for the C08 HTML simulator. Reproducibility hashes
 # and logs remain in rtl_result.json; the UI does not need to load that payload.
 $ContractResult = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     scenario_id = $Cfg.scenario_id
     verdict = "PASS"
     scenario = $Cfg
