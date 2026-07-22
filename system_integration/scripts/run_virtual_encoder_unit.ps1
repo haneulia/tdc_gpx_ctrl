@@ -1,7 +1,9 @@
 param(
     [string]$SourceRoot = "C:/Projects/my_sp/lib/IP/motor_decoder/HDL",
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
-    [int]$RunTimeMs = 50
+    [int]$RunTimeMs = 50,
+    [ValidateSet("enc_top_tb", "tb_motor_cfg_commit_atomic")]
+    [string]$Top = "enc_top_tb"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,7 +12,7 @@ $Hdl = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path.Replace('\', '/')
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin"
 $Work = Join-Path $Hdl "tmp/virtual_encoder/$Stamp"
-$Archive = Join-Path $Hdl "sim_results/vivado_xsim/sessions/${Stamp}_virtual_encoder_unit"
+$Archive = Join-Path $Hdl "sim_results/vivado_xsim/sessions/${Stamp}_${Top}"
 
 New-Item -ItemType Directory -Force -Path $Work, $Archive | Out-Null
 
@@ -34,7 +36,10 @@ $Files = @(
     "$SourceRoot/enc_phase_counter.vhd",
     "$SourceRoot/enc_position_counter.vhd",
     "$SourceRoot/enc_top.vhd",
-    "$SourceRoot/enc_top_tb.vhd"
+    "$SourceRoot/enc_top_tb.vhd",
+    "$SourceRoot/motor_decoder_cfg_pkg.vhd",
+    "$SourceRoot/motor_cfg_commit_ctrl.vhd",
+    "$Hdl/system_integration/tb/tb_motor_cfg_commit_atomic.vhd"
 )
 
 foreach ($File in $Files) {
@@ -53,7 +58,7 @@ $ProjectLines | Set-Content -Encoding ASCII -LiteralPath $Project
 $CompileLog = Join-Path $Work "xvhdl.log"
 $ElabLog = Join-Path $Work "xelab.log"
 $SimLog = Join-Path $Work "xsim.log"
-$Snapshot = "virtual_encoder_${Stamp}_snap"
+$Snapshot = "${Top}_${Stamp}_snap"
 $RunTcl = Join-Path $Work "run.tcl"
 $RunTclXsim = $RunTcl.Replace('\', '/')
 $SimLogXsim = $SimLog.Replace('\', '/')
@@ -76,7 +81,7 @@ try {
         "-L", "unisim",
         "-L", "xpm",
         "--snapshot", $Snapshot,
-        "xil_defaultlib.enc_top_tb",
+        "xil_defaultlib.$Top",
         "-log", $ElabLog
     )
     Invoke-Checked "$Vivado/xsim.bat" @(
@@ -89,13 +94,19 @@ finally {
     Pop-Location
 }
 
+$PassPattern = if ($Top -eq "enc_top_tb") {
+    "Result\s*:\s*ALL PASS"
+} else {
+    "MOTOR_CFG_ATOMIC_PASS"
+}
+
 $SimText = Get-Content -Raw -LiteralPath $SimLog
-if ($SimText -notmatch "Result\s*:\s*ALL PASS") {
-    throw "Virtual encoder regression did not report ALL PASS. See $SimLog"
+if ($SimText -notmatch $PassPattern) {
+    throw "$Top did not report its PASS marker. See $SimLog"
 }
 
 Copy-Item -Force -LiteralPath $CompileLog, $ElabLog, $SimLog -Destination $Archive
 Copy-Item -Force -LiteralPath $Project, $RunTcl -Destination $Archive
 
-Write-Output "VIRTUAL_ENCODER_UNIT_PASS"
+Write-Output "${Top}_PASS"
 Write-Output "Archive: $Archive"
