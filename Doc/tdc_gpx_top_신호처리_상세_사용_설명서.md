@@ -482,7 +482,7 @@ Laser가 이미 발사된 뒤 TDC가 `ready`를 낮추는 사후 backpressure는
 | `laser_ctrl.o_shot_start` | `echo_receiver.i_shot_start` | 2FF+edge 동기화 후 Echo capture window 시작 |
 | `laser_ctrl.o_shot_start` | `tdc_gpx_top.i_shot_start` | 동기화된 Shot bookkeeping과 face payload valid |
 | `laser_ctrl.o_stop_tdc` | Echo/TDC `i_stop_tdc` | 확정 T0부터 max_roundtrip 뒤의 논리 측정 window 종료 |
-| `echo_receiver.o_stop_pulse_rise/fall` | 실제 TDC-GPX STOP pins | LVDS echo에서 변환된 실제 채널별 STOP |
+| `echo_receiver.o_tdc_stop` | 실제 TDC-GPX STOP pins | 단일 물리 waveform. rising/falling 선택은 GPX Reg0과 `tdc_gpx_top` slope topology가 소유 |
 
 `o_start_tdc`와 `o_shot_start`는 같은 신호의 이름 차이가 아니다. 전자는 물리 GPX pin 전용이고, 후자는 CDC 안전한 제어 event 전용이다. `o_start_tdc`를 Echo나 `tdc_gpx_top.i_shot_start`에 연결하면 제어 CDC 계약이 깨지고, 반대로 `o_shot_start`를 물리 START pin에 연결하면 2~3 AXIS clock의 동기화 지연이 거리 기준에 들어간다.
 

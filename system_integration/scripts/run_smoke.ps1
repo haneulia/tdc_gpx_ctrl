@@ -103,10 +103,10 @@ $MotorFiles = @(
 )
 
 $LaserFiles = @(
-    "$IpRoot/laser_ctrl/HDL/laser_ctrl_types_pkg.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_cfg_pkg.vhd",
-    "$IpRoot/laser_ctrl/HDL/laser_ctrl_math_pkg.vhd",
-    "$IpRoot/laser_ctrl/HDL/laser_ctrl_pkg.vhd",
+    "$IpRoot/laser_ctrl/HDL/laser_ctrl_types_pkg.vhd",
+    "$IpRoot/laser_ctrl/HDL/laser_ctrl_timebase.vhd",
+    "$IpRoot/laser_ctrl/HDL/laser_ctrl_cdc_snapshot.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_status.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_tdc.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_result.vhd",
@@ -123,6 +123,8 @@ $LaserFiles = @(
 
 $EchoFiles = @(
     "$IpRoot/echo_receiver/HDL/echo_receiver_pkg.vhd",
+    "$IpRoot/echo_receiver/HDL/echo_receiver_timebase.vhd",
+    "$IpRoot/echo_receiver/HDL/echo_receiver_stop_frontend.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_core.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_csr.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_top.vhd"

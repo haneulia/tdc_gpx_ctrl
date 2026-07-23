@@ -38,7 +38,7 @@
 -- CSR sequence (AXI-Lite writes via px_utility_pkg, AXIS clock in this TB)
 --   - motor_decoder : SIM_EN = 1                                  (CTL0[0])
 --   - laser_ctrl    : LASER_EN + STREAM_EN + minimal sched config
---   - echo_receiver : SIM_EN = 1, multi-hit limit default
+--   - echo_receiver : physical LVDS-to-GPX STOP path
 --   - tdc_gpx_top   : 500 m / G_TDATA_WIDTH / cols=2 / stops=2 (same as top_int)
 --
 -- Scenario
@@ -142,8 +142,17 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_MAX_RANGE_TDC_CLKS : natural :=
         to_integer(fn_range_5ns_ticks_to_clks(
             to_unsigned(C_MAX_RANGE_5NS_TICKS, 16), C_TDC_DOMAIN_CLK_MHZ));
-    constant C_SIM_TARGET_CLKS: natural :=
-        natural(2.0 * G_SIM_TARGET_M / C_LIGHT_M_PER_US * G_AXIS_CLK_MHZ);
+    -- stop_tdc is an ordering diagnostic, not the GPX capture deadline. Give
+    -- synchronized IrFlag time to become visible before Laser closes its
+    -- logical window. The GPX MTimer and accepted distance remain unchanged.
+    constant C_TDC_CLOSE_MARGIN_5NS_TICKS : natural := 8; -- 40 ns
+    constant C_LASER_RANGE_5NS_TICKS : natural :=
+        C_MAX_RANGE_5NS_TICKS + C_TDC_CLOSE_MARGIN_5NS_TICKS;
+    constant C_SIM_TARGET_5NS_TICKS : natural := natural(ceil(
+        2.0 * G_SIM_TARGET_M / C_LIGHT_M_PER_US * real(c_RANGE_REF_CLK_MHZ)));
+    constant C_SIM_TARGET_CLKS : natural :=
+        to_integer(fn_range_5ns_ticks_to_clks(
+            to_unsigned(C_SIM_TARGET_5NS_TICKS, 16), C_AXIS_DOMAIN_CLK_MHZ));
 
     -- PRF headroom (shot_period = 1.5 x round-trip per TDC window design memo)
     constant C_SHOT_PERIOD_AXIS_CLKS : natural :=
@@ -218,15 +227,30 @@ architecture sim of tb_tdc_gpx_full_int is
     -- AXIS service margin, so copying max_range directly would be unsafe.
     constant C_MAX_SCAN_5NS_TICKS : natural := 0;
 
-    -- pulse / trigger widths. Kept at tb_laser_ctrl_pkg values (1 clk) so
-    -- Physical START is asynchronously asserted then stretched. The separate
-    -- logical shot_start is a one-clock control-domain event.
+    -- Laser timing CSRs are fixed 5 ns ticks. The Laser timebase converts them
+    -- to the selected AXIS clock and rounds up, preserving minimum pulse width.
     function fn_max_nat(a, b : natural) return natural is
     begin if a > b then return a; else return b; end if; end function;
-    constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_CLKS, 1);
-    constant C_START_TDC_W    : natural := fn_max_nat(C_START_TDC_CLKS, 1);
-    constant C_STOP_TDC_W     : natural := fn_max_nat(C_STOP_TDC_CLKS, 1);
+    constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_5NS_TICKS, 1);
+    constant C_START_TDC_W    : natural := fn_max_nat(C_START_TDC_5NS_TICKS, 1);
+    constant C_STOP_TDC_W     : natural := fn_max_nat(C_STOP_TDC_5NS_TICKS, 1);
     constant C_CTL3_VAL_LOCAL : natural := C_STOP_TDC_W * 65536 + C_START_TDC_W;
+
+    function fn_lc_ctl0(
+        laser_enable : std_logic;
+        reset_toggle : std_logic
+    ) return std_logic_vector is
+        variable v : std_logic_vector(31 downto 0) := c_CTL0_INIT;
+    begin
+        v(c_CTL0_LASER_EN)  := laser_enable;
+        v(c_CTL0_SW_RST)    := reset_toggle;
+        v(c_CTL0_STREAM_EN) := '1';
+        return v;
+    end function;
+    constant C_LC_CTL0_RESET_LOCAL  : std_logic_vector(31 downto 0) :=
+        fn_lc_ctl0('0', '1');
+    constant C_LC_CTL0_ENABLE_LOCAL : std_logic_vector(31 downto 0) :=
+        fn_lc_ctl0('1', '1');
 
     -- CTL5 packed for laser_ctrl:
     --   [20:16] face_enable = 0x1F (all 5 mirror faces present in pkg),
@@ -494,7 +518,7 @@ architecture sim of tb_tdc_gpx_full_int is
 
     -- echo_receiver PD input + stop_evt/fire_count output
     signal pd_p, pd_n : std_logic_vector(C_PD_WIDTH - 1 downto 0) := (others => '0');
-    signal er_pulse_rise, er_pulse_fall : std_logic_vector(C_PD_WIDTH - 1 downto 0);
+    signal er_tdc_stop : std_logic_vector(C_PD_WIDTH - 1 downto 0);
     signal er_stop_tvalid : std_logic;
     signal er_stop_tdata  : std_logic_vector(C_STOP_DW - 1 downto 0);
     signal er_stop_tkeep  : std_logic_vector(C_STOP_DW/8 - 1 downto 0);
@@ -656,7 +680,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_lc_m_tlast   : natural := 0;
     signal mon_er_stop_beats : natural := 0;
     signal mon_er_fire_count_beats : natural := 0;
-    signal mon_er_pulse_rise_any : natural := 0;
+    signal mon_er_stop_high_cycles : natural := 0;
     signal mon_td_rise_beats : natural := 0;
     signal mon_td_fall_beats : natural := 0;
     signal mon_td_rise_line_end : natural := 0;
@@ -969,6 +993,9 @@ begin
     --   valid beat is an interface-contract failure and laser_ctrl rejects it.
     -- =========================================================================
     u_lc : entity work.laser_ctrl_top
+        generic map (
+            g_AXIS_CLK_MHZ => C_AXIS_DOMAIN_CLK_MHZ
+        )
         port map (
             s_axi_aclk      => clk,
             s_axi_aresetn   => rst_n,
@@ -1037,6 +1064,8 @@ begin
             -- this integration profile consumes the shared logical ABI max.
             g_N_CHIPS         => c_MAX_CHIPS,
             g_STOPS_PER_CHIP  => C_ER_N_STOPS,
+            g_AXIS_CLK_MHZ    => C_AXIS_DOMAIN_CLK_MHZ,
+            g_ENABLE_SIM_PATH => false,
             g_STOP_CNT_WIDTH  => C_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW,
             g_FIRE_COUNT_DWIDTH => 32
@@ -1074,8 +1103,7 @@ begin
             o_laser_evt_tready => lc_m_tready,
             i_pd_lvds_p      => pd_p,
             i_pd_lvds_n      => pd_n,
-            o_stop_pulse_rise => er_pulse_rise,
-            o_stop_pulse_fall => er_pulse_fall,
+            o_tdc_stop        => er_tdc_stop,
             o_stop_evt_tvalid => er_stop_tvalid,
             o_stop_evt_tdata  => er_stop_tdata,
             o_stop_evt_tkeep  => er_stop_tkeep,
@@ -1214,7 +1242,7 @@ begin
      --
      --  Sequence per shot (datasheet 01_chip_acquisition_single_shot.md, 5.4):
      --    1. AluTrigger rising  -> ALU reset: clear IFIFO counts, reload MTimer
-     --    2. Stop pulses (from echo_receiver.o_stop_pulse_rise) during MTimer
+     --    2. Rising edges on echo_receiver.o_tdc_stop during MTimer
      --       window push entries into IFIFO1 (stops 0..3) or IFIFO2 (stops 4..7)
      --    3. MTimer reaches 0 -> assert IrFlag
      --    4. chip_ctrl reads Reg8/Reg9 with RDN low; drive raw 28-bit word
@@ -1238,6 +1266,8 @@ begin
             variable v_irf        : std_logic := '0';
             variable v_rdn_prev   : std_logic := '1';
             variable v_alu_prev   : std_logic := '0';
+            variable v_stop_prev  : std_logic_vector(C_ER_N_STOPS - 1 downto 0)
+                                         := (others => '0');
             -- Stop pulse slice index for this chip (8 channels)
             variable v_pd_slice_lo : natural := i * C_ER_N_STOPS;
         begin
@@ -1246,6 +1276,7 @@ begin
                     v_fill1 := 0; v_fill2 := 0; v_rd1 := 0; v_rd2 := 0;
                     v_mtimer := 0; v_irf := '0';
                     v_rdn_prev := '1'; v_alu_prev := '0';
+                    v_stop_prev := (others => '0');
                     chip_d_oe(i) <= '0';
                     chip_d_out(i) <= (others => '0');
                 else
@@ -1287,7 +1318,8 @@ begin
                     -- ---------------------------------------------------
                     if v_mtimer > 0 and o_tdc_stopdis(i) = '0' then
                         for s in 0 to C_ER_N_STOPS - 1 loop
-                            if er_pulse_rise(v_pd_slice_lo + s) = '1' then
+                            if er_tdc_stop(v_pd_slice_lo + s) = '1'
+                               and v_stop_prev(s) = '0' then
                                 if s < C_ER_N_STOPS / 2 then
                                     if v_fill1 < C_FIFO_DEPTH then
                                         v_fill1 := v_fill1 + 1;
@@ -1300,6 +1332,9 @@ begin
                             end if;
                         end loop;
                     end if;
+                    for s in 0 to C_ER_N_STOPS - 1 loop
+                        v_stop_prev(s) := er_tdc_stop(v_pd_slice_lo + s);
+                    end loop;
 
                     -- ---------------------------------------------------
                     -- [3] MTimer countdown; assert IrFlag on expiry.
@@ -1435,6 +1470,8 @@ begin
     p_mon : process(clk)
         variable v_prev_fire, v_prev_start, v_prev_stop : std_logic := '0';
         variable v_prev_td_shot_start                  : std_logic := '0';
+        variable v_prev_irflag                         : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+        variable v_prev_alutrigger                     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
         variable v_prev_cmd_start, v_prev_cmd_accept   : std_logic := '0';
         variable v_prev_shot_gated                     : std_logic := '0';
         variable v_prev_cfg_rej, v_prev_pipe_abort     : std_logic := '0';
@@ -1469,7 +1506,7 @@ begin
                 mon_lc_m_tlast <= 0;
                 mon_er_stop_beats <= 0;
                 mon_er_fire_count_beats <= 0;
-                mon_er_pulse_rise_any <= 0;
+                mon_er_stop_high_cycles <= 0;
                 mon_td_rise_beats <= 0;
                 mon_td_fall_beats <= 0;
                 mon_td_rise_line_end <= 0;
@@ -1489,6 +1526,8 @@ begin
                 v_prev_start := '0';
                 v_prev_stop := '0';
                 v_prev_td_shot_start := '0';
+                v_prev_irflag := (others => '0');
+                v_prev_alutrigger := (others => '0');
                 v_prev_cmd_start := '0';
                 v_prev_cmd_accept := '0';
                 v_prev_shot_gated := '0';
@@ -1512,6 +1551,9 @@ begin
                 -- transfer. Queue the payload at the transfer boundary so
                 -- delayed/deferred TDC output can be checked in order.
                 if td_shot_start_mux = '1' and v_prev_td_shot_start = '0' then
+                    report "full_int timing: shot_start, IrFlag="
+                        & to_hstring(i_tdc_irflag)
+                        severity note;
                     assert v_shot_face_count < C_MON_SHOT_DEPTH
                         report "full_int: shot face monitor queue overflow"
                         severity failure;
@@ -1587,11 +1629,27 @@ begin
                     mon_lc_start_cnt <= mon_lc_start_cnt + 1;
                 end if;
                 if lc_stop_tdc = '1' and v_prev_stop = '0' then
+                    report "full_int timing: stop_tdc, IrFlag="
+                        & to_hstring(i_tdc_irflag)
+                        & ", AluTrigger=" & to_hstring(o_tdc_alutrigger)
+                        severity note;
                     mon_lc_stop_cnt <= mon_lc_stop_cnt + 1;
+                end if;
+                if i_tdc_irflag /= v_prev_irflag then
+                    report "full_int timing: IrFlag "
+                        & to_hstring(v_prev_irflag) & "->" & to_hstring(i_tdc_irflag)
+                        severity note;
+                end if;
+                if o_tdc_alutrigger /= v_prev_alutrigger then
+                    report "full_int timing: AluTrigger "
+                        & to_hstring(v_prev_alutrigger) & "->" & to_hstring(o_tdc_alutrigger)
+                        severity note;
                 end if;
                 v_prev_fire := lc_fire_pulse;
                 v_prev_start := lc_start_tdc;
                 v_prev_stop := lc_stop_tdc;
+                v_prev_irflag := i_tdc_irflag;
+                v_prev_alutrigger := o_tdc_alutrigger;
 
                 if lc_m_tvalid = '1' then
                     mon_lc_m_beats <= mon_lc_m_beats + 1;
@@ -1605,8 +1663,8 @@ begin
                 if er_fire_count_tvalid = '1' then
                     mon_er_fire_count_beats <= mon_er_fire_count_beats + 1;
                 end if;
-                if er_pulse_rise /= (er_pulse_rise'range => '0') then
-                    mon_er_pulse_rise_any <= mon_er_pulse_rise_any + 1;
+                if er_tdc_stop /= (er_tdc_stop'range => '0') then
+                    mon_er_stop_high_cycles <= mon_er_stop_high_cycles + 1;
                 end if;
                 if m_rise_tvalid = '1' and m_rise_tready = '1' then
                     assert m_rise_tkeep = (m_rise_tkeep'range => '1')
@@ -2099,30 +2157,28 @@ begin
         end if;
         wait_clk(30);
 
-        pl("[S1] echo_receiver CSR: SIM mode + ch_delay(0) = C_SIM_TARGET_CLKS");
-        -- CTL0: SIM_EN=1, multi_hit_limit=7 [12:8] -> 0x701
-        er_wr(C_ER_CTL0, x"00000701");
-        -- CTL1 = ch_delay(0): SIM mode auto-fires channel 0 this many clks
-        -- after start_tdc rising edge (no pd_lvds required).
-        er_wr("0" & x"04", std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
+        pl("[S1] echo_receiver CSR: production physical STOP mode");
+        -- CTL0[0]=0. The synthetic path is also absent at elaboration because
+        -- g_ENABLE_SIM_PATH=false; the PD generator drives the GPX path.
+        er_wr(C_ER_CTL0, x"00000000");
         wait_clk(10);
 
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
         lc_wr(C_LC_CTL1, std_logic_vector(to_unsigned(C_FIRE_WIDTH, 32)));
-        -- CTL2 max_roundtrip -- derived from G_MAX_RANGE_M / G_AXIS_CLK_MHZ
+        -- CTL2 max_roundtrip uses the shared fixed 5 ns CSR timebase.
         lc_wr(C_LC_CTL2,
-              std_logic_vector(to_unsigned(C_MAX_RANGE_AXIS_CLKS, 32)));
+              std_logic_vector(to_unsigned(C_LASER_RANGE_5NS_TICKS, 32)));
         lc_wr(C_LC_CTL3, std_logic_vector(to_unsigned(C_CTL3_VAL_LOCAL, 32)));
-        -- CTL4 sim target -- derived from G_SIM_TARGET_M / G_AXIS_CLK_MHZ
-        lc_wr(C_LC_CTL4, std_logic_vector(to_unsigned(C_SIM_TARGET_CLKS, 32)));
+        -- CTL4 remains valid if a debug build enables Laser simulation.
+        lc_wr(C_LC_CTL4, std_logic_vector(to_unsigned(C_SIM_TARGET_5NS_TICKS, 32)));
         -- CTL5 step_interval -- derived to guarantee shot_period >= 1.5 * round-trip
         lc_wr(C_LC_CTL5, C_LC_CTL5_DERIVED);
         lc_wr(C_LC_CTL6, C_LC_CTL6_DEFAULT);
         lc_wr(C_LC_CTL7, C_LC_CTL7_DEFAULT);
-        -- sw_rst + enable (CTL0 SWRST then EN)
-        lc_wr(C_LC_CTL0, C_LC_CTL0_SWRST_EN);
-        wait_clk(5);
-        lc_wr(C_LC_CTL0, C_LC_CTL0_EN);
+        -- Toggle reset while disabled, then enable without changing the toggle.
+        lc_wr(C_LC_CTL0, C_LC_CTL0_RESET_LOCAL);
+        wait_clk(20);
+        lc_wr(C_LC_CTL0, C_LC_CTL0_ENABLE_LOCAL);
         wait_clk(100);
 
         pl("[S1] tdc_gpx chip CSR: cfg_image Reg0/Reg5/Reg6 + CTL21");
@@ -2278,7 +2334,7 @@ begin
         pl("  lc     stop_tdc     = " & integer'image(mon_lc_stop_cnt));
         pl("  lc     result beats = " & integer'image(mon_lc_m_beats));
         pl("  lc     result tlast = " & integer'image(mon_lc_m_tlast));
-        pl("  er     pd rise hits = " & integer'image(mon_er_pulse_rise_any));
+        pl("  er     STOP high cycles = " & integer'image(mon_er_stop_high_cycles));
         pl("  er     stop_evt beats = " & integer'image(mon_er_stop_beats));
         pl("  er     fire_count beats = " & integer'image(mon_er_fire_count_beats));
         pl("  td     rise VDMA beats = " & integer'image(mon_td_rise_beats)
@@ -2339,7 +2395,7 @@ begin
              & " laser_stop=" & integer'image(mon_lc_stop_cnt)
              & " laser_result_beats=" & integer'image(mon_lc_m_beats)
              & " laser_result_tlast=" & integer'image(mon_lc_m_tlast)
-             & " echo_rise_cycles=" & integer'image(mon_er_pulse_rise_any)
+             & " echo_stop_high_cycles=" & integer'image(mon_er_stop_high_cycles)
              & " echo_stop_beats=" & integer'image(mon_er_stop_beats)
              & " stat5=" & to_hstring(v_stat5)
              & " stat6=" & to_hstring(v_stat6)
@@ -2373,7 +2429,7 @@ begin
                and mon_lc_stop_cnt = mon_lc_m_tlast
             report "full_int: laser start/stop/result-TLAST shot accounting mismatch"
             severity failure;
-        assert mon_er_pulse_rise_any > 0 and mon_er_stop_beats > 0
+        assert mon_er_stop_high_cycles > 0 and mon_er_stop_beats > 0
             report "full_int: no Echo-to-STOP diagnostic activity" severity failure;
         assert mon_td_rise_beats > 0 and mon_td_fall_beats > 0
             report "full_int: no GPX rising/falling output activity"

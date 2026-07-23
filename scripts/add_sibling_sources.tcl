@@ -36,10 +36,10 @@ set sibling_rtl [list \
     "$md_dir/motor_decoder_csr.vhd" \
     "$md_dir/motor_decoder_top.vhd" \
     \
-    "$lc_dir/laser_ctrl_types_pkg.vhd" \
     "$lc_dir/laser_ctrl_cfg_pkg.vhd" \
-    "$lc_dir/laser_ctrl_math_pkg.vhd" \
-    "$lc_dir/laser_ctrl_pkg.vhd" \
+    "$lc_dir/laser_ctrl_types_pkg.vhd" \
+    "$lc_dir/laser_ctrl_timebase.vhd" \
+    "$lc_dir/laser_ctrl_cdc_snapshot.vhd" \
     "$lc_dir/laser_ctrl_status.vhd" \
     "$lc_dir/laser_ctrl_tdc.vhd" \
     "$lc_dir/laser_ctrl_result.vhd" \
@@ -52,6 +52,8 @@ set sibling_rtl [list \
     "$lc_dir/laser_ctrl_top.vhd" \
     \
     "$er_dir/echo_receiver_pkg.vhd" \
+    "$er_dir/echo_receiver_timebase.vhd" \
+    "$er_dir/echo_receiver_stop_frontend.vhd" \
     "$er_dir/echo_receiver_core.vhd" \
     "$er_dir/echo_receiver_csr.vhd" \
     "$er_dir/echo_receiver_top.vhd" \

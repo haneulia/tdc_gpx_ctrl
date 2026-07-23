@@ -127,7 +127,7 @@ laser_ctrl.o_shot_face_index    -> tdc_gpx_top.i_shot_face_index
 laser_ctrl.o_stop_tdc           -> echo_receiver.i_stop_tdc
 laser_ctrl.o_stop_tdc           -> tdc_gpx_top.i_stop_tdc
 
-echo_receiver.o_stop_pulse_*    -> physical TDC-GPX STOP pins
+echo_receiver.o_tdc_stop        -> physical TDC-GPX STOP pins
 echo_receiver.m_stop_evt_*      -> optional diagnostics only
 echo_receiver.m_fire_count_*    -> optional diagnostics only
 ```
