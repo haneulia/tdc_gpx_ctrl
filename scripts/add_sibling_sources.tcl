@@ -43,7 +43,7 @@ set sibling_rtl [list \
     "$lc_dir/laser_ctrl_status.vhd" \
     "$lc_dir/laser_ctrl_tdc.vhd" \
     "$lc_dir/laser_ctrl_result.vhd" \
-    "$lc_dir/laser_ctrl_echo_capture.vhd" \
+    "$lc_dir/laser_ctrl_fire_done_bridge.vhd" \
     "$lc_dir/laser_ctrl_scheduler.vhd" \
     "$lc_dir/laser_ctrl_csr.vhd" \
     "$lc_dir/laser_ctrl_metrics.vhd" \
@@ -68,6 +68,8 @@ set sibling_tb [list \
     "$lc_dir/tb_laser_ctrl_axis_in_unit.vhd" \
     "$lc_dir/tb_laser_ctrl_scheduler_unit.vhd" \
     "$lc_dir/tb_laser_ctrl_executor_unit.vhd" \
+    "$lc_dir/tb_laser_ctrl_fire_done_bridge_unit.vhd" \
+    "$lc_dir/tb_laser_ctrl_result_unit.vhd" \
     "$lc_dir/tb_laser_ctrl_metrics_unit.vhd" \
     "$lc_dir/tb_laser_ctrl.vhd" \
     \

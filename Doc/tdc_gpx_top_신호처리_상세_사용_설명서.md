@@ -451,7 +451,7 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 | 포트 | 도메인 | 의미 | 계약 |
 |---|---|---|---|
 | `i_n_faces` | 정적 sideband | motor가 합성 전 확정한 polygon 면 수 | `motor_decoder_top.o_n_faces`에 직접 연결, bitstream 동작 중 1..5의 일정한 값이어야 함 |
-| `i_shot_start` | AXIS | 실제 레이저/TStart 발생 표지이자 `i_shot_face_index`의 valid | level이 길어도 내부 edge detector가 1회 pulse로 변환; 물리 TStart 출력은 아님 |
+| `i_shot_start` | AXIS | `fire_done`의 동기화된 논리 T0 표지이자 `i_shot_face_index`의 valid | `laser_ctrl.o_shot_start`에 연결; 내부 edge detector가 1회 pulse로 변환하며 물리 GPX START를 대신하지 않음 |
 | `i_shot_face_index` | AXIS | 수락된 Shot이 속한 face ID payload | `i_shot_start` pulse 전체에서 안정; direct/deferred Shot queue가 payload를 함께 보존 |
 | `i_stop_tdc` | AXIS | 현재 Shot의 측정 window 종료 표지 | TDC domain으로 pulse CDC; 동기화된 `IrFlag`보다 먼저 도착할 때만 `sequence_error`, IrFlag 이후 drain/ALU 중 도착은 정상이며 session 종료 명령은 아님 |
 | `i_bin_resolution_ps` | AXIS | bin 해상도 메타데이터 | 헤더 기록 전용 |
@@ -459,7 +459,7 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 
 `tdc_gpx_top`에는 `stop_evt` 또는 `fire_count` 입력 포트가 없다. Echo pulse/count가 필요한 시스템은 이를 별도 진단 또는 광학 검증 경로로 수집할 수 있지만, 그 값을 GPX IFIFO read 개수로 변환해 이 모듈에 주입해서는 안 된다.
 
-현재 `laser_ctrl` 결과 스트림은 `tdata[15:0]=step_idx+1`, `tdata[31:16]=remaining` 계약이므로 GPX geometry 입력이 아니다. `tdc_gpx_top`은 이 스트림을 받지 않지만, 수락된 Shot의 face ID는 전용 `i_shot_face_index` payload로 받는다. `cols_per_face`는 Pipeline CSR `RANGE_COLS[31:16]`이 단독 소유하며 Laser 결과 스트림은 별도 진단/소프트웨어 경로로 라우팅해야 한다.
+현재 `laser_ctrl` 결과 스트림은 `tdata[15:0]=step_idx+1`, `tdata[31:16]=0`, `tuser[20:6]=encoder_position`, `tuser[5:0]=last/shot-open/sim/face`인 1-beat Shot descriptor이다. `tdc_gpx_top`은 이 스트림을 받지 않지만, 수락된 Shot의 face ID는 전용 `i_shot_face_index` payload로 받는다. `cols_per_face`는 Pipeline CSR `RANGE_COLS[31:16]`이 단독 소유하며 Laser descriptor는 Echo metadata 또는 별도 진단/소프트웨어 경로로 사용한다.
 
 #### IP 간 값 전달 방식
 
@@ -468,9 +468,23 @@ Rise-only build는 split 대비 LUT 3,420개(19.8%), FF 3,293개(14.1%), LUTRAM 
 | bitstream 동안 불변 | `n_faces`, build capability | generic 파생 정적 sideband 직접 연결 | 변화가 없으므로 handshake 없이도 coherent |
 | 이벤트마다 변화 | `shot_face_index` | `i_shot_start`를 valid로 사용하는 payload 묶음 | Shot과 face ID를 같은 cycle 경계에서 원자적으로 capture |
 | 운용 중 장기 설정 변경 | motor center/half width, TDC CSR 설정 | request/apply 또는 `xpm_cdc_handshake` | multi-bit 값이 중간 상태로 관측되는 것을 방지 |
-| 연속 데이터 | raw hit, VDMA output | AXI4-Stream `TVALID/TREADY` | backpressure와 beat 보존 필요 |
+| 저장 가능한 연속 데이터 | Laser Shot descriptor, VDMA output | AXI4-Stream `TVALID/TREADY` | pending beat를 보존하고 다음 transaction을 제한할 수 있음 |
+| 되돌릴 수 없는 관측 event | Motor 위치, Echo STOP/count 진단 | AXIS subset `TVALID` without `TREADY` | 물리 source를 stall할 수 없으므로 ready를 보장처럼 노출하지 않음 |
 
 Laser가 이미 발사된 뒤 TDC가 `ready`를 낮추는 사후 backpressure는 광학 사건을 되돌릴 수 없으므로 추가하지 않는다. 현재 TDC는 경계 충돌에 대해 1-deep deferred Shot과 drop 진단을 가진다. 모든 Shot의 무손실 수락이 필수라면 향후 `laser_ctrl`이 발사 **전에** 확인하는 `tdc_ready/fire_admit` 핸드셰이크를 추가해야 한다.
+
+#### Parent의 물리/논리 T0 배선
+
+| Source | Destination | 역할 |
+|---|---|---|
+| `laser_ctrl.i_fire_done` | 내부 async-set bridge | laser driver의 실제 발광 완료, 물리 optical T0 |
+| `laser_ctrl.o_start_tdc` | 실제 TDC-GPX START pin | assertion에 AXIS clock cycle을 추가하지 않는 물리 거리 기준 |
+| `laser_ctrl.o_shot_start` | `echo_receiver.i_shot_start` | 2FF+edge 동기화 후 Echo capture window 시작 |
+| `laser_ctrl.o_shot_start` | `tdc_gpx_top.i_shot_start` | 동기화된 Shot bookkeeping과 face payload valid |
+| `laser_ctrl.o_stop_tdc` | Echo/TDC `i_stop_tdc` | 확정 T0부터 max_roundtrip 뒤의 논리 측정 window 종료 |
+| `echo_receiver.o_stop_pulse_rise/fall` | 실제 TDC-GPX STOP pins | LVDS echo에서 변환된 실제 채널별 STOP |
+
+`o_start_tdc`와 `o_shot_start`는 같은 신호의 이름 차이가 아니다. 전자는 물리 GPX pin 전용이고, 후자는 CDC 안전한 제어 event 전용이다. `o_start_tdc`를 Echo나 `tdc_gpx_top.i_shot_start`에 연결하면 제어 CDC 계약이 깨지고, 반대로 `o_shot_start`를 물리 START pin에 연결하면 2~3 AXIS clock의 동기화 지연이 거리 기준에 들어간다.
 
 ### 8.2 GPX 물리 포트
 
@@ -1910,7 +1924,8 @@ p_run_timeout_sticky
 
 ### 32.3 upstream 계약
 
-- [ ] 물리 TStart와 `i_shot_start`의 지연/정렬을 정의했다.
+- [ ] `laser_ctrl.o_start_tdc`는 물리 GPX START pin에만, `o_shot_start`는 Echo/TDC의 논리 Shot 입력에만 연결했다.
+- [ ] `fire_done -> o_start_tdc`의 비동기 assertion과 `fire_done -> o_shot_start`의 2FF+edge 지연을 보드 timing 계약에 기록했다.
 - [ ] `i_shot_face_index`가 `i_shot_start` 전체에서 안정하고 항상 `i_n_faces`보다 작다.
 - [ ] `i_stop_tdc`를 session stop으로 사용하지 않는다.
 - [ ] Echo edge count는 광학/배선 진단으로만 사용하고 GPX IFIFO read bound로 사용하지 않는다.
@@ -1991,12 +2006,12 @@ p_run_timeout_sticky
 | [C08 Clock/Timing Generic Simulator v016](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Contract_Simulator_v016.html) | ns generic의 TDC/AXIS clock 변환, 5 ns scan CSR 변환과 시간 margin | 현재 timing 계약 계산/검증 도구 |
 | [C08 Physical Chip Pin Contract Simulator v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Simulator_v017.html) | `g_NUM_CHIPS`, sparse Present mask, compact physical lane과 D/ADR/control 핀 폭 | 현재 physical pin 계약 계산/검증 도구 |
 | [C08 GPX FIFO Ownership Simulator v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Simulator_v018.html) | Echo 진단 분리, EF 완료 권한, LF/Fill burst 힌트, cap fault/purge | 현재 FIFO 소유권과 전체 C08 계산/검증 도구 |
-| [C08 IP Handoff Contract Simulator v020](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_IP_Handoff_Contract_Simulator_v020.html) | motor 정적 `n_faces`, laser Shot face payload, runtime request/apply와 전체 계산 | 현재 IP 전달 계약과 전체 C08 계산/검증 도구 |
+| [C08 Physical T0/AXIS Handoff Simulator v021](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_Physical_T0_AXIS_Handoff_Simulator_v021.html) | motor/laser/echo AXIS 비트맵과 역압, 물리 GPX START와 논리 Shot event 분리, 전체 계산 | 현재 IP 전달 계약과 전체 C08 계산/검증 도구 |
 | [C08 Slope Mask/Falling Closure v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Closure_v017.md) | xsim, parent validate, OOC, HTML 검증 근거 | 현재 slope closure 기록 |
 | [C08 Clock/Timing Generic Closure v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Closure_v018.md) | 시간 generic 전파, 5 ns CSR, 50~200 MHz 회귀와 OOC timing 근거 | 현재 clock/timing closure 기록 |
 | [C08 Physical Chip Pin Contract Closure v019](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Closure_v019.md) | `c_MAX_CHIPS` 전수 조사, compact physical pin 구현, 1/2/3/4-chip xsim/OOC/parent/HTML 검증 근거 | 현재 physical pin closure 기록 |
 | [C08 GPX FIFO Ownership Closure v020](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Closure_v020.md) | expected-count 경로 제거, EF-authoritative drain, 복구/parent/HTML 검증 근거 | 현재 FIFO 소유권 closure 기록 |
-| [C08 Static/Dynamic IP Handoff Closure v031](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_Static_Dynamic_IP_Handoff_Closure_v031.md) | IP별 값 소유권, 정적/event/runtime 전달 방식, 통합 회귀 근거 | 현재 IP 전달 closure 기록 |
+| [C08 Physical T0/AXIS Handoff Closure v032](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_Physical_T0_AXIS_Handoff_Closure_v032.md) | IP별 AXIS 계약, fire_done 기반 물리 T0, 동기식 Shot event, 4종 통합 회귀 근거 | 현재 IP 전달 closure 기록 |
 
 ---
 

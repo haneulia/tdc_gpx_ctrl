@@ -4,6 +4,8 @@
 
 `virtual_encoder -> motor_decoder -> laser_ctrl -> tdc_gpx_top` 통합에서 값의 소유권과 전달 방식을 하나의 규칙으로 정리한다. 같은 의미의 설정을 여러 IP가 독립적으로 소유하지 않게 하고, 변화하는 multi-bit 값이 갱신 중간 상태로 관측되는 문제를 막는 것이 목적이다.
 
+> **후속 정정:** 이 문서의 기존 Section 4는 `laser_ctrl.o_start_tdc`를 논리 Shot valid처럼 기술했다. 현재 계약에서는 `o_start_tdc`가 물리 GPX START pin 전용이고, Echo/TDC 제어에는 동기화된 `o_shot_start`를 사용한다. 최신 근거는 `C08_HDL_HTML_Alignment_260723_Physical_T0_AXIS_Handoff_Closure_v032.md`를 따른다.
+
 ## 2. 적용 원칙
 
 | 값의 수명 | 대표 값 | 인터페이스 | 판단 |
@@ -28,12 +30,14 @@ TDC는 motor가 정한 면 수를 header/status와 face-ID legality에 사용한
 
 ## 4. Shot별 face ID 전달
 
-`laser_ctrl_top.o_shot_face_index`는 `o_start_tdc`가 유효한 Shot에서만 의미가 있다. Parent는 이를 다음 묶음으로 연결한다.
+`laser_ctrl_top.o_shot_face_index`는 동기화된 `o_shot_start`가 유효한 Shot에서 의미가 있다. Parent는 이를 다음 묶음으로 연결한다.
 
 ```text
-laser_ctrl.o_start_tdc       -> tdc_gpx_top.i_shot_start
+laser_ctrl.o_shot_start      -> tdc_gpx_top.i_shot_start
 laser_ctrl.o_shot_face_index -> tdc_gpx_top.i_shot_face_index
 ```
+
+`laser_ctrl.o_start_tdc`는 raw `i_fire_done`에서 asynchronous set되는 물리 출력이며 실제 TDC-GPX START pin에만 연결한다.
 
 `tdc_gpx_face_seq`는 direct, pending, deferred 경로마다 Shot event와 face payload를 함께 저장한다. Face header word3의 `face_id`는 이 payload에서 오며, 같은 word의 `n_faces`는 motor static sideband에서 온다. Simulation에서는 `face_index < n_faces`를 assertion으로 검사한다.
 

@@ -20,16 +20,16 @@
 --   150/200 MHz exercises the product-reference AXIS/TDC CDC boundary.
 --
 --   enc_top  drives A/B/Z pins of motor_decoder_top (virtual encoder).
---   motor_decoder_top AXI-Stream output drives laser_ctrl_top slave port.
---     (Only md_tuser(8 downto 0) are consumed by laser_ctrl which still uses
---      the legacy 9-bit tuser interface; bit 9 "face_valid" is dropped here.)
+--   motor_decoder_top 10-bit AXI-Stream output drives laser_ctrl_top directly.
+--     TUSER[9] is the face_valid qualifier and is checked by laser_ctrl.
 --   laser_ctrl_top o_fire_pulse drives a photodiode pulse generator that
 --     produces a rising pulse on echo_receiver_top.i_pd_lvds_p after a fixed
 --     echo delay. That emulates the optical return path.
---   laser_ctrl_top o_start_tdc / o_stop_tdc drive tdc_gpx_top.i_shot_start and
---     tdc_gpx_top.i_stop_tdc.
---   laser_ctrl_top m_axis remains an independently monitored result stream.
---     Its payload is step_idx/remaining and must not drive GPX geometry.
+--   laser_ctrl_top o_shot_start / o_stop_tdc drive tdc_gpx_top lifecycle;
+--   o_start_tdc is reserved for the physical GPX START pin.
+--   laser_ctrl_top m_axis drives echo_receiver's backpressured one-beat Shot
+--     descriptor input. Its fire-count/face/encoder payload does not drive
+--     GPX geometry.
 --   echo_receiver_top o_stop_evt_* remains a read-only diagnostic stream.
 --   GPX FIFO ownership is observed through EF/LF/IrFlag and bus responses.
 --   A 4-chip behavioral TDC-GPX model (same as tb_tdc_gpx_top_int) fills the
@@ -151,6 +151,7 @@ architecture sim of tb_tdc_gpx_full_int is
 
     -- TB photodiode echo delay (clk units)
     constant C_ECHO_DELAY     : natural := C_SIM_TARGET_CLKS;
+    constant C_FIRE_DONE_DELAY : natural := 8;
 
     -- One clock-derived encoder profile is shared by both ownership modes.
     -- The sibling TB package has separate 100 MHz and 150 MHz constants;
@@ -218,9 +219,8 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_MAX_SCAN_5NS_TICKS : natural := 0;
 
     -- pulse / trigger widths. Kept at tb_laser_ctrl_pkg values (1 clk) so
-    -- lc_start_tdc matches the 1-clk pulse that face_seq edge-detects in
-    -- direct mode. A >= 4 clk floor was tried earlier but does not help
-    -- (face_seq only needs one rising edge per shot).
+    -- Physical START is asynchronously asserted then stretched. The separate
+    -- logical shot_start is a one-clock control-domain event.
     function fn_max_nat(a, b : natural) return natural is
     begin if a > b then return a; else return b; end if; end function;
     constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_CLKS, 1);
@@ -399,8 +399,7 @@ architecture sim of tb_tdc_gpx_full_int is
     -- motor_decoder AXI-Stream output
     signal md_tvalid  : std_logic;
     signal md_tdata   : std_logic_vector(31 downto 0);
-    signal md_tuser_full : std_logic_vector(9 downto 0);
-    signal md_tuser_laser : std_logic_vector(8 downto 0);
+    signal md_tuser : std_logic_vector(9 downto 0);
     signal md_tlast   : std_logic;
     -- Downstream configuration completes before encoder requests are admitted.
     signal lc_req_enable : std_logic := '0';
@@ -441,6 +440,7 @@ architecture sim of tb_tdc_gpx_full_int is
     -- laser_ctrl key outputs
     signal lc_fire_pulse   : std_logic;
     signal lc_start_tdc    : std_logic;
+    signal lc_shot_start   : std_logic;
     signal lc_shot_face_index : std_logic_vector(2 downto 0);
     signal lc_stop_tdc     : std_logic;
 
@@ -457,6 +457,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal lc_m_tdata      : std_logic_vector(31 downto 0);
     signal lc_m_tuser      : std_logic_vector(c_RES_TUSER_WIDTH - 1 downto 0);
     signal lc_m_tlast      : std_logic;
+    signal lc_m_tready     : std_logic;
     signal lc_fire_done    : std_logic := '0';
 
     -- laser debug outs (unused)
@@ -498,7 +499,6 @@ architecture sim of tb_tdc_gpx_full_int is
     signal er_stop_tdata  : std_logic_vector(C_STOP_DW - 1 downto 0);
     signal er_stop_tkeep  : std_logic_vector(C_STOP_DW/8 - 1 downto 0);
     signal er_stop_tuser  : std_logic_vector(C_STOP_DW - 1 downto 0);
-    signal er_stop_tready : std_logic := '1';
     signal er_fire_count_tvalid : std_logic;
     signal er_fire_count_tdata  : std_logic_vector(31 downto 0);
     signal er_fire_count_tkeep  : std_logic_vector(3 downto 0);
@@ -717,10 +717,85 @@ begin
     clk <= not clk after C_AXIS_CLK_PERIOD / 2 when not sim_done else '0';
     tdc_clk <= not tdc_clk after C_TDC_CLK_PERIOD / 2 when not sim_done else '0';
 
+    -- Physical laser-driver model. A real fire_done marks optical T0; it is
+    -- deliberately independent from the later photodiode target return.
+    p_fire_done_driver : process(clk)
+        variable v_fire_d1 : std_logic := '0';
+        variable v_waiting : boolean := false;
+        variable v_count   : natural := 0;
+    begin
+        if rising_edge(clk) then
+            if rst_n = '0' then
+                lc_fire_done <= '0';
+                v_fire_d1 := '0';
+                v_waiting := false;
+                v_count := 0;
+            else
+                lc_fire_done <= '0';
+                if lc_fire_pulse = '1' and v_fire_d1 = '0' then
+                    v_waiting := true;
+                    v_count := C_FIRE_DONE_DELAY;
+                end if;
+                v_fire_d1 := lc_fire_pulse;
+
+                if v_waiting then
+                    if v_count = 0 then
+                        lc_fire_done <= '1';
+                        v_waiting := false;
+                    else
+                        v_count := v_count - 1;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_fire_done_driver;
+
+    -- The physical START assertion must not wait for another AXIS clock edge.
+    p_start_zero_cycle_check : process
+    begin
+        loop
+            wait until rising_edge(lc_fire_done);
+            wait for 1 ps;
+            assert lc_start_tdc = '1'
+                report "full_int: physical START did not assert directly from fire_done"
+                severity failure;
+        end loop;
+    end process p_start_zero_cycle_check;
+
+    -- Echo must receive the descriptor for this shot no later than the
+    -- synchronized logical T0. With the direct laser->echo AXIS connection,
+    -- TREADY is permanently high and this is a hard integration contract.
+    p_descriptor_before_shot : process(clk)
+        variable v_descriptor_pending : boolean := false;
+        variable v_shot_start_d1      : std_logic := '0';
+    begin
+        if rising_edge(clk) then
+            if rst_n = '0' then
+                v_descriptor_pending := false;
+                v_shot_start_d1 := '0';
+            else
+                if lc_m_tvalid = '1' and lc_m_tready = '1' then
+                    assert lc_m_tlast = '1' and lc_m_tuser(c_RES_SHOT_OPEN) = '1'
+                        report "full_int: malformed laser shot descriptor"
+                        severity failure;
+                    v_descriptor_pending := true;
+                end if;
+
+                if lc_shot_start = '1' and v_shot_start_d1 = '0' then
+                    assert v_descriptor_pending
+                        report "full_int: logical T0 arrived before descriptor handshake"
+                        severity failure;
+                    v_descriptor_pending := false;
+                end if;
+                v_shot_start_d1 := lc_shot_start;
+            end if;
+        end if;
+    end process p_descriptor_before_shot;
+
     -- i_shot_start / i_stop_tdc source mux. Default ("lc") routes from the
     -- laser_ctrl outputs; "direct" exposes a TB-controlled pulse for debug.
     td_shot_start_mux <= tb_shot_start when G_TDC_STIM_MODE = "direct"
-                                       else lc_start_tdc;
+                                       else lc_shot_start;
     td_shot_face_index_mux <= (others => '0') when G_TDC_STIM_MODE = "direct"
                                              else lc_shot_face_index;
     td_stop_tdc_mux   <= tb_stop_tdc   when G_TDC_STIM_MODE = "direct"
@@ -867,7 +942,7 @@ begin
             m_axis_aresetn  => rst_n,
             m_axis_tvalid   => md_tvalid,
             m_axis_tdata    => md_tdata,
-            m_axis_tuser    => md_tuser_full,
+            m_axis_tuser    => md_tuser,
             m_axis_tlast    => md_tlast,
             o_n_faces       => md_n_faces,
             o_dbg_virt_a    => open,
@@ -889,12 +964,10 @@ begin
 
     -- =========================================================================
     -- laser_ctrl_top
-    --   The current laser_ctrl ABI is the legacy 9-bit TUSER. Keep the adapter
-    --   explicit and prove below that discarded face_valid is high on every
-    --   valid beat. A violation is an interface-contract failure, not padding.
+    --   The current Motor-to-Laser ABI uses the complete 10-bit TUSER.
+    --   TUSER[9] face_valid is preserved end-to-end. A low qualifier on a
+    --   valid beat is an interface-contract failure and laser_ctrl rejects it.
     -- =========================================================================
-    md_tuser_laser <= md_tuser_full(8 downto 0);
-
     u_lc : entity work.laser_ctrl_top
         port map (
             s_axi_aclk      => clk,
@@ -923,11 +996,12 @@ begin
             s_axis_aresetn  => rst_n,
             s_axis_tvalid   => md_tvalid and lc_req_enable,
             s_axis_tdata    => md_tdata,
-            s_axis_tuser    => md_tuser_laser,
+            s_axis_tuser    => md_tuser,
             s_axis_tlast    => md_tlast,
             i_fire_done     => lc_fire_done,
             o_fire_pulse    => lc_fire_pulse,
             o_start_tdc     => lc_start_tdc,
+            o_shot_start    => lc_shot_start,
             o_shot_face_index => lc_shot_face_index,
             o_stop_tdc      => lc_stop_tdc,
             o_laser_active  => lc_laser_active,
@@ -937,6 +1011,7 @@ begin
             m_axis_tdata    => lc_m_tdata,
             m_axis_tuser    => lc_m_tuser,
             m_axis_tlast    => lc_m_tlast,
+            m_axis_tready   => lc_m_tready,
             o_dbg_fire_trigger => lc_dbg_fire_trig,
             o_dbg_fire_busy    => lc_dbg_fire_busy,
             o_dbg_sim_flag     => lc_dbg_sim_flag,
@@ -990,13 +1065,13 @@ begin
             s_axi_rready     => er_rready,
             s_axi_rdata      => er_rdata,
             s_axi_rresp      => er_rresp,
-            i_start_tdc      => lc_start_tdc,
+            i_shot_start     => lc_shot_start,
             i_stop_tdc       => lc_stop_tdc,
             i_laser_evt_tvalid => lc_m_tvalid,
             i_laser_evt_tdata  => lc_m_tdata,
             i_laser_evt_tuser  => lc_m_tuser,
             i_laser_evt_tlast  => lc_m_tlast,
-            o_laser_evt_tready => open,
+            o_laser_evt_tready => lc_m_tready,
             i_pd_lvds_p      => pd_p,
             i_pd_lvds_n      => pd_n,
             o_stop_pulse_rise => er_pulse_rise,
@@ -1005,12 +1080,10 @@ begin
             o_stop_evt_tdata  => er_stop_tdata,
             o_stop_evt_tkeep  => er_stop_tkeep,
             o_stop_evt_tuser  => er_stop_tuser,
-            i_stop_evt_tready => er_stop_tready,
             o_fire_count_tvalid => er_fire_count_tvalid,
             o_fire_count_tdata  => er_fire_count_tdata,
             o_fire_count_tkeep  => er_fire_count_tkeep,
             o_fire_count_tlast  => er_fire_count_tlast,
-            i_fire_count_tready => '1',
             o_irq             => er_irq
         );
 
@@ -1485,7 +1558,7 @@ begin
                 if lc_fire_pulse = '1' then dbg_lc_fire_ever <= '1'; end if;
                 if md_tvalid = '1' then
                     mon_md_beats <= mon_md_beats + 1;
-                    if md_tuser_full(9) /= '1' then
+                    if md_tuser(9) /= '1' then
                         mon_md_face_valid_violation <=
                             mon_md_face_valid_violation + 1;
                         assert false
@@ -1526,7 +1599,7 @@ begin
                         mon_lc_m_tlast <= mon_lc_m_tlast + 1;
                     end if;
                 end if;
-                if er_stop_tvalid = '1' and er_stop_tready = '1' then
+                if er_stop_tvalid = '1' then
                     mon_er_stop_beats <= mon_er_stop_beats + 1;
                 end if;
                 if er_fire_count_tvalid = '1' then
