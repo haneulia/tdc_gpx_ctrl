@@ -42,7 +42,7 @@ $Files = switch ($Top) {
     "tb_enc_timing_generator" {
         "$SourceRoot/enc_pkg.vhd"
         "$SourceRoot/enc_timing_generator.vhd"
-        "$Hdl/system_integration/tb/tb_enc_timing_generator.vhd"
+        "$SourceRoot/tb_enc_timing_generator.vhd"
     }
     { $_ -in @(
         "enc_top_tb",
