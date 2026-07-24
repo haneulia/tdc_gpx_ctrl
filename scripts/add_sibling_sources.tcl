@@ -40,6 +40,7 @@ set sibling_rtl [list \
     "$lc_dir/laser_ctrl_types_pkg.vhd" \
     "$lc_dir/laser_ctrl_timebase.vhd" \
     "$lc_dir/laser_ctrl_cdc_snapshot.vhd" \
+    "$lc_dir/laser_ctrl_event_counters.vhd" \
     "$lc_dir/laser_ctrl_status.vhd" \
     "$lc_dir/laser_ctrl_tdc.vhd" \
     "$lc_dir/laser_ctrl_result.vhd" \

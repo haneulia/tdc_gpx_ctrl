@@ -107,6 +107,7 @@ $LaserFiles = @(
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_types_pkg.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_timebase.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_cdc_snapshot.vhd",
+    "$IpRoot/laser_ctrl/HDL/laser_ctrl_event_counters.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_status.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_tdc.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_result.vhd",
