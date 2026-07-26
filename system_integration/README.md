@@ -13,6 +13,7 @@ generated Vivado project sources.
 |---|---|
 | Motor decoder and virtual encoder | `C:/Projects/my_sp/lib/IP/motor_decoder/HDL` |
 | Laser controller | `C:/Projects/my_sp/lib/IP/laser_ctrl/HDL` |
+| Motor/Laser integration wrapper | `C:/Projects/my_sp/lib/IP/motor_laser_ctrl/HDL` |
 | Echo receiver | `C:/Projects/my_sp/lib/IP/echo_receiver/HDL` |
 | TDC-GPX controller | this repository |
 
@@ -23,13 +24,14 @@ not a replacement for source control.
 
 ## Encoder modes
 
-`motor_decoder_top` already contains `enc_top` for simulation. The integration
-TB supports two mutually exclusive modes:
+`motor_laser_ctrl_top` contains `motor_decoder_top`, which already contains
+`enc_top` for simulation. The integration TB supports two mutually exclusive
+modes:
 
-- `internal`: use the encoder inside `motor_decoder_top`; physical A/B/Z inputs
-  are tied low.
-- `external`: instantiate a TB-only encoder and select the motor decoder's
-  physical A/B/Z path.
+- `internal`: use the encoder inside the wrapped Motor Decoder; physical A/B/Z
+  inputs are tied low.
+- `external`: instantiate a TB-only encoder and select the wrapped Motor
+  Decoder's physical A/B/Z path.
 
 A product parent does not need a second virtual encoder instance.
 
@@ -48,10 +50,10 @@ Both values must be one of 50, 100, 125, 150, or 200 MHz and AXIS must not be
 faster than TDC. A scenario that omits `tdc_clock_mhz` remains a same-clock run
 for schema-v1 compatibility.
 
-The primary integration gates are:
-
-- 200/200 MHz: synchronous regression baseline;
-- 150/200 MHz: product-reference AXIS/TDC asynchronous boundary.
+The maintained integration gate is AXIS 150 MHz / TDC 200 MHz. It is run once
+with the internal encoder and once with the external A/B/Z path. Same-clock
+profiles remain available for diagnosis, but they are not part of the routine
+two-scenario regression.
 
 The shared CSR range remains in 5 ns ticks. `rtl_contract.json` reports the two
 derived values separately as `max_range_axis_clks` and
@@ -104,6 +106,34 @@ remaining step count in bits 31:16; it is not a geometry stream and is not
 connected to the GPX pipeline configuration. This single-owner rule prevents
 live Laser progress from changing VDMA VSIZE during a face.
 
+## External GPX I-Mode ownership
+
+The system smoke keeps the production boundaries explicit:
+
+1. `echo_receiver_top` creates physical STOP waveforms. In simulation its CSR
+   delay table may create deterministic STOPs; fixed patterns do not belong to
+   `tdc_gpx_top`.
+2. `tdc_gpx_external_chip_model` is a simulation-only external-chip model. It
+   measures START-to-STOP time, fills IFIFO1/2, and drives the GPX status pins
+   and 28-bit data bus.
+3. `tdc_gpx_top` reads and decodes the external bus. It has no generic that
+   calculates or replaces a GPX Hit value.
+
+The implemented SINGLE_SHOT I-Mode word is:
+
+| Bits | Field | Contract |
+|---|---|---|
+| `[27:26]` | `ChaCode` | channel 0..3 inside the selected IFIFO |
+| `[25:18]` | `StartNum` | zero in the current SINGLE_SHOT profile |
+| `[17]` | `Slope` | rising/falling edge direction |
+| `[16:0]` | `Hit` | 17-bit external GPX time/distance code |
+
+The scoreboard observes START and Echo STOP independently, checks every raw
+bus word, and reconstructs the final Hit from the canonical VDMA cell:
+`Hit[15:0]` in the hit slot plus `Hit[16]` in metadata bit 0. The result
+contract publishes `i_mode_hit_refs`, rise/fall check counts, raw bus check
+count, and the last expected/rise/fall Hit values.
+
 The Stage I1 pass marker is `SYSTEM_INTEGRATION_SMOKE_PASS`. It requires
 activity through Motor, Laser, Echo, GPX acquisition, and both VDMA slope
 streams. It also requires exact Laser start/stop/result-TLAST accounting,
@@ -127,7 +157,7 @@ long-stall behavior, and post-route closure remain separate sign-off gates.
 ## C08 HTML comparison
 
 Open
-`Doc/cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_RTL_Contract_Comparison_Simulator_v019.html`
+`Doc/cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260727_External_GPX_I_Mode_Integration_Simulator_v022.html`
 and select either `rtl_contract.json` or the full `rtl_result.json` in the
 **RTL contract comparison** panel. With **Apply scenario** enabled, the HTML
 loads the clock pair, output width, range/scan CSR values, max hits, build and
@@ -136,7 +166,8 @@ the observed RTL metrics.
 
 PASS requires schema version 2, an RTL PASS marker, explicit build/runtime mask
 evidence, exact HSIZE/VSIZE and clock conversions, complete-line beat
-accounting, balanced Laser transactions, expected `STAT5/6/7`, and zero fault
+accounting, balanced Laser transactions, every active chip's raw 28-bit I-Mode
+word, exact 17-bit Hit preservation, expected `STAT5/6/7`, and zero fault
 counters. A legacy or ambiguous contract remains readable but is intentionally
 shown as CHECK; inferred stimulus masks are not sign-off evidence.
 
@@ -144,18 +175,11 @@ shown as CHECK; inferred stimulus masks are not sign-off evidence.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File system_integration/scripts/run_smoke.ps1
-```
-
-Run the physical A/B/Z input path with its explicit scenario:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_smoke.ps1 `
-  -Scenario system_integration/scenarios/smoke_external_200m_v001.json
+  -Scenario system_integration/scenarios/smoke_internal_axis150_tdc200_v001.json
 ```
 
-Run the product-reference AXIS/TDC clock pair:
+Run the physical A/B/Z input path at the same 150/200 MHz clock pair:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `

@@ -5,6 +5,7 @@ proc tdc_gpx_integration_rtl_manifest {ip_root} {
     set ve_dir [file join $ip_root virtual_encoder HDL]
     set md_dir [file join $ip_root motor_decoder HDL]
     set lc_dir [file join $ip_root laser_ctrl HDL]
+    set ml_dir [file join $ip_root motor_laser_ctrl HDL]
     set er_dir [file join $ip_root echo_receiver HDL]
 
     return [list \
@@ -38,6 +39,7 @@ proc tdc_gpx_integration_rtl_manifest {ip_root} {
         [file join $lc_dir laser_ctrl_axis_in.vhd] \
         [file join $lc_dir laser_ctrl_executor.vhd] \
         [file join $lc_dir laser_ctrl_top.vhd] \
+        [file join $ml_dir motor_laser_ctrl_top.vhd] \
         [file join $er_dir echo_receiver_pkg.vhd] \
         [file join $er_dir echo_receiver_timebase.vhd] \
         [file join $er_dir echo_receiver_stop_frontend.vhd] \
@@ -52,8 +54,10 @@ proc tdc_gpx_integration_tb_manifest {ip_root} {
     set md_dir [file join $ip_root motor_decoder HDL]
     set lc_dir [file join $ip_root laser_ctrl HDL]
     set er_dir [file join $ip_root echo_receiver HDL]
+    set tdc_hdl_dir [file join $ip_root tdc_gpx_ctrl HDL]
 
     return [list \
+        [file join $tdc_hdl_dir system_integration tb tdc_gpx_external_chip_model.vhd] \
         [file join $md_dir tb_motor_decoder_pkg.vhd] \
         [file join $md_dir motor_decoder_top_tb.vhd] \
         [file join $md_dir enc_top_tb.vhd] \

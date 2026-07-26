@@ -112,6 +112,7 @@ $LaserFiles = @(
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_axis_in.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_executor.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_top.vhd",
+    "$IpRoot/motor_laser_ctrl/HDL/motor_laser_ctrl_top.vhd",
     "$IpRoot/laser_ctrl/HDL/tb_laser_ctrl_pkg.vhd",
     "$IpRoot/laser_ctrl/HDL/tb_laser_ctrl_tests_pkg.vhd"
 )
@@ -157,6 +158,7 @@ $TdcFiles = @(
     "$Hdl/tdc_gpx_csr_pipeline.vhd",
     "$Hdl/tdc_gpx_status_agg.vhd",
     "$Hdl/tdc_gpx_top.vhd",
+    "$Hdl/system_integration/tb/tdc_gpx_external_chip_model.vhd",
     "$Hdl/tb_tdc_gpx_full_int.vhd"
 )
 

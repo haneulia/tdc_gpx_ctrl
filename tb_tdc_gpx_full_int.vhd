@@ -1,8 +1,8 @@
 -- =============================================================================
 -- tb_tdc_gpx_full_int.vhd
 -- Full system integration TB:
---   enc_top -> motor_decoder_top -> laser_ctrl_top -> echo_receiver_top
---                                                 -> tdc_gpx_top
+--   enc_top -> motor_laser_ctrl_top -> echo_receiver_top -> external GPX model
+--                                           \-------> tdc_gpx_top
 -- =============================================================================
 --
 -- Purpose
@@ -19,27 +19,27 @@
 --   Setting both generics to the same value preserves the single-clock smoke;
 --   150/200 MHz exercises the product-reference AXIS/TDC CDC boundary.
 --
---   enc_top  drives A/B/Z pins of motor_decoder_top (virtual encoder).
---   motor_decoder_top AXI4-Stream output drives laser_ctrl_top directly.
+--   enc_top drives A/B/Z pins of motor_laser_ctrl_top in physical-source mode.
+--   motor_laser_ctrl_top keeps the Motor-to-Laser AXI4-Stream private.
 --     TKEEP is always 1111; TUSER carries latency, overlap, simulation, and
 --     face-index metadata according to the current 8-bit Motor/Laser ABI.
---   laser_ctrl_top o_fire_pulse drives a photodiode pulse generator that
---     produces a rising pulse on echo_receiver_top.i_pd_lvds_p after a fixed
---     echo delay. That emulates the optical return path.
---   laser_ctrl_top o_shot_start / o_stop_tdc drive tdc_gpx_top lifecycle;
+--   echo_receiver_top owns the optional synthetic target path. Its CSR delay
+--     table produces STOP waveforms exactly where the physical LVDS frontend
+--     would otherwise produce them.
+--   motor_laser_ctrl_top o_shot_start / o_stop_tdc drive tdc_gpx_top lifecycle;
 --   o_start_tdc is reserved for the physical GPX START pin.
---   laser_ctrl_top m_axis drives echo_receiver's backpressured one-beat Shot
+--   motor_laser_ctrl_top m_axis drives echo_receiver's backpressured one-beat Shot
 --     descriptor input. Its fire-count/face/encoder payload does not drive
 --     GPX geometry.
 --   echo_receiver_top o_stop_evt_* remains a read-only diagnostic stream.
---   GPX FIFO ownership is observed through EF/LF/IrFlag and bus responses.
---   A 4-chip behavioral TDC-GPX model (same as tb_tdc_gpx_top_int) fills the
---   IFIFOs and drives EF / LF / IrFlag pins.
+--   A simulation-only external TDC-GPX model measures START-to-STOP, builds
+--   the 28-bit I-Mode word, fills IFIFOs, and drives EF/LF/IrFlag plus the
+--   physical bus. tdc_gpx_top remains only an external-chip bus reader.
 --
 -- CSR sequence (AXI-Lite writes via px_utility_pkg, AXIS clock in this TB)
 --   - motor_decoder : SIM_EN = 1                                  (CTL0[0])
 --   - laser_ctrl    : LASER_EN + STREAM_EN + minimal sched config
---   - echo_receiver : physical LVDS-to-GPX STOP path
+--   - echo_receiver : per-channel synthetic STOP delays in fixed 5 ns ticks
 --   - tdc_gpx_top   : 500 m / G_TDATA_WIDTH / cols=2 / stops=2 (same as top_int)
 --
 -- Scenario
@@ -77,7 +77,7 @@ entity tb_tdc_gpx_full_int is
         G_AXIS_CLK_MHZ    : real    := 200.0;   -- processing clock (MHz)
         G_TDC_CLK_MHZ     : real    := 200.0;   -- GPX physical-bus clock (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (meters)
-        G_SIM_TARGET_M    : real    := 375.0;   -- TB photodiode target (m)
+        G_SIM_TARGET_M    : real    := 375.0;   -- Echo synthetic target (m)
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
@@ -159,8 +159,6 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_SHOT_PERIOD_AXIS_CLKS : natural :=
         (C_MAX_RANGE_AXIS_CLKS * 3 + 1) / 2;
 
-    -- TB photodiode echo delay (clk units)
-    constant C_ECHO_DELAY     : natural := C_SIM_TARGET_CLKS;
     constant C_FIRE_DONE_DELAY : natural := 8;
 
     -- One clock-derived encoder profile is shared by both ownership modes.
@@ -384,6 +382,12 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_MON_SHOT_DEPTH : positive := 256;
     type t_face_index_queue is array (0 to C_MON_SHOT_DEPTH - 1) of
         std_logic_vector(2 downto 0);
+    type t_hit_queue is array (0 to C_MON_SHOT_DEPTH - 1) of
+        unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+    constant C_FIRST_CELL_HIT_WORD_INDEX : natural :=
+        c_HDR_PREFIX_BYTES / 4;
+    constant C_FIRST_CELL_META_WORD_INDEX : natural :=
+        C_FIRST_CELL_HIT_WORD_INDEX + fn_ceil_div(C_MAX_HITS, 2);
     constant C_STOP_DW    : natural := 32;
     constant C_STOP_CNT_WIDTH : natural := 4;
 
@@ -391,9 +395,9 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_ER_N_STOPS : natural := c_MAX_STOPS_PER_CHIP;
     constant C_PD_WIDTH   : natural := c_MAX_CHIPS * C_ER_N_STOPS;
 
-    -- Chip model fixed parameters (not distance dependent)
-    constant C_FIFO_DEPTH : natural := 32;
-    constant C_LF_THRESH  : natural := 4;
+    -- External GPX model calibration. The DUT receives the same value in its
+    -- Face header, but never performs the START-to-STOP calculation itself.
+    constant C_BIN_RESOLUTION_PS : positive := 81;
 
     -- Encoder run wall-time (derived from generic)
     constant C_ENC_RUN_CLKS : natural :=
@@ -438,17 +442,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal md_rresp   : std_logic_vector(1 downto 0);
     signal md_rvalid  : std_logic;
     signal md_rready  : std_logic := '0';
-    signal md_irq     : std_logic;
-
-    -- motor_decoder AXI-Stream output
-    signal md_tvalid  : std_logic;
-    signal md_tdata   : std_logic_vector(31 downto 0);
-    signal md_tkeep   : std_logic_vector(3 downto 0);
-    signal md_tuser   : std_logic_vector(7 downto 0);
-    signal md_tlast   : std_logic;
-    signal lc_s_tready : std_logic;
-    -- Downstream configuration completes before encoder requests are admitted.
-    signal lc_req_enable : std_logic := '0';
+    signal ml_irq     : std_logic;
     signal md_dbg_virt_pos   : std_logic_vector(14 downto 0);
     signal md_dbg_dec_count  : std_logic_vector(14 downto 0);
     signal md_dbg_active     : std_logic_vector(4 downto 0);
@@ -481,8 +475,6 @@ architecture sim of tb_tdc_gpx_full_int is
     signal lc_rready  : std_logic := '0';
     signal lc_rdata   : std_logic_vector(31 downto 0);
     signal lc_rresp   : std_logic_vector(1 downto 0);
-    signal lc_irq     : std_logic;
-
     -- laser_ctrl key outputs
     signal lc_fire_pulse   : std_logic;
     signal lc_start_tdc    : std_logic;
@@ -539,7 +531,8 @@ architecture sim of tb_tdc_gpx_full_int is
     signal er_irq     : std_logic;
 
     -- echo_receiver PD input + stop_evt/fire_count output
-    signal pd_p, pd_n : std_logic_vector(C_PD_WIDTH - 1 downto 0) := (others => '0');
+    signal pd_p : std_logic_vector(C_PD_WIDTH - 1 downto 0) := (others => '0');
+    signal pd_n : std_logic_vector(C_PD_WIDTH - 1 downto 0) := (others => '1');
     signal er_tdc_stop : std_logic_vector(C_PD_WIDTH - 1 downto 0);
     signal er_stop_tvalid : std_logic;
     signal er_stop_tdata  : std_logic_vector(C_STOP_DW - 1 downto 0);
@@ -632,29 +625,20 @@ architecture sim of tb_tdc_gpx_full_int is
     signal m_fall_tready : std_logic := '1';
 
     -- Calibration
-    signal i_bin_res_ps : unsigned(15 downto 0) := to_unsigned(81, 16);
+    signal i_bin_res_ps : unsigned(15 downto 0) :=
+        to_unsigned(C_BIN_RESOLUTION_PS, 16);
     signal i_k_dist     : unsigned(31 downto 0) := to_unsigned(54321, 32);
     signal td_irq, td_irq_pipe : std_logic;
     signal td_vdma_hsize_rise : unsigned(15 downto 0);
     signal td_vdma_hsize_fall : unsigned(15 downto 0);
     signal td_vdma_vsize      : unsigned(15 downto 0);
 
-    -- =========================================================================
-    -- 4-chip behavioral TDC-GPX model state (same as tb_tdc_gpx_top_int)
-    -- =========================================================================
-    type t_fill_array is array (0 to c_MAX_CHIPS - 1) of natural;
-    signal fifo1_fill   : t_fill_array := (others => 0);
-    signal fifo2_fill   : t_fill_array := (others => 0);
-    signal fifo1_rd_cnt : t_fill_array := (others => 0);
-    signal fifo2_rd_cnt : t_fill_array := (others => 0);
-    signal fifo_load_req : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
-    signal fifo_load_n1  : t_fill_array := (others => 0);
-    signal fifo_load_n2  : t_fill_array := (others => 0);
-
-    type t_chip_d_array is array (0 to c_MAX_CHIPS - 1)
-        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
-    signal chip_d_out : t_chip_d_array := (others => (others => '0'));
-    signal chip_d_oe  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
+    -- External TDC-GPX behavioral-chip observability.
+    signal gpx_start_tdc_mux : std_logic;
+    signal gpx_last_hit : std_logic_vector(
+        c_MAX_CHIPS * c_RAW_HIT_WIDTH - 1 downto 0);
+    signal gpx_capture_count : std_logic_vector(
+        c_MAX_CHIPS * 16 - 1 downto 0);
 
     -- =========================================================================
     -- DUT internal observability NOTE
@@ -689,8 +673,6 @@ architecture sim of tb_tdc_gpx_full_int is
     signal dbg_lc_fire_ever  : std_logic := '0';
 
 
-    signal mon_md_beats     : natural := 0;
-    signal mon_md_tkeep_violation : natural := 0;
     signal mon_md_virt_pos_changes : natural := 0;
     signal mon_md_dec_count_changes : natural := 0;
     signal mon_md_active_cycles     : natural := 0;
@@ -709,8 +691,19 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_td_fall_line_end : natural := 0;
     signal mon_td_rise_header_checks : natural := 0;
     signal mon_td_fall_header_checks : natural := 0;
+    signal mon_td_rise_hit_checks : natural := 0;
+    signal mon_td_fall_hit_checks : natural := 0;
+    signal mon_i_mode_bus_checks : natural := 0;
     signal mon_td_rise_face_seen : std_logic_vector(4 downto 0) := (others => '0');
     signal mon_td_fall_face_seen : std_logic_vector(4 downto 0) := (others => '0');
+    signal mon_expected_hit_queue : t_hit_queue := (others => (others => '0'));
+    signal mon_expected_hit_count : natural range 0 to C_MON_SHOT_DEPTH := 0;
+    signal mon_last_expected_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
+        (others => '0');
+    signal mon_last_rise_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
+        (others => '0');
+    signal mon_last_fall_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
+        (others => '0');
 
     -- pipeline CSR addresses (C_MAIN_CTRL_BASE / C_RANGE_COLS_VAL are now
     -- declared in the derived-constants block above from the generics).
@@ -755,6 +748,10 @@ begin
 
     assert G_AXIS_CLK_MHZ <= G_TDC_CLK_MHZ
         report "tb_tdc_gpx_full_int: AXIS clock must not exceed TDC clock"
+        severity failure;
+
+    assert C_SIM_TARGET_5NS_TICKS <= 65535
+        report "tb_tdc_gpx_full_int: Echo delay exceeds 16-bit CSR field"
         severity failure;
 
     -- =========================================================================
@@ -935,13 +932,14 @@ begin
     end generate gen_internal_encoder;
 
     -- =========================================================================
-    -- motor_decoder_top
+    -- Motor + Laser integration IP. The hard-real-time Motor-to-Laser AXIS
+    -- link is private to this wrapper and is required to remain always-ready.
     -- =========================================================================
-    u_md : entity work.motor_decoder_top
+    u_motor_laser : entity work.motor_laser_ctrl_top
         generic map (
-            has_irq         => true, 
-            g_CLK_FREQ_MHZ  => C_AXIS_DOMAIN_CLK_MHZ,
-            g_CPR           => C_MD_CPR, 
+            has_irq         => true,
+            g_PROC_CLK_MHZ  => C_AXIS_DOMAIN_CLK_MHZ,
+            g_CPR           => C_MD_CPR,
             g_DEC_MODE      => 4,
             g_DIR           => '0',
             g_TICKS_LO      => C_ENC_TICKS_LO_LOCAL,
@@ -953,135 +951,111 @@ begin
                 C_MD_VIRTUAL_LATENCY_CLKS,
             g_N_FACES       => G_N_FACES,
             g_TOTAL_STATES  => C_MD_TOTAL_STATES,
-            g_FACE_CENTER_0 => C_MD_FACE_CENTER_0, 
+            g_FACE_CENTER_0 => C_MD_FACE_CENTER_0,
             g_FACE_CENTER_1 => C_MD_FACE_CENTER_1,
-            g_FACE_CENTER_2 => C_MD_FACE_CENTER_2, 
+            g_FACE_CENTER_2 => C_MD_FACE_CENTER_2,
             g_FACE_CENTER_3 => C_MD_FACE_CENTER_3,
             g_FACE_CENTER_4 => C_MD_FACE_CENTER_4,
-            g_FACE_HALF_0   => C_MD_FACE_HALF_ST, 
+            g_FACE_HALF_0   => C_MD_FACE_HALF_ST,
             g_FACE_HALF_1   => C_MD_FACE_HALF_ST,
-            g_FACE_HALF_2   => C_MD_FACE_HALF_ST, 
+            g_FACE_HALF_2   => C_MD_FACE_HALF_ST,
             g_FACE_HALF_3   => C_MD_FACE_HALF_ST,
-            g_FACE_HALF_4   => C_MD_FACE_HALF_ST
+            g_FACE_HALF_4   => C_MD_FACE_HALF_ST,
+            g_FIRE_DONE_TIMEOUT_5NS_TICKS =>
+                C_FIRE_DONE_TIMEOUT_5NS_TICKS,
+            g_TARGET_ROUNDTRIP_5NS_TICKS =>
+                C_LASER_RANGE_5NS_TICKS,
+            g_STEP_INTERVAL_STATES => C_STEP_INTERVAL
         )
         port map (
-            s_axi_aclk      => clk,
-            s_axi_aresetn   => rst_n,
-            i_enc_a         => enc_a,
-            i_enc_b         => enc_b,
-            i_enc_z         => enc_z,
-            s_axi_awvalid   => md_awvalid,
-            s_axi_awready   => md_awready,
-            s_axi_awaddr    => md_awaddr,
-            s_axi_awprot    => md_awprot,
-            s_axi_wvalid    => md_wvalid,
-            s_axi_wready    => md_wready,
-            s_axi_wdata     => md_wdata,
-            s_axi_wstrb     => md_wstrb,
-            s_axi_bvalid    => md_bvalid,
-            s_axi_bready    => md_bready,
-            s_axi_bresp     => md_bresp,
-            s_axi_arvalid   => md_arvalid,
-            s_axi_arready   => md_arready,
-            s_axi_araddr    => md_araddr,
-            s_axi_arprot    => md_arprot,
-            s_axi_rvalid    => md_rvalid,
-            s_axi_rready    => md_rready,
-            s_axi_rdata     => md_rdata,
-            s_axi_rresp     => md_rresp,
-            irq             => md_irq,
-            m_axis_aclk     => clk,
-            m_axis_aresetn  => rst_n,
-            m_axis_tready   => lc_s_tready,
-            m_axis_tvalid   => md_tvalid,
-            m_axis_tdata    => md_tdata,
-            m_axis_tkeep    => md_tkeep,
-            m_axis_tuser    => md_tuser,
-            m_axis_tlast    => md_tlast,
-            o_n_faces       => md_n_faces,
-            o_dbg_virt_a    => open,
-            o_dbg_virt_b    => open,
-            o_dbg_virt_z    => open,
-            o_dbg_virt_pos  => md_dbg_virt_pos,
-            o_dbg_virt_phase => open,
-            o_dbg_dec_count => md_dbg_dec_count,
-            o_dbg_dec_dir   => open,
-            o_dbg_z_pulse   => open,
-            o_dbg_active    => md_dbg_active,
-            o_dbg_active_any => md_dbg_active_any,
-            o_dbg_face_index => md_dbg_face_index,
-            o_dbg_sim_en    => md_dbg_sim_en,
-            o_dbg_rst_n_int => md_dbg_rst_n_int,
-            o_dbg_z_fault   => open,
-            o_dbg_cfg_busy  => md_dbg_cfg_busy
-        );
-
-    -- =========================================================================
-    -- laser_ctrl_top
-    --   The current Motor-to-Laser ABI uses 32-bit TDATA, 4-bit TKEEP and
-    --   8-bit TUSER. laser_ctrl keeps TREADY high and rejects partial beats.
-    -- =========================================================================
-    u_lc : entity work.laser_ctrl_top
-        generic map (
-            g_AXIS_CLK_MHZ => C_AXIS_DOMAIN_CLK_MHZ
-        )
-        port map (
-            s_axi_aclk      => clk,
-            s_axi_aresetn   => rst_n,
-            s_axi_awvalid   => lc_awvalid,
-            s_axi_awready   => lc_awready,
-            s_axi_awaddr    => lc_awaddr,
-            s_axi_awprot    => lc_awprot,
-            s_axi_wvalid    => lc_wvalid,
-            s_axi_wready    => lc_wready,
-            s_axi_wdata     => lc_wdata,
-            s_axi_wstrb     => lc_wstrb,
-            s_axi_bvalid    => lc_bvalid,
-            s_axi_bready    => lc_bready,
-            s_axi_bresp     => lc_bresp,
-            s_axi_arvalid   => lc_arvalid,
-            s_axi_arready   => lc_arready,
-            s_axi_araddr    => lc_araddr,
-            s_axi_arprot    => lc_arprot,
-            s_axi_rvalid    => lc_rvalid,
-            s_axi_rready    => lc_rready,
-            s_axi_rdata     => lc_rdata,
-            s_axi_rresp     => lc_rresp,
-            o_irq           => lc_irq,
-            s_axis_aclk     => clk,
-            s_axis_aresetn  => rst_n,
-            s_axis_tready   => lc_s_tready,
-            s_axis_tvalid   => md_tvalid and lc_req_enable,
-            s_axis_tdata    => md_tdata,
-            s_axis_tkeep    => md_tkeep,
-            s_axis_tuser    => md_tuser,
-            s_axis_tlast    => md_tlast,
-            i_fire_done     => lc_fire_done,
-            o_fire_pulse    => lc_fire_pulse,
-            o_start_tdc     => lc_start_tdc,
-            o_shot_start    => lc_shot_start,
-            o_shot_face_index => lc_shot_face_index,
-            o_stop_tdc      => lc_stop_tdc,
-            o_laser_active  => lc_laser_active,
-            o_warning       => lc_warning,
-            o_warning_any   => lc_warning_any,
-            m_axis_tvalid   => lc_m_tvalid,
-            m_axis_tdata    => lc_m_tdata,
-            m_axis_tuser    => lc_m_tuser,
-            m_axis_tlast    => lc_m_tlast,
-            m_axis_tready   => lc_m_tready,
-            o_dbg_fire_trigger => lc_dbg_fire_trig,
-            o_dbg_fire_busy    => lc_dbg_fire_busy,
-            o_dbg_sim_flag     => lc_dbg_sim_flag,
-            o_dbg_sim_done     => lc_dbg_sim_done,
-            o_dbg_fire_done    => lc_dbg_fire_done_i,
-            o_dbg_fire_delay   => lc_dbg_fire_delay,
-            o_dbg_fsm_state    => lc_dbg_fsm_state,
-            o_dbg_shot_cnt     => lc_dbg_shot_cnt,
-            o_dbg_timeout      => lc_dbg_timeout,
-            o_dbg_face_start   => lc_dbg_face_start,
-            o_dbg_face_end     => lc_dbg_face_end,
-            o_dbg_shot_accept  => lc_dbg_shot_accept
+            s_axi_aclk          => clk,
+            s_axi_aresetn       => rst_n,
+            s_axi_motor_awvalid => md_awvalid,
+            s_axi_motor_awready => md_awready,
+            s_axi_motor_awaddr  => md_awaddr,
+            s_axi_motor_awprot  => md_awprot,
+            s_axi_motor_wvalid  => md_wvalid,
+            s_axi_motor_wready  => md_wready,
+            s_axi_motor_wdata   => md_wdata,
+            s_axi_motor_wstrb   => md_wstrb,
+            s_axi_motor_bvalid  => md_bvalid,
+            s_axi_motor_bready  => md_bready,
+            s_axi_motor_bresp   => md_bresp,
+            s_axi_motor_arvalid => md_arvalid,
+            s_axi_motor_arready => md_arready,
+            s_axi_motor_araddr  => md_araddr,
+            s_axi_motor_arprot  => md_arprot,
+            s_axi_motor_rvalid  => md_rvalid,
+            s_axi_motor_rready  => md_rready,
+            s_axi_motor_rdata   => md_rdata,
+            s_axi_motor_rresp   => md_rresp,
+            s_axi_laser_awvalid => lc_awvalid,
+            s_axi_laser_awready => lc_awready,
+            s_axi_laser_awaddr  => lc_awaddr,
+            s_axi_laser_awprot  => lc_awprot,
+            s_axi_laser_wvalid  => lc_wvalid,
+            s_axi_laser_wready  => lc_wready,
+            s_axi_laser_wdata   => lc_wdata,
+            s_axi_laser_wstrb   => lc_wstrb,
+            s_axi_laser_bvalid  => lc_bvalid,
+            s_axi_laser_bready  => lc_bready,
+            s_axi_laser_bresp   => lc_bresp,
+            s_axi_laser_arvalid => lc_arvalid,
+            s_axi_laser_arready => lc_arready,
+            s_axi_laser_araddr  => lc_araddr,
+            s_axi_laser_arprot  => lc_arprot,
+            s_axi_laser_rvalid  => lc_rvalid,
+            s_axi_laser_rready  => lc_rready,
+            s_axi_laser_rdata   => lc_rdata,
+            s_axi_laser_rresp   => lc_rresp,
+            proc_aclk           => clk,
+            proc_aresetn        => rst_n,
+            i_enc_a             => enc_a,
+            i_enc_b             => enc_b,
+            i_enc_z             => enc_z,
+            i_fire_done         => lc_fire_done,
+            o_fire_pulse        => lc_fire_pulse,
+            o_start_tdc         => lc_start_tdc,
+            o_shot_start        => lc_shot_start,
+            o_shot_face_index   => lc_shot_face_index,
+            o_stop_tdc          => lc_stop_tdc,
+            o_laser_active      => lc_laser_active,
+            o_warning           => lc_warning,
+            o_warning_any       => lc_warning_any,
+            o_n_faces           => md_n_faces,
+            o_irq               => ml_irq,
+            m_axis_tvalid       => lc_m_tvalid,
+            m_axis_tdata        => lc_m_tdata,
+            m_axis_tuser        => lc_m_tuser,
+            m_axis_tlast        => lc_m_tlast,
+            m_axis_tready       => lc_m_tready,
+            o_dbg_virt_a        => open,
+            o_dbg_virt_b        => open,
+            o_dbg_virt_z        => open,
+            o_dbg_virt_pos      => md_dbg_virt_pos,
+            o_dbg_virt_phase    => open,
+            o_dbg_dec_count     => md_dbg_dec_count,
+            o_dbg_dec_dir       => open,
+            o_dbg_z_pulse       => open,
+            o_dbg_active        => md_dbg_active,
+            o_dbg_active_any    => md_dbg_active_any,
+            o_dbg_face_index    => md_dbg_face_index,
+            o_dbg_sim_en        => md_dbg_sim_en,
+            o_dbg_rst_n_int     => md_dbg_rst_n_int,
+            o_dbg_z_fault       => open,
+            o_dbg_cfg_busy      => md_dbg_cfg_busy,
+            o_dbg_fire_trigger  => lc_dbg_fire_trig,
+            o_dbg_fire_busy     => lc_dbg_fire_busy,
+            o_dbg_sim_flag      => lc_dbg_sim_flag,
+            o_dbg_sim_done      => lc_dbg_sim_done,
+            o_dbg_fire_done     => lc_dbg_fire_done_i,
+            o_dbg_fire_delay    => lc_dbg_fire_delay,
+            o_dbg_fsm_state     => lc_dbg_fsm_state,
+            o_dbg_shot_cnt      => lc_dbg_shot_cnt,
+            o_dbg_timeout       => lc_dbg_timeout,
+            o_dbg_face_start    => lc_dbg_face_start,
+            o_dbg_face_end      => lc_dbg_face_end,
+            o_dbg_shot_accept   => lc_dbg_shot_accept
         );
 
     -- =========================================================================
@@ -1096,7 +1070,10 @@ begin
             g_N_CHIPS         => c_MAX_CHIPS,
             g_STOPS_PER_CHIP  => C_ER_N_STOPS,
             g_AXIS_CLK_MHZ    => C_AXIS_DOMAIN_CLK_MHZ,
-            g_ENABLE_SIM_PATH => false,
+            -- Synthetic target ownership remains inside echo_receiver. Its
+            -- CSR delay table creates STOP waveforms; the external GPX model
+            -- below converts those waveforms into 28-bit I-Mode words.
+            g_ENABLE_SIM_PATH => true,
             g_STOP_CNT_WIDTH  => C_STOP_CNT_WIDTH,
             g_STOP_EVT_DWIDTH => C_STOP_DW,
             g_FIRE_COUNT_DWIDTH => 32
@@ -1125,8 +1102,8 @@ begin
             s_axi_rready     => er_rready,
             s_axi_rdata      => er_rdata,
             s_axi_rresp      => er_rresp,
-            i_shot_start     => lc_shot_start,
-            i_stop_tdc       => lc_stop_tdc,
+            i_shot_start     => td_shot_start_mux,
+            i_stop_tdc       => td_stop_tdc_mux,
             i_laser_evt_tvalid => lc_m_tvalid,
             i_laser_evt_tdata  => lc_m_tdata,
             i_laser_evt_tuser  => lc_m_tuser,
@@ -1259,241 +1236,154 @@ begin
         );
 
     -- =========================================================================
-    -- 4-chip virtual TDC-GPX model (same as tb_tdc_gpx_top_int)
+    -- External TDC-GPX chips. Echo owns the STOP pattern; this model owns the
+    -- GPX time interpolation, IFIFO contents, status pins and 28-bit bus.
+    -- tdc_gpx_top remains an external-chip reader in every configuration.
     -- =========================================================================
-    gen_flags : for i in 0 to c_MAX_CHIPS - 1 generate
-        i_tdc_ef1(i) <= '1' when fifo1_fill(i) = 0 else '0';
-        i_tdc_ef2(i) <= '1' when fifo2_fill(i) = 0 else '0';
-        i_tdc_lf1(i) <= '1' when fifo1_fill(i) >= C_LF_THRESH else '0';
-        i_tdc_lf2(i) <= '1' when fifo2_fill(i) >= C_LF_THRESH else '0';
-    end generate;
+    gpx_start_tdc_mux <= tb_shot_start when G_TDC_STIM_MODE = "direct"
+                                       else lc_start_tdc;
 
-    -- =========================================================================
-     --  TDC-GPX I-Mode single-shot behavioral model, per chip (gen_chip x4)
-     --
-     --  Sequence per shot (datasheet 01_chip_acquisition_single_shot.md, 5.4):
-     --    1. AluTrigger rising  -> ALU reset: clear IFIFO counts, reload MTimer
-     --    2. Rising edges on echo_receiver.o_tdc_stop during MTimer
-     --       window push entries into IFIFO1 (stops 0..3) or IFIFO2 (stops 4..7)
-     --    3. MTimer reaches 0 -> assert IrFlag
-     --    4. chip_ctrl reads Reg8/Reg9 with RDN low; drive raw 28-bit word
-     --       (ChaCode[27:26]=00, StartNum[25:18]=0,
-     --        Slope[17]=G_CHIP_SLOPE_MASK(chip), Hit[16:0])
-     --       and pop on RDN rising edge
-     --    5. When both FIFOs empty, chip_ctrl pulses AluTrigger -> back to 1
-     --
-     --  EF pin = '1' when IFIFO empty; LF pin = '1' when fill >= LF_THRESH
-     --  IrFlag stays high until an AluTrigger pulse clears the state
-     -- =========================================================================
-    gen_chip : for i in 0 to c_MAX_CHIPS - 1 generate
+    u_gpx_model : entity work.tdc_gpx_external_chip_model
+        generic map (
+            g_NUM_CHIPS                => c_MAX_CHIPS,
+            g_STOPS_PER_CHIP           => C_ER_N_STOPS,
+            g_TDC_CLK_MHZ              => C_TDC_DOMAIN_CLK_MHZ,
+            g_CAPTURE_WINDOW_5NS_TICKS => C_MAX_RANGE_5NS_TICKS,
+            g_BIN_RESOLUTION_PS        => C_BIN_RESOLUTION_PS,
+            g_FIFO_DEPTH               => 32,
+            g_LF_THRESHOLD             => 4,
+            g_CHIP_SLOPE_MASK          => G_CHIP_SLOPE_MASK
+        )
+        port map (
+            i_tdc_clk        => tdc_clk,
+            i_rst_n          => rst_n,
+            i_start_tdc      => gpx_start_tdc_mux,
+            i_tdc_stop       => er_tdc_stop,
+            io_tdc_d         => io_tdc_d,
+            i_tdc_adr        => o_tdc_adr,
+            i_tdc_csn        => o_tdc_csn,
+            i_tdc_rdn        => o_tdc_rdn,
+            i_tdc_wrn        => o_tdc_wrn,
+            i_tdc_oen        => o_tdc_oen,
+            i_tdc_stopdis    => o_tdc_stopdis,
+            i_tdc_alutrigger => o_tdc_alutrigger,
+            i_tdc_puresn     => o_tdc_puresn,
+            o_tdc_ef1        => i_tdc_ef1,
+            o_tdc_ef2        => i_tdc_ef2,
+            o_tdc_lf1        => i_tdc_lf1,
+            o_tdc_lf2        => i_tdc_lf2,
+            o_tdc_irflag     => i_tdc_irflag,
+            o_tdc_errflag    => i_tdc_errflag,
+            o_last_hit       => gpx_last_hit,
+            o_capture_count  => gpx_capture_count
+        );
 
-        p_chip : process(tdc_clk)
-            -- Persistent state
-            variable v_fill1      : natural := 0;
-            variable v_fill2      : natural := 0;
-            variable v_rd1        : natural := 0;
-            variable v_rd2        : natural := 0;
-            variable v_mtimer     : natural := 0;          -- 0 = expired
-            variable v_irf        : std_logic := '0';
-            variable v_rdn_prev   : std_logic := '1';
-            variable v_alu_prev   : std_logic := '0';
-            variable v_stop_prev  : std_logic_vector(C_ER_N_STOPS - 1 downto 0)
-                                         := (others => '0');
-            -- Stop pulse slice index for this chip (8 channels)
-            variable v_pd_slice_lo : natural := i * C_ER_N_STOPS;
-        begin
-            if rising_edge(tdc_clk) then
-                if rst_n = '0' then
-                    v_fill1 := 0; v_fill2 := 0; v_rd1 := 0; v_rd2 := 0;
-                    v_mtimer := 0; v_irf := '0';
-                    v_rdn_prev := '1'; v_alu_prev := '0';
-                    v_stop_prev := (others => '0');
-                    chip_d_oe(i) <= '0';
-                    chip_d_out(i) <= (others => '0');
-                else
-                    chip_d_oe(i) <= '0';
-
-                    -- ---------------------------------------------------
-                    -- MTimer arm + ALU reset.
-                    -- Real chip: AluTrigger (sometime after a chip_init
-                    -- MASTER_RESET) arms MTimer; real chip_run expects
-                    -- IrFlag to be FALLING to ARMED entry, then RISING in
-                    -- CAPTURE. In our behavioural model we just re-arm
-                    -- MTimer on every td_shot_start_mux rising edge. This
-                    -- keeps IrFlag low while chip_run is in ARMED and gives
-                    -- a clean 0->1 transition when MTimer expires during
-                    -- CAPTURE. AluTrigger pulses (from init) are still
-                    -- observed to clear the FIFO mid-simulation but no
-                    -- longer arm MTimer on their own, which would leave a
-                    -- sticky IrFlag from init time.
-                    -- ---------------------------------------------------
-                    if o_tdc_alutrigger(i) = '1' and v_alu_prev = '0' then
-                        v_fill1 := 0; v_fill2 := 0;
-                        v_rd1   := 0; v_rd2   := 0;
-                        v_irf   := '0';   -- clear IrFlag, keep MTimer idle
-                        v_mtimer := 0;
-                    end if;
-                    v_alu_prev := o_tdc_alutrigger(i);
-
-                    if td_shot_start_mux = '1' then
-                        v_fill1 := 0; v_fill2 := 0;
-                        v_rd1   := 0; v_rd2   := 0;
-                        v_mtimer := C_MAX_RANGE_TDC_CLKS;
-                        v_irf    := '0';
-                    end if;
-
-                    -- ---------------------------------------------------
-                    -- [2] Stop pulses during open MTimer window fall into
-                    -- IFIFO1 (stops 0..3) or IFIFO2 (stops 4..7), up to
-                    -- C_FIFO_DEPTH per side. Ignored when StopDis=1.
-                    -- ---------------------------------------------------
-                    if v_mtimer > 0 and o_tdc_stopdis(i) = '0' then
-                        for s in 0 to C_ER_N_STOPS - 1 loop
-                            if er_tdc_stop(v_pd_slice_lo + s) = '1'
-                               and v_stop_prev(s) = '0' then
-                                if s < C_ER_N_STOPS / 2 then
-                                    if v_fill1 < C_FIFO_DEPTH then
-                                        v_fill1 := v_fill1 + 1;
-                                    end if;
-                                else
-                                    if v_fill2 < C_FIFO_DEPTH then
-                                        v_fill2 := v_fill2 + 1;
-                                    end if;
-                                end if;
-                            end if;
-                        end loop;
-                    end if;
-                    for s in 0 to C_ER_N_STOPS - 1 loop
-                        v_stop_prev(s) := er_tdc_stop(v_pd_slice_lo + s);
-                    end loop;
-
-                    -- ---------------------------------------------------
-                    -- [3] MTimer countdown; assert IrFlag on expiry.
-                    -- Hold IrFlag high until the next AluTrigger rising.
-                    -- ---------------------------------------------------
-                    if v_mtimer > 0 then
-                        v_mtimer := v_mtimer - 1;
-                        if v_mtimer = 0 then
-                            v_irf := '1';
-                        end if;
-                    end if;
-
-                    -- ---------------------------------------------------
-                    -- [4] Bus read response: drive D-bus with 28-bit TDC-GPX
-                    -- I-Mode raw word while chip_ctrl holds RDN low.
-                    --   Hit value is a test pattern keyed on chip/stop/rd_cnt
-                    --   so decode_pipe / raw_event_builder can sanity-check.
-                    -- ---------------------------------------------------
-                    if o_tdc_oen(i) = '0' and o_tdc_rdn(i) = '0'
-                       and o_tdc_csn(i) = '0' then
-                        chip_d_oe(i) <= '1';
-                        if o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
-                                     i * c_TDC_ADR_WIDTH) = c_TDC_REG8_IFIFO1 then
-                            chip_d_out(i) <= "00" & x"00" & G_CHIP_SLOPE_MASK(i) &
-                                std_logic_vector(to_unsigned(
-                                    (i * 256) + v_rd1 + 1, c_RAW_HIT_WIDTH));
-                        elsif o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
-                                        i * c_TDC_ADR_WIDTH) = c_TDC_REG9_IFIFO2 then
-                            chip_d_out(i) <= "00" & x"00" & G_CHIP_SLOPE_MASK(i) &
-                                std_logic_vector(to_unsigned(
-                                    (i * 256) + 128 + v_rd2 + 1, c_RAW_HIT_WIDTH));
-                        else
-                            chip_d_out(i) <= (others => '0');
-                        end if;
-                    end if;
-
-                    -- On RDN rising edge: pop the corresponding IFIFO.
-                    if o_tdc_rdn(i) = '1' and v_rdn_prev = '0' then
-                        if o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
-                                     i * c_TDC_ADR_WIDTH) = c_TDC_REG8_IFIFO1 and v_fill1 > 0 then
-                            v_fill1 := v_fill1 - 1;
-                            v_rd1   := v_rd1 + 1;
-                        elsif o_tdc_adr((i + 1) * c_TDC_ADR_WIDTH - 1 downto
-                                        i * c_TDC_ADR_WIDTH) = c_TDC_REG9_IFIFO2 and v_fill2 > 0 then
-                            v_fill2 := v_fill2 - 1;
-                            v_rd2   := v_rd2 + 1;
-                        end if;
-                    end if;
-                    v_rdn_prev := o_tdc_rdn(i);
-
-                    -- ---------------------------------------------------
-                    -- Publish state: fill counters + IrFlag output pin
-                    -- ---------------------------------------------------
-                    fifo1_fill(i)   <= v_fill1;
-                    fifo2_fill(i)   <= v_fill2;
-                    fifo1_rd_cnt(i) <= v_rd1;
-                    fifo2_rd_cnt(i) <= v_rd2;
-                    i_tdc_irflag(i) <= v_irf;
-                end if;
-            end if;
-        end process p_chip;
-
-        io_tdc_d((i + 1) * c_TDC_BUS_WIDTH - 1 downto i * c_TDC_BUS_WIDTH) <=
-            chip_d_out(i) when chip_d_oe(i) = '1' else (others => 'Z');
-    end generate gen_chip;
-
-    -- =========================================================================
-    -- Photodiode pulse generator
-    --   On each lc_fire_pulse rising edge, schedule a rising pulse on pd_p(0)
-    --   after C_ECHO_DELAY cycles. pd_n is kept low (differential simplified).
-    --   Also preloads chip FIFOs so the TDC chip model has data to drain.
-    -- =========================================================================
-    -- =========================================================================
-    -- Photodiode pulse generator
-    --   Emits a rising pulse on pd_p(0) after C_ECHO_DELAY clocks relative
-    --   to each td_shot_start_mux rising edge so echo_receiver's physical
-    --   path observes a single stop event per shot. IFIFO population +
-    --   IrFlag are handled inside the per-chip p_chip datasheet model.
-    -- =========================================================================
-    p_pd : process(clk)
-        variable v_fire_prev : std_logic := '0';
-        variable v_delay_cnt : natural := 0;
-        variable v_pulse_wait : boolean := false;
-        variable v_pulse_hold : natural := 0;
+    -- Independent time-domain reference. This observes only the external
+    -- pins, not the behavioral GPX model's internal result. One STOP0 is
+    -- configured per chip and shot, so channel 0 is the canonical reference.
+    p_expected_hit : process(rst_n, gpx_start_tdc_mux, er_tdc_stop(0))
+        variable v_t0 : time := 0 ns;
+        variable v_armed : boolean := false;
+        variable v_count : natural range 0 to C_MON_SHOT_DEPTH := 0;
+        variable v_elapsed_ps : natural;
+        variable v_hit : natural;
     begin
-        if rising_edge(clk) then
-            if rst_n = '0' then
-                pd_p <= (others => '0');
-                pd_n <= (others => '1');
-                v_fire_prev := '0';
-                v_delay_cnt := 0;
-                v_pulse_wait := false;
-                v_pulse_hold := 0;
-            else
-                pd_n <= (others => '1');
+        if rst_n = '0' then
+            v_t0 := 0 ns;
+            v_armed := false;
+            v_count := 0;
+            mon_expected_hit_queue <= (others => (others => '0'));
+            mon_expected_hit_count <= 0;
+            mon_last_expected_hit <= (others => '0');
+        else
+            if rising_edge(gpx_start_tdc_mux) then
+                v_t0 := now;
+                v_armed := true;
+            end if;
 
-                if td_shot_start_mux = '1' and v_fire_prev = '0' then
-                    v_delay_cnt := C_ECHO_DELAY;
-                    v_pulse_wait := true;
-                end if;
-                v_fire_prev := td_shot_start_mux;
-
-                if v_pulse_wait then
-                    if v_delay_cnt = 0 then
-                        v_pulse_wait := false;
-                        v_pulse_hold := 10;
-                    else
-                        v_delay_cnt := v_delay_cnt - 1;
+            if rising_edge(er_tdc_stop(0)) then
+                assert v_armed
+                    report "full_int: Echo STOP0 arrived without a GPX START"
+                    severity failure;
+                if v_armed then
+                    assert v_count < C_MON_SHOT_DEPTH
+                        report "full_int: expected-hit queue overflow"
+                        severity failure;
+                    v_elapsed_ps := (now - v_t0) / 1 ps;
+                    v_hit := v_elapsed_ps / C_BIN_RESOLUTION_PS;
+                    assert v_hit < 2 ** c_RAW_HIT_WIDTH
+                        report "full_int: reference hit exceeds 17-bit I-Mode field"
+                        severity failure;
+                    if v_count < C_MON_SHOT_DEPTH then
+                        mon_expected_hit_queue(v_count) <=
+                            to_unsigned(v_hit, c_RAW_HIT_WIDTH);
+                        v_count := v_count + 1;
+                        mon_expected_hit_count <= v_count;
+                        mon_last_expected_hit <=
+                            to_unsigned(v_hit, c_RAW_HIT_WIDTH);
                     end if;
-                end if;
-
-                if v_pulse_hold > 0 then
-                    -- Broadcast echo to channel 0 of every chip (stop_id=0,
-                    -- one hit per chip per shot). Ensures whichever chip
-                    -- chip_run decides to drain finds a hit in its IFIFO1.
-                    for i in 0 to c_MAX_CHIPS - 1 loop
-                        pd_p(i * C_ER_N_STOPS) <= '1';
-                        pd_n(i * C_ER_N_STOPS) <= '0';
-                    end loop;
-                    v_pulse_hold := v_pulse_hold - 1;
-                else
-                    for i in 0 to c_MAX_CHIPS - 1 loop
-                        pd_p(i * C_ER_N_STOPS) <= '0';
-                    end loop;
+                    v_armed := false;
                 end if;
             end if;
         end if;
-    end process p_pd;
+    end process p_expected_hit;
+
+    -- Check the actual 28-bit GPX bus at the first cycle of every IFIFO1
+    -- read. This makes the datasheet I-Mode contract explicit before the DUT
+    -- decoder transforms the word into internal events.
+    p_i_mode_bus_check : process(tdc_clk)
+        variable v_read_checked : std_logic_vector(c_MAX_CHIPS - 1 downto 0) :=
+            (others => '0');
+        variable v_read_active : std_logic;
+        variable v_addr : std_logic_vector(c_TDC_ADR_WIDTH - 1 downto 0);
+        variable v_raw : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        variable v_count : natural := 0;
+    begin
+        if rising_edge(tdc_clk) then
+            if rst_n = '0' then
+                v_read_checked := (others => '0');
+                v_count := 0;
+                mon_i_mode_bus_checks <= 0;
+            else
+                for chip in 0 to c_MAX_CHIPS - 1 loop
+                    v_read_active := not o_tdc_csn(chip)
+                                     and not o_tdc_oen(chip)
+                                     and not o_tdc_rdn(chip);
+                    v_addr := o_tdc_adr(
+                        (chip + 1) * c_TDC_ADR_WIDTH - 1 downto
+                        chip * c_TDC_ADR_WIDTH);
+                    v_raw := io_tdc_d(
+                        (chip + 1) * c_TDC_BUS_WIDTH - 1 downto
+                        chip * c_TDC_BUS_WIDTH);
+
+                    if v_read_active = '0' then
+                        v_read_checked(chip) := '0';
+                    elsif v_read_checked(chip) = '0'
+                          and v_addr = c_TDC_REG8_IFIFO1
+                          and unsigned(v_raw(c_RAW_HIT_HI downto c_RAW_HIT_LO)) /= 0 then
+                        assert v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO) = "00"
+                            report "full_int: GPX I-Mode ChaCode is not STOP0"
+                            severity failure;
+                        assert v_raw(c_RAW_STARTNUM_HI downto c_RAW_STARTNUM_LO) = x"00"
+                            report "full_int: GPX I-Mode StartNum is not zero in SINGLE_SHOT"
+                            severity failure;
+                        assert v_raw(c_RAW_SLOPE_BIT) = G_CHIP_SLOPE_MASK(chip)
+                            report "full_int: GPX I-Mode Slope differs from chip profile"
+                            severity failure;
+                        assert v_raw(c_RAW_HIT_HI downto c_RAW_HIT_LO) =
+                               gpx_last_hit(
+                                   (chip + 1) * c_RAW_HIT_WIDTH - 1 downto
+                                   chip * c_RAW_HIT_WIDTH)
+                            report "full_int: GPX I-Mode Hit[16:0] differs from interpolator result"
+                            severity failure;
+                        v_count := v_count + 1;
+                        v_read_checked(chip) := '1';
+                    end if;
+                end loop;
+                mon_i_mode_bus_checks <= v_count;
+            end if;
+        end if;
+    end process p_i_mode_bus_check;
 
     -- =========================================================================
     -- Monitors
@@ -1521,11 +1411,19 @@ begin
         variable v_fall_face_header_line  : boolean := false;
         variable v_header_word_idx   : natural := 0;
         variable v_header_word       : std_logic_vector(31 downto 0);
+        variable v_rise_hit_lo       : std_logic_vector(15 downto 0) :=
+            (others => '0');
+        variable v_fall_hit_lo       : std_logic_vector(15 downto 0) :=
+            (others => '0');
+        variable v_rise_hit          : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
+            (others => '0');
+        variable v_fall_hit          : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
+            (others => '0');
+        variable v_rise_hit_index    : natural := 0;
+        variable v_fall_hit_index    : natural := 0;
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
-                mon_md_beats <= 0;
-                mon_md_tkeep_violation <= 0;
                 mon_md_virt_pos_changes <= 0;
                 mon_md_dec_count_changes <= 0;
                 mon_md_active_cycles <= 0;
@@ -1544,8 +1442,12 @@ begin
                 mon_td_fall_line_end <= 0;
                 mon_td_rise_header_checks <= 0;
                 mon_td_fall_header_checks <= 0;
+                mon_td_rise_hit_checks <= 0;
+                mon_td_fall_hit_checks <= 0;
                 mon_td_rise_face_seen <= (others => '0');
                 mon_td_fall_face_seen <= (others => '0');
+                mon_last_rise_hit <= (others => '0');
+                mon_last_fall_hit <= (others => '0');
                 mon_cmd_start_cnt  <= 0;
                 mon_cmd_accept_cnt <= 0;
                 mon_chip_busy_any  <= 0;
@@ -1575,6 +1477,10 @@ begin
                 v_fall_header_shot_index := 0;
                 v_rise_face_header_line := false;
                 v_fall_face_header_line := false;
+                v_rise_hit_lo := (others => '0');
+                v_fall_hit_lo := (others => '0');
+                v_rise_hit_index := 0;
+                v_fall_hit_index := 0;
                 dbg_lc_start_ever <= '0';
                 dbg_lc_fire_ever  <= '0';
             else
@@ -1629,16 +1535,6 @@ begin
                 -- can observe that an event happened at least once
                 if lc_start_tdc = '1' then dbg_lc_start_ever <= '1'; end if;
                 if lc_fire_pulse = '1' then dbg_lc_fire_ever <= '1'; end if;
-                if md_tvalid = '1' then
-                    mon_md_beats <= mon_md_beats + 1;
-                    if md_tkeep /= "1111" then
-                        mon_md_tkeep_violation <=
-                            mon_md_tkeep_violation + 1;
-                        assert false
-                            report "full_int: motor produced a partial AXIS beat"
-                            severity error;
-                    end if;
-                end if;
                 if md_dbg_virt_pos /= v_prev_md_virt_pos then
                     mon_md_virt_pos_changes <= mon_md_virt_pos_changes + 1;
                 end if;
@@ -1743,6 +1639,35 @@ begin
                             mon_td_rise_header_checks <=
                                 mon_td_rise_header_checks + 1;
                         end if;
+                        if v_header_word_idx = C_FIRST_CELL_HIT_WORD_INDEX then
+                            v_rise_hit_lo := m_rise_tdata(
+                                32 * lane + 15 downto 32 * lane);
+                        elsif v_header_word_idx = C_FIRST_CELL_META_WORD_INDEX then
+                            v_header_word := m_rise_tdata(
+                                32 * lane + 31 downto 32 * lane);
+                            v_rise_hit := unsigned(
+                                v_header_word(0) & v_rise_hit_lo);
+                            assert v_header_word(25) = '1'
+                                report "full_int: rising first-cell hit_valid[0] is clear"
+                                severity failure;
+                            assert v_header_word(18) = '1'
+                                report "full_int: rising first-cell slope[0] is not rising"
+                                severity failure;
+                            if v_rise_hit_index < mon_expected_hit_count then
+                                assert v_rise_hit =
+                                       mon_expected_hit_queue(v_rise_hit_index)
+                                    report "full_int: rising 17-bit Hit changed between GPX bus and VDMA cell"
+                                    severity failure;
+                            else
+                                assert false
+                                    report "full_int: rising VDMA hit has no timestamp reference"
+                                    severity failure;
+                            end if;
+                            mon_last_rise_hit <= v_rise_hit;
+                            mon_td_rise_hit_checks <=
+                                mon_td_rise_hit_checks + 1;
+                            v_rise_hit_index := v_rise_hit_index + 1;
+                        end if;
                     end loop;
                     mon_td_rise_beats <= mon_td_rise_beats + 1;
                     v_rise_line_beats := v_rise_line_beats + 1;
@@ -1806,6 +1731,35 @@ begin
                                 v_fall_header_shot_index + G_COLS_PER_FACE;
                             mon_td_fall_header_checks <=
                                 mon_td_fall_header_checks + 1;
+                        end if;
+                        if v_header_word_idx = C_FIRST_CELL_HIT_WORD_INDEX then
+                            v_fall_hit_lo := m_fall_tdata(
+                                32 * lane + 15 downto 32 * lane);
+                        elsif v_header_word_idx = C_FIRST_CELL_META_WORD_INDEX then
+                            v_header_word := m_fall_tdata(
+                                32 * lane + 31 downto 32 * lane);
+                            v_fall_hit := unsigned(
+                                v_header_word(0) & v_fall_hit_lo);
+                            assert v_header_word(25) = '1'
+                                report "full_int: falling first-cell hit_valid[0] is clear"
+                                severity failure;
+                            assert v_header_word(18) = '0'
+                                report "full_int: falling first-cell slope[0] is not falling"
+                                severity failure;
+                            if v_fall_hit_index < mon_expected_hit_count then
+                                assert v_fall_hit =
+                                       mon_expected_hit_queue(v_fall_hit_index)
+                                    report "full_int: falling 17-bit Hit changed between GPX bus and VDMA cell"
+                                    severity failure;
+                            else
+                                assert false
+                                    report "full_int: falling VDMA hit has no timestamp reference"
+                                    severity failure;
+                            end if;
+                            mon_last_fall_hit <= v_fall_hit;
+                            mon_td_fall_hit_checks <=
+                                mon_td_fall_hit_checks + 1;
+                            v_fall_hit_index := v_fall_hit_index + 1;
                         end if;
                     end loop;
                     mon_td_fall_beats <= mon_td_fall_beats + 1;
@@ -2086,7 +2040,7 @@ begin
 
         pl("======================================================");
         pl(" full system integration TB start");
-        pl(" (enc_top + motor_decoder + laser_ctrl + echo_receiver + tdc_gpx)");
+        pl(" (enc_top + motor_laser_ctrl + echo_receiver + GPX model + tdc_gpx)");
         pl("======================================================");
         if G_PRINT_BANNER then
             pl("  config :  axis/tdc clk="
@@ -2178,11 +2132,20 @@ begin
         end if;
         wait_clk(30);
 
-        pl("[S1] echo_receiver CSR: production physical STOP mode");
-        -- CTL0[0]=0. The synthetic path is also absent at elaboration because
-        -- g_ENABLE_SIM_PATH=false; the PD generator drives the GPX path.
-        er_wr(C_ER_CTL0, x"00000000");
-        wait_clk(10);
+        pl("[S1] echo_receiver CSR: synthetic STOP0 per GPX chip");
+        -- CTL1..16 hold two 16-bit delays per word. Configure channel 0 of
+        -- every chip; all other channels remain zero. Delay values use the
+        -- fixed 5 ns CSR timebase and Echo converts them to AXIS clocks.
+        for chip in 0 to c_MAX_CHIPS - 1 loop
+            er_wr(
+                std_logic_vector(to_unsigned(
+                    4 * (1 + (chip * C_ER_N_STOPS) / 2), 9)),
+                x"0000" & std_logic_vector(to_unsigned(
+                    C_SIM_TARGET_5NS_TICKS, 16))
+            );
+        end loop;
+        er_wr(C_ER_CTL0, x"00000001");
+        wait_clk(100);
 
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
         lc_wr(C_LC_CTL1, C_CTL1_VAL_LOCAL);
@@ -2196,11 +2159,10 @@ begin
         lc_wr(C_LC_CTL5, C_LC_CTL5_DERIVED);
         lc_wr(C_LC_CTL6, C_LC_CTL6_DEFAULT);
         lc_wr(C_LC_CTL7, C_LC_CTL7_DEFAULT);
-        -- Toggle reset while disabled, then enable without changing the toggle.
+        -- Toggle reset while disabled. Laser admission is enabled only after
+        -- tdc_gpx configuration and START have completed.
         lc_wr(C_LC_CTL0, C_LC_CTL0_RESET_LOCAL);
         wait_clk(20);
-        lc_wr(C_LC_CTL0, C_LC_CTL0_ENABLE_LOCAL);
-        wait_clk(100);
 
         pl("[S1] tdc_gpx chip CSR: cfg_image Reg0/Reg5/Reg6 + CTL21");
         td_wr("0" & x"14", x"00001C00");  -- Reg0 TRiseEn
@@ -2253,9 +2215,9 @@ begin
             tb_stop_tdc <= '1'; wait_clk(2); tb_stop_tdc <= '0';
             wait_clk(500);
         else
-            pl("[S4] admit Motor-to-Laser requests after TDC START");
-            lc_req_enable <= '1';
-            wait_clk(2);
+            pl("[S4] enable motor_laser_ctrl after TDC START");
+            lc_wr(C_LC_CTL0, C_LC_CTL0_ENABLE_LOCAL);
+            wait_clk(20);
             if G_ENCODER_SOURCE = "external" then
                 pl("[S4] enable external encoder motion (physical A/B/Z path)");
                 enc_run <= '1';
@@ -2277,14 +2239,17 @@ begin
                 severity failure;
         end if;
 
-        -- Freeze only the upstream request stream at a complete face boundary.
-        -- LASER_EN remains asserted:
-        -- clearing it is an admission control, but it is also a live executor
-        -- input and is therefore the wrong boundary for deterministic drain.
-        pl("[S5] gate Motor-to-Laser requests and drain in-flight shot");
-        lc_req_enable <= '0';
+        -- Stop the encoder source at a complete face boundary, then let the
+        -- already accepted shot drain before disabling Laser admission. This
+        -- preserves the wrapper's private always-ready AXIS contract.
+        pl("[S5] stop encoder source and drain in-flight shot");
         if G_ENCODER_SOURCE = "external" then
             enc_run <= '0';
+        else
+            -- Physical inputs are tied low in internal-source mode, so this
+            -- runtime source switch stops new position events without adding
+            -- a test-only gate inside motor_laser_ctrl_top.
+            md_wr(C_MD_CTL3, C_MD_CTL3_PHYS);
         end if;
         v_pipeline_drain_wait := 0;
         while (mon_lc_stop_cnt < mon_lc_start_cnt or
@@ -2301,6 +2266,8 @@ begin
                mon_td_fall_line_end = mon_lc_start_cnt
             report "full_int: timed out draining accepted shot outputs"
             severity failure;
+        lc_wr(C_LC_CTL0, C_LC_CTL0_RESET_LOCAL);
+        wait_clk(20);
 
         --------------------------------------------------------------
         -- [S6] Diagnostic readback: pipeline CSR STAT5/STAT6/STAT7
@@ -2332,9 +2299,6 @@ begin
         pl("======================================================");
         pl(" full integration TB summary:");
         pl("  source encoder     = " & G_ENCODER_SOURCE);
-        pl("  md     AXI-S beats  = " & integer'image(mon_md_beats));
-        pl("  md     TKEEP violations = "
-           & integer'image(mon_md_tkeep_violation));
         pl("  md     virt/decoded position changes = "
            & integer'image(mon_md_virt_pos_changes) & "/"
            & integer'image(mon_md_dec_count_changes));
@@ -2365,6 +2329,15 @@ begin
         pl("  td     rise/fall header face checks = "
            & integer'image(mon_td_rise_header_checks) & "/"
            & integer'image(mon_td_fall_header_checks));
+        pl("  td     rise/fall 17-bit Hit checks = "
+           & integer'image(mon_td_rise_hit_checks) & "/"
+           & integer'image(mon_td_fall_hit_checks));
+        pl("  td     raw 28-bit I-Mode bus checks = "
+           & integer'image(mon_i_mode_bus_checks));
+        pl("  td     last expected/rise/fall Hit = "
+           & integer'image(to_integer(mon_last_expected_hit)) & "/"
+           & integer'image(to_integer(mon_last_rise_hit)) & "/"
+           & integer'image(to_integer(mon_last_fall_hit)));
         pl("  td     rise/fall face seen masks = "
            & to_hstring(mon_td_rise_face_seen) & "/"
            & to_hstring(mon_td_fall_face_seen));
@@ -2405,8 +2378,6 @@ begin
              & " vdma_hsize_rise=" & integer'image(to_integer(td_vdma_hsize_rise))
              & " vdma_hsize_fall=" & integer'image(to_integer(td_vdma_hsize_fall))
              & " vdma_vsize=" & integer'image(to_integer(td_vdma_vsize))
-             & " md_beats=" & integer'image(mon_md_beats)
-             & " tkeep_violations=" & integer'image(mon_md_tkeep_violation)
              & " md_virt_changes=" & integer'image(mon_md_virt_pos_changes)
              & " md_dec_changes=" & integer'image(mon_md_dec_count_changes)
              & " md_active_cycles=" & integer'image(mon_md_active_cycles)
@@ -2426,14 +2397,19 @@ begin
              & " rise_tlast=" & integer'image(mon_td_rise_line_end)
              & " fall_beats=" & integer'image(mon_td_fall_beats)
              & " fall_tlast=" & integer'image(mon_td_fall_line_end)
+             & " i_mode_hit_refs=" & integer'image(mon_expected_hit_count)
+             & " i_mode_rise_checks=" & integer'image(mon_td_rise_hit_checks)
+             & " i_mode_fall_checks=" & integer'image(mon_td_fall_hit_checks)
+             & " i_mode_bus_checks=" & integer'image(mon_i_mode_bus_checks)
+             & " i_mode_expected_hit=" & integer'image(to_integer(mon_last_expected_hit))
+             & " i_mode_rise_hit=" & integer'image(to_integer(mon_last_rise_hit))
+             & " i_mode_fall_hit=" & integer'image(to_integer(mon_last_fall_hit))
              & " cfg_rejected=" & integer'image(mon_cfg_rejected)
              & " pipeline_abort=" & integer'image(mon_pipe_abort)
             severity note;
 
-        assert mon_md_beats > 0
-            report "full_int: no motor AXIS activity" severity failure;
-        assert mon_md_tkeep_violation = 0
-            report "full_int: Motor-Laser AXIS path produced a partial beat"
+        assert mon_md_dec_count_changes > 0
+            report "full_int: no motor decoder position activity"
             severity failure;
         if G_ENCODER_SOURCE = "internal" then
             assert mon_lc_fire_cnt = 0 and mon_lc_start_cnt > 0
@@ -2462,6 +2438,28 @@ begin
                and mon_td_fall_line_end = mon_lc_start_cnt
             report "full_int: accepted shots and VDMA line TLAST counts differ"
             severity failure;
+        assert mon_expected_hit_count = mon_lc_start_cnt
+            report "full_int: GPX START/Echo STOP reference count differs from accepted shots"
+            severity failure;
+        assert mon_td_rise_hit_checks = mon_td_rise_line_end
+               and mon_td_fall_hit_checks = mon_td_fall_line_end
+            report "full_int: not every VDMA line passed the exact 17-bit Hit check"
+            severity failure;
+        assert mon_i_mode_bus_checks =
+               mon_expected_hit_count * fn_count_ones(G_ACTIVE_CHIP_MASK)
+            report "full_int: not every active GPX chip read passed the 28-bit I-Mode field check"
+            severity failure;
+        assert mon_last_rise_hit = mon_last_expected_hit
+               and mon_last_fall_hit = mon_last_expected_hit
+            report "full_int: final 17-bit Hit differs across GPX reference and VDMA lanes"
+            severity failure;
+        for chip in 0 to c_MAX_CHIPS - 1 loop
+            assert to_integer(unsigned(gpx_capture_count(
+                       (chip + 1) * 16 - 1 downto chip * 16))) =
+                   mon_expected_hit_count
+                report "full_int: external GPX chip capture count mismatch"
+                severity failure;
+        end loop;
         assert to_integer(td_vdma_vsize) = G_COLS_PER_FACE
             report "full_int: VDMA VSIZE diverged from CSR cols_per_face"
             severity failure;
