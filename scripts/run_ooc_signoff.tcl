@@ -36,7 +36,7 @@ set part_name   "xc7z020clg484-2"
 set script_dir  [file dirname [file normalize [info script]]]
 set hdl_dir     [file normalize [file join $script_dir ..]]
 set project_dir [file dirname $hdl_dir]
-set gen_ip_dir  [file join $project_dir tdc_gpx_ctrl.gen sources_1 ip]
+set ip_root     [file dirname $project_dir]
 file mkdir $out_dir
 
 puts "OOC_SIGNOFF_CONFIG width=$width axis_mhz=$axis_mhz tdc_mhz=$tdc_mhz chips=$num_chips present=$present_mask rise=$rise_mask fall=$fall_mask max_stops=$max_stops max_hits=$max_hits stream=$stream_mode impl=$do_impl strategy=$impl_strategy"
@@ -62,6 +62,14 @@ set_property target_language VHDL [current_project]
 set_property simulator_language Mixed [current_project]
 set_property default_lib xil_defaultlib [current_project]
 
+source [file join $script_dir tdc_gpx_csr_source_manifest.tcl]
+foreach source [tdc_gpx_csr_source_manifest $ip_root] {
+    if {![file exists $source]} {
+        error "canonical CSR source is missing: $source"
+    }
+    read_vhdl -vhdl2008 -library xil_defaultlib $source
+}
+
 source [file join $script_dir tdc_gpx_rtl_manifest.tcl]
 foreach file_name [tdc_gpx_rtl_manifest] {
     set source [file join $hdl_dir $file_name]
@@ -71,26 +79,6 @@ foreach file_name [tdc_gpx_rtl_manifest] {
     read_vhdl -vhdl2008 -library xil_defaultlib $source
 }
 
-# The source .xpr has no OOC DCPs for the two custom CSR IPs. Read their
-# generated implementation sources so a successful run cannot hide black boxes.
-foreach source [list \
-    [file join $gen_ip_dir tdc_gpx_axil_csr_pipeline src axil_fsm.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr_pipeline src axil_ctrl_regs.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr_pipeline src axil_stat_regs.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr_pipeline src axil_intr.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr_pipeline src my_axil_csr_top.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr_pipeline synth tdc_gpx_axil_csr_pipeline.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr32_chip src axil_fsm_32.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr32_chip src axil_ctrl_regs_32.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr32_chip src axil_stat_regs_32.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr32_chip src axil_intr_32.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr32_chip src my_axil_csr32_top.vhd] \
-    [file join $gen_ip_dir tdc_gpx_axil_csr32_chip synth tdc_gpx_axil_csr32_chip.vhd]] {
-    if {![file exists $source]} {
-        error "generated CSR source is missing: $source"
-    }
-    read_vhdl -vhdl2008 -library xil_defaultlib $source
-}
 update_compile_order -fileset sources_1
 read_xdc -unmanaged $xdc_file
 

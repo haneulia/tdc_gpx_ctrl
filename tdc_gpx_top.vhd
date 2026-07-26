@@ -43,45 +43,49 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_top is
     generic (
-        g_HW_VERSION      : std_logic_vector(31 downto 0) := c_DEFAULT_HW_VERSION;
-        g_OUTPUT_WIDTH    : natural := c_DEFAULT_OUTPUT_WIDTH;
+        -- Keep the public entity defaults and ranges as simple literals.
+        -- Vivado IP Packager parses this VHDL-93-compatible declaration
+        -- without evaluating VHDL-2008 package constants. The package keeps
+        -- the canonical values used by all implementation internals.
+        g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
+        g_OUTPUT_WIDTH    : natural := 32;
         -- Compile-time board edge capabilities. Masks may overlap for
         -- same-chip dual-edge operation. g_FALL_CHIP_MASK="0000" builds a
         -- rising-only datapath; runtime falling_enable can also disable fall
         -- and use every active chip as rising in a fall-capable bitstream.
-        g_RISE_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_RISE_CHIP_MASK;
-        g_FALL_CHIP_MASK : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_DEFAULT_FALL_CHIP_MASK;
+        g_RISE_CHIP_MASK : std_logic_vector(3 downto 0) := "0011";
+        g_FALL_CHIP_MASK : std_logic_vector(3 downto 0) := "1100";
         -- Compile-time build profile. CSR/header logical chip slots remain
         -- fixed at c_MAX_CHIPS. g_NUM_CHIPS sets the physical pin-vector width
         -- using IP-Integrator-safe integer arithmetic; g_PRESENT_CHIP_MASK
         -- selects the logical slots. Their values must agree by assertion.
         -- Physical lane order follows ascending asserted logical chip IDs, so
         -- sparse masks keep metadata IDs without exporting absent-slot pins.
-        g_NUM_CHIPS         : positive range 1 to c_MAX_CHIPS := c_MAX_CHIPS;
-        g_PRESENT_CHIP_MASK  : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := c_ALL_CHIPS_MASK;
-        g_MAX_STOPS_PER_CHIP : positive range 2 to c_MAX_STOPS_PER_CHIP := c_MAX_STOPS_PER_CHIP;
-        g_MAX_HITS_PER_STOP  : positive range 1 to c_MAX_HITS_PER_STOP := c_MAX_HITS_PER_STOP;
+        g_NUM_CHIPS         : positive range 1 to 4 := 4;
+        g_PRESENT_CHIP_MASK  : std_logic_vector(3 downto 0) := "1111";
+        g_MAX_STOPS_PER_CHIP : positive range 2 to 8 := 8;
+        g_MAX_HITS_PER_STOP  : positive range 1 to 7 := 7;
         -- Signal-processing clock contract. Supported values are
         -- 50/100/125/150/200 MHz. AXIS must not be faster than TDC; therefore
         -- end-to-end processing margin and throughput closure use AXIS timing.
         -- Domain-local watchdogs still use counts converted for their clock.
         -- These values must match the real clocks and XDC constraints.
-        g_AXIS_CLK_MHZ    : positive := c_DEFAULT_AXIS_CLK_MHZ;
-        g_TDC_CLK_MHZ     : positive := c_DEFAULT_TDC_CLK_MHZ;
+        g_AXIS_CLK_MHZ    : positive := 150;
+        g_TDC_CLK_MHZ     : positive := 200;
         -- Physical timing policy. Values are expressed once in time units;
         -- domain-local clock counts are elaboration-time derived constants.
-        g_POWERUP_TIME_NS             : positive := c_DEFAULT_POWERUP_TIME_NS;
-        g_RECOVERY_TIME_NS            : positive := c_DEFAULT_RECOVERY_TIME_NS;
-        g_ALU_PULSE_TIME_NS           : positive := c_DEFAULT_ALU_PULSE_TIME_NS;
-        g_BUS_READ_PERIOD_MIN_TIME_NS : positive := c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS;
-        g_BUS_IDLE_STABLE_TIME_NS     : positive := c_DEFAULT_BUS_IDLE_STABLE_TIME_NS;
-        g_DRAIN_MARGIN_TIME_NS        : positive := c_DEFAULT_DRAIN_MARGIN_TIME_NS;
-        g_ERR_DEBOUNCE_TIME_NS        : positive := c_DEFAULT_ERR_DEBOUNCE_TIME_NS;
-        g_ERR_MAX_RETRIES             : positive := c_DEFAULT_ERR_MAX_RETRIES;
-        g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS;
-        g_CELL_IFIFO2_MARGIN_TIME_NS  : positive := c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS;
-        g_OEN_MODE        : string   := c_DEFAULT_OEN_MODE;
-        g_STREAM_CLK_MODE : string   := c_DEFAULT_STREAM_CLK_MODE
+        g_POWERUP_TIME_NS             : positive := 240;
+        g_RECOVERY_TIME_NS            : positive := 40;
+        g_ALU_PULSE_TIME_NS           : positive := 20;
+        g_BUS_READ_PERIOD_MIN_TIME_NS : positive := 25;
+        g_BUS_IDLE_STABLE_TIME_NS     : positive := 20480;
+        g_DRAIN_MARGIN_TIME_NS        : positive := 1280;
+        g_ERR_DEBOUNCE_TIME_NS        : positive := 25;
+        g_ERR_MAX_RETRIES             : positive := 3;
+        g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3410;
+        g_CELL_IFIFO2_MARGIN_TIME_NS  : positive := 1705;
+        g_OEN_MODE        : string   := "DYNAMIC_CONNECTED";
+        g_STREAM_CLK_MODE : string   := "ASYNC"
     );
     port (
         -- Processing / AXI-Stream clock and reset (g_AXIS_CLK_MHZ)
@@ -100,7 +104,7 @@ entity tdc_gpx_top is
         -- AXI4-Lite Slave #1: Chip CSR (9-bit address)
         s_axi_awvalid    : in  std_logic;
         s_axi_awready    : out std_logic;
-        s_axi_awaddr     : in  std_logic_vector(c_CSR_ADDR_WIDTH - 1 downto 0);
+        s_axi_awaddr     : in  std_logic_vector(8 downto 0);
         s_axi_awprot     : in  std_logic_vector(2 downto 0);
         s_axi_wvalid     : in  std_logic;
         s_axi_wready     : out std_logic;
@@ -111,7 +115,7 @@ entity tdc_gpx_top is
         s_axi_bresp      : out std_logic_vector(1 downto 0);
         s_axi_arvalid    : in  std_logic;
         s_axi_arready    : out std_logic;
-        s_axi_araddr     : in  std_logic_vector(c_CSR_ADDR_WIDTH - 1 downto 0);
+        s_axi_araddr     : in  std_logic_vector(8 downto 0);
         s_axi_arprot     : in  std_logic_vector(2 downto 0);
         s_axi_rvalid     : out std_logic;
         s_axi_rready     : in  std_logic;
@@ -156,9 +160,9 @@ entity tdc_gpx_top is
         -- TDC-GPX physical pins. The two buses are flattened as contiguous
         -- physical lanes for Vivado/IP Integrator compatibility.
         io_tdc_d         : inout std_logic_vector(
-            g_NUM_CHIPS * c_TDC_BUS_WIDTH - 1 downto 0);
+            g_NUM_CHIPS * 28 - 1 downto 0);
         o_tdc_adr        : out std_logic_vector(
-            g_NUM_CHIPS * c_TDC_ADR_WIDTH - 1 downto 0);
+            g_NUM_CHIPS * 4 - 1 downto 0);
         o_tdc_csn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
         o_tdc_rdn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
         o_tdc_wrn        : out std_logic_vector(g_NUM_CHIPS - 1 downto 0);
@@ -425,6 +429,10 @@ architecture rtl of tdc_gpx_top is
     signal s_face_fall_tvalid     : std_logic;
     signal s_face_buf_tvalid      : std_logic;
     signal s_face_fall_buf_tvalid : std_logic;
+    -- Keep stream-valid feedback internal so the public top remains legal
+    -- under both VHDL-93 IP packaging and VHDL-2008 RTL compilation.
+    signal s_m_axis_tvalid        : std_logic;
+    signal s_m_axis_fall_tvalid   : std_logic;
 
     -- =========================================================================
     -- Decode pipe status
@@ -554,6 +562,9 @@ architecture rtl of tdc_gpx_top is
     signal s_err_cause     : std_logic_vector(2 downto 0);
 
 begin
+
+    o_m_axis_tvalid      <= s_m_axis_tvalid;
+    o_m_axis_fall_tvalid <= s_m_axis_fall_tvalid;
 
     assert fn_count_ones(g_PRESENT_CHIP_MASK) > 0
         report "tdc_gpx_top: g_PRESENT_CHIP_MASK must contain at least one implemented chip"
@@ -1081,7 +1092,7 @@ begin
             o_m_axis_tdata       => o_m_axis_tdata,
             o_m_axis_tkeep       => o_m_axis_tkeep,
             o_m_axis_tstrb       => o_m_axis_tstrb,
-            o_m_axis_tvalid      => o_m_axis_tvalid,
+            o_m_axis_tvalid      => s_m_axis_tvalid,
             o_m_axis_tlast       => o_m_axis_tlast,
             o_m_axis_tuser       => o_m_axis_tuser,
             i_m_axis_tready      => i_m_axis_tready,
@@ -1089,7 +1100,7 @@ begin
             o_m_axis_fall_tdata  => o_m_axis_fall_tdata,
             o_m_axis_fall_tkeep  => o_m_axis_fall_tkeep,
             o_m_axis_fall_tstrb  => o_m_axis_fall_tstrb,
-            o_m_axis_fall_tvalid => o_m_axis_fall_tvalid,
+            o_m_axis_fall_tvalid => s_m_axis_fall_tvalid,
             o_m_axis_fall_tlast  => o_m_axis_fall_tlast,
             o_m_axis_fall_tuser  => o_m_axis_fall_tuser,
             i_m_axis_fall_tready => i_m_axis_fall_tready,
@@ -1179,8 +1190,8 @@ begin
             i_face_fall_tvalid     => s_face_fall_tvalid,
             i_face_buf_tvalid      => s_face_buf_tvalid,
             i_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
-            i_m_axis_tvalid        => o_m_axis_tvalid,        -- VHDL-2008: read output port
-            i_m_axis_fall_tvalid   => o_m_axis_fall_tvalid,   -- VHDL-2008: read output port
+            i_m_axis_tvalid        => s_m_axis_tvalid,
+            i_m_axis_fall_tvalid   => s_m_axis_fall_tvalid,
             i_shot_start_raw       => i_shot_start,
             i_shot_face_index_raw  => i_shot_face_index,
             i_frame_done           => s_frame_done,
@@ -1248,8 +1259,8 @@ begin
             i_face_fall_tvalid     => s_face_fall_tvalid,
             i_face_buf_tvalid      => s_face_buf_tvalid,
             i_face_fall_buf_tvalid => s_face_fall_buf_tvalid,
-            i_m_axis_tvalid        => o_m_axis_tvalid,        -- VHDL-2008: read output port
-            i_m_axis_fall_tvalid   => o_m_axis_fall_tvalid,   -- VHDL-2008: read output port
+            i_m_axis_tvalid        => s_m_axis_tvalid,
+            i_m_axis_fall_tvalid   => s_m_axis_fall_tvalid,
             i_stop_id_error        => s_stop_id_error,
             i_hit_dropped          => s_hit_dropped,
             i_hit_fall_dropped     => s_hit_fall_dropped,

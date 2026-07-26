@@ -13,7 +13,7 @@ $TdcRoot = "$IpRoot/tdc_gpx_ctrl"
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin"
 
 if ([string]::IsNullOrWhiteSpace($Scenario)) {
-    $Scenario = Join-Path $Hdl "system_integration/scenarios/smoke_internal_200m_v001.json"
+    $Scenario = Join-Path $Hdl "system_integration/scenarios/smoke_internal_axis150_tdc200_v001.json"
 }
 $Scenario = (Resolve-Path $Scenario).Path
 $Cfg = Get-Content -Raw -LiteralPath $Scenario | ConvertFrom-Json
@@ -64,24 +64,18 @@ function Assert-FileExists {
     }
 }
 
-$Csr7 = "$TdcRoot/tdc_gpx_ctrl.gen/sources_1/ip/my_axil_csr_0"
-$Csr32 = "$TdcRoot/tdc_gpx_ctrl.gen/sources_1/ip/echo_receiver_axil_csr32"
-$GeneratedFiles = @(
-    "$Csr7/src/axil_ctrl_regs.vhd",
-    "$Csr7/src/axil_fsm.vhd",
-    "$Csr7/src/axil_intr.vhd",
-    "$Csr7/src/axil_stat_regs.vhd",
-    "$Csr7/src/my_axil_csr_top.vhd",
-    "$Csr7/sim/my_axil_csr_0.vhd",
-    "$TdcRoot/tdc_gpx_ctrl.gen/sources_1/ip/laser_ctl_axil_csr/sim/laser_ctl_axil_csr.vhd",
-    "$TdcRoot/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr_pipeline/sim/tdc_gpx_axil_csr_pipeline.vhd",
-    "$Csr32/src/axil_ctrl_regs_32.vhd",
-    "$Csr32/src/axil_fsm_32.vhd",
-    "$Csr32/src/axil_intr_32.vhd",
-    "$Csr32/src/axil_stat_regs_32.vhd",
-    "$Csr32/src/my_axil_csr32_top.vhd",
-    "$Csr32/sim/echo_receiver_axil_csr32.vhd",
-    "$TdcRoot/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr32_chip/sim/tdc_gpx_axil_csr32_chip.vhd"
+$CsrFiles = @(
+    "$IpRoot/my_axil_csr/HDL/axil_fsm.vhd",
+    "$IpRoot/my_axil_csr/HDL/axil_ctrl_regs.vhd",
+    "$IpRoot/my_axil_csr/HDL/axil_stat_regs.vhd",
+    "$IpRoot/my_axil_csr/HDL/axil_intr.vhd",
+    "$IpRoot/my_axil_csr/HDL/my_axil_csr_top.vhd",
+    "$IpRoot/my_axil_csr32/HDL/my_axil_csr32_pkg.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_fsm_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_ctrl_regs_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_stat_regs_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_intr_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/my_axil_csr32_top.vhd"
 )
 
 $MotorFiles = @(
@@ -127,6 +121,7 @@ $EchoFiles = @(
     "$IpRoot/echo_receiver/HDL/echo_receiver_timebase.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_stop_frontend.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_core.vhd",
+    "$IpRoot/echo_receiver/HDL/echo_receiver_cdc_snapshot.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_csr.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_top.vhd"
 )
@@ -165,16 +160,13 @@ $TdcFiles = @(
     "$Hdl/tb_tdc_gpx_full_int.vhd"
 )
 
-$CanonicalFiles = @($MotorFiles + $LaserFiles + $EchoFiles + $TdcFiles)
-Assert-FileExists @($GeneratedFiles + $CanonicalFiles)
+$CanonicalFiles = @($CsrFiles + $MotorFiles + $LaserFiles + $EchoFiles + $TdcFiles)
+Assert-FileExists $CanonicalFiles
 
 $VhdlProject = Join-Path $Work "system_smoke_vhdl.prj"
 $VlogProject = Join-Path $Work "system_smoke_vlog.prj"
 $VhdlLines = @()
-foreach ($File in $GeneratedFiles) {
-    $VhdlLines += "vhdl xil_defaultlib `"$File`""
-}
-foreach ($File in $MotorFiles + $LaserFiles + $EchoFiles + $TdcFiles) {
+foreach ($File in $CanonicalFiles) {
     $VhdlLines += "vhdl2008 xil_defaultlib `"$File`""
 }
 $VhdlLines += "nosort"
@@ -272,7 +264,7 @@ foreach ($Match in [regex]::Matches($MetricLine, '([a-z][a-z0-9_]*)=([^\s]+)')) 
     }
 }
 
-$SourceEntries = foreach ($File in @($CanonicalFiles + $GeneratedFiles)) {
+$SourceEntries = foreach ($File in $CanonicalFiles) {
     $Hash = Get-FileHash -Algorithm SHA256 -LiteralPath $File
     [ordered]@{
         path = $File.Replace('\', '/')

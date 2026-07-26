@@ -9,8 +9,6 @@ set project_file "C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/tdc_gpx_ctrl.xpr"
 open_project $project_file
 
 set ip_tb_patterns {
-    "*tdc_gpx_axil_csr32_chip/src/tb_my_axil_csr_32.vhd"
-    "*tdc_gpx_axil_csr_pipeline/src/tb_my_axil_csr.vhd"
     "*laser_ctl_axil_csr/src/tb_my_axil_csr.vhd"
     "*my_axil_csr_0/src/tb_my_axil_csr.vhd"
 }

@@ -69,19 +69,19 @@ function Invoke-Xelab {
     Invoke-Checked "$Vivado/xelab.bat" @("-f", $argFile)
 }
 
-$ipFiles = @(
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr32_chip/src/axil_ctrl_regs_32.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr32_chip/src/axil_fsm_32.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr32_chip/src/axil_intr_32.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr32_chip/src/axil_stat_regs_32.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr32_chip/src/my_axil_csr32_top.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr32_chip/sim/tdc_gpx_axil_csr32_chip.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr_pipeline/src/axil_ctrl_regs.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr_pipeline/src/axil_fsm.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr_pipeline/src/axil_intr.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr_pipeline/src/axil_stat_regs.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr_pipeline/src/my_axil_csr_top.vhd",
-    "$Root/tdc_gpx_ctrl.gen/sources_1/ip/tdc_gpx_axil_csr_pipeline/sim/tdc_gpx_axil_csr_pipeline.vhd"
+$IpRoot = "C:/Projects/my_sp/lib/IP"
+$csrFiles = @(
+    "$IpRoot/my_axil_csr/HDL/axil_fsm.vhd",
+    "$IpRoot/my_axil_csr/HDL/axil_ctrl_regs.vhd",
+    "$IpRoot/my_axil_csr/HDL/axil_stat_regs.vhd",
+    "$IpRoot/my_axil_csr/HDL/axil_intr.vhd",
+    "$IpRoot/my_axil_csr/HDL/my_axil_csr_top.vhd",
+    "$IpRoot/my_axil_csr32/HDL/my_axil_csr32_pkg.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_fsm_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_ctrl_regs_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_stat_regs_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/axil_intr_32.vhd",
+    "$IpRoot/my_axil_csr32/HDL/my_axil_csr32_top.vhd"
 )
 
 $vhdl2008Files = @(
@@ -138,7 +138,7 @@ $vhdl2008Files = @(
 )
 
 $vhdlLines = @()
-foreach ($f in $ipFiles) { $vhdlLines += "vhdl xil_defaultlib `"$f`"" }
+foreach ($f in $csrFiles) { $vhdlLines += "vhdl2008 xil_defaultlib `"$f`"" }
 foreach ($f in $vhdl2008Files) { $vhdlLines += "vhdl2008 xil_defaultlib `"$f`"" }
 $vhdlLines += "nosort"
 $vhdlLines | Set-Content -Encoding ASCII $vhdlPrj

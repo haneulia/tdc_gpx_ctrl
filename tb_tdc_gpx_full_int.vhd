@@ -20,8 +20,9 @@
 --   150/200 MHz exercises the product-reference AXIS/TDC CDC boundary.
 --
 --   enc_top  drives A/B/Z pins of motor_decoder_top (virtual encoder).
---   motor_decoder_top 10-bit AXI-Stream output drives laser_ctrl_top directly.
---     TUSER[9] is the face_valid qualifier and is checked by laser_ctrl.
+--   motor_decoder_top AXI4-Stream output drives laser_ctrl_top directly.
+--     TKEEP is always 1111; TUSER carries latency, overlap, simulation, and
+--     face-index metadata according to the current 8-bit Motor/Laser ABI.
 --   laser_ctrl_top o_fire_pulse drives a photodiode pulse generator that
 --     produces a rising pulse on echo_receiver_top.i_pd_lvds_p after a fixed
 --     echo delay. That emulates the optical return path.
@@ -232,6 +233,14 @@ architecture sim of tb_tdc_gpx_full_int is
     function fn_max_nat(a, b : natural) return natural is
     begin if a > b then return a; else return b; end if; end function;
     constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_5NS_TICKS, 1);
+    -- A zero timeout is a blocking configuration error in the current Laser
+    -- contract. Keep the integration profile within the configured target
+    -- round-trip limit while leaving ample room for the behavioral fire_done.
+    constant C_FIRE_DONE_TIMEOUT_5NS_TICKS : natural :=
+        C_LASER_RANGE_5NS_TICKS;
+    constant C_CTL1_VAL_LOCAL : std_logic_vector(31 downto 0) :=
+        std_logic_vector(to_unsigned(C_FIRE_DONE_TIMEOUT_5NS_TICKS, 16)) &
+        std_logic_vector(to_unsigned(C_FIRE_WIDTH, 16));
     constant C_START_TDC_W    : natural := fn_max_nat(C_START_TDC_5NS_TICKS, 1);
     constant C_STOP_TDC_W     : natural := fn_max_nat(C_STOP_TDC_5NS_TICKS, 1);
     constant C_CTL3_VAL_LOCAL : natural := C_STOP_TDC_W * 65536 + C_START_TDC_W;
@@ -269,6 +278,17 @@ architecture sim of tb_tdc_gpx_full_int is
         for i in 0 to n_faces - 1 loop
             v(i) := '1';
         end loop;
+        return v;
+    end function;
+
+    function fn_md_ctl7(
+        face_index   : natural;
+        stage_toggle : std_logic
+    ) return std_logic_vector is
+        variable v : std_logic_vector(31 downto 0) := (others => '0');
+    begin
+        v(2 downto 0) := std_logic_vector(to_unsigned(face_index, 3));
+        v(7) := stage_toggle;
         return v;
     end function;
 
@@ -423,8 +443,10 @@ architecture sim of tb_tdc_gpx_full_int is
     -- motor_decoder AXI-Stream output
     signal md_tvalid  : std_logic;
     signal md_tdata   : std_logic_vector(31 downto 0);
-    signal md_tuser : std_logic_vector(9 downto 0);
+    signal md_tkeep   : std_logic_vector(3 downto 0);
+    signal md_tuser   : std_logic_vector(7 downto 0);
     signal md_tlast   : std_logic;
+    signal lc_s_tready : std_logic;
     -- Downstream configuration completes before encoder requests are admitted.
     signal lc_req_enable : std_logic := '0';
     signal md_dbg_virt_pos   : std_logic_vector(14 downto 0);
@@ -668,7 +690,7 @@ architecture sim of tb_tdc_gpx_full_int is
 
 
     signal mon_md_beats     : natural := 0;
-    signal mon_md_face_valid_violation : natural := 0;
+    signal mon_md_tkeep_violation : natural := 0;
     signal mon_md_virt_pos_changes : natural := 0;
     signal mon_md_dec_count_changes : natural := 0;
     signal mon_md_active_cycles     : natural := 0;
@@ -918,11 +940,17 @@ begin
     u_md : entity work.motor_decoder_top
         generic map (
             has_irq         => true, 
+            g_CLK_FREQ_MHZ  => C_AXIS_DOMAIN_CLK_MHZ,
             g_CPR           => C_MD_CPR, 
+            g_DEC_MODE      => 4,
             g_DIR           => '0',
             g_TICKS_LO      => C_ENC_TICKS_LO_LOCAL,
             g_TICKS_HI      => C_ENC_TICKS_HI_LOCAL,
             g_HI_COUNT      => C_ENC_HI_COUNT_LOCAL,
+            g_PHYSICAL_ENCODER_TO_AXIS_LATENCY_CLKS =>
+                C_MD_PHYSICAL_LATENCY_CLKS,
+            g_VIRTUAL_ENCODER_TO_AXIS_LATENCY_CLKS =>
+                C_MD_VIRTUAL_LATENCY_CLKS,
             g_N_FACES       => G_N_FACES,
             g_TOTAL_STATES  => C_MD_TOTAL_STATES,
             g_FACE_CENTER_0 => C_MD_FACE_CENTER_0, 
@@ -964,8 +992,10 @@ begin
             irq             => md_irq,
             m_axis_aclk     => clk,
             m_axis_aresetn  => rst_n,
+            m_axis_tready   => lc_s_tready,
             m_axis_tvalid   => md_tvalid,
             m_axis_tdata    => md_tdata,
+            m_axis_tkeep    => md_tkeep,
             m_axis_tuser    => md_tuser,
             m_axis_tlast    => md_tlast,
             o_n_faces       => md_n_faces,
@@ -988,9 +1018,8 @@ begin
 
     -- =========================================================================
     -- laser_ctrl_top
-    --   The current Motor-to-Laser ABI uses the complete 10-bit TUSER.
-    --   TUSER[9] face_valid is preserved end-to-end. A low qualifier on a
-    --   valid beat is an interface-contract failure and laser_ctrl rejects it.
+    --   The current Motor-to-Laser ABI uses 32-bit TDATA, 4-bit TKEEP and
+    --   8-bit TUSER. laser_ctrl keeps TREADY high and rejects partial beats.
     -- =========================================================================
     u_lc : entity work.laser_ctrl_top
         generic map (
@@ -1021,8 +1050,10 @@ begin
             o_irq           => lc_irq,
             s_axis_aclk     => clk,
             s_axis_aresetn  => rst_n,
+            s_axis_tready   => lc_s_tready,
             s_axis_tvalid   => md_tvalid and lc_req_enable,
             s_axis_tdata    => md_tdata,
+            s_axis_tkeep    => md_tkeep,
             s_axis_tuser    => md_tuser,
             s_axis_tlast    => md_tlast,
             i_fire_done     => lc_fire_done,
@@ -1494,7 +1525,7 @@ begin
         if rising_edge(clk) then
             if rst_n = '0' then
                 mon_md_beats <= 0;
-                mon_md_face_valid_violation <= 0;
+                mon_md_tkeep_violation <= 0;
                 mon_md_virt_pos_changes <= 0;
                 mon_md_dec_count_changes <= 0;
                 mon_md_active_cycles <= 0;
@@ -1600,11 +1631,11 @@ begin
                 if lc_fire_pulse = '1' then dbg_lc_fire_ever <= '1'; end if;
                 if md_tvalid = '1' then
                     mon_md_beats <= mon_md_beats + 1;
-                    if md_tuser(9) /= '1' then
-                        mon_md_face_valid_violation <=
-                            mon_md_face_valid_violation + 1;
+                    if md_tkeep /= "1111" then
+                        mon_md_tkeep_violation <=
+                            mon_md_tkeep_violation + 1;
                         assert false
-                            report "full_int: motor valid beat lost face_valid at legacy 9-bit laser adapter"
+                            report "full_int: motor produced a partial AXIS beat"
                             severity error;
                     end if;
                 end if;
@@ -2044,6 +2075,7 @@ begin
         variable v_stat6 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_stat7 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_md_stat0 : std_logic_vector(31 downto 0) := (others => '0');
+        variable v_md_stage_toggle : std_logic := '0';
         variable v_hw_config : std_logic_vector(31 downto 0) := (others => '0');
         variable v_face_close_wait : natural := 0;
         variable v_pipeline_drain_wait : natural := 0;
@@ -2084,30 +2116,17 @@ begin
         -- [S1] CSR configuration (mirrors tb_laser_ctrl TEST 1 / TEST 2)
         --------------------------------------------------------------
         pl("[S1] motor_decoder bring-up (selected encoder + CPR + ticks + faces + APPLY)");
-        if G_ENCODER_SOURCE = "internal" then
-            md_wr(C_MD_CTL0, C_MD_CTL0_SIM);
-        else
-            md_wr(C_MD_CTL0, C_MD_CTL0_PHYS);
-        end if;
-        md_wr(C_MD_CTL1, std_logic_vector(to_unsigned(C_MD_CPR, 32)));
-        md_wr(C_MD_CTL2,
+        md_wr(C_MD_CTL0, C_MD_CTL0_INIT);
+        md_wr(C_MD_CTL1,
               std_logic_vector(to_unsigned(C_ENC_TICKS_LO_LOCAL, 32)));
-        md_wr(C_MD_CTL3,
+        md_wr(C_MD_CTL2,
               std_logic_vector(to_unsigned(C_ENC_HI_COUNT_LOCAL, 32)));
+        if G_ENCODER_SOURCE = "internal" then
+            md_wr(C_MD_CTL3, C_MD_CTL3_SIM);
+        else
+            md_wr(C_MD_CTL3, C_MD_CTL3_PHYS);
+        end if;
         wait_clk(100);
-        -- sw reset pulse (CTL0 SWRST_PHYS then clear)
-        if G_ENCODER_SOURCE = "internal" then
-            md_wr(C_MD_CTL0, C_MD_CTL0_SWRST_SIM);
-        else
-            md_wr(C_MD_CTL0, C_MD_CTL0_SWRST_PHYS);
-        end if;
-        wait_clk(5);
-        if G_ENCODER_SOURCE = "internal" then
-            md_wr(C_MD_CTL0, C_MD_CTL0_SIM);
-        else
-            md_wr(C_MD_CTL0, C_MD_CTL0_PHYS);
-        end if;
-        wait_clk(30);
         -- per-face centers (CTL5/CTL6/CTL7 loop)
         for f in 0 to G_N_FACES - 1 loop
             case f is
@@ -2129,9 +2148,11 @@ begin
                 when others => null;
             end case;
             md_wr(C_MD_CTL6, std_logic_vector(to_unsigned(C_MD_FACE_HALF_ST, 32)));
-            md_wr(C_MD_CTL7, std_logic_vector(to_unsigned(f, 32)));
+            v_md_stage_toggle := not v_md_stage_toggle;
+            md_wr(C_MD_CTL7, fn_md_ctl7(f, v_md_stage_toggle));
+            wait_clk(20);
         end loop;
-        md_wr(C_MD_CTL7, C_MD_CTL7_APPLY);
+        md_wr(C_MD_CTL0, fn_md_ctl0('1'));
         wait_md_commit(C_MD_COMMIT_TIMEOUT_CLKS);
 
         assert md_n_faces = std_logic_vector(to_unsigned(G_N_FACES, 3))
@@ -2145,15 +2166,15 @@ begin
         -- cfg_apply may wait for a revolution boundary. Restart at position 0
         -- after it completes so the A/B guard interval is deterministic.
         if G_ENCODER_SOURCE = "internal" then
-            md_wr(C_MD_CTL0, C_MD_CTL0_SWRST_SIM);
+            md_wr(C_MD_CTL3, C_MD_CTL3_SWRST_SIM);
         else
-            md_wr(C_MD_CTL0, C_MD_CTL0_SWRST_PHYS);
+            md_wr(C_MD_CTL3, C_MD_CTL3_SWRST_PHYS);
         end if;
         wait_clk(5);
         if G_ENCODER_SOURCE = "internal" then
-            md_wr(C_MD_CTL0, C_MD_CTL0_SIM);
+            md_wr(C_MD_CTL3, C_MD_CTL3_SIM);
         else
-            md_wr(C_MD_CTL0, C_MD_CTL0_PHYS);
+            md_wr(C_MD_CTL3, C_MD_CTL3_PHYS);
         end if;
         wait_clk(30);
 
@@ -2164,7 +2185,7 @@ begin
         wait_clk(10);
 
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
-        lc_wr(C_LC_CTL1, std_logic_vector(to_unsigned(C_FIRE_WIDTH, 32)));
+        lc_wr(C_LC_CTL1, C_CTL1_VAL_LOCAL);
         -- CTL2 max_roundtrip uses the shared fixed 5 ns CSR timebase.
         lc_wr(C_LC_CTL2,
               std_logic_vector(to_unsigned(C_LASER_RANGE_5NS_TICKS, 32)));
@@ -2312,8 +2333,8 @@ begin
         pl(" full integration TB summary:");
         pl("  source encoder     = " & G_ENCODER_SOURCE);
         pl("  md     AXI-S beats  = " & integer'image(mon_md_beats));
-        pl("  md     face_valid violations = "
-           & integer'image(mon_md_face_valid_violation));
+        pl("  md     TKEEP violations = "
+           & integer'image(mon_md_tkeep_violation));
         pl("  md     virt/decoded position changes = "
            & integer'image(mon_md_virt_pos_changes) & "/"
            & integer'image(mon_md_dec_count_changes));
@@ -2385,7 +2406,7 @@ begin
              & " vdma_hsize_fall=" & integer'image(to_integer(td_vdma_hsize_fall))
              & " vdma_vsize=" & integer'image(to_integer(td_vdma_vsize))
              & " md_beats=" & integer'image(mon_md_beats)
-             & " face_valid_violations=" & integer'image(mon_md_face_valid_violation)
+             & " tkeep_violations=" & integer'image(mon_md_tkeep_violation)
              & " md_virt_changes=" & integer'image(mon_md_virt_pos_changes)
              & " md_dec_changes=" & integer'image(mon_md_dec_count_changes)
              & " md_active_cycles=" & integer'image(mon_md_active_cycles)
@@ -2411,8 +2432,8 @@ begin
 
         assert mon_md_beats > 0
             report "full_int: no motor AXIS activity" severity failure;
-        assert mon_md_face_valid_violation = 0
-            report "full_int: legacy Motor-Laser TUSER adapter lost face_valid"
+        assert mon_md_tkeep_violation = 0
+            report "full_int: Motor-Laser AXIS path produced a partial beat"
             severity failure;
         if G_ENCODER_SOURCE = "internal" then
             assert mon_lc_fire_cnt = 0 and mon_lc_start_cnt > 0

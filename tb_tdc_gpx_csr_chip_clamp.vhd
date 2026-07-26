@@ -3,7 +3,7 @@
 -- C01 Bus_Timing CSR clamp regression
 -- =============================================================================
 --
--- Drives the CSR (tdc_gpx_csr_chip + bound tdc_gpx_axil_csr32_chip IP) over
+-- Drives tdc_gpx_csr_chip with the canonical source-level CSR32 implementation.
 -- AXI4-Lite using px_axi_lite_writer from px_utility_pkg, then samples the
 -- i_axis_aclk-domain outputs (o_bus_clk_div / o_bus_ticks) to verify the
 -- C01 timing clamp. The matrix sweep covers raw CTL1 div/ticks values that
@@ -144,7 +144,7 @@ begin
     end process p_reset;
 
     -- =========================================================================
-    -- DUT: tdc_gpx_csr_chip + bound tdc_gpx_axil_csr32_chip IP
+    -- DUT: tdc_gpx_csr_chip + canonical source-level CSR32 implementation
     -- =========================================================================
     u_dut : entity work.tdc_gpx_csr_chip
         port map (

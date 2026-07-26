@@ -112,8 +112,7 @@ proc report_parent_control_sets {stage result_dir} {
     puts "PARENT_CONTROL_SETS stage=$stage cfg_cells=[llength $cfg_cells]"
 }
 
-set ip_repo_axil   C:/Projects/my_sp/lib/IP/my_axil_csr/ip_repo
-set ip_repo_axil32 C:/Projects/my_sp/lib/IP/my_axil_csr32/ip_repo
+set ip_root C:/Projects/my_sp/lib/IP
 
 file mkdir $build_dir
 file mkdir $result_dir
@@ -124,8 +123,15 @@ create_project $project_name $project_dir -part $part_name -force
 set_property target_language VHDL [current_project]
 set_property simulator_language Mixed [current_project]
 set_property default_lib xil_defaultlib [current_project]
-set_property ip_repo_paths [list $ip_repo_axil $ip_repo_axil32] [current_project]
-update_ip_catalog -rebuild
+
+source [file join $hdl_dir scripts tdc_gpx_csr_source_manifest.tcl]
+foreach source [tdc_gpx_csr_source_manifest $ip_root] {
+    if {![file exists $source]} {
+        error "missing canonical CSR source: $source"
+    }
+    add_files -fileset sources_1 -norecurse $source
+    set_property file_type {VHDL 2008} [get_files $source]
+}
 
 source [file join $hdl_dir scripts tdc_gpx_rtl_manifest.tcl]
 set rtl_files [tdc_gpx_rtl_manifest]
@@ -152,36 +158,6 @@ if {![file exists $parent_xdc]} {
 }
 add_files -fileset constrs_1 -norecurse $parent_xdc
 
-# Generate the two CSR IPs from their source repositories. The parent project
-# does not rely on generated products from the standalone tdc_gpx_ctrl.xpr.
-create_ip \
-    -vendor victek.co.kr -library my_ip -name my_axil_csr -version 1.0 \
-    -module_name tdc_gpx_axil_csr_pipeline \
-    -dir [file join $project_dir ${project_name}.srcs sources_1 ip]
-set_property -dict [list \
-    CONFIG.num_data_bits 32 \
-    CONFIG.num_ctl_regs 8 \
-    CONFIG.num_stat_regs 8 \
-    CONFIG.has_interrupt_regs true \
-    CONFIG.num_intr_regs 4 \
-    CONFIG.num_interrupt_src 1] \
-    [get_ips tdc_gpx_axil_csr_pipeline]
-
-create_ip \
-    -vendor xilinx.com -library user -name my_axil_csr32_top -version 1.0 \
-    -module_name tdc_gpx_axil_csr32_chip \
-    -dir [file join $project_dir ${project_name}.srcs sources_1 ip]
-set_property -dict [list \
-    CONFIG.num_data_bits 32 \
-    CONFIG.num_ctl_regs 32 \
-    CONFIG.num_stat_regs 32 \
-    CONFIG.has_interrupt_regs true \
-    CONFIG.num_intr_regs 4 \
-    CONFIG.num_interrupt_src 2] \
-    [get_ips tdc_gpx_axil_csr32_chip]
-
-generate_target {instantiation_template synthesis simulation} \
-    [get_ips {tdc_gpx_axil_csr_pipeline tdc_gpx_axil_csr32_chip}]
 update_compile_order -fileset sources_1
 
 create_bd_design $bd_name

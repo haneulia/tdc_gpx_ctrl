@@ -14,72 +14,10 @@ open_project "$prj_dir/tdc_gpx_ctrl.xpr"
 # -----------------------------------------------------------------------------
 # 이웃 HDL 경로
 # -----------------------------------------------------------------------------
-set md_dir  "C:/Projects/my_sp/lib/IP/motor_decoder/HDL"
-set ve_dir  "C:/Projects/my_sp/lib/IP/virtual_encoder/HDL"
-set lc_dir  "C:/Projects/my_sp/lib/IP/laser_ctrl/HDL"
-set er_dir  "C:/Projects/my_sp/lib/IP/echo_receiver/HDL"
-
-set sibling_rtl [list \
-    "$ve_dir/enc_pkg.vhd" \
-    "$ve_dir/enc_param_apply_ctrl.vhd" \
-    "$ve_dir/enc_phase_counter.vhd" \
-    "$ve_dir/enc_position_tracker.vhd" \
-    "$ve_dir/enc_index_pulse.vhd" \
-    "$ve_dir/enc_timing_generator.vhd" \
-    "$ve_dir/enc_top.vhd" \
-    "$md_dir/quad_decoder.vhd" \
-    "$md_dir/mirror_active_detect.vhd" \
-    "$md_dir/motor_irq_bridge.vhd" \
-    "$md_dir/motor_decoder_cfg_pkg.vhd" \
-    "$md_dir/motor_cfg_commit_ctrl.vhd" \
-    "$md_dir/motor_axis_stream_out.vhd" \
-    "$md_dir/motor_decoder_csr.vhd" \
-    "$md_dir/motor_decoder_top.vhd" \
-    \
-    "$lc_dir/laser_ctrl_cfg_pkg.vhd" \
-    "$lc_dir/laser_ctrl_types_pkg.vhd" \
-    "$lc_dir/laser_ctrl_timebase.vhd" \
-    "$lc_dir/laser_ctrl_cdc_snapshot.vhd" \
-    "$lc_dir/laser_ctrl_event_counters.vhd" \
-    "$lc_dir/laser_ctrl_status.vhd" \
-    "$lc_dir/laser_ctrl_tdc.vhd" \
-    "$lc_dir/laser_ctrl_result.vhd" \
-    "$lc_dir/laser_ctrl_fire_done_bridge.vhd" \
-    "$lc_dir/laser_ctrl_scheduler.vhd" \
-    "$lc_dir/laser_ctrl_csr.vhd" \
-    "$lc_dir/laser_ctrl_metrics.vhd" \
-    "$lc_dir/laser_ctrl_axis_in.vhd" \
-    "$lc_dir/laser_ctrl_executor.vhd" \
-    "$lc_dir/laser_ctrl_top.vhd" \
-    \
-    "$er_dir/echo_receiver_pkg.vhd" \
-    "$er_dir/echo_receiver_timebase.vhd" \
-    "$er_dir/echo_receiver_stop_frontend.vhd" \
-    "$er_dir/echo_receiver_core.vhd" \
-    "$er_dir/echo_receiver_csr.vhd" \
-    "$er_dir/echo_receiver_top.vhd" \
-]
-
-set sibling_tb [list \
-    "$md_dir/tb_motor_decoder_pkg.vhd" \
-    "$md_dir/motor_decoder_top_tb.vhd" \
-    "$md_dir/enc_top_tb.vhd" \
-    \
-    "$lc_dir/tb_laser_ctrl_tests_pkg.vhd" \
-    "$lc_dir/tb_laser_ctrl_pkg.vhd" \
-    "$lc_dir/tb_laser_ctrl_monitors.vhd" \
-    "$lc_dir/tb_laser_ctrl_axis_in_unit.vhd" \
-    "$lc_dir/tb_laser_ctrl_scheduler_unit.vhd" \
-    "$lc_dir/tb_laser_ctrl_executor_unit.vhd" \
-    "$lc_dir/tb_laser_ctrl_fire_done_bridge_unit.vhd" \
-    "$lc_dir/tb_laser_ctrl_result_unit.vhd" \
-    "$lc_dir/tb_laser_ctrl_metrics_unit.vhd" \
-    "$lc_dir/tb_laser_ctrl.vhd" \
-    \
-    "$er_dir/tb_echo_receiver_pkg.vhd" \
-    "$er_dir/tb_echo_receiver_core_only.vhd" \
-    "$er_dir/tb_echo_receiver.vhd" \
-]
+set ip_root "C:/Projects/my_sp/lib/IP"
+source "$prj_dir/HDL/scripts/tdc_gpx_integration_source_manifest.tcl"
+set sibling_rtl [tdc_gpx_integration_rtl_manifest $ip_root]
+set sibling_tb  [tdc_gpx_integration_tb_manifest $ip_root]
 
 puts "INFO: adding sibling RTL (reference, no copy)"
 foreach f $sibling_rtl {
@@ -105,36 +43,25 @@ foreach f $sibling_tb {
 # -----------------------------------------------------------------------------
 # 추가 IP 3 개 (이웃이 사용)
 # -----------------------------------------------------------------------------
-proc mk_ip {ip_name vendor library name ver ctl stat intr_src} {
-    global prj_dir
-    puts "INFO: creating IP $ip_name"
-    create_ip -vendor $vendor -library $library -name $name -version $ver \
-        -module_name $ip_name -dir "$prj_dir/tdc_gpx_ctrl.srcs/sources_1/ip"
-    set_property -dict [list \
-        CONFIG.num_data_bits      32 \
-        CONFIG.num_ctl_regs       $ctl \
-        CONFIG.num_stat_regs      $stat \
-        CONFIG.has_interrupt_regs true \
-        CONFIG.num_intr_regs      4 \
-        CONFIG.num_interrupt_src  $intr_src \
-    ] [get_ips $ip_name]
-    generate_target {instantiation_template synthesis simulation} \
-        [get_files $ip_name.xci]
-}
-
 # laser_ctl_axil_csr — my_axil_csr 7-bit, 8/8 CTL/STAT, 1 intr_src
-mk_ip laser_ctl_axil_csr  victek.co.kr my_ip my_axil_csr        1.0  8  8 1
+# CSR entities are compiled directly from their canonical source directories.
 # my_axil_csr_0 — motor_decoder 용 (ALU: 3 intr src 기존값 유지)
-mk_ip my_axil_csr_0       victek.co.kr my_ip my_axil_csr        1.0  8  8 3
 # echo_receiver_axil_csr32 — 9-bit, 17 CTL / 4 STAT, 1 intr_src
-mk_ip echo_receiver_axil_csr32 xilinx.com user  my_axil_csr32_top 1.0 17  4 1
+source "$prj_dir/HDL/scripts/tdc_gpx_csr_source_manifest.tcl"
+foreach f [tdc_gpx_csr_source_manifest $ip_root] {
+    if {![file exists $f]} {
+        error "missing canonical CSR source: $f"
+    }
+    if {[llength [get_files -all -quiet $f]] == 0} {
+        add_files -fileset sources_1 -norecurse $f
+    }
+    set_property file_type {VHDL 2008} [get_files -all $f]
+}
 
 # -----------------------------------------------------------------------------
 # IP 내부 tb 파일 excludes (컴파일 순서 꼬임 방지)
 # -----------------------------------------------------------------------------
 foreach pat {
-    "*tdc_gpx_axil_csr32_chip/src/tb_my_axil_csr_32.vhd"
-    "*tdc_gpx_axil_csr_pipeline/src/tb_my_axil_csr.vhd"
     "*laser_ctl_axil_csr/src/tb_my_axil_csr.vhd"
     "*my_axil_csr_0/src/tb_my_axil_csr.vhd"
     "*echo_receiver_axil_csr32/src/tb_my_axil_csr_32.vhd"

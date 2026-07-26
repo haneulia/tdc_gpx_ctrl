@@ -5,8 +5,9 @@
 --
 -- Purpose:
 --   AXI4-Lite register interface for TDC-GPX chip configuration and individual
---   register read/write access.  Uses tdc_gpx_axil_csr32_chip IP (32 CTL + 32 STAT,
---   9-bit address).  CDC transfers control registers to i_axis_aclk domain.
+--   register read/write access. Uses the canonical source-level
+--   my_axil_csr32_top implementation (32 CTL + 32 STAT, 9-bit address).
+--   CDC transfers control registers to i_axis_aclk domain.
 --
 -- Owned registers:
 --   CTL1  (0x04) BUS_TIMING     [5:0] bus_clk_div, [8:6] bus_ticks,
@@ -77,7 +78,7 @@ entity tdc_gpx_csr_chip is
         s_axi_aclk          : in  std_logic;
         s_axi_aresetn       : in  std_logic;
 
-        -- AXI4-Lite Slave (9-bit address, tdc_gpx_axil_csr32)
+        -- AXI4-Lite Slave (9-bit address, canonical my_axil_csr32_top)
         s_axi_awvalid       : in  std_logic;
         s_axi_awready       : out std_logic;
         s_axi_awaddr        : in  std_logic_vector(c_CSR_ADDR_WIDTH - 1 downto 0);
@@ -142,137 +143,6 @@ entity tdc_gpx_csr_chip is
 end entity tdc_gpx_csr_chip;
 
 architecture rtl of tdc_gpx_csr_chip is
-
-    -- =========================================================================
-    -- tdc_gpx_axil_csr32_chip component (Vivado IP: 32 CTL, 32 STAT, 1 IRQ)
-    -- =========================================================================
-    component tdc_gpx_axil_csr32_chip is
-        port (
-            s_axi_csr_aclk      : in  std_logic;
-            s_axi_csr_aresetn   : in  std_logic;
-            s_axi_csr_awaddr    : in  std_logic_vector(8 downto 0);
-            s_axi_csr_awprot    : in  std_logic_vector(2 downto 0);
-            s_axi_csr_awvalid   : in  std_logic;
-            s_axi_csr_awready   : out std_logic;
-            s_axi_csr_wdata     : in  std_logic_vector(31 downto 0);
-            s_axi_csr_wstrb     : in  std_logic_vector(3 downto 0);
-            s_axi_csr_wvalid    : in  std_logic;
-            s_axi_csr_wready    : out std_logic;
-            s_axi_csr_bresp     : out std_logic_vector(1 downto 0);
-            s_axi_csr_bvalid    : out std_logic;
-            s_axi_csr_bready    : in  std_logic;
-            s_axi_csr_araddr    : in  std_logic_vector(8 downto 0);
-            s_axi_csr_arprot    : in  std_logic_vector(2 downto 0);
-            s_axi_csr_arvalid   : in  std_logic;
-            s_axi_csr_arready   : out std_logic;
-            s_axi_csr_rdata     : out std_logic_vector(31 downto 0);
-            s_axi_csr_rresp     : out std_logic_vector(1 downto 0);
-            s_axi_csr_rvalid    : out std_logic;
-            s_axi_csr_rready    : in  std_logic;
-            -- Init values (32 CTL registers)
-            reg0_init_val  : in std_logic_vector(31 downto 0);
-            reg1_init_val  : in std_logic_vector(31 downto 0);
-            reg2_init_val  : in std_logic_vector(31 downto 0);
-            reg3_init_val  : in std_logic_vector(31 downto 0);
-            reg4_init_val  : in std_logic_vector(31 downto 0);
-            reg5_init_val  : in std_logic_vector(31 downto 0);
-            reg6_init_val  : in std_logic_vector(31 downto 0);
-            reg7_init_val  : in std_logic_vector(31 downto 0);
-            reg8_init_val  : in std_logic_vector(31 downto 0);
-            reg9_init_val  : in std_logic_vector(31 downto 0);
-            reg10_init_val : in std_logic_vector(31 downto 0);
-            reg11_init_val : in std_logic_vector(31 downto 0);
-            reg12_init_val : in std_logic_vector(31 downto 0);
-            reg13_init_val : in std_logic_vector(31 downto 0);
-            reg14_init_val : in std_logic_vector(31 downto 0);
-            reg15_init_val : in std_logic_vector(31 downto 0);
-            reg16_init_val : in std_logic_vector(31 downto 0);
-            reg17_init_val : in std_logic_vector(31 downto 0);
-            reg18_init_val : in std_logic_vector(31 downto 0);
-            reg19_init_val : in std_logic_vector(31 downto 0);
-            reg20_init_val : in std_logic_vector(31 downto 0);
-            reg21_init_val : in std_logic_vector(31 downto 0);
-            reg22_init_val : in std_logic_vector(31 downto 0);
-            reg23_init_val : in std_logic_vector(31 downto 0);
-            reg24_init_val : in std_logic_vector(31 downto 0);
-            reg25_init_val : in std_logic_vector(31 downto 0);
-            reg26_init_val : in std_logic_vector(31 downto 0);
-            reg27_init_val : in std_logic_vector(31 downto 0);
-            reg28_init_val : in std_logic_vector(31 downto 0);
-            reg29_init_val : in std_logic_vector(31 downto 0);
-            reg30_init_val : in std_logic_vector(31 downto 0);
-            reg31_init_val : in std_logic_vector(31 downto 0);
-            -- CTL outputs (32)
-            ctl0_out  : out std_logic_vector(31 downto 0);
-            ctl1_out  : out std_logic_vector(31 downto 0);
-            ctl2_out  : out std_logic_vector(31 downto 0);
-            ctl3_out  : out std_logic_vector(31 downto 0);
-            ctl4_out  : out std_logic_vector(31 downto 0);
-            ctl5_out  : out std_logic_vector(31 downto 0);
-            ctl6_out  : out std_logic_vector(31 downto 0);
-            ctl7_out  : out std_logic_vector(31 downto 0);
-            ctl8_out  : out std_logic_vector(31 downto 0);
-            ctl9_out  : out std_logic_vector(31 downto 0);
-            ctl10_out : out std_logic_vector(31 downto 0);
-            ctl11_out : out std_logic_vector(31 downto 0);
-            ctl12_out : out std_logic_vector(31 downto 0);
-            ctl13_out : out std_logic_vector(31 downto 0);
-            ctl14_out : out std_logic_vector(31 downto 0);
-            ctl15_out : out std_logic_vector(31 downto 0);
-            ctl16_out : out std_logic_vector(31 downto 0);
-            ctl17_out : out std_logic_vector(31 downto 0);
-            ctl18_out : out std_logic_vector(31 downto 0);
-            ctl19_out : out std_logic_vector(31 downto 0);
-            ctl20_out : out std_logic_vector(31 downto 0);
-            ctl21_out : out std_logic_vector(31 downto 0);
-            ctl22_out : out std_logic_vector(31 downto 0);
-            ctl23_out : out std_logic_vector(31 downto 0);
-            ctl24_out : out std_logic_vector(31 downto 0);
-            ctl25_out : out std_logic_vector(31 downto 0);
-            ctl26_out : out std_logic_vector(31 downto 0);
-            ctl27_out : out std_logic_vector(31 downto 0);
-            ctl28_out : out std_logic_vector(31 downto 0);
-            ctl29_out : out std_logic_vector(31 downto 0);
-            ctl30_out : out std_logic_vector(31 downto 0);
-            ctl31_out : out std_logic_vector(31 downto 0);
-            -- STAT inputs (32)
-            stat0_in  : in std_logic_vector(31 downto 0);
-            stat1_in  : in std_logic_vector(31 downto 0);
-            stat2_in  : in std_logic_vector(31 downto 0);
-            stat3_in  : in std_logic_vector(31 downto 0);
-            stat4_in  : in std_logic_vector(31 downto 0);
-            stat5_in  : in std_logic_vector(31 downto 0);
-            stat6_in  : in std_logic_vector(31 downto 0);
-            stat7_in  : in std_logic_vector(31 downto 0);
-            stat8_in  : in std_logic_vector(31 downto 0);
-            stat9_in  : in std_logic_vector(31 downto 0);
-            stat10_in : in std_logic_vector(31 downto 0);
-            stat11_in : in std_logic_vector(31 downto 0);
-            stat12_in : in std_logic_vector(31 downto 0);
-            stat13_in : in std_logic_vector(31 downto 0);
-            stat14_in : in std_logic_vector(31 downto 0);
-            stat15_in : in std_logic_vector(31 downto 0);
-            stat16_in : in std_logic_vector(31 downto 0);
-            stat17_in : in std_logic_vector(31 downto 0);
-            stat18_in : in std_logic_vector(31 downto 0);
-            stat19_in : in std_logic_vector(31 downto 0);
-            stat20_in : in std_logic_vector(31 downto 0);
-            stat21_in : in std_logic_vector(31 downto 0);
-            stat22_in : in std_logic_vector(31 downto 0);
-            stat23_in : in std_logic_vector(31 downto 0);
-            stat24_in : in std_logic_vector(31 downto 0);
-            stat25_in : in std_logic_vector(31 downto 0);
-            stat26_in : in std_logic_vector(31 downto 0);
-            stat27_in : in std_logic_vector(31 downto 0);
-            stat28_in : in std_logic_vector(31 downto 0);
-            stat29_in : in std_logic_vector(31 downto 0);
-            stat30_in : in std_logic_vector(31 downto 0);
-            stat31_in : in std_logic_vector(31 downto 0);
-            -- Interrupt
-            intrpt_src_in : in  std_logic_vector(1 downto 0);
-            irq           : out std_logic
-        );
-    end component tdc_gpx_axil_csr32_chip;
 
     -- =========================================================================
     -- Constants
@@ -385,9 +255,17 @@ architecture rtl of tdc_gpx_csr_chip is
 begin
 
     -- =========================================================================
-    -- [1] tdc_gpx_axil_csr32_chip instantiation (32 CTL, 32 STAT)
+    -- [1] Canonical source-level my_axil_csr32_top (32 CTL, 32 STAT)
     -- =========================================================================
-    u_csr : tdc_gpx_axil_csr32_chip
+    u_csr : entity work.my_axil_csr32_top
+        generic map (
+            num_data_bits       => 32,
+            num_ctl_regs        => 32,
+            num_stat_regs       => 32,
+            has_interrupt_regs  => true,
+            num_intr_regs       => 4,
+            num_interrupt_src   => 2
+        )
         port map (
             s_axi_csr_aclk    => s_axi_aclk,
             s_axi_csr_aresetn => s_axi_aresetn,

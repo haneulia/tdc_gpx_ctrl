@@ -5,7 +5,8 @@
 --
 -- Purpose:
 --   AXI4-Lite register interface for pipeline and shot control.
---   Uses tdc_gpx_axil_csr_pipeline IP (8 CTL + 8 STAT, 7-bit address).
+--   Uses the canonical source-level my_axil_csr implementation
+--   (8 CTL + 8 STAT, 7-bit address).
 --   CDC transfers control registers to i_axis_aclk domain.
 --
 -- Register map:
@@ -76,7 +77,7 @@ entity tdc_gpx_csr_pipeline is
         s_axi_aclk          : in  std_logic;
         s_axi_aresetn       : in  std_logic;
 
-        -- AXI4-Lite Slave (7-bit address, tdc_gpx_axil_csr_pipeline IP)
+        -- AXI4-Lite Slave (7-bit address, canonical my_axil_csr)
         s_axi_awvalid       : in  std_logic;
         s_axi_awready       : out std_logic;
         s_axi_awaddr        : in  std_logic_vector(6 downto 0);
@@ -147,61 +148,6 @@ architecture rtl of tdc_gpx_csr_pipeline is
                 return to_unsigned(1, 3);
         end case;
     end function;
-
-    -- =========================================================================
-    -- tdc_gpx_axil_csr_pipeline component (Vivado IP: 8 CTL, 8 STAT, 1 IRQ)
-    -- =========================================================================
-    component tdc_gpx_axil_csr_pipeline is
-        port (
-            s_axi_csr_aclk      : in  std_logic;
-            s_axi_csr_aresetn   : in  std_logic;
-            s_axi_csr_awaddr    : in  std_logic_vector(6 downto 0);
-            s_axi_csr_awprot    : in  std_logic_vector(2 downto 0);
-            s_axi_csr_awvalid   : in  std_logic;
-            s_axi_csr_awready   : out std_logic;
-            s_axi_csr_wdata     : in  std_logic_vector(31 downto 0);
-            s_axi_csr_wstrb     : in  std_logic_vector(3 downto 0);
-            s_axi_csr_wvalid    : in  std_logic;
-            s_axi_csr_wready    : out std_logic;
-            s_axi_csr_bresp     : out std_logic_vector(1 downto 0);
-            s_axi_csr_bvalid    : out std_logic;
-            s_axi_csr_bready    : in  std_logic;
-            s_axi_csr_araddr    : in  std_logic_vector(6 downto 0);
-            s_axi_csr_arprot    : in  std_logic_vector(2 downto 0);
-            s_axi_csr_arvalid   : in  std_logic;
-            s_axi_csr_arready   : out std_logic;
-            s_axi_csr_rdata     : out std_logic_vector(31 downto 0);
-            s_axi_csr_rresp     : out std_logic_vector(1 downto 0);
-            s_axi_csr_rvalid    : out std_logic;
-            s_axi_csr_rready    : in  std_logic;
-            reg0_init_val       : in  std_logic_vector(31 downto 0);
-            reg1_init_val       : in  std_logic_vector(31 downto 0);
-            reg2_init_val       : in  std_logic_vector(31 downto 0);
-            reg3_init_val       : in  std_logic_vector(31 downto 0);
-            reg4_init_val       : in  std_logic_vector(31 downto 0);
-            reg5_init_val       : in  std_logic_vector(31 downto 0);
-            reg6_init_val       : in  std_logic_vector(31 downto 0);
-            reg7_init_val       : in  std_logic_vector(31 downto 0);
-            ctl0_out            : out std_logic_vector(31 downto 0);
-            ctl1_out            : out std_logic_vector(31 downto 0);
-            ctl2_out            : out std_logic_vector(31 downto 0);
-            ctl3_out            : out std_logic_vector(31 downto 0);
-            ctl4_out            : out std_logic_vector(31 downto 0);
-            ctl5_out            : out std_logic_vector(31 downto 0);
-            ctl6_out            : out std_logic_vector(31 downto 0);
-            ctl7_out            : out std_logic_vector(31 downto 0);
-            stat0_in            : in  std_logic_vector(31 downto 0);
-            stat1_in            : in  std_logic_vector(31 downto 0);
-            stat2_in            : in  std_logic_vector(31 downto 0);
-            stat3_in            : in  std_logic_vector(31 downto 0);
-            stat4_in            : in  std_logic_vector(31 downto 0);
-            stat5_in            : in  std_logic_vector(31 downto 0);
-            stat6_in            : in  std_logic_vector(31 downto 0);
-            stat7_in            : in  std_logic_vector(31 downto 0);
-            intrpt_src_in       : in  std_logic_vector(0 downto 0);
-            irq                 : out std_logic
-        );
-    end component tdc_gpx_axil_csr_pipeline;
 
     -- =========================================================================
     -- Constants
@@ -350,7 +296,7 @@ begin
         <= std_logic_vector(s_n_faces_effective);
 
     -- =========================================================================
-    -- [2] tdc_gpx_axil_csr_pipeline instantiation (8 CTL, 8 STAT)
+    -- [2] Canonical source-level my_axil_csr (8 CTL, 8 STAT)
     --
     -- LATENT-BUG FIX (2026-07-17): STAT read address remap.
     -- The IP was generated with num_ctl_regs=8 / num_stat_regs=8, which
@@ -376,7 +322,15 @@ begin
                    when s_axi_awaddr(6 downto 5) = "00" else
                    c_UNMAPPED_IP_ADDR;
 
-    u_srm : tdc_gpx_axil_csr_pipeline
+    u_srm : entity work.my_axil_csr
+        generic map (
+            num_data_bits       => 32,
+            num_ctl_regs        => 8,
+            num_stat_regs       => 8,
+            has_interrupt_regs  => true,
+            num_intr_regs       => 4,
+            num_interrupt_src   => 1
+        )
         port map (
             s_axi_csr_aclk    => s_axi_aclk,
             s_axi_csr_aresetn => s_axi_aresetn,

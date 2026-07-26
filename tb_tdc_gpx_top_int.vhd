@@ -63,7 +63,7 @@ entity tb_tdc_gpx_top_int is
         -- width here propagates consistently through the whole TB (DUT
         -- generics + CSR values + chip model preload + timing waits).
         -- =================================================================
-        G_AXIS_CLK_MHZ    : real    := 200.0;   -- AXIS/AXI-Lite clock (MHz)
+        G_AXIS_CLK_MHZ    : real    := 150.0;   -- Processing clock (MHz)
         G_TDC_CLK_MHZ     : real    := 200.0;   -- TDC bus/control clock (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (m)
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
