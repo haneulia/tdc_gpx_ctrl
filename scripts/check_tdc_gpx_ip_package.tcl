@@ -80,10 +80,28 @@ if {[llength [ipx::get_bus_parameters -quiet FREQ_HZ \
     error {s_axi_aclk must not publish a fixed CSR frequency}
 }
 
+set output_width [require_one [ipx::get_user_parameters g_OUTPUT_WIDTH \
+    -of_objects $core] {user parameter g_OUTPUT_WIDTH}]
+if {[get_property value $output_width] != 32} {
+    error {g_OUTPUT_WIDTH default must remain 32 bits}
+}
+if {[get_property value_validation_type $output_width] ne {list}} {
+    error {g_OUTPUT_WIDTH must use list validation}
+}
+if {[get_property value_validation_list $output_width] ne {32 64 128}} {
+    error "g_OUTPUT_WIDTH choices must be exactly 32, 64, and 128: [get_property value_validation_list $output_width]"
+}
+
 foreach {port_name dependency_fragment} {
     io_tdc_d {* 28}
     o_tdc_adr {* 4}
     o_tdc_csn {g_NUM_CHIPS}
+    o_m_axis_tdata {g_OUTPUT_WIDTH}
+    o_m_axis_tkeep {g_OUTPUT_WIDTH}
+    o_m_axis_tstrb {g_OUTPUT_WIDTH}
+    o_m_axis_fall_tdata {g_OUTPUT_WIDTH}
+    o_m_axis_fall_tkeep {g_OUTPUT_WIDTH}
+    o_m_axis_fall_tstrb {g_OUTPUT_WIDTH}
 } {
     set port [require_one [ipx::get_ports $port_name -of_objects $core] \
         "port $port_name"]
@@ -119,6 +137,14 @@ foreach required_file {
 
 source $xgui
 foreach {label command expected} [list \
+    output_width_32 \
+        {::tdc_gpx_xgui::validate_output_width 32} true \
+    output_width_64 \
+        {::tdc_gpx_xgui::validate_output_width 64} true \
+    output_width_128 \
+        {::tdc_gpx_xgui::validate_output_width 128} true \
+    output_width_invalid \
+        {::tdc_gpx_xgui::validate_output_width 96} false \
     default_topology \
         {::tdc_gpx_xgui::validate_topology 4 1111 0011 1100} true \
     one_chip_dual_edge \

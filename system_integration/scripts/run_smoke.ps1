@@ -2,6 +2,8 @@ param(
     [string]$Scenario = "",
     [ValidateSet("", "internal", "external")]
     [string]$EncoderSource = "",
+    [ValidateSet(0, 32, 64, 128)]
+    [int]$OutputWidth = 0,
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss")
 )
 
@@ -38,6 +40,15 @@ if ([double]$Cfg.axis_clock_mhz -gt [double]$Cfg.tdc_clock_mhz) {
 
 if (-not [string]::IsNullOrWhiteSpace($EncoderSource)) {
     $Cfg.encoder_source = $EncoderSource
+}
+
+if ($OutputWidth -ne 0) {
+    $Cfg.output_width_bits = $OutputWidth
+    $Cfg.scenario_id = "$($Cfg.scenario_id)_w${OutputWidth}"
+}
+$SupportedOutputWidths = @(32, 64, 128)
+if ([int]$Cfg.output_width_bits -notin $SupportedOutputWidths) {
+    throw "Unsupported output_width_bits '$($Cfg.output_width_bits)'; use 32, 64, or 128"
 }
 
 $Work = Join-Path $Hdl "tmp/system_integration/$Stamp"

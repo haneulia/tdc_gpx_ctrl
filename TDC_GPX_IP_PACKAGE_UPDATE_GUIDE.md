@@ -91,6 +91,8 @@ TDC_GPX_IP_PACKAGE_PASS
 - 두 AXI4-Lite, 두 AXI4-Stream, 세 clock, 두 interrupt interface
 - clock generic에 종속된 `FREQ_HZ`
 - `g_NUM_CHIPS`에 종속된 물리 핀 폭
+- `g_OUTPUT_WIDTH` 기본값 32와 선택 목록 32/64/128
+- Rise/Fall `TDATA`, `TKEEP`, `TSTRB`의 `g_OUTPUT_WIDTH` 종속성
 - canonical CSR source 포함 및 `.xci`/외부 경로 부재
 - 유효 topology와 잘못된 topology XGUI 예외처리
 - 150/200 MHz ASYNC 허용, AXIS>TDC 및 split SYNC 거부
@@ -99,17 +101,39 @@ TDC_GPX_IP_PACKAGE_PASS
 
 ```powershell
 & 'C:\AMDDesignTools\2025.2.1\Vivado\bin\vivado.bat' `
-  -mode batch -nojournal `
+  -mode batch -nojournal -nolog `
   -source 'C:\Projects\my_sp\lib\IP\tdc_gpx_ctrl\HDL\scripts\run_tdc_gpx_packaged_ip_ooc.tcl'
 ```
 
-기준 profile은 32-bit output, 4 chip, AXIS 150 MHz, TDC 200 MHz이다.
+기본 실행은 4 chip, AXIS 150 MHz, TDC 200 MHz에서 32/64/128-bit
+세 인스턴스를 모두 합성한다. 각 netlist에서 Rise/Fall `TDATA`와
+`TKEEP/TSTRB`가 각각 32/64/128 bit와 4/8/16 byte인지 검사한다.
+
+두 번째 Tcl 인수에 폭을 주면 한 폭만 진단할 수 있다.
+
+```powershell
+& 'C:\AMDDesignTools\2025.2.1\Vivado\bin\vivado.bat' `
+  -mode batch -nojournal -nolog `
+  -source 'C:\Projects\my_sp\lib\IP\tdc_gpx_ctrl\HDL\scripts\run_tdc_gpx_packaged_ip_ooc.tcl' `
+  -tclargs 'C:\tmp\tdc_gpx_ooc_w64' 64
+```
+
+### 32/64/128-bit 통합 기능 회귀
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File 'C:\Projects\my_sp\lib\IP\tdc_gpx_ctrl\HDL\system_integration\scripts\run_output_width_matrix.ps1'
+```
+
+이 회귀는 AXIS 150 MHz/TDC 200 MHz에서 외부 GPX I-Mode 모델까지 연결해
+세 폭 모두의 HSIZE, line beat 수, 28-bit raw word와 17-bit Hit 보존을 검사한다.
 
 Tcl에서 vector generic을 직접 설정할 때는 VHDL 문자열의 따옴표까지
 CONFIG 값에 포함한다. GUI Customize IP에서는 네 자리 binary 값만 입력한다.
 
 ```tcl
 set_property -dict [list \
+  CONFIG.g_OUTPUT_WIDTH       64 \
   CONFIG.g_PRESENT_CHIP_MASK {"1111"} \
   CONFIG.g_RISE_CHIP_MASK    {"0011"} \
   CONFIG.g_FALL_CHIP_MASK    {"1100"}] [get_ips tdc_gpx_top_0]

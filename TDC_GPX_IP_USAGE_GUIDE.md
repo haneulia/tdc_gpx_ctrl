@@ -54,6 +54,12 @@ Topology 규칙:
 - rising-capable chip 수는 falling-capable chip 수보다 작을 수 없다.
 - falling 전용 회로가 필요 없으면 `g_FALL_CHIP_MASK="0000"`으로 합성한다.
 
+`g_OUTPUT_WIDTH`는 포트 폭과 내부 packing geometry를 바꾸는 합성 전
+제너릭이다. CSR로 운용 중 변경할 수 없으며, Vivado XGUI에서는 32, 64,
+128 bit 중 하나만 선택할 수 있다. 기본값은 32 bit다. 값을 바꾼 뒤에는
+output products와 Block Design을 다시 생성하고, 연결된 VDMA/Data Width
+Converter의 폭도 일치시켜야 한다.
+
 유효 예:
 
 | 목적 | NUM | PRESENT | RISE | FALL |

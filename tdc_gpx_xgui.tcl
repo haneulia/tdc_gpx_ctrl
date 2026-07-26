@@ -2,6 +2,7 @@
 
 namespace eval ::tdc_gpx_xgui {
   variable supported_clocks {50 100 125 150 200}
+  variable supported_output_widths {32 64 128}
 
   proc as_integer {value label} {
     if {![string is entier -strict $value]} {
@@ -90,6 +91,19 @@ namespace eval ::tdc_gpx_xgui {
     }
     if {$mode eq {SYNC} && $axis != $tdc} {
       return [list false {SYNC stream mode requires equal AXIS and TDC clock frequencies.}]
+    }
+    return [list true {}]
+  }
+
+  proc validate_output_width {output_width} {
+    variable supported_output_widths
+    if {[catch {
+      set width [as_integer $output_width {AXI4-Stream output width}]
+    } message]} {
+      return [list false $message]
+    }
+    if {$width ni $supported_output_widths} {
+      return [list false {AXI4-Stream output width must be 32, 64, or 128 bits.}]
     }
     return [list true {}]
   }
@@ -184,6 +198,12 @@ proc tdc_set_clock_error {parameter axis tdc mode} {
   return $valid
 }
 
+proc tdc_set_output_width_error {parameter output_width} {
+  lassign [::tdc_gpx_xgui::validate_output_width $output_width] valid message
+  set_property errmsg $message $parameter
+  return $valid
+}
+
 proc tdc_set_time_error {parameter time_ns clock_mhz maximum label} {
   lassign [::tdc_gpx_xgui::validate_time_limit $time_ns $clock_mhz $maximum $label] valid message
   set_property errmsg $message $parameter
@@ -201,6 +221,10 @@ proc validate_PARAM_VALUE.g_RISE_CHIP_MASK {PARAM_VALUE.g_RISE_CHIP_MASK PARAM_V
 }
 proc validate_PARAM_VALUE.g_FALL_CHIP_MASK {PARAM_VALUE.g_FALL_CHIP_MASK PARAM_VALUE.g_NUM_CHIPS PARAM_VALUE.g_PRESENT_CHIP_MASK PARAM_VALUE.g_RISE_CHIP_MASK} {
   return [tdc_set_topology_error ${PARAM_VALUE.g_FALL_CHIP_MASK} [get_property value ${PARAM_VALUE.g_NUM_CHIPS}] [get_property value ${PARAM_VALUE.g_PRESENT_CHIP_MASK}] [get_property value ${PARAM_VALUE.g_RISE_CHIP_MASK}] [get_property value ${PARAM_VALUE.g_FALL_CHIP_MASK}]]
+}
+
+proc validate_PARAM_VALUE.g_OUTPUT_WIDTH {PARAM_VALUE.g_OUTPUT_WIDTH} {
+  return [tdc_set_output_width_error ${PARAM_VALUE.g_OUTPUT_WIDTH} [get_property value ${PARAM_VALUE.g_OUTPUT_WIDTH}]]
 }
 
 proc validate_PARAM_VALUE.g_AXIS_CLK_MHZ {PARAM_VALUE.g_AXIS_CLK_MHZ PARAM_VALUE.g_TDC_CLK_MHZ PARAM_VALUE.g_STREAM_CLK_MODE} {

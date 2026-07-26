@@ -48,6 +48,9 @@ entity tdc_gpx_top is
         -- without evaluating VHDL-2008 package constants. The package keeps
         -- the canonical values used by all implementation internals.
         g_HW_VERSION      : std_logic_vector(31 downto 0) := x"00010000";
+        -- Build-time width of both VDMA AXI4-Stream masters. Legal values
+        -- are 32, 64, and 128 bits; the port and packing geometry change at
+        -- elaboration, so this setting is intentionally not runtime CSR.
         g_OUTPUT_WIDTH    : natural := 32;
         -- Compile-time board edge capabilities. Masks may overlap for
         -- same-chip dual-edge operation. g_FALL_CHIP_MASK="0000" builds a
