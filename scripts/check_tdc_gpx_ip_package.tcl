@@ -92,6 +92,20 @@ if {[get_property value_validation_list $output_width] ne {32 64 128}} {
     error "g_OUTPUT_WIDTH choices must be exactly 32, 64, and 128: [get_property value_validation_list $output_width]"
 }
 
+foreach {label parameter} [list \
+        user [require_one \
+            [ipx::get_user_parameters g_DRAIN_MARGIN_TIME_NS \
+                -of_objects $core] \
+            {user parameter g_DRAIN_MARGIN_TIME_NS}] \
+        model [require_one \
+            [ipx::get_hdl_parameters g_DRAIN_MARGIN_TIME_NS \
+                -of_objects $core] \
+            {HDL parameter g_DRAIN_MARGIN_TIME_NS}]] {
+    if {[get_property value $parameter] != 6000} {
+        error "g_DRAIN_MARGIN_TIME_NS $label default must remain 6000 ns"
+    }
+}
+
 foreach {port_name dependency_fragment} {
     io_tdc_d {* 28}
     o_tdc_adr {* 4}

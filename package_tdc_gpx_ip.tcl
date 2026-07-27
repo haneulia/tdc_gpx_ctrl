@@ -240,7 +240,7 @@ foreach {name value maximum display_name description} {
     g_ALU_PULSE_TIME_NS 20 1000000 {ALU trigger pulse (ns)} {TDC-domain ALUTRIGGER pulse width.}
     g_BUS_READ_PERIOD_MIN_TIME_NS 25 140 {Minimum bus read period (ns)} {Converted count must fit the seven-clock bus scheduler limit.}
     g_BUS_IDLE_STABLE_TIME_NS 20480 2147483647 {Bus idle stable time (ns)} {Idle qualification before a new command sequence.}
-    g_DRAIN_MARGIN_TIME_NS 1280 1000000 {Drain margin (ns)} {Extra TDC-domain allowance while draining IFIFO data.}
+    g_DRAIN_MARGIN_TIME_NS 6000 1000000 {Drain margin (ns)} {Extra TDC-domain allowance while draining IFIFO data. Return 7 at the default 200 MHz TDC timing requires the 6 us verified budget.}
     g_ERR_DEBOUNCE_TIME_NS 25 1000000 {Error debounce (ns)} {AXIS-domain error qualification time.}
     g_CELL_QUARANTINE_MARGIN_TIME_NS 3410 327675000 {Cell quarantine margin (ns)} {AXIS-domain late-data quarantine allowance.}
     g_CELL_IFIFO2_MARGIN_TIME_NS 1705 327675000 {IFIFO2 cell margin (ns)} {AXIS-domain IFIFO2 drain allowance.}
