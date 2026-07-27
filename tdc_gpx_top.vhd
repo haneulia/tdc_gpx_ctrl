@@ -82,7 +82,11 @@ entity tdc_gpx_top is
         g_ALU_PULSE_TIME_NS           : positive := 20;
         g_BUS_READ_PERIOD_MIN_TIME_NS : positive := 25;
         g_BUS_IDLE_STABLE_TIME_NS     : positive := 20480;
-        g_DRAIN_MARGIN_TIME_NS        : positive := 1280;
+        -- Post-IrFlag GPX FIFO drain budget. The 6 us default closes the
+        -- 200 MHz reference profile with bus_clk_div=2, bus_ticks=5 and the
+        -- maximum 8 STOP x 7 Return payload. Slower runtime bus timing must
+        -- be re-budgeted explicitly in system verification.
+        g_DRAIN_MARGIN_TIME_NS        : positive := 6000;
         g_ERR_DEBOUNCE_TIME_NS        : positive := 25;
         g_ERR_MAX_RETRIES             : positive := 3;
         g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3410;

@@ -4,6 +4,10 @@ param(
     [string]$EncoderSource = "",
     [ValidateSet(0, 32, 64, 128)]
     [int]$OutputWidth = 0,
+    [ValidateRange(0, 7)]
+    [int]$ReturnsPerStop = 0,
+    [ValidateRange(0, 7)]
+    [int]$MaxHits = 0,
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss")
 )
 
@@ -27,6 +31,22 @@ if ($null -eq $Cfg.tdc_clock_mhz) {
         -NotePropertyValue $Cfg.axis_clock_mhz
 }
 
+$ScenarioDefaults = [ordered]@{
+    revolution_period_us = 100.0
+    optical_shot_interval_deg = 36.5
+    returns_per_stop = 1
+    max_hits_cfg = 3
+    tdc_drain_margin_time_ns = 6000
+    echo_stimulus_mode = "synthetic_single"
+    rearm_guard_5ns_ticks = 0
+}
+foreach ($Entry in $ScenarioDefaults.GetEnumerator()) {
+    if ($null -eq $Cfg.($Entry.Key)) {
+        $Cfg | Add-Member -NotePropertyName $Entry.Key `
+            -NotePropertyValue $Entry.Value
+    }
+}
+
 $SupportedClocksMhz = @(50, 100, 125, 150, 200)
 if ([double]$Cfg.axis_clock_mhz -notin $SupportedClocksMhz) {
     throw "Unsupported axis_clock_mhz '$($Cfg.axis_clock_mhz)'"
@@ -46,9 +66,47 @@ if ($OutputWidth -ne 0) {
     $Cfg.output_width_bits = $OutputWidth
     $Cfg.scenario_id = "$($Cfg.scenario_id)_w${OutputWidth}"
 }
+if ($ReturnsPerStop -ne 0) {
+    $Cfg.returns_per_stop = $ReturnsPerStop
+    $Cfg.scenario_id = "$($Cfg.scenario_id)_r${ReturnsPerStop}"
+}
+if ($MaxHits -ne 0) {
+    $Cfg.max_hits_cfg = $MaxHits
+    $Cfg.scenario_id = "$($Cfg.scenario_id)_mh${MaxHits}"
+}
 $SupportedOutputWidths = @(32, 64, 128)
 if ([int]$Cfg.output_width_bits -notin $SupportedOutputWidths) {
     throw "Unsupported output_width_bits '$($Cfg.output_width_bits)'; use 32, 64, or 128"
+}
+if ([double]$Cfg.revolution_period_us -le 0.0) {
+    throw "revolution_period_us must be positive"
+}
+if ([double]$Cfg.optical_shot_interval_deg -le 0.0 -or
+    [double]$Cfg.optical_shot_interval_deg -gt 360.0) {
+    throw "optical_shot_interval_deg must be in (0, 360]"
+}
+if ([int]$Cfg.returns_per_stop -lt 1 -or [int]$Cfg.returns_per_stop -gt 7) {
+    throw "returns_per_stop must be in 1..7"
+}
+if ([int]$Cfg.max_hits_cfg -lt 1 -or [int]$Cfg.max_hits_cfg -gt 7) {
+    throw "max_hits_cfg must be in 1..7"
+}
+if ([int]$Cfg.tdc_drain_margin_time_ns -le 0) {
+    throw "tdc_drain_margin_time_ns must be positive"
+}
+if ([int]$Cfg.returns_per_stop -gt [int]$Cfg.max_hits_cfg) {
+    throw "returns_per_stop must not exceed max_hits_cfg"
+}
+if ([string]$Cfg.echo_stimulus_mode -notin @("synthetic_single", "physical_multi")) {
+    throw "echo_stimulus_mode must be synthetic_single or physical_multi"
+}
+if ([string]$Cfg.echo_stimulus_mode -eq "physical_multi" -and
+    [int]$Cfg.stops_per_chip -ne 8) {
+    throw "physical_multi requires stops_per_chip=8"
+}
+if ([int]$Cfg.rearm_guard_5ns_ticks -lt 0 -or
+    [int]$Cfg.rearm_guard_5ns_ticks -gt 65535) {
+    throw "rearm_guard_5ns_ticks must be in 0..65535"
 }
 
 $Work = Join-Path $Hdl "tmp/system_integration/$Stamp"
@@ -221,13 +279,20 @@ try {
         "--generic_top `"G_TDC_CLK_MHZ=$($Cfg.tdc_clock_mhz)`"",
         "--generic_top `"G_MAX_RANGE_M=$($Cfg.max_range_m)`"",
         "--generic_top `"G_SIM_TARGET_M=$($Cfg.target_distance_m)`"",
+        "--generic_top `"G_REV_TIME_US=$($Cfg.revolution_period_us)`"",
+        "--generic_top `"G_OPTICAL_SHOT_INTERVAL_DEG=$($Cfg.optical_shot_interval_deg)`"",
         "--generic_top `"G_TDATA_WIDTH=$($Cfg.output_width_bits)`"",
         "--generic_top `"G_STOPS_PER_CHIP=$($Cfg.stops_per_chip)`"",
+        "--generic_top `"G_RETURNS_PER_STOP=$($Cfg.returns_per_stop)`"",
+        "--generic_top `"G_MAX_HITS_CFG=$($Cfg.max_hits_cfg)`"",
+        "--generic_top `"G_TDC_DRAIN_MARGIN_TIME_NS=$($Cfg.tdc_drain_margin_time_ns)`"",
         "--generic_top `"G_COLS_PER_FACE=$($Cfg.columns_per_face)`"",
         "--generic_top `"G_N_FACES=$($Cfg.faces_per_frame)`"",
         "--generic_top `"G_ACTIVE_CHIP_MASK=4'b$($Cfg.active_chip_mask)`"",
         "--generic_top `"G_CHIP_SLOPE_MASK=4'b$($Cfg.chip_slope_mask)`"",
         "--generic_top `"G_ENCODER_SOURCE=$($Cfg.encoder_source)`"",
+        "--generic_top `"G_ECHO_STIM_MODE=$($Cfg.echo_stimulus_mode)`"",
+        "--generic_top `"G_REARM_GUARD_5NS_TICKS=$($Cfg.rearm_guard_5ns_ticks)`"",
         "--generic_top `"G_TDC_STIM_MODE=$($Cfg.tdc_stimulus_mode)`"",
         "--generic_top `"G_BP_TREADY_GAP=$($Cfg.backpressure_gap_clocks)`"",
         "--generic_top `"G_ENC_RUN_US=$($Cfg.encoder_observation_us)`"",

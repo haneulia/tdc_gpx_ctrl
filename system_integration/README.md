@@ -60,6 +60,23 @@ derived values separately as `max_range_axis_clks` and
 `max_range_tdc_clks`; there is no ambiguous `max_range_local_clks` field in
 schema version 2.
 
+Mirror and Return timing are independent scenario inputs. The revolution
+period and optical shot interval derive the real Motor-to-Laser cadence;
+`returns_per_stop` selects the physical LVDS pulses actually generated on all
+32 GPX STOP pins, while `max_hits_cfg` remains the independent Cell capacity.
+The profile is valid only when all of the following hold:
+
+- `returns_per_stop <= max_hits_cfg <= 7`;
+- the GPX range window plus `tdc_drain_margin_time_ns` covers capture and FIFO
+  drain without `STAT5[11:8]`;
+- the mirror-derived shot interval completes without Laser schedule overrun;
+- the final rise/fall VDMA lines preserve every expected 17-bit Hit.
+
+The 200 MHz GPX reference profile uses a 6,000 ns drain margin. This value was
+closed with `bus_clk_div=2`, `bus_ticks=5`, eight STOP channels and seven
+Returns per STOP. A slower runtime GPX bus setting requires a new margin sweep;
+the range value alone does not cover FIFO readout time.
+
 ## Result contract
 
 Each run archives:
@@ -85,10 +102,11 @@ profile is reported as `present_chip_mask`, `rise_capability_mask`, and
 the slope bit emitted by the behavioral GPX model. It is stimulus data and must
 not be used as a substitute for the DUT's build-time topology.
 
-The TB writes Chip CSR `CTL21` before `CFG_WRITE` and `START`. Its
-distance-derived `max_hits` value therefore controls the actual Cell payload;
-leaving this field at zero would select the safe build-maximum alias of seven
-hits and invalidate any width/throughput comparison. The current smoke keeps
+The TB writes Chip CSR `CTL21` before `CFG_WRITE` and `START`. Its explicit
+`max_hits_cfg` value controls the Cell capacity independently of target
+distance and actual Return count; leaving this field at zero would select the
+safe build-maximum alias of seven hits and invalidate a claimed smaller
+geometry. The current smoke keeps
 `max_scan_5ns_ticks=0` because a nonzero Face-assembler timeout must include
 separately justified GPX drain and AXIS service margins. Copying the range
 window alone into that field is not a safe timeout policy.
@@ -132,7 +150,10 @@ The scoreboard observes START and Echo STOP independently, checks every raw
 bus word, and reconstructs the final Hit from the canonical VDMA cell:
 `Hit[15:0]` in the hit slot plus `Hit[16]` in metadata bit 0. The result
 contract publishes `i_mode_hit_refs`, rise/fall check counts, raw bus check
-count, and the last expected/rise/fall Hit values.
+count, and the last expected/rise/fall Hit values. In `physical_multi` mode,
+all eight STOP pins of each of the four GPX chips are exercised. This is the
+32 physical STOP-pin representation of 16 APD channels split across dedicated
+rising and falling GPX pairs.
 
 The Stage I1 pass marker is `SYSTEM_INTEGRATION_SMOKE_PASS`. It requires
 activity through Motor, Laser, Echo, GPX acquisition, and both VDMA slope
@@ -186,6 +207,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_smoke.ps1 `
   -Scenario system_integration/scenarios/smoke_external_axis150_tdc200_v001.json
 ```
+
+Run the maintained Return/width boundary matrix. It checks Return 1..7 at
+32-bit output and repeats the maximum seven-Return payload at 64 and 128 bits:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_return_feasibility_matrix.ps1
+```
+
+Add `-FullCrossProduct` only when all 21 Return/width combinations are needed.
 
 `-EncoderSource` remains available for short experiments, but archived
 `scenario.json` always contains the effective configuration after overrides.

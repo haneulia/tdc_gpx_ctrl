@@ -78,8 +78,20 @@ entity tb_tdc_gpx_full_int is
         G_TDC_CLK_MHZ     : real    := 200.0;   -- GPX physical-bus clock (MHz)
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (meters)
         G_SIM_TARGET_M    : real    := 375.0;   -- Echo synthetic target (m)
+        -- Motor/optical timing inputs. The mirror mechanical step is one half
+        -- of the requested optical scan-angle step.
+        G_REV_TIME_US     : real    := 100.0;   -- mirror revolution period
+        G_OPTICAL_SHOT_INTERVAL_DEG : real := 36.5;
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
+        -- Physical GPX words generated per enabled STOP and the downstream
+        -- Cell capacity are independent contracts. The former must not exceed
+        -- the latter in a healthy operating profile.
+        G_RETURNS_PER_STOP : positive range 1 to 7 := 1;
+        G_MAX_HITS_CFG      : positive range 1 to 7 := 3;
+        -- Existing tdc_gpx_top physical-time policy, exposed here so every
+        -- integration result records the exact post-IrFlag drain budget.
+        G_TDC_DRAIN_MARGIN_TIME_NS : positive := 6000;
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : positive range 1 to 5 := 1; -- compile-time faces
         -- All four behavioral GPX chips are active in the default profile.
@@ -97,6 +109,11 @@ entity tb_tdc_gpx_full_int is
         --   "external" = this TB's enc_top drives the physical A/B/Z inputs
         -- The two sources are mutually exclusive so the selected path is real.
         G_ENCODER_SOURCE  : string  := "internal";
+        -- "synthetic_single": Echo CSR generates one STOP0/chip (legacy smoke)
+        -- "physical_multi"  : TB drives every LVDS channel through
+        --                     echo_receiver, with G_RETURNS_PER_STOP pulses.
+        G_ECHO_STIM_MODE  : string  := "synthetic_single";
+        G_REARM_GUARD_5NS_TICKS : natural range 0 to 65535 := 0;
         -- Debug / experiment:
         --   'lc'     = i_shot_start / i_stop_tdc driven from laser_ctrl (normal)
         --   'direct' = TB drives them directly as 1-clk pulses (bypass lc), used
@@ -143,6 +160,8 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_MAX_RANGE_TDC_CLKS : natural :=
         to_integer(fn_range_5ns_ticks_to_clks(
             to_unsigned(C_MAX_RANGE_5NS_TICKS, 16), C_TDC_DOMAIN_CLK_MHZ));
+    constant C_DRAIN_MARGIN_TDC_CLKS : positive := fn_time_ns_to_clks_ceil(
+        G_TDC_DRAIN_MARGIN_TIME_NS, C_TDC_DOMAIN_CLK_MHZ);
     -- stop_tdc is an ordering diagnostic, not the GPX capture deadline. Give
     -- synchronized IrFlag time to become visible before Laser closes its
     -- logical window. The GPX MTimer and accepted distance remain unchanged.
@@ -155,28 +174,29 @@ architecture sim of tb_tdc_gpx_full_int is
         to_integer(fn_range_5ns_ticks_to_clks(
             to_unsigned(C_SIM_TARGET_5NS_TICKS, 16), C_AXIS_DOMAIN_CLK_MHZ));
 
-    -- PRF headroom (shot_period = 1.5 x round-trip per TDC window design memo)
-    constant C_SHOT_PERIOD_AXIS_CLKS : natural :=
-        (C_MAX_RANGE_AXIS_CLKS * 3 + 1) / 2;
-
     constant C_FIRE_DONE_DELAY : natural := 8;
 
     -- One clock-derived encoder profile is shared by both ownership modes.
     -- The sibling TB package has separate 100 MHz and 150 MHz constants;
     -- reusing either at another clock changes RPM and therefore shot PRF.
     constant C_ENC_TOTAL_CLKS_LOCAL : natural :=
-        natural(C_REV_TIME_US * G_AXIS_CLK_MHZ);
+        natural(ceil(G_REV_TIME_US * G_AXIS_CLK_MHZ));
+    constant C_MOTOR_RPM_LOCAL : positive :=
+        positive(integer(round(60000000.0 / G_REV_TIME_US)));
     constant C_ENC_TICKS_LO_LOCAL : natural :=
         C_ENC_TOTAL_CLKS_LOCAL / C_MD_TOTAL_STATES;
     constant C_ENC_HI_COUNT_LOCAL : natural :=
         C_ENC_TOTAL_CLKS_LOCAL
         - C_ENC_TICKS_LO_LOCAL * C_MD_TOTAL_STATES;
     constant C_ENC_TICKS_HI_LOCAL : natural := C_ENC_TICKS_LO_LOCAL + 1;
-    -- Convert the requested clock interval to position steps using the exact
-    -- average revolution length, then round up for PRF safety.
+    -- Optical reflection doubles mirror motion. Convert the requested optical
+    -- interval to a mechanical angle first, then round up to a decoder state.
     constant C_STEP_INTERVAL  : natural :=
-        (C_SHOT_PERIOD_AXIS_CLKS * C_MD_TOTAL_STATES
-         + C_ENC_TOTAL_CLKS_LOCAL - 1) / C_ENC_TOTAL_CLKS_LOCAL;
+        natural(ceil((G_OPTICAL_SHOT_INTERVAL_DEG / 2.0)
+                     * real(C_MD_TOTAL_STATES) / 360.0));
+    constant C_SHOT_PERIOD_AXIS_CLKS : natural :=
+        (C_STEP_INTERVAL * C_ENC_TOTAL_CLKS_LOCAL
+         + C_MD_TOTAL_STATES - 1) / C_MD_TOTAL_STATES;
     constant C_MD_COMMIT_TIMEOUT_CLKS : positive :=
         2 * C_ENC_TICKS_HI_LOCAL * C_MD_TOTAL_STATES + 100;
     -- A fixed observation time can end halfway through a face. Allow enough
@@ -189,17 +209,9 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_PIPE_DRAIN_TIMEOUT_CLKS : positive :=
         C_FACE_CLOSE_TIMEOUT_CLKS + 4 * C_MAX_RANGE_AXIS_CLKS;
 
-    -- max_hits table per distance memo (100m=1 / 250m=2 / 500m=3 / 750m=6 / 1000m=7)
-    function fn_max_hits(r_m : real) return natural is
-    begin
-        if r_m <=  150.0 then return 1;
-        elsif r_m <= 300.0 then return 2;
-        elsif r_m <= 600.0 then return 3;
-        elsif r_m <= 850.0 then return 6;
-        else                   return 7;
-        end if;
-    end function;
-    constant C_MAX_HITS       : natural := fn_max_hits(G_MAX_RANGE_M);
+    -- Distance owns only the acquisition window. Return count is an explicit
+    -- scene/stimulus input, while max_hits is the independent Cell capacity.
+    constant C_MAX_HITS : natural := G_MAX_HITS_CFG;
 
     -- The behavioral GPX model emits one slope bit per chip.  If every active
     -- chip emits rising data, disable the runtime falling lane so all present
@@ -242,6 +254,8 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_START_TDC_W    : natural := fn_max_nat(C_START_TDC_5NS_TICKS, 1);
     constant C_STOP_TDC_W     : natural := fn_max_nat(C_STOP_TDC_5NS_TICKS, 1);
     constant C_CTL3_VAL_LOCAL : natural := C_STOP_TDC_W * 65536 + C_START_TDC_W;
+    constant C_LC_CTL7_LOCAL : std_logic_vector(31 downto 0) :=
+        std_logic_vector(to_unsigned(G_REARM_GUARD_5NS_TICKS, 16)) & x"0000";
 
     function fn_lc_ctl0(
         laser_enable : std_logic;
@@ -379,25 +393,119 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_KEEP_W     : natural := fn_axis_keep_width(C_OUTPUT_W);
     constant C_WORDS_PER_BEAT : positive := C_OUTPUT_W / 32;
     constant C_HEADER_WORD_INDEX : natural := 3;
-    constant C_MON_SHOT_DEPTH : positive := 256;
+    constant C_MON_SHOT_DEPTH : positive := 64;
     type t_face_index_queue is array (0 to C_MON_SHOT_DEPTH - 1) of
         std_logic_vector(2 downto 0);
     type t_hit_queue is array (0 to C_MON_SHOT_DEPTH - 1) of
         unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+    constant C_HIT_WORDS_PER_CELL : positive := fn_ceil_div(C_MAX_HITS, 2);
+    constant C_CELL_WORDS         : positive := C_HIT_WORDS_PER_CELL + 1;
     constant C_FIRST_CELL_HIT_WORD_INDEX : natural :=
         c_HDR_PREFIX_BYTES / 4;
     constant C_FIRST_CELL_META_WORD_INDEX : natural :=
-        C_FIRST_CELL_HIT_WORD_INDEX + fn_ceil_div(C_MAX_HITS, 2);
+        C_FIRST_CELL_HIT_WORD_INDEX + C_HIT_WORDS_PER_CELL;
     constant C_STOP_DW    : natural := 32;
     constant C_STOP_CNT_WIDTH : natural := 4;
 
     -- Echo-receiver geometry for this integration profile.
     constant C_ER_N_STOPS : natural := c_MAX_STOPS_PER_CHIP;
     constant C_PD_WIDTH   : natural := c_MAX_CHIPS * C_ER_N_STOPS;
+    constant C_EXPECT_REF_DEPTH : positive :=
+        C_MON_SHOT_DEPTH * c_MAX_HITS_PER_STOP;
+    type t_hit_reference_array is array (0 to C_EXPECT_REF_DEPTH - 1) of
+        unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+    type t_channel_count_array is array (0 to C_PD_WIDTH - 1) of natural;
+    type t_chip_count_array is array (0 to c_MAX_CHIPS - 1) of natural;
+
+    function fn_hit_ref_index(
+        shot_idx : natural;
+        channel  : natural;
+        hit_idx  : natural
+    ) return natural is
+    begin
+        -- Every integration profile drives the same Return time to all active
+        -- channels. One canonical pin timestamp is therefore sufficient; the
+        -- raw bus and every Cell still compare their own words against it.
+        return shot_idx * c_MAX_HITS_PER_STOP + hit_idx;
+    end function;
+
+    function fn_expected_returns(channel : natural) return natural is
+    begin
+        if G_ECHO_STIM_MODE = "physical_multi" then
+            return G_RETURNS_PER_STOP;
+        elsif channel mod C_ER_N_STOPS = 0 then
+            return 1;
+        else
+            return 0;
+        end if;
+    end function;
+
+    function fn_lane_channel(
+        chip_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        cell_idx  : natural
+    ) return natural is
+        variable v_cell_base : natural := 0;
+    begin
+        for chip in 0 to c_MAX_CHIPS - 1 loop
+            if chip_mask(chip) = '1' then
+                if cell_idx < v_cell_base + G_STOPS_PER_CHIP then
+                    return chip * C_ER_N_STOPS + (cell_idx - v_cell_base);
+                end if;
+                v_cell_base := v_cell_base + G_STOPS_PER_CHIP;
+            end if;
+        end loop;
+        assert false
+            report "full_int: lane cell index exceeds active chip geometry"
+            severity failure;
+        return 0;
+    end function;
+
+    function fn_active_return_words_per_shot return natural is
+        variable v_total : natural := 0;
+    begin
+        for chip in 0 to c_MAX_CHIPS - 1 loop
+            if G_ACTIVE_CHIP_MASK(chip) = '1' then
+                for stop_id in 0 to G_STOPS_PER_CHIP - 1 loop
+                    v_total := v_total + fn_expected_returns(
+                        chip * C_ER_N_STOPS + stop_id);
+                end loop;
+            end if;
+        end loop;
+        return v_total;
+    end function;
+
+    function fn_lane_return_words_per_shot(
+        chip_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0)
+    ) return natural is
+        variable v_total : natural := 0;
+    begin
+        for chip in 0 to c_MAX_CHIPS - 1 loop
+            if chip_mask(chip) = '1' then
+                for stop_id in 0 to G_STOPS_PER_CHIP - 1 loop
+                    v_total := v_total + fn_expected_returns(
+                        chip * C_ER_N_STOPS + stop_id);
+                end loop;
+            end if;
+        end loop;
+        return v_total;
+    end function;
+
+    constant C_EXPECT_RAW_WORDS_PER_SHOT : natural :=
+        fn_active_return_words_per_shot;
+    constant C_RISE_CELL_COUNT : natural :=
+        fn_count_ones(C_RISE_ACTIVE_MASK) * G_STOPS_PER_CHIP;
+    constant C_FALL_CELL_COUNT : natural :=
+        fn_count_ones(C_FALL_ACTIVE_MASK) * G_STOPS_PER_CHIP;
+    constant C_EXPECT_RISE_HITS_PER_SHOT : natural :=
+        fn_lane_return_words_per_shot(C_RISE_ACTIVE_MASK);
+    constant C_EXPECT_FALL_HITS_PER_SHOT : natural :=
+        fn_lane_return_words_per_shot(C_FALL_ACTIVE_MASK);
 
     -- External GPX model calibration. The DUT receives the same value in its
     -- Face header, but never performs the START-to-STOP calculation itself.
     constant C_BIN_RESOLUTION_PS : positive := 81;
+    constant C_SIM_TARGET_DELAY : time := C_SIM_TARGET_5NS_TICKS * 5 ns;
+    constant C_ECHO_PULSE_WIDTH : time := 2 * C_AXIS_CLK_PERIOD;
 
     -- Encoder run wall-time (derived from generic)
     constant C_ENC_RUN_CLKS : natural :=
@@ -694,10 +802,14 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_td_rise_hit_checks : natural := 0;
     signal mon_td_fall_hit_checks : natural := 0;
     signal mon_i_mode_bus_checks : natural := 0;
+    signal mon_expected_shots : natural range 0 to C_MON_SHOT_DEPTH := 0;
+    signal mon_expected_hit_refs : t_hit_reference_array :=
+        (others => (others => '0'));
     signal mon_td_rise_face_seen : std_logic_vector(4 downto 0) := (others => '0');
     signal mon_td_fall_face_seen : std_logic_vector(4 downto 0) := (others => '0');
-    signal mon_expected_hit_queue : t_hit_queue := (others => (others => '0'));
-    signal mon_expected_hit_count : natural range 0 to C_MON_SHOT_DEPTH := 0;
+    signal mon_shot_interval_min_clks : natural := 0;
+    signal mon_shot_interval_max_clks : natural := 0;
+    signal mon_schedule_overrun : natural := 0;
     signal mon_last_expected_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
         (others => '0');
     signal mon_last_rise_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
@@ -736,6 +848,39 @@ begin
 
     assert G_TDC_STIM_MODE = "lc" or G_TDC_STIM_MODE = "direct"
         report "tb_tdc_gpx_full_int: G_TDC_STIM_MODE must be lc or direct"
+        severity failure;
+
+    assert G_ECHO_STIM_MODE = "synthetic_single"
+        or G_ECHO_STIM_MODE = "physical_multi"
+        report "tb_tdc_gpx_full_int: G_ECHO_STIM_MODE must be synthetic_single or physical_multi"
+        severity failure;
+
+    assert G_RETURNS_PER_STOP <= G_MAX_HITS_CFG
+        report "tb_tdc_gpx_full_int: actual returns exceed configured max_hits capacity"
+        severity failure;
+
+    assert G_REV_TIME_US > 0.0 and C_ENC_TOTAL_CLKS_LOCAL >= C_MD_TOTAL_STATES
+        report "tb_tdc_gpx_full_int: revolution period is too short for one clock per encoder state"
+        severity failure;
+
+    assert G_OPTICAL_SHOT_INTERVAL_DEG > 0.0
+        and G_OPTICAL_SHOT_INTERVAL_DEG <= 360.0
+        and C_STEP_INTERVAL >= 1 and C_STEP_INTERVAL <= 65535
+        report "tb_tdc_gpx_full_int: optical shot interval is outside the supported state range"
+        severity failure;
+
+    assert G_SIM_TARGET_M <= G_MAX_RANGE_M
+        report "tb_tdc_gpx_full_int: synthetic target exceeds the configured maximum range"
+        severity failure;
+
+    assert G_ECHO_STIM_MODE /= "physical_multi"
+        or C_SIM_TARGET_DELAY / G_RETURNS_PER_STOP > C_ECHO_PULSE_WIDTH
+        report "tb_tdc_gpx_full_int: Return spacing is not wider than the LVDS pulse"
+        severity failure;
+
+    assert G_ECHO_STIM_MODE /= "physical_multi"
+        or G_STOPS_PER_CHIP = C_ER_N_STOPS
+        report "tb_tdc_gpx_full_int: physical_multi requires all eight STOP channels per chip"
         severity failure;
 
     assert G_AXIS_CLK_MHZ = real(C_AXIS_DOMAIN_CLK_MHZ)
@@ -804,6 +949,38 @@ begin
                 severity failure;
         end loop;
     end process p_start_zero_cycle_check;
+
+    -- Physical multi-Return source. Every pulse traverses the Echo Receiver's
+    -- differential input and zero-added-latency STOP path before reaching the
+    -- external GPX model. Returns are evenly distributed from near range to
+    -- G_SIM_TARGET_M; the final Return therefore exercises the selected range.
+    p_physical_echo_driver : process
+        variable v_edge_time : time;
+        variable v_elapsed   : time;
+    begin
+        pd_p <= (others => '0');
+        pd_n <= (others => '1');
+        wait until rst_n = '1';
+        loop
+            wait until rising_edge(gpx_start_tdc_mux);
+            if G_ECHO_STIM_MODE = "physical_multi" then
+                v_elapsed := 0 ns;
+                for return_idx in 1 to G_RETURNS_PER_STOP loop
+                    v_edge_time := C_SIM_TARGET_DELAY * return_idx
+                                   / G_RETURNS_PER_STOP;
+                    if v_edge_time > v_elapsed then
+                        wait for v_edge_time - v_elapsed;
+                    end if;
+                    pd_p <= (others => '1');
+                    pd_n <= (others => '0');
+                    wait for C_ECHO_PULSE_WIDTH;
+                    pd_p <= (others => '0');
+                    pd_n <= (others => '1');
+                    v_elapsed := v_edge_time + C_ECHO_PULSE_WIDTH;
+                end loop;
+            end if;
+        end loop;
+    end process p_physical_echo_driver;
 
     -- Echo must receive the descriptor for this shot no later than the
     -- synchronized logical T0. With the direct laser->echo AXIS connection,
@@ -939,6 +1116,7 @@ begin
         generic map (
             has_irq         => true,
             g_PROC_CLK_MHZ  => C_AXIS_DOMAIN_CLK_MHZ,
+            g_MOTOR_RPM     => C_MOTOR_RPM_LOCAL,
             g_CPR           => C_MD_CPR,
             g_DEC_MODE      => 4,
             g_DIR           => '0',
@@ -1142,6 +1320,7 @@ begin
             g_MAX_HITS_PER_STOP  => c_MAX_HITS_PER_STOP,
             g_AXIS_CLK_MHZ    => C_AXIS_DOMAIN_CLK_MHZ,
             g_TDC_CLK_MHZ     => C_TDC_DOMAIN_CLK_MHZ,
+            g_DRAIN_MARGIN_TIME_NS => G_TDC_DRAIN_MARGIN_TIME_NS,
             g_STREAM_CLK_MODE => "ASYNC",
             -- Convert accelerated TB cycle knobs to the top-level physical
             -- time contract without changing the intended TDC cycle count.
@@ -1278,51 +1457,64 @@ begin
             o_capture_count  => gpx_capture_count
         );
 
-    -- Independent time-domain reference. This observes only the external
-    -- pins, not the behavioral GPX model's internal result. One STOP0 is
-    -- configured per chip and shot, so channel 0 is the canonical reference.
+    -- Independent pin-domain reference. It timestamps every physical STOP
+    -- channel and every Return instead of trusting the GPX model's internal
+    -- calculation. The flattened reference is later consumed by both the raw
+    -- 28-bit bus checker and the packed VDMA Cell checker.
     p_expected_hit : process(rst_n, gpx_start_tdc_mux, er_tdc_stop(0))
-        variable v_t0 : time := 0 ns;
-        variable v_armed : boolean := false;
-        variable v_count : natural range 0 to C_MON_SHOT_DEPTH := 0;
-        variable v_elapsed_ps : natural;
-        variable v_hit : natural;
+        variable v_t0           : time := 0 ns;
+        variable v_armed        : boolean := false;
+        variable v_shot_count   : natural range 0 to C_MON_SHOT_DEPTH := 0;
+        variable v_current_shot : natural range 0 to C_MON_SHOT_DEPTH - 1 := 0;
+        variable v_hit_count    : natural range 0 to c_MAX_HITS_PER_STOP := 0;
+        variable v_elapsed_ps   : natural;
+        variable v_hit          : natural;
+        variable v_ref_idx      : natural;
     begin
         if rst_n = '0' then
             v_t0 := 0 ns;
             v_armed := false;
-            v_count := 0;
-            mon_expected_hit_queue <= (others => (others => '0'));
-            mon_expected_hit_count <= 0;
+            v_shot_count := 0;
+            v_current_shot := 0;
+            v_hit_count := 0;
+            mon_expected_hit_refs <= (others => (others => '0'));
+            mon_expected_shots <= 0;
             mon_last_expected_hit <= (others => '0');
         else
             if rising_edge(gpx_start_tdc_mux) then
+                assert v_shot_count < C_MON_SHOT_DEPTH
+                    report "full_int: expected-hit shot queue overflow"
+                    severity failure;
+                if v_shot_count < C_MON_SHOT_DEPTH then
+                    v_current_shot := v_shot_count;
+                    v_shot_count := v_shot_count + 1;
+                    mon_expected_shots <= v_shot_count;
+                end if;
                 v_t0 := now;
                 v_armed := true;
+                v_hit_count := 0;
             end if;
 
             if rising_edge(er_tdc_stop(0)) then
                 assert v_armed
-                    report "full_int: Echo STOP0 arrived without a GPX START"
+                    report "full_int: Echo STOP arrived without a GPX START"
                     severity failure;
-                if v_armed then
-                    assert v_count < C_MON_SHOT_DEPTH
-                        report "full_int: expected-hit queue overflow"
-                        severity failure;
+                assert v_hit_count < fn_expected_returns(0)
+                    report "full_int: Echo emitted more Returns than configured"
+                    severity failure;
+                if v_armed and v_hit_count < fn_expected_returns(0) then
                     v_elapsed_ps := (now - v_t0) / 1 ps;
                     v_hit := v_elapsed_ps / C_BIN_RESOLUTION_PS;
                     assert v_hit < 2 ** c_RAW_HIT_WIDTH
                         report "full_int: reference hit exceeds 17-bit I-Mode field"
                         severity failure;
-                    if v_count < C_MON_SHOT_DEPTH then
-                        mon_expected_hit_queue(v_count) <=
-                            to_unsigned(v_hit, c_RAW_HIT_WIDTH);
-                        v_count := v_count + 1;
-                        mon_expected_hit_count <= v_count;
-                        mon_last_expected_hit <=
-                            to_unsigned(v_hit, c_RAW_HIT_WIDTH);
-                    end if;
-                    v_armed := false;
+                    v_ref_idx := fn_hit_ref_index(
+                        v_current_shot, 0, v_hit_count);
+                    mon_expected_hit_refs(v_ref_idx) <=
+                        to_unsigned(v_hit, c_RAW_HIT_WIDTH);
+                    v_hit_count := v_hit_count + 1;
+                    mon_last_expected_hit <=
+                        to_unsigned(v_hit, c_RAW_HIT_WIDTH);
                 end if;
             end if;
         end if;
@@ -1338,11 +1530,20 @@ begin
         variable v_addr : std_logic_vector(c_TDC_ADR_WIDTH - 1 downto 0);
         variable v_raw : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
         variable v_count : natural := 0;
+        variable v_stop_id : natural range 0 to C_ER_N_STOPS - 1;
+        variable v_channel : natural range 0 to C_PD_WIDTH - 1;
+        variable v_hit_seq : natural range 0 to c_MAX_HITS_PER_STOP;
+        variable v_ref_idx : natural;
+        variable v_read_shot : t_chip_count_array := (others => 0);
+        variable v_stop_hits : t_channel_count_array := (others => 0);
+        variable v_all_complete : boolean;
     begin
         if rising_edge(tdc_clk) then
             if rst_n = '0' then
                 v_read_checked := (others => '0');
                 v_count := 0;
+                v_read_shot := (others => 0);
+                v_stop_hits := (others => 0);
                 mon_i_mode_bus_checks <= 0;
             else
                 for chip in 0 to c_MAX_CHIPS - 1 loop
@@ -1359,10 +1560,25 @@ begin
                     if v_read_active = '0' then
                         v_read_checked(chip) := '0';
                     elsif v_read_checked(chip) = '0'
-                          and v_addr = c_TDC_REG8_IFIFO1
+                          and (v_addr = c_TDC_REG8_IFIFO1
+                               or v_addr = c_TDC_REG9_IFIFO2)
                           and unsigned(v_raw(c_RAW_HIT_HI downto c_RAW_HIT_LO)) /= 0 then
-                        assert v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO) = "00"
-                            report "full_int: GPX I-Mode ChaCode is not STOP0"
+                        if v_addr = c_TDC_REG8_IFIFO1 then
+                            v_stop_id := to_integer(unsigned(
+                                v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO)));
+                        else
+                            v_stop_id := 4 + to_integer(unsigned(
+                                v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO)));
+                        end if;
+                        v_channel := chip * C_ER_N_STOPS + v_stop_id;
+                        v_hit_seq := v_stop_hits(v_channel);
+
+                        assert v_stop_id < G_STOPS_PER_CHIP
+                            report "full_int: GPX read an inactive STOP channel"
+                            severity failure;
+                        assert v_raw(c_RAW_CHACODE_HI downto c_RAW_CHACODE_LO) =
+                               std_logic_vector(to_unsigned(v_stop_id mod 4, 2))
+                            report "full_int: GPX I-Mode ChaCode differs from IFIFO STOP order"
                             severity failure;
                         assert v_raw(c_RAW_STARTNUM_HI downto c_RAW_STARTNUM_LO) = x"00"
                             report "full_int: GPX I-Mode StartNum is not zero in SINGLE_SHOT"
@@ -1370,14 +1586,37 @@ begin
                         assert v_raw(c_RAW_SLOPE_BIT) = G_CHIP_SLOPE_MASK(chip)
                             report "full_int: GPX I-Mode Slope differs from chip profile"
                             severity failure;
-                        assert v_raw(c_RAW_HIT_HI downto c_RAW_HIT_LO) =
-                               gpx_last_hit(
-                                   (chip + 1) * c_RAW_HIT_WIDTH - 1 downto
-                                   chip * c_RAW_HIT_WIDTH)
-                            report "full_int: GPX I-Mode Hit[16:0] differs from interpolator result"
+                        assert v_hit_seq < fn_expected_returns(v_channel)
+                            report "full_int: GPX returned more hits than the Echo reference"
                             severity failure;
+                        assert v_read_shot(chip) < mon_expected_shots
+                            report "full_int: GPX read has no matching START reference"
+                            severity failure;
+                        v_ref_idx := fn_hit_ref_index(
+                            v_read_shot(chip), v_channel, v_hit_seq);
+                        assert v_raw(c_RAW_HIT_HI downto c_RAW_HIT_LO) =
+                               std_logic_vector(mon_expected_hit_refs(v_ref_idx))
+                            report "full_int: GPX I-Mode Hit[16:0] differs from pin timestamp reference"
+                            severity failure;
+                        v_stop_hits(v_channel) := v_hit_seq + 1;
                         v_count := v_count + 1;
                         v_read_checked(chip) := '1';
+
+                        v_all_complete := true;
+                        for stop_id in 0 to G_STOPS_PER_CHIP - 1 loop
+                            v_channel := chip * C_ER_N_STOPS + stop_id;
+                            if v_stop_hits(v_channel) <
+                               fn_expected_returns(v_channel) then
+                                v_all_complete := false;
+                            end if;
+                        end loop;
+                        if v_all_complete then
+                            v_read_shot(chip) := v_read_shot(chip) + 1;
+                            for stop_id in 0 to G_STOPS_PER_CHIP - 1 loop
+                                v_channel := chip * C_ER_N_STOPS + stop_id;
+                                v_stop_hits(v_channel) := 0;
+                            end loop;
+                        end if;
                     end if;
                 end loop;
                 mon_i_mode_bus_checks <= v_count;
@@ -1411,16 +1650,24 @@ begin
         variable v_fall_face_header_line  : boolean := false;
         variable v_header_word_idx   : natural := 0;
         variable v_header_word       : std_logic_vector(31 downto 0);
-        variable v_rise_hit_lo       : std_logic_vector(15 downto 0) :=
-            (others => '0');
-        variable v_fall_hit_lo       : std_logic_vector(15 downto 0) :=
-            (others => '0');
-        variable v_rise_hit          : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
-            (others => '0');
-        variable v_fall_hit          : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
-            (others => '0');
-        variable v_rise_hit_index    : natural := 0;
-        variable v_fall_hit_index    : natural := 0;
+        variable v_rise_line_index   : natural := 0;
+        variable v_fall_line_index   : natural := 0;
+        variable v_rise_hit_check_count : natural := 0;
+        variable v_fall_hit_check_count : natural := 0;
+        variable v_data_word_idx     : natural;
+        variable v_cell_idx          : natural;
+        variable v_cell_word_idx     : natural;
+        variable v_hit_seq           : natural;
+        variable v_channel           : natural;
+        variable v_expected_returns  : natural;
+        variable v_ref_idx           : natural;
+        variable v_expected_mask     : std_logic_vector(
+            c_MAX_HITS_PER_STOP - 1 downto 0);
+        variable v_expected_hit      : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+        variable v_axis_cycle        : natural := 0;
+        variable v_prev_start_cycle  : natural := 0;
+        variable v_have_start_cycle  : boolean := false;
+        variable v_interval_clks     : natural;
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
@@ -1477,13 +1724,20 @@ begin
                 v_fall_header_shot_index := 0;
                 v_rise_face_header_line := false;
                 v_fall_face_header_line := false;
-                v_rise_hit_lo := (others => '0');
-                v_fall_hit_lo := (others => '0');
-                v_rise_hit_index := 0;
-                v_fall_hit_index := 0;
+                v_rise_line_index := 0;
+                v_fall_line_index := 0;
+                v_rise_hit_check_count := 0;
+                v_fall_hit_check_count := 0;
+                v_axis_cycle := 0;
+                v_prev_start_cycle := 0;
+                v_have_start_cycle := false;
+                mon_shot_interval_min_clks <= 0;
+                mon_shot_interval_max_clks <= 0;
+                mon_schedule_overrun <= 0;
                 dbg_lc_start_ever <= '0';
                 dbg_lc_fire_ever  <= '0';
             else
+                v_axis_cycle := v_axis_cycle + 1;
                 -- The shot-start pulse and its face index are one qualified
                 -- transfer. Queue the payload at the transfer boundary so
                 -- delayed/deferred TDC output can be checked in order.
@@ -1554,6 +1808,18 @@ begin
                 end if;
                 if lc_start_tdc = '1' and v_prev_start = '0' then
                     mon_lc_start_cnt <= mon_lc_start_cnt + 1;
+                    if v_have_start_cycle then
+                        v_interval_clks := v_axis_cycle - v_prev_start_cycle;
+                        if mon_shot_interval_min_clks = 0
+                           or v_interval_clks < mon_shot_interval_min_clks then
+                            mon_shot_interval_min_clks <= v_interval_clks;
+                        end if;
+                        if v_interval_clks > mon_shot_interval_max_clks then
+                            mon_shot_interval_max_clks <= v_interval_clks;
+                        end if;
+                    end if;
+                    v_prev_start_cycle := v_axis_cycle;
+                    v_have_start_cycle := true;
                 end if;
                 if lc_stop_tdc = '1' and v_prev_stop = '0' then
                     report "full_int timing: stop_tdc, IrFlag="
@@ -1577,6 +1843,9 @@ begin
                 v_prev_stop := lc_stop_tdc;
                 v_prev_irflag := i_tdc_irflag;
                 v_prev_alutrigger := o_tdc_alutrigger;
+                if lc_warning(c_WARNING_SCHEDULE_OVERRUN) = '1' then
+                    mon_schedule_overrun <= 1;
+                end if;
 
                 if lc_m_tvalid = '1' then
                     mon_lc_m_beats <= mon_lc_m_beats + 1;
@@ -1639,34 +1908,89 @@ begin
                             mon_td_rise_header_checks <=
                                 mon_td_rise_header_checks + 1;
                         end if;
-                        if v_header_word_idx = C_FIRST_CELL_HIT_WORD_INDEX then
-                            v_rise_hit_lo := m_rise_tdata(
-                                32 * lane + 15 downto 32 * lane);
-                        elsif v_header_word_idx = C_FIRST_CELL_META_WORD_INDEX then
+                        if v_header_word_idx >= C_FIRST_CELL_HIT_WORD_INDEX
+                           and v_header_word_idx <
+                               C_FIRST_CELL_HIT_WORD_INDEX
+                               + C_RISE_CELL_COUNT * C_CELL_WORDS then
+                            v_data_word_idx := v_header_word_idx
+                                               - C_FIRST_CELL_HIT_WORD_INDEX;
+                            v_cell_idx := v_data_word_idx / C_CELL_WORDS;
+                            v_cell_word_idx := v_data_word_idx mod C_CELL_WORDS;
+                            v_channel := fn_lane_channel(
+                                C_RISE_ACTIVE_MASK, v_cell_idx);
+                            v_expected_returns := fn_expected_returns(v_channel);
                             v_header_word := m_rise_tdata(
                                 32 * lane + 31 downto 32 * lane);
-                            v_rise_hit := unsigned(
-                                v_header_word(0) & v_rise_hit_lo);
-                            assert v_header_word(25) = '1'
-                                report "full_int: rising first-cell hit_valid[0] is clear"
-                                severity failure;
-                            assert v_header_word(18) = '1'
-                                report "full_int: rising first-cell slope[0] is not rising"
-                                severity failure;
-                            if v_rise_hit_index < mon_expected_hit_count then
-                                assert v_rise_hit =
-                                       mon_expected_hit_queue(v_rise_hit_index)
-                                    report "full_int: rising 17-bit Hit changed between GPX bus and VDMA cell"
-                                    severity failure;
+
+                            if v_cell_word_idx < C_HIT_WORDS_PER_CELL then
+                                for slot in 0 to 1 loop
+                                    v_hit_seq := v_cell_word_idx * 2 + slot;
+                                    if v_hit_seq < C_MAX_HITS then
+                                        if v_hit_seq < v_expected_returns then
+                                            v_ref_idx := fn_hit_ref_index(
+                                                v_rise_line_index, v_channel,
+                                                v_hit_seq);
+                                            v_expected_hit :=
+                                                mon_expected_hit_refs(v_ref_idx);
+                                            assert v_header_word(
+                                                       slot * 16 + 15 downto
+                                                       slot * 16) =
+                                                   std_logic_vector(
+                                                       v_expected_hit(15 downto 0))
+                                                report "full_int: rising VDMA Hit[15:0] differs from pin reference"
+                                                severity failure;
+                                        else
+                                            assert v_header_word(
+                                                       slot * 16 + 15 downto
+                                                       slot * 16) = x"0000"
+                                                report "full_int: rising inactive Hit slot is not zero"
+                                                severity failure;
+                                        end if;
+                                    end if;
+                                end loop;
                             else
-                                assert false
-                                    report "full_int: rising VDMA hit has no timestamp reference"
+                                v_expected_mask := (others => '0');
+                                for hit_idx in 0 to c_MAX_HITS_PER_STOP - 1 loop
+                                    if hit_idx < v_expected_returns then
+                                        v_expected_mask(hit_idx) := '1';
+                                        v_ref_idx := fn_hit_ref_index(
+                                            v_rise_line_index, v_channel,
+                                            hit_idx);
+                                        v_expected_hit :=
+                                            mon_expected_hit_refs(v_ref_idx);
+                                        assert v_header_word(hit_idx) =
+                                               v_expected_hit(c_RAW_HIT_WIDTH - 1)
+                                            report "full_int: rising VDMA Hit[16] differs from pin reference"
+                                            severity failure;
+                                        mon_last_rise_hit <= v_expected_hit;
+                                    end if;
+                                end loop;
+                                assert v_header_word(31 downto 25) =
+                                       v_expected_mask
+                                    report "full_int: rising Cell hit_valid mask mismatch"
                                     severity failure;
+                                assert v_header_word(24 downto 18) =
+                                       v_expected_mask
+                                    report "full_int: rising Cell slope mask mismatch"
+                                    severity failure;
+                                assert to_integer(unsigned(
+                                           v_header_word(15 downto 12))) =
+                                       v_expected_returns
+                                    report "full_int: rising Cell hit_count mismatch"
+                                    severity failure;
+                                assert v_header_word(11 downto 10) = "00"
+                                    report "full_int: rising Cell drop/error flag set"
+                                    severity failure;
+                                assert v_header_word(9 downto 8) =
+                                       std_logic_vector(to_unsigned(
+                                           v_channel / C_ER_N_STOPS, 2))
+                                    report "full_int: rising Cell chip_id mismatch"
+                                    severity failure;
+                                v_rise_hit_check_count :=
+                                    v_rise_hit_check_count + v_expected_returns;
+                                mon_td_rise_hit_checks <=
+                                    v_rise_hit_check_count;
                             end if;
-                            mon_last_rise_hit <= v_rise_hit;
-                            mon_td_rise_hit_checks <=
-                                mon_td_rise_hit_checks + 1;
-                            v_rise_hit_index := v_rise_hit_index + 1;
                         end if;
                     end loop;
                     mon_td_rise_beats <= mon_td_rise_beats + 1;
@@ -1683,6 +2007,7 @@ begin
                             report "full_int: rising line beat count diverged from HSIZE"
                             severity failure;
                         v_rise_line_beats := 0;
+                        v_rise_line_index := v_rise_line_index + 1;
                         v_rise_face_header_line := false;
                     end if;
                 end if;
@@ -1732,34 +2057,88 @@ begin
                             mon_td_fall_header_checks <=
                                 mon_td_fall_header_checks + 1;
                         end if;
-                        if v_header_word_idx = C_FIRST_CELL_HIT_WORD_INDEX then
-                            v_fall_hit_lo := m_fall_tdata(
-                                32 * lane + 15 downto 32 * lane);
-                        elsif v_header_word_idx = C_FIRST_CELL_META_WORD_INDEX then
+                        if v_header_word_idx >= C_FIRST_CELL_HIT_WORD_INDEX
+                           and v_header_word_idx <
+                               C_FIRST_CELL_HIT_WORD_INDEX
+                               + C_FALL_CELL_COUNT * C_CELL_WORDS then
+                            v_data_word_idx := v_header_word_idx
+                                               - C_FIRST_CELL_HIT_WORD_INDEX;
+                            v_cell_idx := v_data_word_idx / C_CELL_WORDS;
+                            v_cell_word_idx := v_data_word_idx mod C_CELL_WORDS;
+                            v_channel := fn_lane_channel(
+                                C_FALL_ACTIVE_MASK, v_cell_idx);
+                            v_expected_returns := fn_expected_returns(v_channel);
                             v_header_word := m_fall_tdata(
                                 32 * lane + 31 downto 32 * lane);
-                            v_fall_hit := unsigned(
-                                v_header_word(0) & v_fall_hit_lo);
-                            assert v_header_word(25) = '1'
-                                report "full_int: falling first-cell hit_valid[0] is clear"
-                                severity failure;
-                            assert v_header_word(18) = '0'
-                                report "full_int: falling first-cell slope[0] is not falling"
-                                severity failure;
-                            if v_fall_hit_index < mon_expected_hit_count then
-                                assert v_fall_hit =
-                                       mon_expected_hit_queue(v_fall_hit_index)
-                                    report "full_int: falling 17-bit Hit changed between GPX bus and VDMA cell"
-                                    severity failure;
+
+                            if v_cell_word_idx < C_HIT_WORDS_PER_CELL then
+                                for slot in 0 to 1 loop
+                                    v_hit_seq := v_cell_word_idx * 2 + slot;
+                                    if v_hit_seq < C_MAX_HITS then
+                                        if v_hit_seq < v_expected_returns then
+                                            v_ref_idx := fn_hit_ref_index(
+                                                v_fall_line_index, v_channel,
+                                                v_hit_seq);
+                                            v_expected_hit :=
+                                                mon_expected_hit_refs(v_ref_idx);
+                                            assert v_header_word(
+                                                       slot * 16 + 15 downto
+                                                       slot * 16) =
+                                                   std_logic_vector(
+                                                       v_expected_hit(15 downto 0))
+                                                report "full_int: falling VDMA Hit[15:0] differs from pin reference"
+                                                severity failure;
+                                        else
+                                            assert v_header_word(
+                                                       slot * 16 + 15 downto
+                                                       slot * 16) = x"0000"
+                                                report "full_int: falling inactive Hit slot is not zero"
+                                                severity failure;
+                                        end if;
+                                    end if;
+                                end loop;
                             else
-                                assert false
-                                    report "full_int: falling VDMA hit has no timestamp reference"
+                                v_expected_mask := (others => '0');
+                                for hit_idx in 0 to c_MAX_HITS_PER_STOP - 1 loop
+                                    if hit_idx < v_expected_returns then
+                                        v_expected_mask(hit_idx) := '1';
+                                        v_ref_idx := fn_hit_ref_index(
+                                            v_fall_line_index, v_channel,
+                                            hit_idx);
+                                        v_expected_hit :=
+                                            mon_expected_hit_refs(v_ref_idx);
+                                        assert v_header_word(hit_idx) =
+                                               v_expected_hit(c_RAW_HIT_WIDTH - 1)
+                                            report "full_int: falling VDMA Hit[16] differs from pin reference"
+                                            severity failure;
+                                        mon_last_fall_hit <= v_expected_hit;
+                                    end if;
+                                end loop;
+                                assert v_header_word(31 downto 25) =
+                                       v_expected_mask
+                                    report "full_int: falling Cell hit_valid mask mismatch"
                                     severity failure;
+                                assert v_header_word(24 downto 18) = "0000000"
+                                    report "full_int: falling Cell slope mask is not zero"
+                                    severity failure;
+                                assert to_integer(unsigned(
+                                           v_header_word(15 downto 12))) =
+                                       v_expected_returns
+                                    report "full_int: falling Cell hit_count mismatch"
+                                    severity failure;
+                                assert v_header_word(11 downto 10) = "00"
+                                    report "full_int: falling Cell drop/error flag set"
+                                    severity failure;
+                                assert v_header_word(9 downto 8) =
+                                       std_logic_vector(to_unsigned(
+                                           v_channel / C_ER_N_STOPS, 2))
+                                    report "full_int: falling Cell chip_id mismatch"
+                                    severity failure;
+                                v_fall_hit_check_count :=
+                                    v_fall_hit_check_count + v_expected_returns;
+                                mon_td_fall_hit_checks <=
+                                    v_fall_hit_check_count;
                             end if;
-                            mon_last_fall_hit <= v_fall_hit;
-                            mon_td_fall_hit_checks <=
-                                mon_td_fall_hit_checks + 1;
-                            v_fall_hit_index := v_fall_hit_index + 1;
                         end if;
                     end loop;
                     mon_td_fall_beats <= mon_td_fall_beats + 1;
@@ -1776,6 +2155,7 @@ begin
                             report "full_int: falling line beat count diverged from HSIZE"
                             severity failure;
                         v_fall_line_beats := 0;
+                        v_fall_line_index := v_fall_line_index + 1;
                         v_fall_face_header_line := false;
                     end if;
                 end if;
@@ -2056,10 +2436,16 @@ begin
                & "  sim_target_clks=" & integer'image(C_SIM_TARGET_CLKS)
                & "  shot_period=" & integer'image(C_SHOT_PERIOD_AXIS_CLKS)
                & "  step_interval=" & integer'image(C_STEP_INTERVAL)
+               & "  rev_us=" & integer'image(integer(G_REV_TIME_US))
+               & "  optical_step_mdeg="
+               & integer'image(integer(G_OPTICAL_SHOT_INTERVAL_DEG * 1000.0))
                & "  enc_ticks_lo/hi=" & integer'image(C_ENC_TICKS_LO_LOCAL)
                & "/" & integer'image(C_ENC_TICKS_HI_LOCAL)
-               & "  max_hits=" & integer'image(C_MAX_HITS));
+               & "  returns/max_hits="
+               & integer'image(G_RETURNS_PER_STOP) & "/"
+               & integer'image(C_MAX_HITS));
             pl("  stim   :  mode=" & G_TDC_STIM_MODE
+               & "  echo=" & G_ECHO_STIM_MODE
                & "  bp_gap=" & integer'image(G_BP_TREADY_GAP)
                & "  enc_run_us=" & integer'image(integer(G_ENC_RUN_US))
                & "  chip_slope_mask=" & to_hstring(G_CHIP_SLOPE_MASK));
@@ -2132,19 +2518,25 @@ begin
         end if;
         wait_clk(30);
 
-        pl("[S1] echo_receiver CSR: synthetic STOP0 per GPX chip");
-        -- CTL1..16 hold two 16-bit delays per word. Configure channel 0 of
-        -- every chip; all other channels remain zero. Delay values use the
-        -- fixed 5 ns CSR timebase and Echo converts them to AXIS clocks.
-        for chip in 0 to c_MAX_CHIPS - 1 loop
-            er_wr(
-                std_logic_vector(to_unsigned(
-                    4 * (1 + (chip * C_ER_N_STOPS) / 2), 9)),
-                x"0000" & std_logic_vector(to_unsigned(
-                    C_SIM_TARGET_5NS_TICKS, 16))
-            );
-        end loop;
-        er_wr(C_ER_CTL0, x"00000001");
+        if G_ECHO_STIM_MODE = "synthetic_single" then
+            pl("[S1] echo_receiver CSR: synthetic STOP0 per GPX chip");
+            -- CTL1..16 hold two 16-bit delays per word. Configure channel 0
+            -- of every chip; all other channels remain zero.
+            for chip in 0 to c_MAX_CHIPS - 1 loop
+                er_wr(
+                    std_logic_vector(to_unsigned(
+                        4 * (1 + (chip * C_ER_N_STOPS) / 2), 9)),
+                    x"0000" & std_logic_vector(to_unsigned(
+                        C_SIM_TARGET_5NS_TICKS, 16))
+                );
+            end loop;
+            er_wr(C_ER_CTL0, x"00000001");
+        else
+            pl("[S1] echo_receiver physical LVDS: all STOPs, multi-Return");
+            -- Keep sim_en clear. p_physical_echo_driver drives the LVDS pins,
+            -- so every Return traverses the production fast path.
+            er_wr(C_ER_CTL0, x"00000000");
+        end if;
         wait_clk(100);
 
         pl("[S1] laser_ctrl CSR: 500 m profile (CTL2/CTL4/CTL5 overridden)");
@@ -2155,10 +2547,12 @@ begin
         lc_wr(C_LC_CTL3, std_logic_vector(to_unsigned(C_CTL3_VAL_LOCAL, 32)));
         -- CTL4 remains valid if a debug build enables Laser simulation.
         lc_wr(C_LC_CTL4, std_logic_vector(to_unsigned(C_SIM_TARGET_5NS_TICKS, 32)));
-        -- CTL5 step_interval -- derived to guarantee shot_period >= 1.5 * round-trip
+        -- CTL5 is derived only from mirror period and optical angular step.
+        -- Whether that operating point is fast enough is an outcome of this
+        -- regression, not an input chosen from the range window.
         lc_wr(C_LC_CTL5, C_LC_CTL5_DERIVED);
         lc_wr(C_LC_CTL6, C_LC_CTL6_DEFAULT);
-        lc_wr(C_LC_CTL7, C_LC_CTL7_DEFAULT);
+        lc_wr(C_LC_CTL7, C_LC_CTL7_LOCAL);
         -- Toggle reset while disabled. Laser admission is enabled only after
         -- tdc_gpx configuration and START have completed.
         lc_wr(C_LC_CTL0, C_LC_CTL0_RESET_LOCAL);
@@ -2319,6 +2713,11 @@ begin
         pl("  lc     stop_tdc     = " & integer'image(mon_lc_stop_cnt));
         pl("  lc     result beats = " & integer'image(mon_lc_m_beats));
         pl("  lc     result tlast = " & integer'image(mon_lc_m_tlast));
+        pl("  lc     shot interval min/max clocks = "
+           & integer'image(mon_shot_interval_min_clks) & "/"
+           & integer'image(mon_shot_interval_max_clks));
+        pl("  lc     schedule overrun = "
+           & integer'image(mon_schedule_overrun));
         pl("  er     STOP high cycles = " & integer'image(mon_er_stop_high_cycles));
         pl("  er     stop_evt beats = " & integer'image(mon_er_stop_beats));
         pl("  er     fire_count beats = " & integer'image(mon_er_fire_count_beats));
@@ -2334,6 +2733,8 @@ begin
            & integer'image(mon_td_fall_hit_checks));
         pl("  td     raw 28-bit I-Mode bus checks = "
            & integer'image(mon_i_mode_bus_checks));
+        pl("  td     expected raw pin hits = "
+           & integer'image(mon_expected_shots * C_EXPECT_RAW_WORDS_PER_SHOT));
         pl("  td     last expected/rise/fall Hit = "
            & integer'image(to_integer(mon_last_expected_hit)) & "/"
            & integer'image(to_integer(mon_last_rise_hit)) & "/"
@@ -2358,8 +2759,29 @@ begin
              & " max_range_5ns_ticks=" & integer'image(C_MAX_RANGE_5NS_TICKS)
              & " max_range_axis_clks=" & integer'image(C_MAX_RANGE_AXIS_CLKS)
              & " max_range_tdc_clks=" & integer'image(C_MAX_RANGE_TDC_CLKS)
+             & " tdc_drain_margin_ns=" & integer'image(G_TDC_DRAIN_MARGIN_TIME_NS)
+             & " tdc_drain_margin_clks=" & integer'image(C_DRAIN_MARGIN_TDC_CLKS)
              & " max_scan_5ns_ticks=" & integer'image(C_MAX_SCAN_5NS_TICKS)
              & " max_hits=" & integer'image(C_MAX_HITS)
+             & " returns_per_stop=" & integer'image(G_RETURNS_PER_STOP)
+             & " echo_stim_mode=" & G_ECHO_STIM_MODE
+             & " revolution_period_ns="
+             & integer'image(integer(G_REV_TIME_US * 1000.0))
+             & " motor_rpm=" & integer'image(C_MOTOR_RPM_LOCAL)
+             & " optical_shot_interval_mdeg="
+             & integer'image(integer(G_OPTICAL_SHOT_INTERVAL_DEG * 1000.0))
+             & " mechanical_shot_interval_mdeg="
+             & integer'image(integer(G_OPTICAL_SHOT_INTERVAL_DEG * 500.0))
+             & " planned_shot_interval_clks="
+             & integer'image(C_SHOT_PERIOD_AXIS_CLKS)
+             & " measured_shot_interval_min_clks="
+             & integer'image(mon_shot_interval_min_clks)
+             & " measured_shot_interval_max_clks="
+             & integer'image(mon_shot_interval_max_clks)
+             & " fire_done_delay_clks=" & integer'image(C_FIRE_DONE_DELAY)
+             & " rearm_guard_5ns_ticks="
+             & integer'image(G_REARM_GUARD_5NS_TICKS)
+             & " schedule_overrun=" & integer'image(mon_schedule_overrun)
              & " falling_enable=" & integer'image(fn_bool_to_nat(C_FALLING_ENABLE))
              & " stops_per_chip=" & integer'image(G_STOPS_PER_CHIP)
              & " cols_per_face=" & integer'image(G_COLS_PER_FACE)
@@ -2397,7 +2819,12 @@ begin
              & " rise_tlast=" & integer'image(mon_td_rise_line_end)
              & " fall_beats=" & integer'image(mon_td_fall_beats)
              & " fall_tlast=" & integer'image(mon_td_fall_line_end)
-             & " i_mode_hit_refs=" & integer'image(mon_expected_hit_count)
+             & " i_mode_hit_refs="
+             & integer'image(mon_expected_shots * C_EXPECT_RISE_HITS_PER_SHOT)
+             & " i_mode_raw_hit_refs="
+             & integer'image(mon_expected_shots * C_EXPECT_RAW_WORDS_PER_SHOT)
+             & " i_mode_words_per_shot="
+             & integer'image(C_EXPECT_RAW_WORDS_PER_SHOT)
              & " i_mode_rise_checks=" & integer'image(mon_td_rise_hit_checks)
              & " i_mode_fall_checks=" & integer'image(mon_td_fall_hit_checks)
              & " i_mode_bus_checks=" & integer'image(mon_i_mode_bus_checks)
@@ -2438,15 +2865,17 @@ begin
                and mon_td_fall_line_end = mon_lc_start_cnt
             report "full_int: accepted shots and VDMA line TLAST counts differ"
             severity failure;
-        assert mon_expected_hit_count = mon_lc_start_cnt
+        assert mon_expected_shots = mon_lc_start_cnt
             report "full_int: GPX START/Echo STOP reference count differs from accepted shots"
             severity failure;
-        assert mon_td_rise_hit_checks = mon_td_rise_line_end
-               and mon_td_fall_hit_checks = mon_td_fall_line_end
-            report "full_int: not every VDMA line passed the exact 17-bit Hit check"
+        assert mon_td_rise_hit_checks =
+                   mon_td_rise_line_end * C_EXPECT_RISE_HITS_PER_SHOT
+               and mon_td_fall_hit_checks =
+                   mon_td_fall_line_end * C_EXPECT_FALL_HITS_PER_SHOT
+            report "full_int: not every VDMA Cell Return passed the exact 17-bit check"
             severity failure;
         assert mon_i_mode_bus_checks =
-               mon_expected_hit_count * fn_count_ones(G_ACTIVE_CHIP_MASK)
+               mon_expected_shots * C_EXPECT_RAW_WORDS_PER_SHOT
             report "full_int: not every active GPX chip read passed the 28-bit I-Mode field check"
             severity failure;
         assert mon_last_rise_hit = mon_last_expected_hit
@@ -2456,7 +2885,10 @@ begin
         for chip in 0 to c_MAX_CHIPS - 1 loop
             assert to_integer(unsigned(gpx_capture_count(
                        (chip + 1) * 16 - 1 downto chip * 16))) =
-                   mon_expected_hit_count
+                   mon_expected_shots
+                   * fn_lane_return_words_per_shot(
+                       std_logic_vector(to_unsigned(2 ** chip, c_MAX_CHIPS))
+                       and G_ACTIVE_CHIP_MASK)
                 report "full_int: external GPX chip capture count mismatch"
                 severity failure;
         end loop;
@@ -2490,6 +2922,12 @@ begin
         assert mon_cfg_rejected = 0 and mon_pipe_abort = 0
             report "full_int: configuration reject or pipeline abort observed"
             severity failure;
+        assert mon_schedule_overrun = 0
+            report "full_int: mirror angular grid outran the Laser/TDC shot path"
+            severity failure;
+        assert mon_lc_start_cnt < 2 or mon_shot_interval_min_clks > 0
+            report "full_int: consecutive Shot interval was not measured"
+            severity failure;
 
         report "SYSTEM_INTEGRATION_SMOKE_PASS" severity note;
 
@@ -2500,9 +2938,9 @@ begin
     -- Watchdog
     p_wdog : process
     begin
-        wait for 500 us;
+        wait for 10 ms;
         if not sim_done then
-            report "tb_tdc_gpx_full_int: watchdog timeout (500 us)" severity failure;
+            report "tb_tdc_gpx_full_int: watchdog timeout (10 ms)" severity failure;
         end if;
         wait;
     end process p_wdog;

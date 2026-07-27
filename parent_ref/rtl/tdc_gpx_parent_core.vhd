@@ -37,7 +37,9 @@ entity tdc_gpx_parent_core is
         g_ALU_PULSE_TIME_NS           : positive := 20;
         g_BUS_READ_PERIOD_MIN_TIME_NS : positive := 25;
         g_BUS_IDLE_STABLE_TIME_NS     : positive := 20480;
-        g_DRAIN_MARGIN_TIME_NS        : positive := 1280;
+        -- Matches tdc_gpx_top's 8 STOP x 7 Return, 200 MHz reference
+        -- profile. Re-budget when runtime GPX bus timing is made slower.
+        g_DRAIN_MARGIN_TIME_NS        : positive := 6000;
         g_ERR_DEBOUNCE_TIME_NS        : positive := 25;
         g_ERR_MAX_RETRIES             : positive := 3;
         g_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3410;

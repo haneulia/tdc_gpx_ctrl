@@ -110,7 +110,7 @@ Assert-ContractValue 'bus_read_period_min_time_ns' `
     $tdc.parameters.g_BUS_READ_PERIOD_MIN_TIME_NS.value '25'
 Assert-ContractValue 'bus_idle_stable_time_ns' `
     $tdc.parameters.g_BUS_IDLE_STABLE_TIME_NS.value '20480'
-Assert-ContractValue 'drain_margin_time_ns' $tdc.parameters.g_DRAIN_MARGIN_TIME_NS.value '1280'
+Assert-ContractValue 'drain_margin_time_ns' $tdc.parameters.g_DRAIN_MARGIN_TIME_NS.value '6000'
 Assert-ContractValue 'err_debounce_time_ns' $tdc.parameters.g_ERR_DEBOUNCE_TIME_NS.value '25'
 Assert-ContractValue 'err_max_retries' $tdc.parameters.g_ERR_MAX_RETRIES.value '3'
 Assert-ContractValue 'cell_quarantine_margin_time_ns' `

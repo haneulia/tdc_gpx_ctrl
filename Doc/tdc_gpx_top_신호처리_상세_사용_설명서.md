@@ -317,7 +317,7 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 | `g_ALU_PULSE_TIME_NS` | 20 ns | ALU trigger 폭 | GPX timing |
 | `g_BUS_READ_PERIOD_MIN_TIME_NS` | 25 ns | CSR와 PHY가 공유하는 최소 read initiation 시간 | GPX 40 MHz 한계 |
 | `g_BUS_IDLE_STABLE_TIME_NS` | 20,480 ns | bus-fatal 후 자동 복구 전 연속 idle 시간 | PCB 안정성/복구 지연 |
-| `g_DRAIN_MARGIN_TIME_NS` | 1,280 ns | TDC drain watchdog의 range 이후 여유 | bus/ALU 지연 |
+| `g_DRAIN_MARGIN_TIME_NS` | 6,000 ns | TDC drain watchdog의 range 이후 여유 | 200 MHz, bus_clk_div=2, bus_ticks=5, 8 STOP x 7 Return 기준; 더 느린 bus 설정은 재검증 필요 |
 | `g_ERR_DEBOUNCE_TIME_NS` | 25 ns | ErrFlag debounce 시간 | board noise |
 | `g_ERR_MAX_RETRIES` | 3 | 자동 복구 retry 횟수 | 시스템 오류 정책 |
 | `g_CELL_QUARANTINE_MARGIN_TIME_NS` | 3,410 ns | Cell DROP/QUARANTINE 여유 | late drain bound |
@@ -331,7 +331,7 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 
 기본 시간값을 지원 주파수에 적용하면 다음처럼 사이클 수만 달라진다. 괄호 안 물리 시간은 동일하다.
 
-| Clock MHz | TDC power-up 240 ns | TDC bus-idle 20,480 ns | TDC drain 1,280 ns | AXIS Cell quarantine 3,410 ns |
+| Clock MHz | TDC power-up 240 ns | TDC bus-idle 20,480 ns | TDC drain 6,000 ns | AXIS Cell quarantine 3,410 ns |
 |---:|---:|---:|---:|---:|
 | 50 | 12 | 1,024 | 64 | 171 |
 | 100 | 24 | 2,048 | 128 | 341 |
