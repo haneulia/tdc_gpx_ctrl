@@ -13,6 +13,7 @@ if ([string]::IsNullOrWhiteSpace($Scenario)) {
         "system_integration/scenarios/return7_external_axis150_tdc200_v001.json"
 }
 $Scenario = (Resolve-Path $Scenario).Path
+$ScenarioCfg = Get-Content -Raw -LiteralPath $Scenario | ConvertFrom-Json
 
 # The boundary matrix proves the independent dimensions without repeating all
 # equivalent combinations: 1..7 Returns use the slowest 32-bit output, then
@@ -74,6 +75,7 @@ foreach ($Case in $Cases) {
         $M.stat5 -ne "00000001" -or
         $M.stat7 -ne "00000000" -or
         [int]$M.schedule_overrun -ne 0 -or
+        [int]$M.point_budget_pass -ne 1 -or
         [int]$M.i_mode_words_per_shot -ne $ExpectedRawWords) {
         throw "Return feasibility contract mismatch: returns=$ReturnCount width=$Width"
     }
@@ -83,9 +85,19 @@ foreach ($Case in $Cases) {
         output_width_bits = $Width
         verdict = $Result.verdict
         max_range_5ns_ticks = [int64]$M.max_range_5ns_ticks
+        operating_motor_rpm = [int64]$M.operating_motor_rpm
+        horizontal_resolution_mdeg = [int64]$M.horizontal_resolution_mdeg
+        operating_point_interval_clks = [int64]$M.operating_point_interval_clks
         revolution_period_ns = [int64]$M.revolution_period_ns
         planned_shot_interval_clks = [int64]$M.planned_shot_interval_clks
         measured_shot_interval_min_clks = [int64]$M.measured_shot_interval_min_clks
+        fire_done_delay_clks = [int64]$M.fire_done_delay_clks
+        range_wait_max_clks = [int64]$M.range_wait_max_clks
+        shot_to_rise_tlast_max_clks = [int64]$M.shot_to_rise_tlast_max_clks
+        shot_to_fall_tlast_max_clks = [int64]$M.shot_to_fall_tlast_max_clks
+        fire_to_output_max_clks = [int64]$M.fire_to_output_max_clks
+        point_budget_margin_clks = [int64]$M.point_budget_margin_clks
+        point_budget_pass = [int64]$M.point_budget_pass
         tdc_drain_margin_ns = [int64]$M.tdc_drain_margin_ns
         raw_words_per_shot = [int64]$M.i_mode_words_per_shot
         raw_bus_checks = [int64]$M.i_mode_bus_checks
@@ -108,6 +120,12 @@ $Summary = [ordered]@{
     channels = 32
     apd_channels = 16
     max_verified_returns_per_stop = $MaxVerified
+    operating_motor_rpm = [double]$ScenarioCfg.operating_motor_rpm
+    horizontal_resolution_deg = [double]$ScenarioCfg.horizontal_resolution_deg
+    max_range_m = [double]$ScenarioCfg.max_range_m
+    target_distance_m = [double]$ScenarioCfg.target_distance_m
+    backpressure_gap_clocks = [int]$ScenarioCfg.backpressure_gap_clocks
+    qualification = "Only for the recorded operating RPM, horizontal resolution, maximum range, clocks, topology, and backpressure policy"
     result_count = $Rows.Count
     verdict = "PASS"
     rows = $Rows

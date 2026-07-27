@@ -1,5 +1,7 @@
 # C08 Motor, Range, and Return Feasibility Closure
 
+> **대체 문서 안내:** 이 문서의 `Return 7 PASS`는 운용 RPM과 수평 각분해능에 따른 포인트 시간 예산을 RTL 계측으로 완전히 닫기 전 결과이다. 무조건적인 성능 Sign-off 근거로 사용하지 말고, 운용점과 잔여 마진을 명시한 `Operating_Point_Budget_Closure_v037`을 기준으로 판단한다.
+
 ## 1. 목적
 
 이 문서는 모터(다면 미러) 회전 주기, 최대 도달거리, 실제 Multi-Echo(Return) 수가 하나의 Shot 시간 예산 안에서 함께 성립하는지 검증한 결과를 고정한다.

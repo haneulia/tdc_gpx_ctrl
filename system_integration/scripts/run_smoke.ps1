@@ -47,6 +47,17 @@ foreach ($Entry in $ScenarioDefaults.GetEnumerator()) {
     }
 }
 
+# Keep product operating requirements separate from the accelerated encoder
+# profile used to shorten xsim runtime. Legacy scenarios represent themselves.
+if ($null -eq $Cfg.operating_motor_rpm) {
+    $Cfg | Add-Member -NotePropertyName operating_motor_rpm `
+        -NotePropertyValue (60000000.0 / [double]$Cfg.revolution_period_us)
+}
+if ($null -eq $Cfg.horizontal_resolution_deg) {
+    $Cfg | Add-Member -NotePropertyName horizontal_resolution_deg `
+        -NotePropertyValue ([double]$Cfg.optical_shot_interval_deg)
+}
+
 $SupportedClocksMhz = @(50, 100, 125, 150, 200)
 if ([double]$Cfg.axis_clock_mhz -notin $SupportedClocksMhz) {
     throw "Unsupported axis_clock_mhz '$($Cfg.axis_clock_mhz)'"
@@ -85,6 +96,13 @@ if ([double]$Cfg.optical_shot_interval_deg -le 0.0 -or
     [double]$Cfg.optical_shot_interval_deg -gt 360.0) {
     throw "optical_shot_interval_deg must be in (0, 360]"
 }
+if ([double]$Cfg.operating_motor_rpm -le 0.0) {
+    throw "operating_motor_rpm must be positive"
+}
+if ([double]$Cfg.horizontal_resolution_deg -le 0.0 -or
+    [double]$Cfg.horizontal_resolution_deg -gt 360.0) {
+    throw "horizontal_resolution_deg must be in (0, 360]"
+}
 if ([int]$Cfg.returns_per_stop -lt 1 -or [int]$Cfg.returns_per_stop -gt 7) {
     throw "returns_per_stop must be in 1..7"
 }
@@ -108,6 +126,21 @@ if ([int]$Cfg.rearm_guard_5ns_ticks -lt 0 -or
     [int]$Cfg.rearm_guard_5ns_ticks -gt 65535) {
     throw "rearm_guard_5ns_ticks must be in 0..65535"
 }
+
+$OperatingRevUs = 60000000.0 / [double]$Cfg.operating_motor_rpm
+$OperatingPointIntervalUs = $OperatingRevUs * `
+    [double]$Cfg.horizontal_resolution_deg / 720.0
+$SimulationPointIntervalUs = [double]$Cfg.revolution_period_us * `
+    [double]$Cfg.optical_shot_interval_deg / 720.0
+$PointIntervalToleranceUs = 1.0 / [double]$Cfg.axis_clock_mhz
+if ([math]::Abs($OperatingPointIntervalUs - $SimulationPointIntervalUs) -gt
+    ($PointIntervalToleranceUs + 1.0e-9)) {
+    throw "Accelerated simulation point interval does not match operating RPM/resolution: operating=$OperatingPointIntervalUs us simulation=$SimulationPointIntervalUs us"
+}
+$Cfg | Add-Member -Force -NotePropertyName operating_point_interval_us `
+    -NotePropertyValue $OperatingPointIntervalUs
+$Cfg | Add-Member -Force -NotePropertyName simulation_point_interval_us `
+    -NotePropertyValue $SimulationPointIntervalUs
 
 $Work = Join-Path $Hdl "tmp/system_integration/$Stamp"
 $Archive = Join-Path $Hdl "sim_results/vivado_xsim/sessions/${Stamp}_system_integration_smoke"
@@ -281,6 +314,8 @@ try {
         "--generic_top `"G_SIM_TARGET_M=$($Cfg.target_distance_m)`"",
         "--generic_top `"G_REV_TIME_US=$($Cfg.revolution_period_us)`"",
         "--generic_top `"G_OPTICAL_SHOT_INTERVAL_DEG=$($Cfg.optical_shot_interval_deg)`"",
+        "--generic_top `"G_OPERATING_MOTOR_RPM=$($Cfg.operating_motor_rpm)`"",
+        "--generic_top `"G_HORIZONTAL_RESOLUTION_DEG=$($Cfg.horizontal_resolution_deg)`"",
         "--generic_top `"G_TDATA_WIDTH=$($Cfg.output_width_bits)`"",
         "--generic_top `"G_STOPS_PER_CHIP=$($Cfg.stops_per_chip)`"",
         "--generic_top `"G_RETURNS_PER_STOP=$($Cfg.returns_per_stop)`"",

@@ -5,14 +5,17 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const hdlRoot = path.resolve(scriptDir, "..", "..");
-const htmlPath = path.join(
+const defaultHtmlPath = path.join(
   hdlRoot,
   "Doc",
   "cluster_analysis",
   "C08_HDL_HTML_Alignment",
   "C08_HDL_HTML_Alignment_260727_Motor_Range_Return_Feasibility_Simulator_v023.html"
 );
-const defaultResultPaths = [
+const htmlPath = process.env.C08_HTML_PATH
+  ? path.resolve(process.env.C08_HTML_PATH)
+  : defaultHtmlPath;
+const builtInResultPaths = [
   path.join(
     hdlRoot,
     "sim_results",
@@ -46,6 +49,9 @@ const defaultResultPaths = [
     "rtl_result.json"
   )
 ];
+const defaultResultPaths = process.env.C08_DEFAULT_RESULT_PATHS
+  ? JSON.parse(process.env.C08_DEFAULT_RESULT_PATHS).map(value => path.resolve(value))
+  : builtInResultPaths;
 const requestedResultPaths = process.argv.slice(2).map(value => path.resolve(value));
 const resultPaths = requestedResultPaths.length > 0
   ? requestedResultPaths
@@ -221,4 +227,4 @@ for (const resultPath of resultPaths) {
 if (resultPaths.length === 0) {
   console.log("PASS HTML self-tests; no local RTL result archives were found");
 }
-console.log("C08_V023_HTML_SELF_TEST_PASS");
+console.log(process.env.C08_PASS_MARKER || "C08_V023_HTML_SELF_TEST_PASS");

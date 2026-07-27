@@ -82,6 +82,11 @@ entity tb_tdc_gpx_full_int is
         -- of the requested optical scan-angle step.
         G_REV_TIME_US     : real    := 100.0;   -- mirror revolution period
         G_OPTICAL_SHOT_INTERVAL_DEG : real := 36.5;
+        -- Product operating point represented by the accelerated encoder
+        -- profile above. Zero keeps legacy direct-elaboration behavior by
+        -- treating the simulated RPM/interval as the operating values.
+        G_OPERATING_MOTOR_RPM : real := 0.0;
+        G_HORIZONTAL_RESOLUTION_DEG : real := 0.0;
         G_TDATA_WIDTH     : natural := 64;       -- VDMA tdata width (32|64|128)
         G_STOPS_PER_CHIP  : natural := 2;        -- active stops per chip (1..8)
         -- Physical GPX words generated per enabled STOP and the downstream
@@ -139,6 +144,31 @@ architecture sim of tb_tdc_gpx_full_int is
     -- =========================================================================
     -- Physical constants
     constant C_LIGHT_M_PER_US : real    := 299.792;   -- speed of light (m/us)
+
+    function fn_positive_or_default(
+        value    : real;
+        fallback : real
+    ) return real is
+    begin
+        if value > 0.0 then
+            return value;
+        end if;
+        return fallback;
+    end function;
+
+    constant C_OPERATING_MOTOR_RPM : real := fn_positive_or_default(
+        G_OPERATING_MOTOR_RPM, 60000000.0 / G_REV_TIME_US);
+    constant C_HORIZONTAL_RESOLUTION_DEG : real := fn_positive_or_default(
+        G_HORIZONTAL_RESOLUTION_DEG, G_OPTICAL_SHOT_INTERVAL_DEG);
+    constant C_OPERATING_REV_TIME_US : real :=
+        60000000.0 / C_OPERATING_MOTOR_RPM;
+    -- Optical angle is twice the mirror mechanical angle.
+    constant C_OPERATING_POINT_INTERVAL_US : real :=
+        C_OPERATING_REV_TIME_US * C_HORIZONTAL_RESOLUTION_DEG / 720.0;
+    constant C_SIM_POINT_INTERVAL_US : real :=
+        G_REV_TIME_US * G_OPTICAL_SHOT_INTERVAL_DEG / 720.0;
+    constant C_OPERATING_POINT_INTERVAL_CLKS : natural := natural(ceil(
+        C_OPERATING_POINT_INTERVAL_US * G_AXIS_CLK_MHZ));
 
     -- Clock periods (rounded to integer ps to keep xsim arithmetic exact).
     constant C_AXIS_CLK_PERIOD_PS : natural := natural(1000000.0 / G_AXIS_CLK_MHZ);
@@ -396,6 +426,7 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_MON_SHOT_DEPTH : positive := 64;
     type t_face_index_queue is array (0 to C_MON_SHOT_DEPTH - 1) of
         std_logic_vector(2 downto 0);
+    type t_cycle_queue is array (0 to C_MON_SHOT_DEPTH - 1) of natural;
     type t_hit_queue is array (0 to C_MON_SHOT_DEPTH - 1) of
         unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
     constant C_HIT_WORDS_PER_CELL : positive := fn_ceil_div(C_MAX_HITS, 2);
@@ -809,6 +840,14 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_td_fall_face_seen : std_logic_vector(4 downto 0) := (others => '0');
     signal mon_shot_interval_min_clks : natural := 0;
     signal mon_shot_interval_max_clks : natural := 0;
+    signal mon_fire_done_latency_min_clks : natural := 0;
+    signal mon_fire_done_latency_max_clks : natural := 0;
+    signal mon_range_wait_min_clks : natural := 0;
+    signal mon_range_wait_max_clks : natural := 0;
+    signal mon_shot_to_rise_tlast_min_clks : natural := 0;
+    signal mon_shot_to_rise_tlast_max_clks : natural := 0;
+    signal mon_shot_to_fall_tlast_min_clks : natural := 0;
+    signal mon_shot_to_fall_tlast_max_clks : natural := 0;
     signal mon_schedule_overrun : natural := 0;
     signal mon_last_expected_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
         (others => '0');
@@ -861,6 +900,17 @@ begin
 
     assert G_REV_TIME_US > 0.0 and C_ENC_TOTAL_CLKS_LOCAL >= C_MD_TOTAL_STATES
         report "tb_tdc_gpx_full_int: revolution period is too short for one clock per encoder state"
+        severity failure;
+
+    assert C_OPERATING_MOTOR_RPM > 0.0
+        and C_HORIZONTAL_RESOLUTION_DEG > 0.0
+        report "tb_tdc_gpx_full_int: operating RPM and horizontal resolution must be positive"
+        severity failure;
+
+    assert abs(C_OPERATING_POINT_INTERVAL_US
+               - real(C_SHOT_PERIOD_AXIS_CLKS) / G_AXIS_CLK_MHZ)
+           <= 1.0 / G_AXIS_CLK_MHZ + 1.0E-9
+        report "tb_tdc_gpx_full_int: accelerated encoder profile does not represent the requested operating point interval"
         severity failure;
 
     assert G_OPTICAL_SHOT_INTERVAL_DEG > 0.0
@@ -1641,7 +1691,12 @@ begin
         variable v_fall_line_beats   : natural := 0;
         variable v_shot_face_queue   : t_face_index_queue :=
             (others => (others => '0'));
+        variable v_shot_cycle_queue  : t_cycle_queue := (others => 0);
+        variable v_fire_cycle_queue  : t_cycle_queue := (others => 0);
         variable v_shot_face_count   : natural := 0;
+        variable v_fire_cycle_count  : natural := 0;
+        variable v_start_cycle_count : natural := 0;
+        variable v_stop_cycle_index  : natural := 0;
         variable v_rise_header_count : natural := 0;
         variable v_fall_header_count : natural := 0;
         variable v_rise_header_shot_index : natural := 0;
@@ -1668,6 +1723,7 @@ begin
         variable v_prev_start_cycle  : natural := 0;
         variable v_have_start_cycle  : boolean := false;
         variable v_interval_clks     : natural;
+        variable v_latency_clks      : natural;
     begin
         if rising_edge(clk) then
             if rst_n = '0' then
@@ -1718,6 +1774,9 @@ begin
                 v_rise_line_beats := 0;
                 v_fall_line_beats := 0;
                 v_shot_face_count := 0;
+                v_fire_cycle_count := 0;
+                v_start_cycle_count := 0;
+                v_stop_cycle_index := 0;
                 v_rise_header_count := 0;
                 v_fall_header_count := 0;
                 v_rise_header_shot_index := 0;
@@ -1733,6 +1792,14 @@ begin
                 v_have_start_cycle := false;
                 mon_shot_interval_min_clks <= 0;
                 mon_shot_interval_max_clks <= 0;
+                mon_fire_done_latency_min_clks <= 0;
+                mon_fire_done_latency_max_clks <= 0;
+                mon_range_wait_min_clks <= 0;
+                mon_range_wait_max_clks <= 0;
+                mon_shot_to_rise_tlast_min_clks <= 0;
+                mon_shot_to_rise_tlast_max_clks <= 0;
+                mon_shot_to_fall_tlast_min_clks <= 0;
+                mon_shot_to_fall_tlast_max_clks <= 0;
                 mon_schedule_overrun <= 0;
                 dbg_lc_start_ever <= '0';
                 dbg_lc_fire_ever  <= '0';
@@ -1750,6 +1817,7 @@ begin
                         severity failure;
                     v_shot_face_queue(v_shot_face_count) :=
                         td_shot_face_index_mux;
+                    v_shot_cycle_queue(v_shot_face_count) := v_axis_cycle;
                     v_shot_face_count := v_shot_face_count + 1;
                     assert unsigned(td_shot_face_index_mux) < unsigned(md_n_faces)
                         report "full_int: laser shot face index is outside motor n_faces"
@@ -1804,9 +1872,32 @@ begin
                 v_prev_md_virt_pos := md_dbg_virt_pos;
                 v_prev_md_dec_count := md_dbg_dec_count;
                 if lc_fire_pulse = '1' and v_prev_fire = '0' then
+                    assert v_fire_cycle_count < C_MON_SHOT_DEPTH
+                        report "full_int: fire timing queue overflow"
+                        severity failure;
+                    v_fire_cycle_queue(v_fire_cycle_count) := v_axis_cycle;
+                    v_fire_cycle_count := v_fire_cycle_count + 1;
                     mon_lc_fire_cnt <= mon_lc_fire_cnt + 1;
                 end if;
                 if lc_start_tdc = '1' and v_prev_start = '0' then
+                    -- The internal encoder smoke path can inject synthetic
+                    -- Shot events without a one-to-one laser fire reference.
+                    -- End-to-end fire latency is valid on the external path.
+                    if G_ENCODER_SOURCE = "external" then
+                        assert v_start_cycle_count < v_fire_cycle_count
+                            report "full_int: start_tdc has no matching fire timing reference"
+                            severity failure;
+                        v_latency_clks := v_axis_cycle
+                            - v_fire_cycle_queue(v_start_cycle_count);
+                        if mon_fire_done_latency_min_clks = 0
+                           or v_latency_clks < mon_fire_done_latency_min_clks then
+                            mon_fire_done_latency_min_clks <= v_latency_clks;
+                        end if;
+                        if v_latency_clks > mon_fire_done_latency_max_clks then
+                            mon_fire_done_latency_max_clks <= v_latency_clks;
+                        end if;
+                    end if;
+                    v_start_cycle_count := v_start_cycle_count + 1;
                     mon_lc_start_cnt <= mon_lc_start_cnt + 1;
                     if v_have_start_cycle then
                         v_interval_clks := v_axis_cycle - v_prev_start_cycle;
@@ -1822,6 +1913,19 @@ begin
                     v_have_start_cycle := true;
                 end if;
                 if lc_stop_tdc = '1' and v_prev_stop = '0' then
+                    assert v_stop_cycle_index < v_shot_face_count
+                        report "full_int: stop_tdc has no matching shot timing reference"
+                        severity failure;
+                    v_latency_clks := v_axis_cycle
+                        - v_shot_cycle_queue(v_stop_cycle_index);
+                    if mon_range_wait_min_clks = 0
+                       or v_latency_clks < mon_range_wait_min_clks then
+                        mon_range_wait_min_clks <= v_latency_clks;
+                    end if;
+                    if v_latency_clks > mon_range_wait_max_clks then
+                        mon_range_wait_max_clks <= v_latency_clks;
+                    end if;
+                    v_stop_cycle_index := v_stop_cycle_index + 1;
                     report "full_int timing: stop_tdc, IrFlag="
                         & to_hstring(i_tdc_irflag)
                         & ", AluTrigger=" & to_hstring(o_tdc_alutrigger)
@@ -1996,6 +2100,18 @@ begin
                     mon_td_rise_beats <= mon_td_rise_beats + 1;
                     v_rise_line_beats := v_rise_line_beats + 1;
                     if m_rise_tlast = '1' then
+                        assert v_rise_line_index < v_shot_face_count
+                            report "full_int: rising TLAST has no matching shot timing reference"
+                            severity failure;
+                        v_latency_clks := v_axis_cycle
+                            - v_shot_cycle_queue(v_rise_line_index);
+                        if mon_shot_to_rise_tlast_min_clks = 0
+                           or v_latency_clks < mon_shot_to_rise_tlast_min_clks then
+                            mon_shot_to_rise_tlast_min_clks <= v_latency_clks;
+                        end if;
+                        if v_latency_clks > mon_shot_to_rise_tlast_max_clks then
+                            mon_shot_to_rise_tlast_max_clks <= v_latency_clks;
+                        end if;
                         mon_td_rise_line_end <= mon_td_rise_line_end + 1;
                         report "full_int: rising line beats="
                              & integer'image(v_rise_line_beats)
@@ -2144,6 +2260,18 @@ begin
                     mon_td_fall_beats <= mon_td_fall_beats + 1;
                     v_fall_line_beats := v_fall_line_beats + 1;
                     if m_fall_tlast = '1' then
+                        assert v_fall_line_index < v_shot_face_count
+                            report "full_int: falling TLAST has no matching shot timing reference"
+                            severity failure;
+                        v_latency_clks := v_axis_cycle
+                            - v_shot_cycle_queue(v_fall_line_index);
+                        if mon_shot_to_fall_tlast_min_clks = 0
+                           or v_latency_clks < mon_shot_to_fall_tlast_min_clks then
+                            mon_shot_to_fall_tlast_min_clks <= v_latency_clks;
+                        end if;
+                        if v_latency_clks > mon_shot_to_fall_tlast_max_clks then
+                            mon_shot_to_fall_tlast_max_clks <= v_latency_clks;
+                        end if;
                         mon_td_fall_line_end <= mon_td_fall_line_end + 1;
                         report "full_int: falling line beats="
                              & integer'image(v_fall_line_beats)
@@ -2413,6 +2541,10 @@ begin
         variable v_hw_config : std_logic_vector(31 downto 0) := (others => '0');
         variable v_face_close_wait : natural := 0;
         variable v_pipeline_drain_wait : natural := 0;
+        variable v_output_completion_max_clks : natural := 0;
+        variable v_fire_to_output_max_clks : natural := 0;
+        variable v_point_budget_margin_clks : integer := 0;
+        variable v_point_budget_pass : natural range 0 to 1 := 0;
 
     begin
         wait until rst_n = '1';
@@ -2687,6 +2819,20 @@ begin
             severity failure;
         tp_rd("1010000", "STAT4 MAX_HSIZE");       -- 0x50 (constant; checks read path)
 
+        v_output_completion_max_clks := fn_max_nat(
+            mon_shot_to_rise_tlast_max_clks,
+            mon_shot_to_fall_tlast_max_clks);
+        v_fire_to_output_max_clks := mon_fire_done_latency_max_clks
+            + v_output_completion_max_clks;
+        v_point_budget_margin_clks := integer(mon_shot_interval_min_clks)
+            - integer(v_fire_to_output_max_clks);
+        if mon_shot_interval_min_clks > 0
+           and v_point_budget_margin_clks >= 0 then
+            v_point_budget_pass := 1;
+        else
+            v_point_budget_pass := 0;
+        end if;
+
         --------------------------------------------------------------
         -- [S7] Summary
         --------------------------------------------------------------
@@ -2716,6 +2862,12 @@ begin
         pl("  lc     shot interval min/max clocks = "
            & integer'image(mon_shot_interval_min_clks) & "/"
            & integer'image(mon_shot_interval_max_clks));
+        pl("  lc     fire_done latency min/max clocks = "
+           & integer'image(mon_fire_done_latency_min_clks) & "/"
+           & integer'image(mon_fire_done_latency_max_clks));
+        pl("  lc     range wait min/max clocks = "
+           & integer'image(mon_range_wait_min_clks) & "/"
+           & integer'image(mon_range_wait_max_clks));
         pl("  lc     schedule overrun = "
            & integer'image(mon_schedule_overrun));
         pl("  er     STOP high cycles = " & integer'image(mon_er_stop_high_cycles));
@@ -2725,6 +2877,15 @@ begin
            & "  line TLAST = " & integer'image(mon_td_rise_line_end));
         pl("  td     fall VDMA beats = " & integer'image(mon_td_fall_beats)
            & "  line TLAST = " & integer'image(mon_td_fall_line_end));
+        pl("  td     shot->rise TLAST min/max clocks = "
+           & integer'image(mon_shot_to_rise_tlast_min_clks) & "/"
+           & integer'image(mon_shot_to_rise_tlast_max_clks));
+        pl("  td     shot->fall TLAST min/max clocks = "
+           & integer'image(mon_shot_to_fall_tlast_min_clks) & "/"
+           & integer'image(mon_shot_to_fall_tlast_max_clks));
+        pl("  budget fire->output max / point margin clocks = "
+           & integer'image(v_fire_to_output_max_clks) & "/"
+           & integer'image(v_point_budget_margin_clks));
         pl("  td     rise/fall header face checks = "
            & integer'image(mon_td_rise_header_checks) & "/"
            & integer'image(mon_td_fall_header_checks));
@@ -2768,6 +2929,15 @@ begin
              & " revolution_period_ns="
              & integer'image(integer(G_REV_TIME_US * 1000.0))
              & " motor_rpm=" & integer'image(C_MOTOR_RPM_LOCAL)
+             & " operating_motor_rpm="
+             & integer'image(integer(round(C_OPERATING_MOTOR_RPM)))
+             & " horizontal_resolution_mdeg="
+             & integer'image(integer(round(
+                 C_HORIZONTAL_RESOLUTION_DEG * 1000.0)))
+             & " operating_revolution_period_ns="
+             & integer'image(integer(round(C_OPERATING_REV_TIME_US * 1000.0)))
+             & " operating_point_interval_clks="
+             & integer'image(C_OPERATING_POINT_INTERVAL_CLKS)
              & " optical_shot_interval_mdeg="
              & integer'image(integer(G_OPTICAL_SHOT_INTERVAL_DEG * 1000.0))
              & " mechanical_shot_interval_mdeg="
@@ -2778,7 +2948,26 @@ begin
              & integer'image(mon_shot_interval_min_clks)
              & " measured_shot_interval_max_clks="
              & integer'image(mon_shot_interval_max_clks)
-             & " fire_done_delay_clks=" & integer'image(C_FIRE_DONE_DELAY)
+             & " fire_done_delay_clks="
+             & integer'image(mon_fire_done_latency_max_clks)
+             & " range_wait_min_clks="
+             & integer'image(mon_range_wait_min_clks)
+             & " range_wait_max_clks="
+             & integer'image(mon_range_wait_max_clks)
+             & " shot_to_rise_tlast_min_clks="
+             & integer'image(mon_shot_to_rise_tlast_min_clks)
+             & " shot_to_rise_tlast_max_clks="
+             & integer'image(mon_shot_to_rise_tlast_max_clks)
+             & " shot_to_fall_tlast_min_clks="
+             & integer'image(mon_shot_to_fall_tlast_min_clks)
+             & " shot_to_fall_tlast_max_clks="
+             & integer'image(mon_shot_to_fall_tlast_max_clks)
+             & " fire_to_output_max_clks="
+             & integer'image(v_fire_to_output_max_clks)
+             & " point_budget_margin_clks="
+             & integer'image(v_point_budget_margin_clks)
+             & " point_budget_pass="
+             & integer'image(v_point_budget_pass)
              & " rearm_guard_5ns_ticks="
              & integer'image(G_REARM_GUARD_5NS_TICKS)
              & " schedule_overrun=" & integer'image(mon_schedule_overrun)
@@ -2927,6 +3116,9 @@ begin
             severity failure;
         assert mon_lc_start_cnt < 2 or mon_shot_interval_min_clks > 0
             report "full_int: consecutive Shot interval was not measured"
+            severity failure;
+        assert v_point_budget_pass = 1
+            report "full_int: fire-to-VDMA completion exceeded the minimum laser point interval"
             severity failure;
 
         report "SYSTEM_INTEGRATION_SMOKE_PASS" severity note;
