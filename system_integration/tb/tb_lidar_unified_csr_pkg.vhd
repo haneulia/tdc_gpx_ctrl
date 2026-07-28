@@ -118,6 +118,30 @@ begin
             report "Stage 3 interrupt ownership changed"
             severity failure;
 
+        assert C_TDC_IMAGE_INDEX_HI < C_TDC_IMAGE_WRITE_EPOCH_LO
+            and C_TDC_IMAGE_WRITE_EPOCH_HI < 32
+            and C_TDC_CMD_OPCODE_HI < C_TDC_CMD_EPOCH_LO
+            and C_TDC_CMD_EPOCH_HI < 32
+            report "TDC indexed image/command fields overlap"
+            severity failure;
+
+        assert C_TDC_CMD_NONE = 0
+            and C_TDC_CMD_START = 1
+            and C_TDC_CMD_STOP = 2
+            and C_TDC_CMD_FORCE_REINIT = 3
+            and C_TDC_CMD_ERROR_CLEAR = 4
+            and C_TDC_CMD_REG_READ = 5
+            and C_TDC_CMD_REG_WRITE = 6
+            report "TDC serialized command opcodes changed"
+            severity failure;
+
+        assert C_TDC_STATUS_CMD_EPOCH_HI < C_TDC_STATUS_IMAGE_EPOCH_LO
+            and C_TDC_STATUS_IMAGE_EPOCH_HI = 31
+            and C_IRQ_TDC_REG_DONE = C_IRQ_TDC_FIRST
+            and C_IRQ_TDC_COMMAND_REJECT = C_IRQ_TDC_LAST
+            report "TDC status acknowledgement or IRQ ownership changed"
+            severity failure;
+
         report "UNIFIED_CSR_CONTRACT_PASS" severity note;
         wait;
     end process p_contract;

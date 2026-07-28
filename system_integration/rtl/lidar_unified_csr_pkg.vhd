@@ -226,6 +226,32 @@ package lidar_unified_csr_pkg is
     constant C_ECHO_DELAY_DATA_LO         : natural := 0;
     constant C_ECHO_DELAY_DATA_HI         : natural := 15;
 
+    -- ---------------------------------------------------------------------
+    -- TDC-GPX indexed image and serialized command contract
+    -- ---------------------------------------------------------------------
+    constant C_TDC_IMAGE_INDEX_LO       : natural := 0;
+    constant C_TDC_IMAGE_INDEX_HI       : natural := 4;
+    constant C_TDC_IMAGE_WRITE_EPOCH_LO : natural := 8;
+    constant C_TDC_IMAGE_WRITE_EPOCH_HI : natural := 15;
+
+    constant C_TDC_CMD_OPCODE_LO : natural := 0;
+    constant C_TDC_CMD_OPCODE_HI : natural := 2;
+    constant C_TDC_CMD_EPOCH_LO  : natural := 8;
+    constant C_TDC_CMD_EPOCH_HI  : natural := 15;
+
+    constant C_TDC_CMD_NONE         : natural := 0;
+    constant C_TDC_CMD_START        : natural := 1;
+    constant C_TDC_CMD_STOP         : natural := 2;
+    constant C_TDC_CMD_FORCE_REINIT : natural := 3;
+    constant C_TDC_CMD_ERROR_CLEAR  : natural := 4;
+    constant C_TDC_CMD_REG_READ     : natural := 5;
+    constant C_TDC_CMD_REG_WRITE    : natural := 6;
+
+    constant C_TDC_STATUS_CMD_EPOCH_LO   : natural := 16;
+    constant C_TDC_STATUS_CMD_EPOCH_HI   : natural := 23;
+    constant C_TDC_STATUS_IMAGE_EPOCH_LO : natural := 24;
+    constant C_TDC_STATUS_IMAGE_EPOCH_HI : natural := 31;
+
     -- Frozen interrupt source meanings for adapters closed in Stage 2/3.
     constant C_IRQ_MOTOR_ACTIVE_ENTER : natural := 4;
     constant C_IRQ_MOTOR_ACTIVE_EXIT  : natural := 5;
@@ -235,6 +261,14 @@ package lidar_unified_csr_pkg is
     constant C_IRQ_LASER_BLOCKING_CFG    : natural := 8;
     constant C_IRQ_LASER_TIMEOUT_OVERFLOW : natural := 9;
     constant C_IRQ_LASER_FRAME_OVERFLOW   : natural := 10;
+
+    constant C_IRQ_TDC_REG_DONE       : natural := 21;
+    constant C_IRQ_TDC_PIPELINE_FAULT : natural := 22;
+    constant C_IRQ_TDC_CHIP_ERROR     : natural := 23;
+    constant C_IRQ_TDC_TIMEOUT        : natural := 24;
+    constant C_IRQ_TDC_SEQUENCE       : natural := 25;
+    constant C_IRQ_TDC_CONFIG_REJECT  : natural := 26;
+    constant C_IRQ_TDC_COMMAND_REJECT : natural := 27;
 
     function fn_ctl_byte_offset(index : natural) return natural;
     function fn_stat_byte_offset(index : natural) return natural;

@@ -106,7 +106,60 @@ status and selected-channel readback.
 
 ## 6. TDC-GPX
 
-CTL17..25 and STAT23..29 keep their address ownership from Stage 1. Their exact
-indexed image command and pipeline fields are frozen during Stage 4, after the
-current chip/pipeline CSR behavior is proven equivalent. No provisional field
-layout in prose may be treated as a software contract before that gate passes.
+### Control words
+
+| Unified slot | Bits | Meaning |
+|---|---:|---|
+| CTL17 `TDC_BUS_TIMING` | 5:0 | GPX bus clock divider |
+|  | 8:6 | GPX bus ticks |
+|  | 13:10 | GPX register target address |
+|  | 15:14 | Single-chip target ID |
+|  | 19:16 | Multi-chip target mask; zero selects the single-chip ID |
+| CTL18 `TDC_START_OFFSET` | 17:0 | GPX `StartOff1` override |
+| CTL19 `TDC_CFG_REG7` | 31:0 | GPX register 7 override |
+| CTL20 `TDC_IMAGE_CMD` | 4:0 | Staging-image word index; 0..15 valid |
+|  | 15:8 | Image-write epoch; change after CTL21 is stable |
+| CTL21 `TDC_IMAGE_DATA` | 31:0 | One staged GPX image word |
+| CTL22 `TDC_SCAN_CFG` | 15:0 | Maximum scan time in fixed 5 ns ticks |
+|  | 18:16 | Runtime maximum Return count; zero selects build maximum |
+|  | 19 | Falling lane enable |
+| CTL23 `TDC_PIPELINE_MAIN` | 3:0 | Requested active-chip mask |
+|  | 4 | Packet scope |
+|  | 6:5 | Hit storage mode |
+|  | 9:7 | Distance scale |
+|  | 10 | Drain mode |
+|  | 11 | Pipeline enable |
+|  | 18:15 | Stops per chip |
+|  | 22:19 | Drain cap |
+|  | 27:23 | STOP-disable override |
+| CTL24 `TDC_RANGE_COLS` | 15:0 | Maximum range in fixed 5 ns ticks |
+|  | 31:16 | Columns per Face |
+| CTL25 `TDC_AUX_CMD` | 2:0 | Command opcode |
+|  | 15:8 | Command epoch; change to issue exactly one command |
+
+`TDC_AUX_CMD` opcodes are `0=NONE`, `1=START`, `2=STOP`,
+`3=FORCE_REINIT`, `4=ERROR_CLEAR`, `5=REG_READ`, and `6=REG_WRITE`.
+Opcode 7 is rejected. This replaces six unrelated edge bits with one serialized,
+acknowledgeable command path. `RESET_EPOCH` owns soft reset and `CFG_EPOCH`
+owns GPX image/configuration apply; CTL23[31:28] and CTL17[31:30] are reserved
+in unified mode.
+
+Software writes each image word by writing CTL21, then CTL20 with a new image
+epoch, and waiting for STAT27's accepted image epoch. After all required words
+are accepted, software changes `SYS_CFG_APPLY.CFG_EPOCH`. The adapter transfers
+the complete 512-bit staging image and all dedicated TDC configuration fields
+as one coherent snapshot.
+
+### Status words
+
+| Unified slot | Meaning |
+|---|---|
+| STAT23..26 | GPX chip 0..3 register-read result: address in 31:28, 28-bit data in 27:0 |
+| STAT27 `TDC_PIPELINE_STATUS` | Legacy pipeline STATUS in 15:0, accepted command epoch in 23:16, accepted image-write epoch in 31:24 |
+| STAT28 `TDC_STATUS_EXT` | Legacy extended sticky/counter status, bit-for-bit |
+| STAT29 `TDC_STATUS_EXT2` | Legacy category-C diagnostic status, bit-for-bit |
+
+Configuration/reset accepted epochs, busy/reject, and valid state feed the
+System status aggregator. The TDC interrupt identities are: 21 register command
+done, 22 pipeline fault, 23 chip error, 24 timeout, 25 sequence/protocol error,
+26 configuration/image rejection, and 27 command rejection.
