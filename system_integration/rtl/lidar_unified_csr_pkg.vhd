@@ -262,6 +262,9 @@ package lidar_unified_csr_pkg is
     constant C_IRQ_LASER_TIMEOUT_OVERFLOW : natural := 9;
     constant C_IRQ_LASER_FRAME_OVERFLOW   : natural := 10;
 
+    constant C_IRQ_ECHO_DIAGNOSTIC : natural := 16;
+    constant C_IRQ_ECHO_CMD_REJECT : natural := 17;
+
     constant C_IRQ_TDC_REG_DONE       : natural := 21;
     constant C_IRQ_TDC_PIPELINE_FAULT : natural := 22;
     constant C_IRQ_TDC_CHIP_ERROR     : natural := 23;

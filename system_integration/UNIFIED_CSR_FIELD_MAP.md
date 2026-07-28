@@ -104,6 +104,12 @@ Bits 15:0 hold one delay in fixed 5 ns ticks. Echo simulation enable and reset
 come from `SYS_CTRL`. STAT19..22 hold completed-shot rise/fall masks, aggregate
 status and selected-channel readback.
 
+Echo interrupt source 16 is the aggregate diagnostic condition from
+`ECHO_STATUS[4:0]`; source 17 is the indexed-profile command reject condition
+from `ECHO_STATUS[12]`. Sources 18..20 remain reserved and read inactive. A
+changed `SYS_CTRL.RESET_EPOCH` produces one reset request, and the Echo adapter
+returns its accepted epoch to the System status aggregator.
+
 ## 6. TDC-GPX
 
 ### Control words

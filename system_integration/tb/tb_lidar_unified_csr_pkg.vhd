@@ -118,6 +118,12 @@ begin
             report "Stage 3 interrupt ownership changed"
             severity failure;
 
+        assert C_IRQ_ECHO_DIAGNOSTIC = C_IRQ_ECHO_FIRST
+            and C_IRQ_ECHO_CMD_REJECT = C_IRQ_ECHO_FIRST + 1
+            and C_IRQ_ECHO_CMD_REJECT < C_IRQ_ECHO_LAST
+            report "Echo interrupt ownership changed"
+            severity failure;
+
         assert C_TDC_IMAGE_INDEX_HI < C_TDC_IMAGE_WRITE_EPOCH_LO
             and C_TDC_IMAGE_WRITE_EPOCH_HI < 32
             and C_TDC_CMD_OPCODE_HI < C_TDC_CMD_EPOCH_LO

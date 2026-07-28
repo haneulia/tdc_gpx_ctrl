@@ -52,7 +52,7 @@ coherent CDC.
 |---|---:|---:|---:|
 | Motor Decoder | SYS 2 + Motor 6 | Motor 6 | 4 |
 | Laser Controller | SYS 2 + Laser 7 | Laser 7 + transaction metadata | 3 |
-| Echo Receiver | SYS 1 + Echo 2 | Echo 4 + transaction metadata | allocated Echo causes |
+| Echo Receiver | SYS 1 + Echo 2 | Echo 4 + transaction metadata | 2 active + 3 reserved |
 | TDC-GPX | SYS 2 + TDC 9 | TDC 7 + transaction metadata | 7 |
 
 System words are fanned out only to adapters that consume their fields. Static
