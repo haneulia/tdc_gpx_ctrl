@@ -17,10 +17,25 @@ generated Vivado project sources.
 | Echo receiver | `C:/Projects/my_sp/lib/IP/echo_receiver/HDL` |
 | TDC-GPX controller | this repository |
 
-The sibling directories are not Git repositories yet. Every run therefore
-records a SHA-256 hash for every compiled source file. Before changing a
-sibling IP, establish its own Git baseline; hashes are reproducibility evidence,
-not a replacement for source control.
+The sibling IPs are maintained as independent Git repositories. Every run also
+records a SHA-256 hash for every compiled source file because an integration
+result spans several repository commits and may include an intentionally dirty
+working tree.
+
+## Unified CSR migration
+
+The staged migration from duplicated local CSR banks to one 32 CTL / 32 STAT /
+4 IRQ bank is defined in `UNIFIED_CSR_MIGRATION_PLAN.md`. The executable address
+allocation is `rtl/lidar_unified_csr_pkg.vhd`; run its static contract gate with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_unified_csr_contract.ps1
+```
+
+The migration does not place real-time Motor, Laser, Echo, or GPX event signals
+behind software registers. It changes configuration ownership and software
+observability only.
 
 ## Encoder modes
 
@@ -197,7 +212,7 @@ shown as CHECK; inferred stimulus masks are not sign-off evidence.
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_smoke.ps1 `
-  -Scenario system_integration/scenarios/smoke_internal_axis150_tdc200_v001.json
+  -Scenario system_integration/scenarios/smoke_internal_axis150_tdc200_v002.json
 ```
 
 Run the physical A/B/Z input path at the same 150/200 MHz clock pair:
@@ -205,7 +220,7 @@ Run the physical A/B/Z input path at the same 150/200 MHz clock pair:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_smoke.ps1 `
-  -Scenario system_integration/scenarios/smoke_external_axis150_tdc200_v001.json
+  -Scenario system_integration/scenarios/return7_external_axis150_tdc200_v001.json
 ```
 
 Run the maintained Return/width boundary matrix. It checks Return 1..7 at
