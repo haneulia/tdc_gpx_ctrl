@@ -194,6 +194,9 @@ $MotorFiles = @(
     "$IpRoot/motor_decoder/HDL/motor_decoder_cfg_pkg.vhd",
     "$IpRoot/motor_decoder/HDL/motor_cfg_commit_ctrl.vhd",
     "$IpRoot/motor_decoder/HDL/motor_axis_stream_out.vhd",
+    "$IpRoot/motor_decoder/HDL/motor_decoder_cdc_snapshot.vhd",
+    "$IpRoot/motor_decoder/HDL/motor_revolution_period.vhd",
+    "$IpRoot/motor_decoder/HDL/motor_unified_csr_adapter.vhd",
     "$IpRoot/motor_decoder/HDL/motor_decoder_csr.vhd",
     "$IpRoot/motor_decoder/HDL/motor_decoder_top.vhd"
 )
@@ -203,6 +206,7 @@ $LaserFiles = @(
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_types_pkg.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_timebase.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_cdc_snapshot.vhd",
+    "$IpRoot/laser_ctrl/HDL/laser_unified_csr_adapter.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_event_counters.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_status.vhd",
     "$IpRoot/laser_ctrl/HDL/laser_ctrl_tdc.vhd",
@@ -225,6 +229,7 @@ $EchoFiles = @(
     "$IpRoot/echo_receiver/HDL/echo_receiver_stop_frontend.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_core.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_cdc_snapshot.vhd",
+    "$IpRoot/echo_receiver/HDL/echo_receiver_delay_profile.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_csr.vhd",
     "$IpRoot/echo_receiver/HDL/echo_receiver_top.vhd"
 )
@@ -233,6 +238,8 @@ $TdcFiles = @(
     "$Hdl/px_utility_pkg.vhd",
     "$Hdl/tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_cfg_pkg.vhd",
+    "$Hdl/tdc_gpx_unified_cdc_snapshot.vhd",
+    "$Hdl/tdc_gpx_unified_csr_adapter.vhd",
     "$Hdl/tdc_gpx_atomic_snapshot_cdc.vhd",
     "$Hdl/tdc_gpx_bus_phy.vhd",
     "$Hdl/tdc_gpx_skid_buffer.vhd",

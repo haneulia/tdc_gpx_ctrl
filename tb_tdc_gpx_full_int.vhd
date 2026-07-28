@@ -874,10 +874,22 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_TB_LC_CTL5  : std_logic_vector(6 downto 0) := "0010100";  -- 0x14 sched cfg0
     constant C_TB_LC_CTL6  : std_logic_vector(6 downto 0) := "0011000";  -- 0x18 sched cfg1
     constant C_TB_LC_CTL7  : std_logic_vector(6 downto 0) := "0011100";  -- 0x1C sched cfg2
-    -- motor_decoder / echo_receiver CTL0 addresses
+    -- motor_decoder / echo_receiver local CSR addresses. Echo Receiver uses
+    -- the compact indexed delay-profile contract introduced in CSR Stage 2.
     constant C_MD_CTL0  : std_logic_vector(6 downto 0) := "0000000";
     constant C_MD_STAT0 : std_logic_vector(6 downto 0) := "0100000";  -- 0x20
-    constant C_ER_CTL0 : std_logic_vector(8 downto 0) := "0" & x"00";
+    constant C_ER_CTL0  : std_logic_vector(8 downto 0) := "0" & x"00";
+    constant C_ER_CTL1  : std_logic_vector(8 downto 0) := "0" & x"04";
+    constant C_ER_STAT2 : std_logic_vector(8 downto 0) := "0" & x"10";
+    constant C_ER_SIM_EN_BIT             : natural := 0;
+    constant C_ER_DELAY_INDEX_LO         : natural := 4;
+    constant C_ER_DELAY_INDEX_HI         : natural := 8;
+    constant C_ER_DELAY_WRITE_TOGGLE_BIT : natural := 9;
+    constant C_ER_APPLY_TOGGLE_BIT       : natural := 10;
+    constant C_ER_WRITE_ACK_BIT          : natural := 9;
+    constant C_ER_APPLY_ACK_BIT          : natural := 10;
+    constant C_ER_APPLY_PENDING_BIT      : natural := 11;
+    constant C_ER_CMD_REJECT_BIT         : natural := 12;
 
 begin
 
@@ -2418,6 +2430,85 @@ begin
             );
         end procedure;
 
+        procedure er_rd(
+            addr         : in  std_logic_vector(8 downto 0);
+            variable got : out std_logic_vector(31 downto 0)
+        ) is
+        begin
+            px_axi_lite_reader(
+                addr          => addr,
+                val           => (others => '0'),
+                comp          => '0',
+                fail_on_error => '1',
+                axi_aclk      => clk,
+                axi_araddr    => er_araddr,
+                axi_arprot    => er_arprot,
+                axi_arvalid   => er_arvalid,
+                axi_arready   => er_arready,
+                axi_rdata     => er_rdata,
+                axi_rresp     => er_rresp,
+                axi_rvalid    => er_rvalid,
+                axi_rready    => er_rready
+            );
+            got := er_rdata;
+        end procedure;
+
+        procedure er_stage_delay(
+            channel       : in natural;
+            ticks         : in natural;
+            variable ctl0 : inout std_logic_vector(31 downto 0)
+        ) is
+            variable v_stat2 : std_logic_vector(31 downto 0);
+            variable v_acked : boolean := false;
+        begin
+            er_wr(C_ER_CTL1, std_logic_vector(to_unsigned(ticks, 32)));
+            ctl0(C_ER_DELAY_INDEX_HI downto C_ER_DELAY_INDEX_LO) :=
+                std_logic_vector(to_unsigned(channel, 5));
+            ctl0(C_ER_DELAY_WRITE_TOGGLE_BIT) :=
+                not ctl0(C_ER_DELAY_WRITE_TOGGLE_BIT);
+            er_wr(C_ER_CTL0, ctl0);
+
+            for poll in 0 to 255 loop
+                er_rd(C_ER_STAT2, v_stat2);
+                if v_stat2(C_ER_WRITE_ACK_BIT) =
+                   ctl0(C_ER_DELAY_WRITE_TOGGLE_BIT) then
+                    v_acked := true;
+                    exit;
+                end if;
+            end loop;
+            assert v_acked
+                report "full_int: Echo delay write acknowledgement timeout"
+                severity failure;
+            assert v_stat2(C_ER_CMD_REJECT_BIT) = '0'
+                report "full_int: Echo delay write was rejected"
+                severity failure;
+        end procedure;
+
+        procedure er_apply_profile(
+            variable ctl0 : inout std_logic_vector(31 downto 0)
+        ) is
+            variable v_stat2 : std_logic_vector(31 downto 0);
+            variable v_acked : boolean := false;
+        begin
+            ctl0(C_ER_APPLY_TOGGLE_BIT) := not ctl0(C_ER_APPLY_TOGGLE_BIT);
+            er_wr(C_ER_CTL0, ctl0);
+
+            for poll in 0 to 1023 loop
+                er_rd(C_ER_STAT2, v_stat2);
+                if v_stat2(C_ER_APPLY_ACK_BIT) = ctl0(C_ER_APPLY_TOGGLE_BIT)
+                   and v_stat2(C_ER_APPLY_PENDING_BIT) = '0' then
+                    v_acked := true;
+                    exit;
+                end if;
+            end loop;
+            assert v_acked
+                report "full_int: Echo delay profile apply acknowledgement timeout"
+                severity failure;
+            assert v_stat2(C_ER_CMD_REJECT_BIT) = '0'
+                report "full_int: Echo delay profile apply was rejected"
+                severity failure;
+        end procedure;
+
         procedure td_wr(addr : std_logic_vector(8 downto 0);
                         val  : std_logic_vector(31 downto 0)) is
         begin
@@ -2538,6 +2629,7 @@ begin
         variable v_stat7 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_md_stat0 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_md_stage_toggle : std_logic := '0';
+        variable v_er_ctl0 : std_logic_vector(31 downto 0) := (others => '0');
         variable v_hw_config : std_logic_vector(31 downto 0) := (others => '0');
         variable v_face_close_wait : natural := 0;
         variable v_pipeline_drain_wait : natural := 0;
@@ -2652,17 +2744,19 @@ begin
 
         if G_ECHO_STIM_MODE = "synthetic_single" then
             pl("[S1] echo_receiver CSR: synthetic STOP0 per GPX chip");
-            -- CTL1..16 hold two 16-bit delays per word. Configure channel 0
-            -- of every chip; all other channels remain zero.
+            -- Stage channel 0 of every chip through the compact indexed
+            -- command window. All other channels remain zero, then one apply
+            -- atomically promotes the complete staging profile.
             for chip in 0 to c_MAX_CHIPS - 1 loop
-                er_wr(
-                    std_logic_vector(to_unsigned(
-                        4 * (1 + (chip * C_ER_N_STOPS) / 2), 9)),
-                    x"0000" & std_logic_vector(to_unsigned(
-                        C_SIM_TARGET_5NS_TICKS, 16))
+                er_stage_delay(
+                    chip * C_ER_N_STOPS,
+                    C_SIM_TARGET_5NS_TICKS,
+                    v_er_ctl0
                 );
             end loop;
-            er_wr(C_ER_CTL0, x"00000001");
+            er_apply_profile(v_er_ctl0);
+            v_er_ctl0(C_ER_SIM_EN_BIT) := '1';
+            er_wr(C_ER_CTL0, v_er_ctl0);
         else
             pl("[S1] echo_receiver physical LVDS: all STOPs, multi-Return");
             -- Keep sim_en clear. p_physical_echo_driver drives the LVDS pins,
