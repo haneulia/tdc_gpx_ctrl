@@ -57,3 +57,16 @@ a 100 MHz unified CSR clock and 150 MHz AXIS clock, stages all 16 image words,
 checks deferred atomic apply, all six commands, four independent GPX results,
 legacy status packing, and all seven interrupt identities. The maintained
 150 MHz AXIS / 200 MHz TDC integration regression remains the Stage 4 exit gate.
+
+Stage 4 closed in commit `c1b7130` with all three gates passing:
+
+- `TDC_GPX_UNIFIED_ADAPTER_REGRESSION_PASS`;
+- internal encoder plus synthetic Echo: 4 shots, 96 rise/96 fall beats,
+  1,513 processing clocks of point margin;
+- external encoder plus physical 16-channel Return-7 Echo: 9 shots, 828
+  rise/828 fall beats, 2,016 raw 28-bit I-Mode comparisons, and 216 processing
+  clocks of point margin.
+
+The integration harness uses Echo Receiver package revision 7's indexed delay
+protocol. Direct writes to the retired Echo CTL1..16 delay map are not backward
+compatible and must not be used by new software or testbenches.

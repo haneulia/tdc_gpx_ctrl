@@ -115,8 +115,11 @@ Exit: `UNIFIED_CSR_CONTRACT_PASS`. Commit the package, test, runner, and plan.
 ### Stage 2 - Echo Receiver adapter
 
 Implement the indexed delay staging table and stable last-shot status. Preserve
-the legacy local CSR wrapper temporarily by translating its old direct delay
-registers into the new adapter during the compatibility phase.
+the local AXI-Lite interface, but treat package revision 7 as an intentional
+register-map revision: the former direct CTL1..16 delay writes are not
+translated. Maintained software and testbenches must use the indexed
+CTL0/CTL1 write-toggle/apply protocol. This break is confined to the optional
+simulation-delay control plane; the physical LVDS-to-STOP path is unchanged.
 
 Required tests:
 
@@ -209,8 +212,18 @@ internal baseline is `smoke_internal_axis150_tdc200_v002`.
 | 2 Echo | Closed | Echo commit `3c71fcc`; 2 CTL / 4 STAT profile and package revision 7 passed |
 | 3 Motor | Closed | Motor commits `0fa1b04`, `795a1ef`; package commit `4214b18`; focused and full regressions passed |
 | 3 Laser | Closed | Laser commit `d1c36bb`; focused adapter regression passed; 11-test full regression ended `Passed=47, Failed=0` |
-| 4 TDC-GPX | Next | Indexed 16-word image adapter and 9 CTL / 7 STAT runtime profile |
+| 4 TDC-GPX | Closed | TDC commit `c1b7130`; focused adapter and static contract passed; internal and external Return-7 150/200 MHz integration passed |
 
 The Laser full-regression log contains one intentional VHDL warning generated
 by the partial-`TKEEP` rejection test. The beat is discarded and both follow-up
 assertions pass; it is test stimulus evidence, not a synthesis or CDC warning.
+
+Stage 4 integration initially exposed one stale Stage 2 dependency: the full
+integration TB still programmed Echo delay channels through the retired direct
+CTL1..16 map. The TB now stages each selected channel through the indexed
+command/data window, waits for each write acknowledgement, applies the complete
+profile once, and preserves command toggles when enabling simulation. The
+corrected internal run produced four shots, 96 rise and 96 fall beats, and a
+1,513-clock point margin. The physical Return-7 run produced nine shots, 828
+rise and 828 fall beats, 2,016 raw 28-bit I-Mode comparisons, and a 216-clock
+point margin.
