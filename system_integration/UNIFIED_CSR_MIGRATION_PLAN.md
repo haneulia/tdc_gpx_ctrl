@@ -200,3 +200,17 @@ budget gate and currently request an angular grid that reports
 `schedule_overrun`. They are not a valid post-change baseline. The maintained
 external baseline is `return7_external_axis150_tdc200_v001`; the replacement
 internal baseline is `smoke_internal_axis150_tdc200_v002`.
+
+## 7. Stage Ledger
+
+| Stage | State | Evidence |
+|---|---|---|
+| 0/1 | Closed | TDC commits `2919873`, `7d98790`; `UNIFIED_CSR_CONTRACT_PASS` |
+| 2 Echo | Closed | Echo commit `3c71fcc`; 2 CTL / 4 STAT profile and package revision 7 passed |
+| 3 Motor | Closed | Motor commits `0fa1b04`, `795a1ef`; package commit `4214b18`; focused and full regressions passed |
+| 3 Laser | Closed | Laser commit `d1c36bb`; focused adapter regression passed; 11-test full regression ended `Passed=47, Failed=0` |
+| 4 TDC-GPX | Next | Indexed 16-word image adapter and 9 CTL / 7 STAT runtime profile |
+
+The Laser full-regression log contains one intentional VHDL warning generated
+by the partial-`TKEEP` rejection test. The beat is discarded and both follow-up
+assertions pass; it is test stimulus evidence, not a synthesis or CDC warning.
