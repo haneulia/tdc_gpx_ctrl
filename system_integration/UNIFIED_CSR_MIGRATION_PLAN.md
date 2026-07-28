@@ -215,7 +215,8 @@ internal baseline is `smoke_internal_axis150_tdc200_v002`.
 | 4 TDC-GPX | Closed | TDC commit `c1b7130`; focused adapter and static contract passed; internal and external Return-7 150/200 MHz integration passed |
 | 5 TDC-GPX | Closed | Local/unified focused behavior, dual-mode OOC synthesis, package static/BD visibility, and maintained 150/200 MHz integration passed; see `TDC_GPX_LOCAL_UNIFIED_CSR_MODE_CLOSURE.md` |
 | 5 Echo | Closed | Echo commit `b183f99`; local/unified behavior, reset epoch, named IP-XACT interface, GUI compatibility and 150/200 MHz dual-mode OOC synthesis passed; see Echo `ECHO_RECEIVER_LOCAL_UNIFIED_CSR_MODE_CLOSURE.md` |
-| 5 Motor/Laser | Open | Motor and Laser package tops still require the same local/unified IP-XACT gate before Stage 6 |
+| 5 Motor | Closed | Motor HDL commit `bfaa622`, package commit `1959641`; full RTL/XGUI/package DRC passed and local/unified OOC synthesis at 150/200 MHz proved local CSR counts 1/0 |
+| 5 Laser | Open | Laser package top still requires the same local/unified IP-XACT gate before Stage 6 |
 | 6 Unified top | Open | Starts only after all four Stage 5 package gates are closed |
 
 The Laser full-regression log contains one intentional VHDL warning generated
@@ -243,3 +244,14 @@ interface only when local ownership is disabled. Package OOC synthesis proved
 one local CSR instance in Local mode and zero in Unified mode at both 150 and
 200 MHz. Global Echo IRQ 16 is diagnostic, 17 is command reject, and 18..20
 remain reserved.
+
+Stage 5 Motor also keeps `g_ENABLE_LOCAL_CSR=true` as the compatibility
+default. Setting it false hides local `s_axi`, its clock/reset and local IRQ,
+and exposes one named `motor_unified_csr` interface with a separate unified
+configuration clock/reset. The full-top mode TB proved config/reset epoch
+handoff through the existing Motor commit FSM. Package revision 13 passed
+IP-XACT DRC, conditional Block Design visibility and black-box-free OOC
+synthesis in all four 150/200 MHz local/unified combinations. The isolated
+unified build contains no `my_axil_csr` instance; final system resource savings
+remain a Stage 6 measurement because that is where one shared CSR32 owner is
+introduced.
