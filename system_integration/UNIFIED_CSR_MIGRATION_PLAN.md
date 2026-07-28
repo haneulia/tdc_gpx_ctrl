@@ -219,7 +219,7 @@ internal baseline is `smoke_internal_axis150_tdc200_v002`.
 | 5 Echo | Closed | Echo commit `b183f99`; local/unified behavior, reset epoch, named IP-XACT interface, GUI compatibility and 150/200 MHz dual-mode OOC synthesis passed; see Echo `ECHO_RECEIVER_LOCAL_UNIFIED_CSR_MODE_CLOSURE.md` |
 | 5 Motor | Closed | Motor HDL commit `bfaa622`, package commit `1959641`; full RTL/XGUI/package DRC passed and local/unified OOC synthesis at 150/200 MHz proved local CSR counts 1/0 |
 | 5 Laser | Closed | Laser HDL commit `f6fbd89`, package commit `73647f6`; full RTL/XGUI/package DRC passed and local/unified OOC synthesis at 150/200 MHz proved local CSR counts 1/0 |
-| 6 Unified top | Ready | All four Stage 5 package gates are closed; implement one source-level CSR32 owner and adapter/status/IRQ routing |
+| 6 Unified top | Closed | One source-level CSR32 owner; 7 focused AXI/routing checks, black-box-free xc7z020 synthesis, exact owner count 1/0 for shared/legacy CSR |
 
 The Laser full-regression log contains one intentional VHDL warning generated
 by the partial-`TKEEP` rejection test. The beat is discarded and both follow-up
@@ -267,3 +267,12 @@ shared CTL0/1, Laser CTL8..14, STAT12..18 and IRQ causes 8..10. The full-top
 mode test also proved valid epoch acceptance, invalid timing rejection without
 active-setting corruption, and reset-epoch acknowledgement. Motor position,
 fire/fire_done and TDC START/STOP remain direct paths outside the CSR plane.
+
+Stage 6 consumes the two formerly reserved status words without enlarging the
+68-register address geometry. STAT30 closes TDC indexed-image readback and
+STAT31 summarizes config/reset match, busy, reject and valid state. The focused
+top test passed all seven AXI, byte-strobe, routing, transaction and IRQ/W1C
+checks. Synthesis for `xc7z020clg484-2` produced zero black boxes, exactly one
+`my_axil_csr32_top`, zero legacy CSR owners, 1,021 LUTs and 2,250 flip-flops.
+This closes the control plane only; direct attachment to all four processing
+IPs and 150/200 MHz local/unified equivalence remain Stage 7.

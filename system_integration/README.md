@@ -37,6 +37,16 @@ The migration does not place real-time Motor, Laser, Echo, or GPX event signals
 behind software registers. It changes configuration ownership and software
 observability only.
 
+The Stage 6 source-level owner is
+`rtl/lidar_unified_csr_top.vhd`; its register, startup, status and interrupt
+contract is documented in `UNIFIED_CSR_TOP_GUIDE.md`. Run its focused AXI and
+aggregation gate with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_unified_csr_top.ps1
+```
+
 ## Encoder modes
 
 `motor_laser_ctrl_top` contains `motor_decoder_top`, which already contains

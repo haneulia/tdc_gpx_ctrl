@@ -22,6 +22,28 @@ package lidar_unified_csr_pkg is
     constant C_UCSR_INTR_BASE : natural := 16#100#;
     constant C_UCSR_LAST_ADDR : natural := 16#10C#;
 
+    -- STAT0/STAT1 fixed identity words. 0x4C is ASCII 'L'. The capability
+    -- word advertises Motor/Laser/Echo/TDC, both indexed windows, shared
+    -- config/reset epochs, 26 active CTLs, 32 active STATs and 32 IRQ inputs.
+    constant C_UCSR_VERSION_WORD : std_logic_vector(31 downto 0) :=
+        x"4C010000";
+    constant C_UCSR_CAPABILITY_WORD : std_logic_vector(31 downto 0) :=
+        x"01041AFF";
+    constant C_SYS_CAP_MOTOR_PRESENT_BIT : natural := 0;
+    constant C_SYS_CAP_LASER_PRESENT_BIT : natural := 1;
+    constant C_SYS_CAP_ECHO_PRESENT_BIT  : natural := 2;
+    constant C_SYS_CAP_TDC_PRESENT_BIT   : natural := 3;
+    constant C_SYS_CAP_ECHO_INDEXED_BIT  : natural := 4;
+    constant C_SYS_CAP_TDC_INDEXED_BIT   : natural := 5;
+    constant C_SYS_CAP_CFG_EPOCH_BIT     : natural := 6;
+    constant C_SYS_CAP_RESET_EPOCH_BIT   : natural := 7;
+    constant C_SYS_CAP_ACTIVE_CTL_LO     : natural := 8;
+    constant C_SYS_CAP_ACTIVE_CTL_HI     : natural := 12;
+    constant C_SYS_CAP_ACTIVE_STAT_LO    : natural := 13;
+    constant C_SYS_CAP_ACTIVE_STAT_HI    : natural := 18;
+    constant C_SYS_CAP_IRQ_COUNT_LO      : natural := 19;
+    constant C_SYS_CAP_IRQ_COUNT_HI      : natural := 24;
+
     -- CTL0..1: system ownership and transaction delimiters.
     constant C_CTL_SYS_CTRL      : natural := 0;
     constant C_CTL_SYS_CFG_APPLY : natural := 1;

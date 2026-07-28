@@ -1,5 +1,6 @@
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 use work.lidar_unified_csr_pkg.all;
 
@@ -15,6 +16,23 @@ begin
             severity failure;
         assert C_UCSR_INTR_COUNT = 4 and C_UCSR_INTR_SOURCE_COUNT = 32
             report "unified CSR interrupt geometry changed"
+            severity failure;
+
+        assert C_UCSR_VERSION_WORD(31 downto 24) = x"4C"
+            and C_UCSR_CAPABILITY_WORD(C_SYS_CAP_MOTOR_PRESENT_BIT) = '1'
+            and C_UCSR_CAPABILITY_WORD(C_SYS_CAP_LASER_PRESENT_BIT) = '1'
+            and C_UCSR_CAPABILITY_WORD(C_SYS_CAP_ECHO_PRESENT_BIT) = '1'
+            and C_UCSR_CAPABILITY_WORD(C_SYS_CAP_TDC_PRESENT_BIT) = '1'
+            and unsigned(C_UCSR_CAPABILITY_WORD(
+                C_SYS_CAP_ACTIVE_CTL_HI downto C_SYS_CAP_ACTIVE_CTL_LO)) =
+                C_UCSR_ACTIVE_CTL_COUNT
+            and unsigned(C_UCSR_CAPABILITY_WORD(
+                C_SYS_CAP_ACTIVE_STAT_HI downto C_SYS_CAP_ACTIVE_STAT_LO)) =
+                C_UCSR_ACTIVE_STAT_COUNT
+            and unsigned(C_UCSR_CAPABILITY_WORD(
+                C_SYS_CAP_IRQ_COUNT_HI downto C_SYS_CAP_IRQ_COUNT_LO)) =
+                C_UCSR_INTR_SOURCE_COUNT
+            report "unified identity/capability word changed"
             severity failure;
 
         assert fn_ctl_byte_offset(0) = 16#000#
