@@ -12,9 +12,11 @@ The final software-visible bank is fixed at:
 - four interrupt registers at `0x100..0x10C`;
 - 32 interrupt-source bits.
 
-There are 26 active CTL slots and 30 active STAT slots in the initial map. Six
-CTL and two STAT slots remain reserved. Including IRQ, 60 of the 68 addressable
-registers have an initial owner.
+There are 26 active CTL slots and 32 active STAT slots. Six CTL slots remain
+reserved. Including IRQ, 62 of the 68 addressable registers have an owner.
+Stage 6 assigned the two initially reserved STAT words to indexed TDC image
+readback and cross-adapter transaction state; the address geometry did not
+grow.
 
 The canonical numeric allocation is
 `system_integration/rtl/lidar_unified_csr_pkg.vhd`. This document describes the
@@ -107,8 +109,8 @@ scenario/contract files.
 ### Stage 1 - Address contract
 
 Add the unified CSR package and a static testbench. The test must prove the
-32/32/4 geometry, byte offsets, contiguous owner ranges, reserved ranges, and
-60 active-word count.
+32/32/4 geometry, byte offsets, contiguous owner ranges, reserved CTL range,
+and 62 active-word count.
 
 Exit: `UNIFIED_CSR_CONTRACT_PASS`. Commit the package, test, runner, and plan.
 

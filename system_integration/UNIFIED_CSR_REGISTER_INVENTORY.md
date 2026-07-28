@@ -19,9 +19,9 @@ The target uses one `my_axil_csr32_top` geometry.
 | Unified bank | Active | Reserved | Address slots |
 |---|---:|---:|---:|
 | CTL | 26 | 6 | 32 |
-| STAT | 30 | 2 | 32 |
+| STAT | 32 | 0 | 32 |
 | IRQ registers | 4 | 0 | 4 |
-| Total | 60 | 8 | 68 |
+| Total | 62 | 6 | 68 |
 
 Reserved slots keep the ABI stable. They are not justification for crossing all
 32 CTLs through every processing clock domain. Each adapter transfers only its
@@ -86,8 +86,14 @@ are what become smaller.
 | Pipeline STAT5..7 | Three runtime pipeline STATs |
 | Unused chip/pipeline slots | Removed from ownership, reserved unified slots read zero |
 
-Target contribution: 9 CTL and 7 TDC runtime STATs. Five static TDC geometry
-values are counted in the six System STAT slots.
+Target contribution: 9 CTL and 8 TDC runtime STATs. Five static TDC geometry
+values are counted in the System STAT slots. STAT30 exposes the selected
+indexed-image word and STAT31 summarizes cross-adapter transaction state.
+
+Using STAT30/31 does not enlarge the address map or instantiate another CSR
+bank. Both words already existed in the fixed 32-STAT geometry; Stage 6 assigns
+them because otherwise image readback and atomic-configuration diagnosis would
+exist only as unaddressed sideband signals.
 
 ## 3. Required compatibility behavior
 

@@ -41,7 +41,11 @@ begin
             and C_STAT_ECHO_RISE_MASK = 19
             and C_STAT_TDC_CHIP0_RESULT = 23
             and C_STAT_TDC_PIPELINE_STATUS = 27
-            and C_STAT_TDC_STATUS_EXT2 + 1 = C_STAT_RESERVED_FIRST
+            and C_STAT_TDC_STATUS_EXT2 + 1 =
+                C_STAT_TDC_IMAGE_SELECTED_DATA
+            and C_STAT_TDC_IMAGE_SELECTED_DATA + 1 =
+                C_STAT_SYS_ADAPTER_STATE
+            and C_STAT_SYS_ADAPTER_STATE = C_UCSR_STAT_COUNT - 1
             report "unified STAT ownership ranges overlap or contain a gap"
             severity failure;
 
@@ -55,13 +59,24 @@ begin
             report "unified interrupt-source ownership ranges overlap"
             severity failure;
 
-        assert C_UCSR_ACTIVE_WORD_COUNT = 60
+        assert C_UCSR_ACTIVE_WORD_COUNT = 62
             report "unified active-register count changed"
             severity failure;
 
         assert C_SYS_CTRL_RESET_EPOCH_HI - C_SYS_CTRL_RESET_EPOCH_LO + 1 = 8
             and C_SYS_CFG_EPOCH_HI - C_SYS_CFG_EPOCH_LO + 1 = 8
             report "system transaction epochs must remain 8 bits"
+            severity failure;
+
+        assert C_SYS_CONFIG_CFG_REQUEST_HI
+                   < C_SYS_CONFIG_RESET_REQUEST_LO
+            and C_SYS_CONFIG_RESET_REQUEST_HI
+                   < C_SYS_CONFIG_LASER_CFG_ACCEPTED_LO
+            and C_SYS_CONFIG_LASER_CFG_ACCEPTED_HI
+                   < C_SYS_CONFIG_TDC_CFG_ACCEPTED_LO
+            and C_SYS_CONFIG_TDC_CFG_ACCEPTED_HI = 31
+            and C_SYS_STATE_ANY_REJECT_BIT < 32
+            report "system transaction status packing changed"
             severity failure;
 
         assert C_MOTOR_CFG_CPR_HI < C_MOTOR_CFG_DIR_BIT

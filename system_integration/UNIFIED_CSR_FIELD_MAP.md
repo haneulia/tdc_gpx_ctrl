@@ -37,6 +37,43 @@ Software must not reuse an epoch value until every participating adapter has
 reported the previous value as accepted. An adapter that is busy keeps its old
 accepted epoch and sets its rejection diagnostic.
 
+### System status
+
+| Unified slot | Meaning |
+|---|---|
+| STAT0 `SYS_VERSION` | `[31:24]=0x4C` LiDAR signature, `[23:16]` ABI major, `[15:8]` ABI minor, `[7:0]` RTL revision |
+| STAT1 `SYS_CAPABILITY` | Present IP/features and fixed active-register counts |
+| STAT2 `SYS_CONFIG` | requested config/reset epochs, Laser accepted config epoch, TDC accepted config epoch |
+| STAT3 `TDC_MAX_ROWS` | build-time TDC maximum row geometry |
+| STAT4 `TDC_CELL_SIZE` | build-time TDC cell/packing geometry |
+| STAT5 `TDC_MAX_HSIZE` | build-time maximum VDMA HSIZE geometry |
+| STAT31 `SYS_ADAPTER_STATE` | per-adapter match, busy, reject and valid summary |
+
+STAT2 byte packing is `[7:0]` requested config epoch, `[15:8]` requested reset
+epoch, `[23:16]` Laser accepted config epoch and `[31:24]` TDC accepted config
+epoch. Motor accepted epochs remain in STAT8. Echo configuration uses its
+independent indexed-profile acknowledgement in STAT21.
+
+STAT31 packs the following one-bit fields:
+
+| Bits | Meaning |
+|---:|---|
+| 2:0 | Motor, Laser, TDC config epoch match and valid |
+| 6:3 | Motor, Laser, Echo, TDC reset epoch match |
+| 10:7 | Motor, Laser, Echo, TDC busy |
+| 14:11 | Motor, Laser, Echo, TDC reject |
+| 17:15 | Motor, Laser, TDC configuration valid |
+| 18 | all shared config participants accepted |
+| 19 | all four reset participants accepted |
+| 20 | any busy |
+| 21 | any reject |
+| 31:22 | reserved, zero |
+
+Echo busy/reject are derived from STAT21 profile-apply-pending and command-
+reject fields. TDC busy/reject include config, serialized command and indexed
+image paths. An epoch may wrap through zero; software therefore uses match and
+valid bits rather than treating epoch zero as invalid.
+
 ## 3. Motor Decoder
 
 ### Control words
@@ -164,6 +201,7 @@ as one coherent snapshot.
 | STAT27 `TDC_PIPELINE_STATUS` | Legacy pipeline STATUS in 15:0, accepted command epoch in 23:16, accepted image-write epoch in 31:24 |
 | STAT28 `TDC_STATUS_EXT` | Legacy extended sticky/counter status, bit-for-bit |
 | STAT29 `TDC_STATUS_EXT2` | Legacy category-C diagnostic status, bit-for-bit |
+| STAT30 `TDC_IMAGE_SELECTED_DATA` | Active 32-bit image word selected by CTL20 index |
 
 Configuration/reset accepted epochs, busy/reject, and valid state feed the
 System status aggregator. The TDC interrupt identities are: 21 register command

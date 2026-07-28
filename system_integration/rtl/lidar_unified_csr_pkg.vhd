@@ -62,7 +62,8 @@ package lidar_unified_csr_pkg is
     constant C_CTL_RESERVED_LAST  : natural := 31;
     constant C_UCSR_ACTIVE_CTL_COUNT : positive := 26;
 
-    -- STAT0..5: system identity, capability, and derived geometry.
+    -- STAT0..5: system identity, capability, transaction epochs, and derived
+    -- geometry.
     constant C_STAT_SYS_VERSION    : natural := 0;
     constant C_STAT_SYS_CAPABILITY : natural := 1;
     constant C_STAT_SYS_CONFIG     : natural := 2;
@@ -105,9 +106,12 @@ package lidar_unified_csr_pkg is
     constant C_STAT_TDC_STATUS_EXT      : natural := 28;
     constant C_STAT_TDC_STATUS_EXT2     : natural := 29;
 
-    constant C_STAT_RESERVED_FIRST : natural := 30;
-    constant C_STAT_RESERVED_LAST  : natural := 31;
-    constant C_UCSR_ACTIVE_STAT_COUNT : positive := 30;
+    -- Stage 6 consumes the two originally reserved words without changing the
+    -- 32-word ABI. STAT30 closes indexed-image readback; STAT31 makes a shared
+    -- config/reset transaction diagnosable without polling hidden sidebands.
+    constant C_STAT_TDC_IMAGE_SELECTED_DATA : natural := 30;
+    constant C_STAT_SYS_ADAPTER_STATE        : natural := 31;
+    constant C_UCSR_ACTIVE_STAT_COUNT : positive := 32;
 
     -- Interrupt source ownership is reserved by group in phase 1.  Individual
     -- source meanings are frozen when each adapter reaches its unit-test gate.
@@ -145,6 +149,45 @@ package lidar_unified_csr_pkg is
     -- word as one transaction. Each adapter returns its accepted epoch.
     constant C_SYS_CFG_EPOCH_LO : natural := 0;
     constant C_SYS_CFG_EPOCH_HI : natural := 7;
+
+    -- STAT2 SYS_CONFIG: requested epochs plus adapter epochs that are not
+    -- already carried in an owned per-IP status word. Motor accepted epochs
+    -- remain in STAT8; Echo profile writes use their independent toggle/ack
+    -- protocol in STAT21.
+    constant C_SYS_CONFIG_CFG_REQUEST_LO : natural := 0;
+    constant C_SYS_CONFIG_CFG_REQUEST_HI : natural := 7;
+    constant C_SYS_CONFIG_RESET_REQUEST_LO : natural := 8;
+    constant C_SYS_CONFIG_RESET_REQUEST_HI : natural := 15;
+    constant C_SYS_CONFIG_LASER_CFG_ACCEPTED_LO : natural := 16;
+    constant C_SYS_CONFIG_LASER_CFG_ACCEPTED_HI : natural := 23;
+    constant C_SYS_CONFIG_TDC_CFG_ACCEPTED_LO : natural := 24;
+    constant C_SYS_CONFIG_TDC_CFG_ACCEPTED_HI : natural := 31;
+
+    -- STAT31 SYS_ADAPTER_STATE. Bit order is Motor, Laser, Echo, TDC wherever
+    -- all four adapters participate. Echo has no shared CFG_EPOCH transaction;
+    -- its indexed profile handshake remains visible in STAT21.
+    constant C_SYS_STATE_MOTOR_CFG_MATCH_BIT : natural := 0;
+    constant C_SYS_STATE_LASER_CFG_MATCH_BIT : natural := 1;
+    constant C_SYS_STATE_TDC_CFG_MATCH_BIT   : natural := 2;
+    constant C_SYS_STATE_MOTOR_RESET_MATCH_BIT : natural := 3;
+    constant C_SYS_STATE_LASER_RESET_MATCH_BIT : natural := 4;
+    constant C_SYS_STATE_ECHO_RESET_MATCH_BIT  : natural := 5;
+    constant C_SYS_STATE_TDC_RESET_MATCH_BIT   : natural := 6;
+    constant C_SYS_STATE_MOTOR_BUSY_BIT : natural := 7;
+    constant C_SYS_STATE_LASER_BUSY_BIT : natural := 8;
+    constant C_SYS_STATE_ECHO_BUSY_BIT  : natural := 9;
+    constant C_SYS_STATE_TDC_BUSY_BIT   : natural := 10;
+    constant C_SYS_STATE_MOTOR_REJECT_BIT : natural := 11;
+    constant C_SYS_STATE_LASER_REJECT_BIT : natural := 12;
+    constant C_SYS_STATE_ECHO_REJECT_BIT  : natural := 13;
+    constant C_SYS_STATE_TDC_REJECT_BIT   : natural := 14;
+    constant C_SYS_STATE_MOTOR_VALID_BIT : natural := 15;
+    constant C_SYS_STATE_LASER_VALID_BIT : natural := 16;
+    constant C_SYS_STATE_TDC_VALID_BIT   : natural := 17;
+    constant C_SYS_STATE_ALL_CFG_ACCEPTED_BIT   : natural := 18;
+    constant C_SYS_STATE_ALL_RESET_ACCEPTED_BIT : natural := 19;
+    constant C_SYS_STATE_ANY_BUSY_BIT            : natural := 20;
+    constant C_SYS_STATE_ANY_REJECT_BIT          : natural := 21;
 
     -- ---------------------------------------------------------------------
     -- Motor Decoder CTL2..7 field contract
@@ -225,6 +268,8 @@ package lidar_unified_csr_pkg is
     constant C_ECHO_DELAY_APPLY_TOGGLE_BIT : natural := 9;
     constant C_ECHO_DELAY_DATA_LO         : natural := 0;
     constant C_ECHO_DELAY_DATA_HI         : natural := 15;
+    constant C_ECHO_STATUS_APPLY_PENDING_BIT : natural := 11;
+    constant C_ECHO_STATUS_CMD_REJECT_BIT    : natural := 12;
 
     -- ---------------------------------------------------------------------
     -- TDC-GPX indexed image and serialized command contract
