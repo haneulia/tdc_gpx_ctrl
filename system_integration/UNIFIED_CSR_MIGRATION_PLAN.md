@@ -216,8 +216,8 @@ internal baseline is `smoke_internal_axis150_tdc200_v002`.
 | 5 TDC-GPX | Closed | Local/unified focused behavior, dual-mode OOC synthesis, package static/BD visibility, and maintained 150/200 MHz integration passed; see `TDC_GPX_LOCAL_UNIFIED_CSR_MODE_CLOSURE.md` |
 | 5 Echo | Closed | Echo commit `b183f99`; local/unified behavior, reset epoch, named IP-XACT interface, GUI compatibility and 150/200 MHz dual-mode OOC synthesis passed; see Echo `ECHO_RECEIVER_LOCAL_UNIFIED_CSR_MODE_CLOSURE.md` |
 | 5 Motor | Closed | Motor HDL commit `bfaa622`, package commit `1959641`; full RTL/XGUI/package DRC passed and local/unified OOC synthesis at 150/200 MHz proved local CSR counts 1/0 |
-| 5 Laser | Open | Laser package top still requires the same local/unified IP-XACT gate before Stage 6 |
-| 6 Unified top | Open | Starts only after all four Stage 5 package gates are closed |
+| 5 Laser | Closed | Laser HDL commit `f6fbd89`, package commit `73647f6`; full RTL/XGUI/package DRC passed and local/unified OOC synthesis at 150/200 MHz proved local CSR counts 1/0 |
+| 6 Unified top | Ready | All four Stage 5 package gates are closed; implement one source-level CSR32 owner and adapter/status/IRQ routing |
 
 The Laser full-regression log contains one intentional VHDL warning generated
 by the partial-`TKEEP` rejection test. The beat is discarded and both follow-up
@@ -255,3 +255,13 @@ synthesis in all four 150/200 MHz local/unified combinations. The isolated
 unified build contains no `my_axil_csr` instance; final system resource savings
 remain a Stage 6 measurement because that is where one shared CSR32 owner is
 introduced.
+
+Stage 5 Laser follows the same ownership rule. Local mode retains exactly one
+`laser_ctrl_csr`; Unified mode removes it and exposes the named
+`laser_unified_csr` interface. Package revision 29 passed XGUI helpers,
+IP-XACT DRC, conditional Block Design visibility and black-box-free OOC
+synthesis in all four 150/200 MHz local/unified combinations. Unified mode uses
+shared CTL0/1, Laser CTL8..14, STAT12..18 and IRQ causes 8..10. The full-top
+mode test also proved valid epoch acceptance, invalid timing rejection without
+active-setting corruption, and reset-epoch acknowledgement. Motor position,
+fire/fire_done and TDC START/STOP remain direct paths outside the CSR plane.
