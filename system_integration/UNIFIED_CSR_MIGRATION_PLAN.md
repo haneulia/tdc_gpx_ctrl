@@ -20,6 +20,10 @@ The canonical numeric allocation is
 `system_integration/rtl/lidar_unified_csr_pkg.vhd`. This document describes the
 migration policy; it is not a second source of address constants.
 
+The software transaction and bit-field interpretation is described in
+`system_integration/UNIFIED_CSR_FIELD_MAP.md`. Field positions are still owned
+by the package constants and are locked by the static contract test.
+
 ## 2. Architecture
 
 Each IP is split conceptually into a processing core and a configuration

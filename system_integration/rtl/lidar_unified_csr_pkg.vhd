@@ -128,6 +128,114 @@ package lidar_unified_csr_pkg is
         C_UCSR_ACTIVE_CTL_COUNT + C_UCSR_ACTIVE_STAT_COUNT
         + C_UCSR_INTR_COUNT;
 
+    -- ---------------------------------------------------------------------
+    -- Shared control transaction fields
+    -- ---------------------------------------------------------------------
+    -- SYS_CTRL carries live mode/enable bits plus an 8-bit reset epoch.
+    -- Software requests reset by writing a value different from the last
+    -- accepted epoch. A level bit is deliberately not used for reset.
+    constant C_SYS_CTRL_MOTOR_SIM_EN_BIT   : natural := 0;
+    constant C_SYS_CTRL_LASER_EN_BIT       : natural := 1;
+    constant C_SYS_CTRL_LASER_STREAM_EN_BIT : natural := 2;
+    constant C_SYS_CTRL_ECHO_SIM_EN_BIT    : natural := 3;
+    constant C_SYS_CTRL_RESET_EPOCH_LO     : natural := 8;
+    constant C_SYS_CTRL_RESET_EPOCH_HI     : natural := 15;
+
+    -- A changed configuration epoch captures every adapter-owned staging
+    -- word as one transaction. Each adapter returns its accepted epoch.
+    constant C_SYS_CFG_EPOCH_LO : natural := 0;
+    constant C_SYS_CFG_EPOCH_HI : natural := 7;
+
+    -- ---------------------------------------------------------------------
+    -- Motor Decoder CTL2..7 field contract
+    -- ---------------------------------------------------------------------
+    constant C_MOTOR_CFG_CPR_LO        : natural := 0;
+    constant C_MOTOR_CFG_CPR_HI        : natural := 15;
+    constant C_MOTOR_CFG_DIR_BIT       : natural := 16;
+    constant C_MOTOR_CFG_DEC_MODE_LO   : natural := 17;
+    constant C_MOTOR_CFG_DEC_MODE_HI   : natural := 18;
+    constant C_MOTOR_CFG_Z_EARLY_BIT   : natural := 19;
+    constant C_MOTOR_CFG_VALID_HOLD_LO : natural := 20;
+    constant C_MOTOR_CFG_VALID_HOLD_HI : natural := 27;
+
+    constant C_MOTOR_SCHED_HI_COUNT_LO : natural := 0;
+    constant C_MOTOR_SCHED_HI_COUNT_HI : natural := 14;
+    constant C_MOTOR_SCHED_PHYS_LAT_LO : natural := 15;
+    constant C_MOTOR_SCHED_PHYS_LAT_HI : natural := 20;
+    constant C_MOTOR_SCHED_VIRT_LAT_LO : natural := 21;
+    constant C_MOTOR_SCHED_VIRT_LAT_HI : natural := 26;
+
+    constant C_MOTOR_Z_OFFSET_LO : natural := 0;
+    constant C_MOTOR_Z_OFFSET_HI : natural := 14;
+    constant C_MOTOR_Z_WIDTH_LO  : natural := 15;
+    constant C_MOTOR_Z_WIDTH_HI  : natural := 29;
+
+    constant C_MOTOR_FACE_WRITE_INDEX_LO : natural := 0;
+    constant C_MOTOR_FACE_WRITE_INDEX_HI : natural := 2;
+    constant C_MOTOR_FACE_READ_INDEX_LO  : natural := 3;
+    constant C_MOTOR_FACE_READ_INDEX_HI  : natural := 5;
+    constant C_MOTOR_FACE_WRITE_EPOCH_LO : natural := 8;
+    constant C_MOTOR_FACE_WRITE_EPOCH_HI : natural := 15;
+
+    -- CTL7 and STAT7 use the same compact 30-bit geometry representation.
+    constant C_MOTOR_FACE_CENTER_LO : natural := 0;
+    constant C_MOTOR_FACE_CENTER_HI : natural := 14;
+    constant C_MOTOR_FACE_HALF_LO   : natural := 15;
+    constant C_MOTOR_FACE_HALF_HI   : natural := 29;
+    constant C_MOTOR_FACE_VALID_BIT : natural := 30;
+
+    -- Motor status words. MOTOR_STATUS is live operating state;
+    -- MOTOR_CFG_STATUS owns transaction acknowledgement and selection state.
+    constant C_MOTOR_STATUS_CUR_FACE_LO       : natural := 0;
+    constant C_MOTOR_STATUS_CUR_FACE_HI       : natural := 2;
+    constant C_MOTOR_STATUS_ACTIVE_BIT        : natural := 3;
+    constant C_MOTOR_STATUS_SIM_RUNNING_BIT   : natural := 4;
+    constant C_MOTOR_STATUS_CFG_BUSY_BIT      : natural := 5;
+    constant C_MOTOR_STATUS_Z_FAULT_LO        : natural := 6;
+    constant C_MOTOR_STATUS_Z_FAULT_HI        : natural := 7;
+    constant C_MOTOR_STATUS_POS_OVERFLOW_BIT  : natural := 8;
+    constant C_MOTOR_STATUS_QUAD_STICKY_BIT   : natural := 9;
+    constant C_MOTOR_STATUS_AXIS_DROP_BIT     : natural := 10;
+    constant C_MOTOR_STATUS_DEC_MODE_LO       : natural := 11;
+    constant C_MOTOR_STATUS_DEC_MODE_HI       : natural := 12;
+    constant C_MOTOR_STATUS_N_FACES_LO        : natural := 13;
+    constant C_MOTOR_STATUS_N_FACES_HI        : natural := 15;
+    constant C_MOTOR_STATUS_DIR_BIT            : natural := 16;
+
+    constant C_MOTOR_CFG_STATUS_CFG_EPOCH_LO   : natural := 0;
+    constant C_MOTOR_CFG_STATUS_CFG_EPOCH_HI   : natural := 7;
+    constant C_MOTOR_CFG_STATUS_FACE_EPOCH_LO  : natural := 8;
+    constant C_MOTOR_CFG_STATUS_FACE_EPOCH_HI  : natural := 15;
+    constant C_MOTOR_CFG_STATUS_READ_INDEX_LO  : natural := 16;
+    constant C_MOTOR_CFG_STATUS_READ_INDEX_HI  : natural := 18;
+    constant C_MOTOR_CFG_STATUS_GEOM_VALID_BIT : natural := 19;
+    constant C_MOTOR_CFG_STATUS_BUSY_BIT       : natural := 20;
+    constant C_MOTOR_CFG_STATUS_APPLY_TRACK_BIT : natural := 21;
+    constant C_MOTOR_CFG_STATUS_REJECT_BIT     : natural := 22;
+    constant C_MOTOR_CFG_STATUS_VALID_BIT      : natural := 23;
+    constant C_MOTOR_CFG_STATUS_RESET_EPOCH_LO : natural := 24;
+    constant C_MOTOR_CFG_STATUS_RESET_EPOCH_HI : natural := 31;
+
+    -- ---------------------------------------------------------------------
+    -- Echo Receiver CTL15..16 indexed command contract
+    -- ---------------------------------------------------------------------
+    constant C_ECHO_DELAY_INDEX_LO        : natural := 0;
+    constant C_ECHO_DELAY_INDEX_HI        : natural := 4;
+    constant C_ECHO_DELAY_WRITE_TOGGLE_BIT : natural := 8;
+    constant C_ECHO_DELAY_APPLY_TOGGLE_BIT : natural := 9;
+    constant C_ECHO_DELAY_DATA_LO         : natural := 0;
+    constant C_ECHO_DELAY_DATA_HI         : natural := 15;
+
+    -- Frozen interrupt source meanings for adapters closed in Stage 2/3.
+    constant C_IRQ_MOTOR_ACTIVE_ENTER : natural := 4;
+    constant C_IRQ_MOTOR_ACTIVE_EXIT  : natural := 5;
+    constant C_IRQ_MOTOR_REVOLUTION   : natural := 6;
+    constant C_IRQ_MOTOR_DIAGNOSTIC   : natural := 7;
+
+    constant C_IRQ_LASER_BLOCKING_CFG    : natural := 8;
+    constant C_IRQ_LASER_TIMEOUT_OVERFLOW : natural := 9;
+    constant C_IRQ_LASER_FRAME_OVERFLOW   : natural := 10;
+
     function fn_ctl_byte_offset(index : natural) return natural;
     function fn_stat_byte_offset(index : natural) return natural;
     function fn_intr_byte_offset(index : natural) return natural;

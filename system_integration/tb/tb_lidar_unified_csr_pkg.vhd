@@ -59,6 +59,65 @@ begin
             report "unified active-register count changed"
             severity failure;
 
+        assert C_SYS_CTRL_RESET_EPOCH_HI - C_SYS_CTRL_RESET_EPOCH_LO + 1 = 8
+            and C_SYS_CFG_EPOCH_HI - C_SYS_CFG_EPOCH_LO + 1 = 8
+            report "system transaction epochs must remain 8 bits"
+            severity failure;
+
+        assert C_MOTOR_CFG_CPR_HI < C_MOTOR_CFG_DIR_BIT
+            and C_MOTOR_CFG_DIR_BIT < C_MOTOR_CFG_DEC_MODE_LO
+            and C_MOTOR_CFG_DEC_MODE_HI < C_MOTOR_CFG_Z_EARLY_BIT
+            and C_MOTOR_CFG_Z_EARLY_BIT < C_MOTOR_CFG_VALID_HOLD_LO
+            and C_MOTOR_CFG_VALID_HOLD_HI < 32
+            report "MOTOR_CFG fields overlap or exceed one word"
+            severity failure;
+
+        assert C_MOTOR_SCHED_HI_COUNT_HI < C_MOTOR_SCHED_PHYS_LAT_LO
+            and C_MOTOR_SCHED_PHYS_LAT_HI < C_MOTOR_SCHED_VIRT_LAT_LO
+            and C_MOTOR_SCHED_VIRT_LAT_HI < 32
+            report "MOTOR_SCHED_LATENCY fields overlap or exceed one word"
+            severity failure;
+
+        assert C_MOTOR_Z_OFFSET_HI < C_MOTOR_Z_WIDTH_LO
+            and C_MOTOR_Z_WIDTH_HI < 32
+            and C_MOTOR_FACE_CENTER_HI < C_MOTOR_FACE_HALF_LO
+            and C_MOTOR_FACE_HALF_HI < C_MOTOR_FACE_VALID_BIT
+            and C_MOTOR_FACE_VALID_BIT < 32
+            report "Motor 15-bit pair packing changed"
+            severity failure;
+
+        assert C_MOTOR_FACE_WRITE_INDEX_HI < C_MOTOR_FACE_READ_INDEX_LO
+            and C_MOTOR_FACE_READ_INDEX_HI < C_MOTOR_FACE_WRITE_EPOCH_LO
+            and C_MOTOR_FACE_WRITE_EPOCH_HI < 32
+            report "MOTOR_FACE_INDEX fields overlap"
+            severity failure;
+
+        assert C_MOTOR_CFG_STATUS_CFG_EPOCH_HI
+                   < C_MOTOR_CFG_STATUS_FACE_EPOCH_LO
+            and C_MOTOR_CFG_STATUS_FACE_EPOCH_HI
+                   < C_MOTOR_CFG_STATUS_READ_INDEX_LO
+            and C_MOTOR_CFG_STATUS_READ_INDEX_HI
+                   < C_MOTOR_CFG_STATUS_GEOM_VALID_BIT
+            and C_MOTOR_CFG_STATUS_VALID_BIT
+                   < C_MOTOR_CFG_STATUS_RESET_EPOCH_LO
+            and C_MOTOR_CFG_STATUS_RESET_EPOCH_HI = 31
+            report "MOTOR_CFG_STATUS fields overlap or leave the word"
+            severity failure;
+
+        assert C_ECHO_DELAY_INDEX_HI < C_ECHO_DELAY_WRITE_TOGGLE_BIT
+            and C_ECHO_DELAY_WRITE_TOGGLE_BIT
+                   < C_ECHO_DELAY_APPLY_TOGGLE_BIT
+            and C_ECHO_DELAY_DATA_HI < 32
+            report "Echo indexed delay command fields changed"
+            severity failure;
+
+        assert C_IRQ_MOTOR_ACTIVE_ENTER = C_IRQ_MOTOR_FIRST
+            and C_IRQ_MOTOR_DIAGNOSTIC = C_IRQ_MOTOR_LAST
+            and C_IRQ_LASER_BLOCKING_CFG = C_IRQ_LASER_FIRST
+            and C_IRQ_LASER_FRAME_OVERFLOW <= C_IRQ_LASER_LAST
+            report "Stage 3 interrupt ownership changed"
+            severity failure;
+
         report "UNIFIED_CSR_CONTRACT_PASS" severity note;
         wait;
     end process p_contract;
