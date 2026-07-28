@@ -21,8 +21,11 @@ set rtl_files [lsearch -all -inline -not -exact \
     [tdc_gpx_rtl_manifest] px_utility_pkg.vhd]
 set csr_sources [tdc_gpx_csr_source_manifest $ip_root]
 set xgui_source [file join $script_dir tdc_gpx_xgui.tcl]
+set interface_sources [list \
+    [file join $script_dir interfaces tdc_gpx_unified_csr.xml] \
+    [file join $script_dir interfaces tdc_gpx_unified_csr_rtl.xml]]
 
-foreach source [concat $csr_sources [list $xgui_source]] {
+foreach source [concat $csr_sources [list $xgui_source] $interface_sources] {
     if {![file exists $source]} {
         error "Required canonical source is missing: $source"
     }
@@ -36,8 +39,9 @@ foreach filename $rtl_files {
 set package_src [file join $package_dir src]
 set package_csr [file join $package_src csr]
 set package_xgui [file join $package_dir xgui]
+set package_interfaces [file join $package_dir interfaces]
 file mkdir $package_dir
-foreach generated_dir [list $package_src $package_xgui] {
+foreach generated_dir [list $package_src $package_xgui $package_interfaces] {
     if {[file exists $generated_dir]} {
         file delete -force $generated_dir
     }
@@ -57,6 +61,10 @@ foreach filename $rtl_files {
 }
 file copy -force $xgui_source \
     [file join $package_xgui tdc_gpx_top_v1_0.tcl]
+foreach source $interface_sources {
+    file copy -force $source \
+        [file join $package_interfaces [file tail $source]]
+}
 
 # Avoid a damaged per-user Tcl Store masking the installation appinit package.
 set install_tcl_store [file normalize \
@@ -77,6 +85,10 @@ if {[file exists $package_work]} {
 create_project -force tdc_gpx_package $package_work -part xc7z020clg484-2
 set_property target_language VHDL [current_project]
 set_property simulator_language Mixed [current_project]
+set unified_bus_definition [ipx::open_bus_definition \
+    [file join $package_interfaces tdc_gpx_unified_csr.xml]]
+set unified_abstraction_definition [ipx::open_abstraction_definition \
+    [file join $package_interfaces tdc_gpx_unified_csr_rtl.xml]]
 
 set ordered_sources {}
 foreach filename $csr_files {
@@ -123,9 +135,9 @@ set_property version 1.0 $core
 set_property taxonomy {/VictekIP} $core
 set_property display_name {TDC-GPX Multi-chip Acquisition Controller} $core
 set_property description \
-    {Configurable one-to-four-chip TDC-GPX acquisition, rising/falling lane processing, dual VDMA-ready AXI4-Stream outputs, source-level runtime CSR banks, diagnostics, and interrupts.} \
+    {Configurable one-to-four-chip TDC-GPX acquisition with selectable local or unified CSR ownership, rising/falling lane processing, dual VDMA-ready AXI4-Stream outputs, diagnostics, and interrupts.} \
     $core
-set_property core_revision 1 $core
+set_property core_revision 2 $core
 set_property supported_families {zynq Production} $core
 
 proc tdc_ensure_long {
@@ -185,9 +197,30 @@ proc tdc_set_string {core name value values display_name description} {
     return $user_param
 }
 
+proc tdc_set_boolean {core name value display_name description} {
+    set user_param [ipx::get_user_parameters -quiet $name -of_objects $core]
+    set hdl_param [ipx::get_hdl_parameters -quiet $name -of_objects $core]
+    if {[llength $user_param] != 1 || [llength $hdl_param] != 1} {
+        error "Expected one user and HDL boolean parameter named $name"
+    }
+    set_property value_format bool $user_param
+    set_property value_resolve_type user $user_param
+    set_property value $value $user_param
+    set_property display_name $display_name $user_param
+    set_property description $description $user_param
+    set_property data_type boolean $hdl_param
+    set_property value_format bool $hdl_param
+    set_property value_resolve_type generated $hdl_param
+    set_property value $value $hdl_param
+    return $user_param
+}
+
 tdc_set_vector $core g_HW_VERSION {"00000000000000010000000000000000"} \
     {Hardware version} \
     {Build identifier reported through runtime status and output metadata.}
+tdc_set_boolean $core g_ENABLE_LOCAL_CSR true \
+    {Enable local CSR banks} \
+    {Enabled exposes the two legacy AXI4-Lite banks. Disabled removes both local banks and exposes the named unified CSR interface.}
 tdc_set_vector $core g_PRESENT_CHIP_MASK {"1111"} \
     {Present chip mask} \
     {Four logical slots. The number of set bits must equal the physical chip count.}
@@ -347,6 +380,155 @@ foreach irq_port {o_irq o_irq_pipe} {
     tdc_set_bus_parameter $irq_if SENSITIVITY LEVEL_HIGH
 }
 
+# -----------------------------------------------------------------------------
+# Mutually exclusive local/unified control-plane interfaces.
+# The same generic controls RTL generate branches and IP-XACT visibility so a
+# hidden AXI port can never leave an active local CSR block in the netlist.
+# -----------------------------------------------------------------------------
+proc tdc_set_enablement {object dependency default_value} {
+    set_property enablement_resolve_type dependent $object
+    set_property enablement_dependency $dependency $object
+    set_property enablement_value $default_value $object
+}
+
+proc tdc_set_interface_enablement {core interface dependency default_value} {
+    tdc_set_enablement $interface $dependency $default_value
+    foreach port_map [ipx::get_port_maps -of_objects $interface] {
+        set physical_name [get_property physical_name $port_map]
+        set physical_port [ipx::get_ports -quiet $physical_name \
+            -of_objects $core]
+        if {[llength $physical_port] != 1} {
+            error "Expected one physical port named $physical_name"
+        }
+        tdc_set_enablement $physical_port $dependency $default_value
+    }
+}
+
+proc tdc_ensure_scalar_interface {
+    core name logical_name physical_name bus_vlnv abstraction_vlnv
+} {
+    set interface [ipx::get_bus_interfaces -quiet $name -of_objects $core]
+    if {[llength $interface] == 0} {
+        set interface [ipx::add_bus_interface $name $core]
+    } elseif {[llength $interface] != 1} {
+        error "Expected at most one interface named $name"
+    }
+    set_property interface_mode slave $interface
+    set_property bus_type_vlnv $bus_vlnv $interface
+    set_property abstraction_type_vlnv $abstraction_vlnv $interface
+    set port_map [ipx::get_port_maps -quiet $logical_name \
+        -of_objects $interface]
+    if {[llength $port_map] == 0} {
+        set port_map [ipx::add_port_map $logical_name $interface]
+    } elseif {[llength $port_map] != 1} {
+        error "Expected at most one $logical_name map on $name"
+    }
+    set_property logical_name $logical_name $port_map
+    set_property physical_name $physical_name $port_map
+    return $interface
+}
+
+set local_csr_dependency \
+    {spirit:decode(id('MODELPARAM_VALUE.g_ENABLE_LOCAL_CSR')) = true}
+set unified_csr_dependency \
+    {spirit:decode(id('MODELPARAM_VALUE.g_ENABLE_LOCAL_CSR')) = false}
+
+set local_reset [tdc_ensure_scalar_interface $core s_axi_aresetn RST \
+    s_axi_aresetn {xilinx.com:signal:reset:1.0} \
+    {xilinx.com:signal:reset_rtl:1.0}]
+tdc_set_bus_parameter $local_reset POLARITY ACTIVE_LOW
+
+foreach local_interface [list $chip_axi $pipe_axi $axi_clock $local_reset \
+        [ipx::get_bus_interfaces o_irq -of_objects $core] \
+        [ipx::get_bus_interfaces o_irq_pipe -of_objects $core]] {
+    tdc_set_interface_enablement $core $local_interface \
+        $local_csr_dependency true
+}
+
+foreach inferred_name {i_unified o_unified} {
+    set inferred_interface [ipx::get_bus_interfaces -quiet $inferred_name \
+        -of_objects $core]
+    if {[llength $inferred_interface] == 1} {
+        ipx::remove_bus_interface $inferred_name $core
+    } elseif {[llength $inferred_interface] != 0} {
+        error "Expected at most one inferred interface named $inferred_name"
+    }
+}
+set old_unified [ipx::get_bus_interfaces -quiet tdc_unified_csr \
+    -of_objects $core]
+if {[llength $old_unified] == 1} {
+    ipx::remove_bus_interface tdc_unified_csr $core
+} elseif {[llength $old_unified] != 0} {
+    error {Expected at most one existing tdc_unified_csr interface}
+}
+set unified_interface [ipx::add_bus_interface tdc_unified_csr $core]
+set_property display_name {TDC-GPX Unified CSR} $unified_interface
+set_property description \
+    {Named TDC control/status words connected to the parent unified CSR owner.} \
+    $unified_interface
+set_property interface_mode slave $unified_interface
+set_property bus_type_vlnv \
+    {victek.co.kr:interface:tdc_gpx_unified_csr:1.0} $unified_interface
+set_property abstraction_type_vlnv \
+    {victek.co.kr:interface:tdc_gpx_unified_csr_rtl:1.0} $unified_interface
+set_property connection_required true $unified_interface
+
+foreach {logical_name physical_name} {
+    SYS_CTRL                    i_unified_sys_ctrl
+    SYS_CFG_APPLY               i_unified_sys_cfg_apply
+    TDC_BUS_TIMING              i_unified_tdc_bus_timing
+    TDC_START_OFFSET            i_unified_tdc_start_offset
+    TDC_CFG_REG7                i_unified_tdc_cfg_reg7
+    TDC_IMAGE_CMD               i_unified_tdc_image_cmd
+    TDC_IMAGE_DATA              i_unified_tdc_image_data
+    TDC_SCAN_CFG                i_unified_tdc_scan_cfg
+    TDC_PIPELINE_MAIN           i_unified_tdc_pipeline_main
+    TDC_RANGE_COLS              i_unified_tdc_range_cols
+    TDC_AUX_CMD                 i_unified_tdc_aux_cmd
+    TDC_CHIP0_RESULT            o_unified_tdc_chip0_result
+    TDC_CHIP1_RESULT            o_unified_tdc_chip1_result
+    TDC_CHIP2_RESULT            o_unified_tdc_chip2_result
+    TDC_CHIP3_RESULT            o_unified_tdc_chip3_result
+    TDC_PIPELINE_STATUS         o_unified_tdc_pipeline_status
+    TDC_STATUS_EXT              o_unified_tdc_status_ext
+    TDC_STATUS_EXT2             o_unified_tdc_status_ext2
+    CFG_EPOCH_ACCEPTED          o_unified_cfg_epoch_accepted
+    RESET_EPOCH_ACCEPTED        o_unified_reset_epoch_accepted
+    CFG_BUSY                    o_unified_cfg_busy
+    CFG_REJECT                  o_unified_cfg_reject
+    CFG_VALID                   o_unified_cfg_valid
+    CMD_EPOCH_ACCEPTED          o_unified_cmd_epoch_accepted
+    CMD_BUSY                    o_unified_cmd_busy
+    COMMAND_REJECT              o_unified_command_reject
+    IMAGE_EPOCH_ACCEPTED        o_unified_image_epoch_accepted
+    IMAGE_REJECT                o_unified_image_reject
+    IMAGE_SELECTED_DATA         o_unified_image_selected_data
+    IRQ_CAUSE                   o_unified_irq_cause
+} {
+    set port_map [ipx::add_port_map $logical_name $unified_interface]
+    set_property logical_name $logical_name $port_map
+    set_property physical_name $physical_name $port_map
+}
+
+set unified_clock [tdc_ensure_scalar_interface $core i_unified_cfg_clk CLK \
+    i_unified_cfg_clk {xilinx.com:signal:clock:1.0} \
+    {xilinx.com:signal:clock_rtl:1.0}]
+set unified_reset [tdc_ensure_scalar_interface $core i_unified_cfg_rst_n RST \
+    i_unified_cfg_rst_n {xilinx.com:signal:reset:1.0} \
+    {xilinx.com:signal:reset_rtl:1.0}]
+set unified_freq [ipx::get_bus_parameters -quiet FREQ_HZ \
+    -of_objects $unified_clock]
+if {[llength $unified_freq] == 1} {
+    ipx::remove_bus_parameter FREQ_HZ $unified_clock
+}
+tdc_set_bus_parameter $unified_clock ASSOCIATED_BUSIF tdc_unified_csr
+tdc_set_bus_parameter $unified_clock ASSOCIATED_RESET i_unified_cfg_rst_n
+tdc_set_bus_parameter $unified_reset POLARITY ACTIVE_LOW
+foreach interface [list $unified_interface $unified_clock $unified_reset] {
+    tdc_set_interface_enablement $core $interface \
+        $unified_csr_dependency false
+}
+
 # Rebuild source views so the package is deterministic and has no child XCI.
 foreach group_name {
     xilinx_anylanguagesynthesis
@@ -395,19 +577,29 @@ foreach file_group [ipx::get_file_groups -of_objects $core] {
 }
 
 foreach required_port {
-    i_axis_aclk i_tdc_clk s_axi_aclk io_tdc_d o_tdc_csn
+    i_axis_aclk i_tdc_clk s_axi_aclk i_unified_cfg_clk io_tdc_d o_tdc_csn
     i_shot_start i_stop_tdc o_m_axis_tdata o_m_axis_fall_tdata
     o_vdma_hsize_bytes_rise o_irq o_irq_pipe
+    i_unified_sys_ctrl o_unified_tdc_pipeline_status
 } {
     if {[llength [ipx::get_ports -quiet $required_port -of_objects $core]] != 1} {
         error "Required packaged port is missing: $required_port"
     }
 }
 
+# Delay catalog registration until after package_project has inferred the
+# standard interfaces. Otherwise Vivado splits the i_unified/o_unified naming
+# prefixes into two incomplete custom interfaces before our bidirectional map
+# is installed.
+set_property ip_repo_paths [list $package_dir] [current_project]
+update_ip_catalog -rebuild
+
 ipx::update_checksums $core
 set drc_result [ipx::check_integrity -verbose $core]
 puts "TDC_GPX_IP_PACKAGER_DRC=$drc_result"
 ipx::save_core $core
+ipx::unload_abstraction_definition $unified_abstraction_definition
+ipx::unload_bus_definition $unified_bus_definition
 close_project
 
 set component [file join $package_dir component.xml]

@@ -1,6 +1,7 @@
 param(
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [switch]$RunProjectSyntax,
+    [switch]$CsrModeOnly,
     [switch]$NoArchiveOnExit
 )
 
@@ -88,6 +89,8 @@ $vhdl2008Files = @(
     "$Hdl/px_utility_pkg.vhd",
     "$Hdl/tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_cfg_pkg.vhd",
+    "$Hdl/tdc_gpx_unified_cdc_snapshot.vhd",
+    "$Hdl/tdc_gpx_unified_csr_adapter.vhd",
     "$Hdl/tdc_gpx_atomic_snapshot_cdc.vhd",
     "$Hdl/tb_tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_bus_phy.vhd",
@@ -122,6 +125,7 @@ $vhdl2008Files = @(
     "$Hdl/tb_tdc_gpx_range_ticks.vhd",
     "$Hdl/tb_tdc_gpx_cfg_image_override.vhd",
     "$Hdl/tb_tdc_gpx_config_ctrl.vhd",
+    "$Hdl/tb_tdc_gpx_unified_config_ctrl.vhd",
     "$Hdl/tb_tdc_gpx_request_loss.vhd",
     "$Hdl/tb_tdc_gpx_chip_init_cfg_owner.vhd",
     "$Hdl/tb_tdc_gpx_chip_ctrl.vhd",
@@ -160,6 +164,20 @@ try {
     }
     Invoke-Checked "$Vivado/xvlog.bat" @("--relax", "-prj", $vlogPrj, "-log", "xvlog_c06_v002_$Stamp.log")
     Invoke-Checked "$Vivado/xvhdl.bat" @("--relax", "-prj", $vhdlPrj, "-log", "xvhdl_c06_v002_$Stamp.log")
+
+    Invoke-Xelab "tb_c06_v002_unified_config_ctrl_snap" `
+        "xelab_c06_v002_unified_config_ctrl_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_unified_config_ctrl"
+    Invoke-Checked "$Vivado/xsim.bat" @(
+        "tb_c06_v002_unified_config_ctrl_snap", "-runall",
+        "-log", "xsim_c06_v002_unified_config_ctrl_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_unified_config_ctrl_$Stamp.log" `
+        "TDC_GPX_UNIFIED_CONFIG_CTRL_PASS"
+
+    if ($CsrModeOnly) {
+        Write-Host "TDC_GPX_CSR_MODE_FOCUSED_PASS"
+        return
+    }
 
     Invoke-Xelab "tb_c06_v002_atomic_snapshot_cdc_snap" "xelab_c06_v002_atomic_snapshot_cdc_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_atomic_snapshot_cdc"

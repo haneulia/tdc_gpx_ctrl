@@ -65,6 +65,7 @@ use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_config_ctrl is
     generic (
+        g_ENABLE_LOCAL_CSR : boolean := true;
         g_AXIS_CLK_MHZ    : positive := c_DEFAULT_AXIS_CLK_MHZ;
         g_TDC_CLK_MHZ     : positive := c_DEFAULT_TDC_CLK_MHZ;
         g_POWERUP_CLKS    : positive := c_DEFAULT_POWERUP_CLKS;
@@ -119,6 +120,30 @@ entity tdc_gpx_config_ctrl is
         s_axi_rready         : in  std_logic;
         s_axi_rdata          : out std_logic_vector(31 downto 0);
         s_axi_rresp          : out std_logic_vector(1 downto 0);
+
+        -- Unified-CSR adapter boundary. These inputs are ignored when
+        -- g_ENABLE_LOCAL_CSR=true. Keeping the selection at this boundary
+        -- removes the local chip CSR from a unified-only build while leaving
+        -- the GPX command/data path unchanged.
+        i_ext_cfg               : in t_tdc_cfg := c_TDC_CFG_INIT;
+        i_ext_cfg_image         : in t_cfg_image := (others => (others => '0'));
+        i_ext_cmd_reg_read      : in std_logic := '0';
+        i_ext_cmd_reg_write     : in std_logic := '0';
+        i_ext_cmd_reg_addr      : in std_logic_vector(3 downto 0) := (others => '0');
+        i_ext_cmd_reg_chip      : in unsigned(1 downto 0) := (others => '0');
+        i_ext_cmd_reg_chip_address : in std_logic_vector(
+            c_MAX_CHIPS - 1 downto 0) := (others => '0');
+
+        -- Common GPX register response surface. Unified mode returns these to
+        -- tdc_gpx_unified_csr_adapter; local mode may leave them open.
+        o_cmd_reg_rdata_0       : out std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        o_cmd_reg_rdata_1       : out std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        o_cmd_reg_rdata_2       : out std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        o_cmd_reg_rdata_3       : out std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+        o_cmd_reg_rvalid        : out std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        o_cmd_reg_done_pulse    : out std_logic;
+        o_cmd_reg_addr_done     : out std_logic_vector(3 downto 0);
+        o_ext_cmd_ready         : out std_logic;
 
         -- =====================================================================
         -- TDC-GPX physical pins. Only present logical slots are exported.
@@ -1052,58 +1077,99 @@ begin
     -- =========================================================================
     -- [1] csr_chip: AXI-Lite CSR + SRM + CDC
     -- =========================================================================
-    u_csr_chip : entity work.tdc_gpx_csr_chip
-        generic map (
-            g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP,
-            g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS
-        )
-        port map (
-            s_axi_aclk      => s_axi_aclk,
-            s_axi_aresetn   => s_axi_aresetn,
-            s_axi_awvalid   => s_axi_awvalid,
-            s_axi_awready   => s_axi_awready,
-            s_axi_awaddr    => s_axi_awaddr,
-            s_axi_awprot    => s_axi_awprot,
-            s_axi_wvalid    => s_axi_wvalid,
-            s_axi_wready    => s_axi_wready,
-            s_axi_wdata     => s_axi_wdata,
-            s_axi_wstrb     => s_axi_wstrb,
-            s_axi_bvalid    => s_axi_bvalid,
-            s_axi_bready    => s_axi_bready,
-            s_axi_bresp     => s_axi_bresp,
-            s_axi_arvalid   => s_axi_arvalid,
-            s_axi_arready   => s_axi_arready,
-            s_axi_araddr    => s_axi_araddr,
-            s_axi_arprot    => s_axi_arprot,
-            s_axi_rvalid    => s_axi_rvalid,
-            s_axi_rready    => s_axi_rready,
-            s_axi_rdata     => s_axi_rdata,
-            s_axi_rresp     => s_axi_rresp,
-            i_axis_aclk     => i_axis_aclk,
-            i_axis_aresetn  => i_axis_aresetn,
-            o_cfg_image     => s_cfg_image_raw,
-            o_bus_clk_div   => s_bus_clk_div,
-            o_bus_ticks     => s_bus_ticks,
-            o_start_off1    => s_start_off1,
-            o_cfg_reg7      => s_cfg_reg7,
-            o_max_scan_5ns_ticks => s_max_scan_5ns_ticks,
-            o_max_hits_cfg  => s_max_hits_cfg,
-            o_falling_enable => s_falling_enable,
-            o_cmd_reg_read  => s_cmd_reg_read,
-            o_cmd_reg_write => s_cmd_reg_write,
-            o_cmd_reg_addr  => s_cmd_reg_addr,
-            o_cmd_reg_chip  => s_cmd_reg_chip,
-            i_cmd_reg_rdata_0    => s_cmd_reg_rdata_axi(0),
-            i_cmd_reg_rdata_1    => s_cmd_reg_rdata_axi(1),
-            i_cmd_reg_rdata_2    => s_cmd_reg_rdata_axi(2),
-            i_cmd_reg_rdata_3    => s_cmd_reg_rdata_axi(3),
-            i_cmd_reg_rvalid     => s_cmd_reg_rvalid_axi,
-            i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
-            i_cmd_reg_addr_done  => s_cmd_reg_addr_out,
-            o_cmd_reg_chip_address  => s_cmd_reg_chip_address,
-            o_cdc_idle      => o_cdc_idle,
-            o_irq           => o_irq
-        );
+    gen_local_csr : if g_ENABLE_LOCAL_CSR generate
+        u_csr_chip : entity work.tdc_gpx_csr_chip
+            generic map (
+                g_MAX_HITS_PER_STOP => g_MAX_HITS_PER_STOP,
+                g_BUS_READ_PERIOD_MIN_CLKS => g_BUS_READ_PERIOD_MIN_CLKS
+            )
+            port map (
+                s_axi_aclk      => s_axi_aclk,
+                s_axi_aresetn   => s_axi_aresetn,
+                s_axi_awvalid   => s_axi_awvalid,
+                s_axi_awready   => s_axi_awready,
+                s_axi_awaddr    => s_axi_awaddr,
+                s_axi_awprot    => s_axi_awprot,
+                s_axi_wvalid    => s_axi_wvalid,
+                s_axi_wready    => s_axi_wready,
+                s_axi_wdata     => s_axi_wdata,
+                s_axi_wstrb     => s_axi_wstrb,
+                s_axi_bvalid    => s_axi_bvalid,
+                s_axi_bready    => s_axi_bready,
+                s_axi_bresp     => s_axi_bresp,
+                s_axi_arvalid   => s_axi_arvalid,
+                s_axi_arready   => s_axi_arready,
+                s_axi_araddr    => s_axi_araddr,
+                s_axi_arprot    => s_axi_arprot,
+                s_axi_rvalid    => s_axi_rvalid,
+                s_axi_rready    => s_axi_rready,
+                s_axi_rdata     => s_axi_rdata,
+                s_axi_rresp     => s_axi_rresp,
+                i_axis_aclk     => i_axis_aclk,
+                i_axis_aresetn  => i_axis_aresetn,
+                o_cfg_image     => s_cfg_image_raw,
+                o_bus_clk_div   => s_bus_clk_div,
+                o_bus_ticks     => s_bus_ticks,
+                o_start_off1    => s_start_off1,
+                o_cfg_reg7      => s_cfg_reg7,
+                o_max_scan_5ns_ticks => s_max_scan_5ns_ticks,
+                o_max_hits_cfg  => s_max_hits_cfg,
+                o_falling_enable => s_falling_enable,
+                o_cmd_reg_read  => s_cmd_reg_read,
+                o_cmd_reg_write => s_cmd_reg_write,
+                o_cmd_reg_addr  => s_cmd_reg_addr,
+                o_cmd_reg_chip  => s_cmd_reg_chip,
+                i_cmd_reg_rdata_0    => s_cmd_reg_rdata_axi(0),
+                i_cmd_reg_rdata_1    => s_cmd_reg_rdata_axi(1),
+                i_cmd_reg_rdata_2    => s_cmd_reg_rdata_axi(2),
+                i_cmd_reg_rdata_3    => s_cmd_reg_rdata_axi(3),
+                i_cmd_reg_rvalid     => s_cmd_reg_rvalid_axi,
+                i_cmd_reg_done_pulse => s_cmd_reg_done_pulse,
+                i_cmd_reg_addr_done  => s_cmd_reg_addr_out,
+                o_cmd_reg_chip_address => s_cmd_reg_chip_address,
+                o_cdc_idle      => o_cdc_idle,
+                o_irq           => o_irq
+            );
+    end generate gen_local_csr;
+
+    gen_unified_csr : if not g_ENABLE_LOCAL_CSR generate
+        s_cfg_image_raw       <= i_ext_cfg_image;
+        s_bus_clk_div         <= i_ext_cfg.bus_clk_div;
+        s_bus_ticks           <= i_ext_cfg.bus_ticks;
+        s_start_off1          <= i_ext_cfg.start_off1;
+        s_cfg_reg7            <= i_ext_cfg.cfg_reg7;
+        s_max_scan_5ns_ticks  <= i_ext_cfg.max_scan_5ns_ticks;
+        s_max_hits_cfg        <= i_ext_cfg.max_hits_cfg;
+        s_falling_enable      <= i_ext_cfg.falling_enable;
+        s_cmd_reg_read        <= i_ext_cmd_reg_read;
+        s_cmd_reg_write       <= i_ext_cmd_reg_write;
+        s_cmd_reg_addr        <= i_ext_cmd_reg_addr;
+        s_cmd_reg_chip        <= i_ext_cmd_reg_chip;
+        s_cmd_reg_chip_address <= i_ext_cmd_reg_chip_address;
+
+        -- The local AXI interface is hidden by IP-XACT in this build profile.
+        -- Idle tie-offs also make accidental direct RTL use immediately visible
+        -- instead of silently mutating unified configuration.
+        s_axi_awready <= '0';
+        s_axi_wready  <= '0';
+        s_axi_bvalid  <= '0';
+        s_axi_bresp   <= "10";
+        s_axi_arready <= '0';
+        s_axi_rvalid  <= '0';
+        s_axi_rdata   <= (others => '0');
+        s_axi_rresp   <= "10";
+        o_cdc_idle    <= '1';
+        o_irq         <= '0';
+    end generate gen_unified_csr;
+
+    o_cmd_reg_rdata_0    <= s_cmd_reg_rdata_axi(0);
+    o_cmd_reg_rdata_1    <= s_cmd_reg_rdata_axi(1);
+    o_cmd_reg_rdata_2    <= s_cmd_reg_rdata_axi(2);
+    o_cmd_reg_rdata_3    <= s_cmd_reg_rdata_axi(3);
+    o_cmd_reg_rvalid     <= s_cmd_reg_rvalid_axi;
+    o_cmd_reg_done_pulse <= s_cmd_reg_done_pulse;
+    o_cmd_reg_addr_done  <= s_cmd_reg_addr_out;
+    o_ext_cmd_ready      <= not s_reg_outstanding and not s_err_active;
 
     -- =========================================================================
     -- [2] cmd_arb: command arbitration

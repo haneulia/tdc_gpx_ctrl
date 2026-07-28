@@ -134,6 +134,10 @@ proc init_gui {IPINST} {
   ipgui::add_param $IPINST -name g_HW_VERSION -parent $identity
   ipgui::add_param $IPINST -name g_OUTPUT_WIDTH -parent $identity -widget comboBox
 
+  set control_plane [ipgui::add_group $IPINST -name {Control Plane Owner} -parent $build_page]
+  ipgui::add_param $IPINST -name g_ENABLE_LOCAL_CSR -parent $control_plane -widget checkBox
+  ipgui::add_static_text $IPINST -name control_plane_help -parent $control_plane -text {Enabled exposes both legacy AXI4-Lite CSR banks. Disabled removes those banks and exposes one named TDC-GPX Unified CSR interface for the parent system CSR.}
+
   set geometry [ipgui::add_group $IPINST -name {Physical TDC-GPX Geometry} -parent $build_page]
   ipgui::add_param $IPINST -name g_NUM_CHIPS -parent $geometry -widget comboBox
   ipgui::add_param $IPINST -name g_PRESENT_CHIP_MASK -parent $geometry
@@ -177,7 +181,7 @@ proc init_gui {IPINST} {
 
   set csr_page [ipgui::add_page $IPINST -name {Interfaces and CSR}]
   set interface_group [ipgui::add_group $IPINST -name {IPI Interfaces} -parent $csr_page]
-  ipgui::add_static_text $IPINST -name interface_help0 -parent $interface_group -text {s_axi: chip configuration/status bank, 9-bit address. s_axi_pipe: pipeline configuration/status bank, 7-bit address. Both use s_axi_aclk.}
+  ipgui::add_static_text $IPINST -name interface_help0 -parent $interface_group -text {Local mode: s_axi is the 9-bit chip bank and s_axi_pipe is the 7-bit pipeline bank. Unified mode: both are replaced by tdc_unified_csr and i_unified_cfg_clk.}
   ipgui::add_static_text $IPINST -name interface_help1 -parent $interface_group -text {o_m_axis and o_m_axis_fall are independent AXI4-Stream masters in i_axis_aclk. Falling AXIS may remain unconnected for a rising-only build.}
   ipgui::add_static_text $IPINST -name interface_help2 -parent $interface_group -text {i_n_faces is static geometry from Motor Decoder. i_shot_start, face index, and i_stop_tdc are synchronous to i_axis_aclk.}
 
@@ -255,7 +259,8 @@ proc update_PARAM_VALUE.g_OEN_MODE {PARAM_VALUE.g_OEN_MODE} {
 }
 
 foreach name {
-  g_HW_VERSION g_OUTPUT_WIDTH g_RISE_CHIP_MASK g_FALL_CHIP_MASK
+  g_HW_VERSION g_ENABLE_LOCAL_CSR g_OUTPUT_WIDTH
+  g_RISE_CHIP_MASK g_FALL_CHIP_MASK
   g_NUM_CHIPS g_PRESENT_CHIP_MASK g_MAX_STOPS_PER_CHIP
   g_MAX_HITS_PER_STOP g_AXIS_CLK_MHZ g_TDC_CLK_MHZ
   g_POWERUP_TIME_NS g_RECOVERY_TIME_NS g_ALU_PULSE_TIME_NS
@@ -268,7 +273,8 @@ foreach name {
 }
 
 foreach name {
-  g_HW_VERSION g_OUTPUT_WIDTH g_RISE_CHIP_MASK g_FALL_CHIP_MASK
+  g_HW_VERSION g_ENABLE_LOCAL_CSR g_OUTPUT_WIDTH
+  g_RISE_CHIP_MASK g_FALL_CHIP_MASK
   g_NUM_CHIPS g_PRESENT_CHIP_MASK g_MAX_STOPS_PER_CHIP
   g_MAX_HITS_PER_STOP g_AXIS_CLK_MHZ g_TDC_CLK_MHZ
   g_POWERUP_TIME_NS g_RECOVERY_TIME_NS g_ALU_PULSE_TIME_NS

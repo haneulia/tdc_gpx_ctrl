@@ -213,6 +213,9 @@ internal baseline is `smoke_internal_axis150_tdc200_v002`.
 | 3 Motor | Closed | Motor commits `0fa1b04`, `795a1ef`; package commit `4214b18`; focused and full regressions passed |
 | 3 Laser | Closed | Laser commit `d1c36bb`; focused adapter regression passed; 11-test full regression ended `Passed=47, Failed=0` |
 | 4 TDC-GPX | Closed | TDC commit `c1b7130`; focused adapter and static contract passed; internal and external Return-7 150/200 MHz integration passed |
+| 5 TDC-GPX | Closed | Local/unified focused behavior, dual-mode OOC synthesis, package static/BD visibility, and maintained 150/200 MHz integration passed; see `TDC_GPX_LOCAL_UNIFIED_CSR_MODE_CLOSURE.md` |
+| 5 Other IPs | Open | Echo, Motor, and Laser package tops still require the same local/unified IP-XACT gate before Stage 6 |
+| 6 Unified top | Open | Starts only after all four Stage 5 package gates are closed |
 
 The Laser full-regression log contains one intentional VHDL warning generated
 by the partial-`TKEEP` rejection test. The beat is discarded and both follow-up
@@ -227,3 +230,9 @@ corrected internal run produced four shots, 96 rise and 96 fall beats, and a
 1,513-clock point margin. The physical Return-7 run produced nine shots, 828
 rise and 828 fall beats, 2,016 raw 28-bit I-Mode comparisons, and a 216-clock
 point margin.
+
+Stage 5 TDC-GPX keeps `g_ENABLE_LOCAL_CSR=true` as the compatibility default.
+Setting it false removes both local CSR owners in synthesis and exposes one
+named `tdc_unified_csr` interface plus its inherited clock/reset in Block
+Design. This closes only the TDC-GPX package gate; it does not claim the final
+local-versus-unified system equivalence reserved for Stage 7.

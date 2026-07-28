@@ -4,6 +4,8 @@ proc tdc_gpx_rtl_manifest {} {
         px_utility_pkg.vhd \
         tdc_gpx_pkg.vhd \
         tdc_gpx_cfg_pkg.vhd \
+        tdc_gpx_unified_cdc_snapshot.vhd \
+        tdc_gpx_unified_csr_adapter.vhd \
         tdc_gpx_atomic_snapshot_cdc.vhd \
         tdc_gpx_bus_phy.vhd \
         tdc_gpx_skid_buffer.vhd \
