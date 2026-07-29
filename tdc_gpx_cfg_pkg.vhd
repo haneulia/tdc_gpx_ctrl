@@ -154,6 +154,16 @@ package tdc_gpx_cfg_pkg is
     constant c_REG0_TRISEEN_HI      : natural := 18;   -- TRiseEn[8]=TStop8
     constant c_REG0_TFALLEN_LO      : natural := 19;   -- TFallEn[0]=TStart
     constant c_REG0_TFALLEN_HI      : natural := 27;   -- TFallEn[8]=TStop8
+    -- START is one common rising-edge time reference for every chip. Chip
+    -- Rise/Fall topology selects APD STOP edges only; it must not change the
+    -- START reference edge. Keep the full-group constants above for register
+    -- documentation and use these split boundaries in role filtering.
+    constant c_REG0_TSTART_RISE     : natural := 10;
+    constant c_REG0_TSTOP_RISE_LO   : natural := 11;
+    constant c_REG0_TSTOP_RISE_HI   : natural := 18;
+    constant c_REG0_TSTART_FALL     : natural := 19;
+    constant c_REG0_TSTOP_FALL_LO   : natural := 20;
+    constant c_REG0_TSTOP_FALL_HI   : natural := 27;
     -- Stop channel offset: TRiseEn[1]=TStop1 = bit 11, ..., TRiseEn[8]=TStop8 = bit 18
     --                       TFallEn[1]=TStop1 = bit 20, ..., TFallEn[8]=TStop8 = bit 27
     constant c_REG0_STOP_OFFSET     : natural := 1;    -- bit index offset: stop N = base + N

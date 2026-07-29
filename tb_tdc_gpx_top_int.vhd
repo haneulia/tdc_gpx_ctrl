@@ -363,7 +363,7 @@ architecture sim of tb_tdc_gpx_top_int is
 
     function fn_expected_reg0(chip_id : natural) return std_logic_vector is
         variable v_word : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) :=
-            x"0381C00";
+            x"0301C00";
         variable v_rise_enable : boolean;
         variable v_fall_enable : boolean;
     begin
@@ -373,11 +373,22 @@ architecture sim of tb_tdc_gpx_top_int is
         v_fall_enable := G_PRESENT_CHIP_MASK(chip_id) = '1'
                          and G_FALLING_ENABLE
                          and G_FALL_CHIP_MASK(chip_id) = '1';
-        if not v_rise_enable then
-            v_word(c_REG0_TRISEEN_HI downto c_REG0_TRISEEN_LO) := (others => '0');
-        end if;
-        if not v_fall_enable then
-            v_word(c_REG0_TFALLEN_HI downto c_REG0_TFALLEN_LO) := (others => '0');
+        if G_PRESENT_CHIP_MASK(chip_id) = '1' then
+            v_word(c_REG0_TSTART_RISE) := '1';
+            v_word(c_REG0_TSTART_FALL) := '0';
+            if not v_rise_enable then
+                v_word(c_REG0_TSTOP_RISE_HI downto c_REG0_TSTOP_RISE_LO) :=
+                    (others => '0');
+            end if;
+            if not v_fall_enable then
+                v_word(c_REG0_TSTOP_FALL_HI downto c_REG0_TSTOP_FALL_LO) :=
+                    (others => '0');
+            end if;
+        else
+            v_word(c_REG0_TRISEEN_HI downto c_REG0_TRISEEN_LO) :=
+                (others => '0');
+            v_word(c_REG0_TFALLEN_HI downto c_REG0_TFALLEN_LO) :=
+                (others => '0');
         end if;
         return v_word;
     end function;
@@ -1761,7 +1772,9 @@ begin
         --   Reg6 : LF threshold = 4 -> 0x0000_0004
         ----------------------------------------------------------------
         pl("[S2] Chip CSR: cfg_image Reg0/Reg5/Reg6 write");
-        chip_wr(C_CHIP_CFG_REG0, x"00381C00");  -- Reg0 template: both edges on start+stop1..2
+        -- Common rising START, with both STOP edge groups available for the
+        -- per-chip role filter. Falling START is deliberately disabled.
+        chip_wr(C_CHIP_CFG_REG0, x"00301C00");
         chip_wr(C_CHIP_CFG_REG5, x"01800000");  -- Reg5: ALU trig bits
         chip_wr(C_CHIP_CFG_REG6, x"00000004");  -- Reg6: LF threshold
         case G_MAX_HITS_WRITE_MODE is

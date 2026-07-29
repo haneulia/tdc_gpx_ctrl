@@ -321,9 +321,11 @@ architecture rtl of tdc_gpx_config_ctrl is
         return v_diff;
     end function;
 
-    -- Apply the selected chip's slope role to GPX Reg0. The CSR image remains
-    -- the canonical channel-enable template; this function only clears edge
-    -- enables that the selected build/runtime topology cannot consume.
+    -- Apply the selected chip's APD STOP slope role to GPX Reg0. TStart is the
+    -- common rising-edge time reference for every present chip; only TStop1..8
+    -- follow the selected Rise/Fall topology. The CSR image remains the
+    -- canonical STOP-channel template and this function removes unsupported
+    -- STOP edges after normalizing the START edge.
     function fn_apply_edge_role_word(
         base_word : std_logic_vector(31 downto 0);
         chip_id   : natural;
@@ -340,11 +342,23 @@ architecture rtl of tdc_gpx_config_ctrl is
                          and cfg.falling_enable = '1'
                          and g_FALL_CHIP_MASK(chip_id) = '1';
 
-        if not v_rise_enable then
-            v_word(c_REG0_TRISEEN_HI downto c_REG0_TRISEEN_LO) := (others => '0');
-        end if;
-        if not v_fall_enable then
-            v_word(c_REG0_TFALLEN_HI downto c_REG0_TFALLEN_LO) := (others => '0');
+        if g_PRESENT_CHIP_MASK(chip_id) = '1' then
+            v_word(c_REG0_TSTART_RISE) := '1';
+            v_word(c_REG0_TSTART_FALL) := '0';
+
+            if not v_rise_enable then
+                v_word(c_REG0_TSTOP_RISE_HI downto c_REG0_TSTOP_RISE_LO) :=
+                    (others => '0');
+            end if;
+            if not v_fall_enable then
+                v_word(c_REG0_TSTOP_FALL_HI downto c_REG0_TSTOP_FALL_LO) :=
+                    (others => '0');
+            end if;
+        else
+            v_word(c_REG0_TRISEEN_HI downto c_REG0_TRISEEN_LO) :=
+                (others => '0');
+            v_word(c_REG0_TFALLEN_HI downto c_REG0_TFALLEN_LO) :=
+                (others => '0');
         end if;
         return v_word;
     end function;
