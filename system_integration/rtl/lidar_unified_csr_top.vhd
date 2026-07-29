@@ -112,13 +112,13 @@ entity lidar_unified_csr_top is
         i_laser_cfg_valid  : in std_logic;
         i_laser_irq_cause  : in std_logic_vector(2 downto 0);
 
-        -- Echo STAT19..STAT22, reset acknowledgement, and IRQ16..IRQ17.
+        -- Echo STAT19..STAT22, reset acknowledgement, and IRQ16..IRQ20.
         i_echo_rise_mask      : in std_logic_vector(31 downto 0);
         i_echo_fall_mask      : in std_logic_vector(31 downto 0);
         i_echo_status         : in std_logic_vector(31 downto 0);
         i_echo_delay_readback : in std_logic_vector(31 downto 0);
         i_echo_reset_epoch_accepted : in std_logic_vector(7 downto 0);
-        i_echo_irq_cause      : in std_logic_vector(1 downto 0);
+        i_echo_irq_cause      : in std_logic_vector(4 downto 0);
 
         -- TDC STAT23..STAT30, transaction sideband, and IRQ21..IRQ27.
         i_tdc_chip0_result    : in std_logic_vector(31 downto 0);
@@ -313,7 +313,6 @@ begin
     s_irq_src <=
         "0000"
         & i_tdc_irq_cause
-        & "000"
         & i_echo_irq_cause
         & "00000"
         & i_laser_irq_cause

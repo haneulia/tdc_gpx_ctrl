@@ -143,7 +143,9 @@ status and selected-channel readback.
 
 Echo interrupt source 16 is the aggregate diagnostic condition from
 `ECHO_STATUS[4:0]`; source 17 is the indexed-profile command reject condition
-from `ECHO_STATUS[12]`. Sources 18..20 remain reserved and read inactive. A
+from `ECHO_STATUS[12]`. The full five-bit Echo cause bus is transported into
+global sources 16..20; the current Echo implementation drives reserved sources
+18..20 low. A
 changed `SYS_CTRL.RESET_EPOCH` produces one reset request, and the Echo adapter
 returns its accepted epoch to the System status aggregator.
 

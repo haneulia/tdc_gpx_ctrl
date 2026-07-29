@@ -153,7 +153,9 @@ begin
 
         assert C_IRQ_ECHO_DIAGNOSTIC = C_IRQ_ECHO_FIRST
             and C_IRQ_ECHO_CMD_REJECT = C_IRQ_ECHO_FIRST + 1
-            and C_IRQ_ECHO_CMD_REJECT < C_IRQ_ECHO_LAST
+            and C_IRQ_ECHO_RESERVED0 = C_IRQ_ECHO_FIRST + 2
+            and C_IRQ_ECHO_RESERVED1 = C_IRQ_ECHO_FIRST + 3
+            and C_IRQ_ECHO_RESERVED2 = C_IRQ_ECHO_LAST
             report "Echo interrupt ownership changed"
             severity failure;
 

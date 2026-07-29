@@ -236,7 +236,7 @@ begin
             i_echo_delay_readback => i_echo_delay_readback,
             i_echo_reset_epoch_accepted =>
                 i_echo_reset_epoch_accepted,
-            i_echo_irq_cause      => i_echo_irq_cause(1 downto 0),
+            i_echo_irq_cause      => i_echo_irq_cause,
             i_tdc_chip0_result    => i_tdc_chip0_result,
             i_tdc_chip1_result    => i_tdc_chip1_result,
             i_tdc_chip2_result    => i_tdc_chip2_result,

@@ -331,6 +331,9 @@ package lidar_unified_csr_pkg is
 
     constant C_IRQ_ECHO_DIAGNOSTIC : natural := 16;
     constant C_IRQ_ECHO_CMD_REJECT : natural := 17;
+    constant C_IRQ_ECHO_RESERVED0  : natural := 18;
+    constant C_IRQ_ECHO_RESERVED1  : natural := 19;
+    constant C_IRQ_ECHO_RESERVED2  : natural := 20;
 
     constant C_IRQ_TDC_REG_DONE       : natural := 21;
     constant C_IRQ_TDC_PIPELINE_FAULT : natural := 22;

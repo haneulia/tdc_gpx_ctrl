@@ -110,12 +110,13 @@ busy/reject는 config, serialized command, indexed image 경로를 모두 포함
 | 4..7 | Motor |
 | 8..10 | Laser |
 | 11..15 | reserved, 0 |
-| 16..17 | Echo |
-| 18..20 | reserved, 0 |
+| 16..20 | Echo 5-bit cause bus; current source uses 16..17 and drives 18..20 low |
 | 21..27 | TDC-GPX |
 | 28..31 | reserved, 0 |
 
-`my_axil_csr32_top`은 source를 동기화하고 rising event를 `INTR_FLAG`에 저장한다.
+`my_axil_csr32_top`은 source를 2-FF로 동기화하고 안정된 두 번째 단계와 별도
+history FF를 비교해 rising event를 `INTR_FLAG`에 저장한다. 첫 synchronizer FF는
+edge detector가 직접 소비하지 않는다.
 운용 기본은 manual mode이며 ISR이 `INTR_FLAG`를 W1C할 때까지 pending이 유지된다.
 IP-XACT interrupt sensitivity는 기존 CSR32 호환성을 따라 `EDGE_RISING`이다. PS GIC와
 parent interrupt fabric도 이 계약에 맞춰야 한다.

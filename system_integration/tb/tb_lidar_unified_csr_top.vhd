@@ -80,7 +80,7 @@ architecture sim of tb_lidar_unified_csr_top is
 
     signal s_motor_irq : std_logic_vector(3 downto 0) := (others => '0');
     signal s_laser_irq : std_logic_vector(2 downto 0) := (others => '0');
-    signal s_echo_irq  : std_logic_vector(1 downto 0) := (others => '0');
+    signal s_echo_irq  : std_logic_vector(4 downto 0) := (others => '0');
     signal s_tdc_irq   : std_logic_vector(6 downto 0) := (others => '0');
 begin
     clk <= not clk after C_CLK_PERIOD / 2;
@@ -352,9 +352,9 @@ begin
 
         s_motor_irq <= "0001";
         s_laser_irq <= "001";
-        s_echo_irq  <= "01";
+        s_echo_irq  <= "11111";
         s_tdc_irq   <= "0000001";
-        axi_write(fn_intr_byte_offset(0), x"00210110");
+        axi_write(fn_intr_byte_offset(0), x"003F0110");
         for i in 1 to 5 loop
             wait_settled;
         end loop;
@@ -370,8 +370,8 @@ begin
         assert irq = '1'
             report "Unified IRQ did not assert"
             severity failure;
-        axi_read(fn_intr_byte_offset(2), x"00210110");
-        axi_write(fn_intr_byte_offset(2), x"00210110");
+        axi_read(fn_intr_byte_offset(2), x"003F0110");
+        axi_write(fn_intr_byte_offset(2), x"003F0110");
         for i in 1 to 3 loop
             wait_settled;
         end loop;
