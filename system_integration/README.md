@@ -61,6 +61,12 @@ vivado.bat -mode batch `
   -source system_integration/scripts/run_lidar_unified_csr_packaged_ip_ooc.tcl
 ```
 
+The package checker validates two IPI layouts: the four standalone child IPs,
+and the product parent layout using one `motor_laser_ctrl` plus Echo Receiver
+and TDC-GPX. In the parent layout the combined Motor/Laser IP is configured
+with `g_ENABLE_LOCAL_CSR=false`, so its two local AXI banks disappear and the
+two named unified CSR Slave interfaces connect directly to the central owner.
+
 ## Encoder modes
 
 `motor_laser_ctrl_top` contains `motor_decoder_top`, which already contains

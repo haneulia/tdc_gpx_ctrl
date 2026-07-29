@@ -218,6 +218,7 @@ foreach object $opened_bus_definitions {
 set child_repos [list \
     [file join $ip_root motor_decoder ip_repo] \
     [file join $ip_root laser_ctrl ip_repo] \
+    [file join $ip_root motor_laser_ctrl ip_repo] \
     [file join $ip_root echo_receiver ip_repo] \
     [file join $ip_root tdc_gpx_ctrl ip_repo]]
 set_property ip_repo_paths [linsert $child_repos 0 $package_dir] \
@@ -228,6 +229,7 @@ foreach vlnv {
     victek.co.kr:my_ip:lidar_unified_csr:1.0
     victek.co.kr:my_ip:motor_decoder_top:1.0
     victek.co.kr:my_ip:laser_ctrl_top:1.0
+    victek.co.kr:my_ip:motor_laser_ctrl_top:1.0
     victek.co.kr:my_ip:echo_receiver_top:1.0
     victek.co.kr:my_ip:tdc_gpx_top:1.0
 } {
@@ -264,6 +266,45 @@ foreach {master_pin slave_pin} {
 }
 save_bd_design
 puts {LIDAR_UNIFIED_CSR_IP_CHILD_INTERFACE_PASS}
+
+# Repeat the bus contract with the combined Motor/Laser IP used by the parent
+# project. The combined wrapper owns unique physical SYS_CTRL/APPLY inputs for
+# each named interface, so connecting both buses cannot create multiple
+# drivers on one HDL port.
+create_bd_design ucsr_parent_if
+set parent_csr [create_bd_cell -type ip \
+    -vlnv victek.co.kr:my_ip:lidar_unified_csr:1.0 parent_csr]
+set motor_laser [create_bd_cell -type ip \
+    -vlnv victek.co.kr:my_ip:motor_laser_ctrl_top:1.0 motor_laser]
+set parent_echo [create_bd_cell -type ip \
+    -vlnv victek.co.kr:my_ip:echo_receiver_top:1.0 parent_echo]
+set parent_tdc [create_bd_cell -type ip \
+    -vlnv victek.co.kr:my_ip:tdc_gpx_top:1.0 parent_tdc]
+foreach child [list $motor_laser $parent_echo $parent_tdc] {
+    set_property CONFIG.g_ENABLE_LOCAL_CSR false $child
+}
+
+foreach {master_pin slave_pin} {
+    parent_csr/motor_unified_csr motor_laser/motor_unified_csr
+    parent_csr/laser_unified_csr motor_laser/laser_unified_csr
+    parent_csr/echo_unified_csr parent_echo/echo_unified_csr
+    parent_csr/tdc_unified_csr parent_tdc/tdc_unified_csr
+} {
+    require_one [get_bd_intf_pins -quiet $master_pin] \
+        "Parent Master interface pin $master_pin"
+    require_one [get_bd_intf_pins -quiet $slave_pin] \
+        "Parent Slave interface pin $slave_pin"
+    connect_bd_intf_net [get_bd_intf_pins $master_pin] \
+        [get_bd_intf_pins $slave_pin]
+}
+foreach hidden_local {s_axi_motor s_axi_laser} {
+    if {[llength [get_bd_intf_pins -quiet \
+            motor_laser/$hidden_local]] != 0} {
+        error "Combined IP local interface remains visible: $hidden_local"
+    }
+}
+save_bd_design
+puts {LIDAR_UNIFIED_CSR_IP_PARENT_INTERFACE_PASS}
 
 close_project
 puts {LIDAR_UNIFIED_CSR_IP_PACKAGE_CHECK_PASS}

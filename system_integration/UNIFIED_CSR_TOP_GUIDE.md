@@ -129,6 +129,7 @@ parent interrupt fabric도 이 계약에 맞춰야 한다.
 | xc7z020clg484-2 synthesis | 0 errors, 0 critical warnings |
 | Packaged-IP source synchronization | `LIDAR_UNIFIED_CSR_IP_SOURCE_SYNC_PASS` |
 | Four child custom-bus connections | `LIDAR_UNIFIED_CSR_IP_CHILD_INTERFACE_PASS` |
+| Parent topology: combined Motor/Laser + Echo + TDC | `LIDAR_UNIFIED_CSR_IP_PARENT_INTERFACE_PASS` |
 | Packaged-IP OOC synthesis | `LIDAR_UNIFIED_CSR_PACKAGED_IP_OOC_PASS` |
 | Black boxes | 0 |
 | CSR32 owners | 1 |
@@ -163,6 +164,11 @@ C:\Projects\my_sp\lib\IP\lidar_unified_csr\ip_repo
 canonical RTL과 패키징 스크립트는 이 Git 저장소에서 관리하고, 위 `ip_repo`는
 재생성 가능한 배포 산출물로 관리한다. 패키지에는 `my_axil_csr32` 소스가 포함되며
 child XCI나 `../HDL` 외부 참조는 포함되지 않는다.
+
+실제 parent가 사용하는 `motor_laser_ctrl` 패키지는 local AXI 두 개 대신
+`motor_unified_csr`과 `laser_unified_csr` 두 Slave interface를 동시에 제공한다.
+`check_lidar_unified_csr_ip_package.tcl`은 중앙 Master 네 개를 결합 Motor/Laser,
+Echo, TDC에 연결해 parent 배치 전 bus 호환성을 검사한다.
 
 패키지 생성:
 
