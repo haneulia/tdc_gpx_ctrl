@@ -226,6 +226,7 @@ architecture rtl of tdc_gpx_bus_phy is
     signal s_rsp_rdata_r     : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_rsp_pending_r   : std_logic := '0';    -- read response deferred by 1 tick
     signal s_rsp_pending_out_r : std_logic := '0';  -- registered module-boundary output
+    signal s_read_phase_h_done_r : std_logic := '0'; -- suppress held-burst response replay
     signal s_busy_r          : std_logic := '0';
 
     -- AXI-Stream master: bus response mirror (32-bit tdata, 8-bit tuser)
@@ -334,6 +335,7 @@ begin
                 s_rsp_rdata_r       <= (others => '0');
                 s_rsp_pending_r     <= '0';
                 s_rsp_pending_out_r <= '0';
+                s_read_phase_h_done_r <= '0';
                 s_busy_r            <= '0';
                 s_last_was_write_r  <= '0';
                 s_last_was_read_r   <= '0';
@@ -369,7 +371,11 @@ begin
                 --             FSM sets s_rsp_pending_r = '1'
                 --   tick N  : s_d_in_ff_r is valid; emit rsp_valid + rdata
                 -- ==========================================================
-                if s_rsp_pending_r = '1' then
+                -- The deferred register is the second response slot. Do not
+                -- overwrite a stalled AXIS output; transfer only when that
+                -- slot is empty or is being consumed on this clock.
+                if s_rsp_pending_r = '1'
+                   and (s_axis_tvalid_r = '0' or i_m_axis_tready = '1') then
                     s_rsp_valid_r   <= '1';
                     s_rsp_rdata_r   <= s_d_in_ff_r;
                     s_rsp_pending_r <= '0';
@@ -388,6 +394,7 @@ begin
                     -- Acceptance on tick_en IS tick 0 (Phase A).
                     -- ---------------------------------------------------------
                     when ST_IDLE =>
+                        s_read_phase_h_done_r <= '0';
                         s_csn_r   <= '1';
                         s_rdn_r   <= '1';
                         s_wrn_r   <= '1';
@@ -523,6 +530,7 @@ begin
                     -- BUS_TICKS). On tick_en, enters next transaction Phase A.
                     -- ---------------------------------------------------------
                     when ST_TURNAROUND =>
+                        s_read_phase_h_done_r <= '0';
                         s_csn_r   <= '1';
                         s_rdn_r   <= '1';
                         s_wrn_r   <= '1';
@@ -590,11 +598,19 @@ begin
                             -- so that s_d_in_ff_r has settled from the IOB FF
                             -- capture that happens at this same clock edge.
                             if s_tick_r = s_bus_ticks_r - 1 then
-                                s_rdn_r            <= '1';
-                                s_rsp_pending_r    <= '1';
-                                s_rsp_pending_out_r <= '1';
-                                s_last_was_write_r <= '0';
-                                s_last_was_read_r  <= '1';
+                                -- Phase H can be held while the two response
+                                -- slots (AXIS output + deferred response) are
+                                -- full. Publish this physical read only on the
+                                -- first Phase H clock; replaying the side
+                                -- effects would duplicate the same GPX word.
+                                if s_read_phase_h_done_r = '0' then
+                                    s_rdn_r                <= '1';
+                                    s_rsp_pending_r        <= '1';
+                                    s_rsp_pending_out_r    <= '1';
+                                    s_last_was_write_r     <= '0';
+                                    s_last_was_read_r      <= '1';
+                                    s_read_phase_h_done_r  <= '1';
+                                end if;
 
                                 -- Burst: back-to-back read (no IDLE)
                                 -- Restart at tick 0 (Phase A gap) so that
@@ -617,7 +633,8 @@ begin
                                    and i_req_burst = '1' then
                                     -- Burst mode: continue only if response was consumed
                                     if s_axis_tvalid_r = '0' or i_m_axis_tready = '1' then
-                                        s_tick_r <= to_unsigned(0, 3);
+                                        s_tick_r                <= to_unsigned(0, 3);
+                                        s_read_phase_h_done_r   <= '0';
                                         -- stay in ST_READ, busy remains '1'
                                     end if;
                                     -- else: hold at max tick until tready clears response
@@ -635,6 +652,7 @@ begin
                                         s_oen_r <= '1';
                                     end if;
                                     s_tick_r  <= (others => '0');
+                                    s_read_phase_h_done_r <= '0';
                                     s_state_r <= ST_IDLE;
                                 end if;
                             else

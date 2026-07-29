@@ -11,6 +11,7 @@
 --      normal RDN-gated reads.
 --   4. o_rsp_pending is a registered module-boundary output that asserts while
 --      a response is pending or held by AXI tvalid.
+--   5. Burst backpressure never duplicates or drops a completed GPX read.
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -57,6 +58,9 @@ architecture sim of tb_tdc_gpx_bus_phy_c01_contract is
     signal s_dyn_tdata       : std_logic_vector(31 downto 0);
     signal s_dyn_tkeep       : std_logic_vector(3 downto 0);
     signal s_dyn_tuser       : std_logic_vector(7 downto 0);
+    signal s_dyn_tready      : std_logic := '1';
+    signal s_dyn_rsp_hs_cnt  : natural := 0;
+    signal s_dyn_rdn_rise_cnt : natural := 0;
 
     -- Pull-up / not-connected OEN DUT
     signal s_pu_req_valid   : std_logic := '0';
@@ -106,6 +110,26 @@ begin
         end if;
     end process p_dyn_tick_gen;
 
+    p_dyn_transfer_count : process(s_clk)
+        variable v_rdn_d : std_logic := '1';
+    begin
+        if rising_edge(s_clk) then
+            if s_rst_n = '0' then
+                s_dyn_rsp_hs_cnt   <= 0;
+                s_dyn_rdn_rise_cnt <= 0;
+                v_rdn_d            := '1';
+            else
+                if s_dyn_tvalid = '1' and s_dyn_tready = '1' then
+                    s_dyn_rsp_hs_cnt <= s_dyn_rsp_hs_cnt + 1;
+                end if;
+                if v_rdn_d = '0' and s_dyn_rdn = '1' then
+                    s_dyn_rdn_rise_cnt <= s_dyn_rdn_rise_cnt + 1;
+                end if;
+                v_rdn_d := s_dyn_rdn;
+            end if;
+        end if;
+    end process p_dyn_transfer_count;
+
     -- Dynamic mode chip model: GPX output buffer follows OEN low and RDN low.
     s_dyn_d <= std_logic_vector(to_unsigned(16#12345#, c_DATA_W))
                when s_dyn_oen = '0' and s_dyn_rdn = '0'
@@ -152,7 +176,7 @@ begin
             o_m_axis_tdata  => s_dyn_tdata,
             o_m_axis_tkeep  => s_dyn_tkeep,
             o_m_axis_tuser  => s_dyn_tuser,
-            i_m_axis_tready => '1',
+            i_m_axis_tready => s_dyn_tready,
             o_ef1_sync      => open,
             o_ef2_sync      => open,
             o_lf1_sync      => open,
@@ -285,6 +309,8 @@ begin
 
         variable v_fall_1 : time;
         variable v_fall_2 : time;
+        variable v_rsp_base : natural;
+        variable v_rdn_base : natural;
     begin
         s_rst_n <= '0';
         wait for 10 * c_CLK_PERIOD;
@@ -320,7 +346,41 @@ begin
         s_dyn_oen_perm  <= '0';
         wait for 10 * c_CLK_PERIOD;
 
-        -- [3] Pull-up/NC mode keeps OEN high but read still completes.
+        -- [3] A held burst response must not be re-issued when tready returns.
+        v_rsp_base := s_dyn_rsp_hs_cnt;
+        v_rdn_base := s_dyn_rdn_rise_cnt;
+        s_dyn_tready    <= '0';
+        s_dyn_req_valid <= '1';
+        s_dyn_req_burst <= '1';
+        s_dyn_oen_perm  <= '1';
+
+        -- Allow exactly two physical GPX reads, then hold the second response
+        -- at Phase H for several clocks while AXIS is backpressured.
+        wait until s_dyn_rdn_rise_cnt = v_rdn_base + 2;
+        for i in 0 to 4 loop
+            wait until rising_edge(s_clk);
+        end loop;
+
+        -- End the burst and release backpressure together. Both completed
+        -- physical reads must emerge exactly once.
+        s_dyn_req_burst <= '0';
+        s_dyn_req_valid <= '0';
+        s_dyn_oen_perm  <= '0';
+        s_dyn_tready    <= '1';
+        for i in 0 to 8 loop
+            wait until rising_edge(s_clk);
+        end loop;
+
+        assert s_dyn_rdn_rise_cnt - v_rdn_base = 2
+            report "burst backpressure issued an unexpected physical GPX read"
+            severity failure;
+        assert s_dyn_rsp_hs_cnt - v_rsp_base = 2
+            report "burst backpressure AXIS response count="
+                   & integer'image(s_dyn_rsp_hs_cnt - v_rsp_base)
+                   & ", expected=2"
+            severity failure;
+
+        -- [4] Pull-up/NC mode keeps OEN high but read still completes.
         s_pu_req_valid <= '1';
         s_pu_req_rw    <= '0';
         s_pu_req_addr  <= c_TDC_REG8_IFIFO1;
