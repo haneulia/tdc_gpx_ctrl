@@ -288,20 +288,29 @@ begin
             s_axi_csr_rresp   => s_axi_rresp,
             s_axi_csr_rvalid  => s_axi_rvalid,
             s_axi_csr_rready  => s_axi_rready,
-            -- Init values: CTL0/CTL2 unused (owned by csr_pipeline), CTL5~20 cfg_image
+            -- Init values: CTL0/CTL2 unused (owned by csr_pipeline), CTL5~20
+            -- share the board-proven GPX image with unified-CSR mode.
             reg0_init_val  => C_ZERO32,             -- CTL0 unused
             reg1_init_val  => c_INIT_BUS_TIMING,    -- CTL1
             reg2_init_val  => C_ZERO32,             -- CTL2 unused
             reg3_init_val  => c_INIT_START_OFF1,    -- CTL3
             reg4_init_val  => c_INIT_CFG_REG7,      -- CTL4
-            reg5_init_val  => C_ZERO32,   reg6_init_val  => C_ZERO32,
-            reg7_init_val  => C_ZERO32,   reg8_init_val  => C_ZERO32,
-            reg9_init_val  => C_ZERO32,   reg10_init_val => C_ZERO32,
-            reg11_init_val => C_ZERO32,   reg12_init_val => C_ZERO32,
-            reg13_init_val => C_ZERO32,   reg14_init_val => C_ZERO32,
-            reg15_init_val => C_ZERO32,   reg16_init_val => C_ZERO32,
-            reg17_init_val => C_ZERO32,   reg18_init_val => C_ZERO32,
-            reg19_init_val => C_ZERO32,   reg20_init_val => C_ZERO32,
+            reg5_init_val  => c_GPX_DEFAULT_IMAGE(0),
+            reg6_init_val  => c_GPX_DEFAULT_IMAGE(1),
+            reg7_init_val  => c_GPX_DEFAULT_IMAGE(2),
+            reg8_init_val  => c_GPX_DEFAULT_IMAGE(3),
+            reg9_init_val  => c_GPX_DEFAULT_IMAGE(4),
+            reg10_init_val => c_GPX_DEFAULT_IMAGE(5),
+            reg11_init_val => c_GPX_DEFAULT_IMAGE(6),
+            reg12_init_val => c_GPX_DEFAULT_IMAGE(7),
+            reg13_init_val => c_GPX_DEFAULT_IMAGE(8),
+            reg14_init_val => c_GPX_DEFAULT_IMAGE(9),
+            reg15_init_val => c_GPX_DEFAULT_IMAGE(10),
+            reg16_init_val => c_GPX_DEFAULT_IMAGE(11),
+            reg17_init_val => c_GPX_DEFAULT_IMAGE(12),
+            reg18_init_val => c_GPX_DEFAULT_IMAGE(13),
+            reg19_init_val => c_GPX_DEFAULT_IMAGE(14),
+            reg20_init_val => c_GPX_DEFAULT_IMAGE(15),
             reg21_init_val => c_INIT_SCAN_TIMEOUT, reg22_init_val => C_ZERO32,
             reg23_init_val => C_ZERO32,   reg24_init_val => C_ZERO32,
             reg25_init_val => C_ZERO32,   reg26_init_val => C_ZERO32,

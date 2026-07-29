@@ -3275,8 +3275,8 @@ begin
         wait_clk(20);
 
         pl("[S1] tdc_gpx chip CSR: cfg_image Reg0/Reg5/Reg6 + CTL21");
-        td_wr("0" & x"14", x"00001C00");  -- Reg0 TRiseEn
-        td_wr("0" & x"28", x"01800000");  -- Reg5 ALU trig
+        td_wr("0" & x"14", c_GPX_DEFAULT_IMAGE(0)); -- Reg0 safe edge template
+        td_wr("0" & x"28", c_GPX_DEFAULT_IMAGE(5)); -- Reg5 proven control/offset
         td_wr("0" & x"2C", x"00000004");  -- Reg6 LF threshold
         -- CTL21 must be written before START/packet_start. Otherwise max_hits=0
         -- aliases to the build maximum (7), while the test/report incorrectly
@@ -3431,13 +3431,13 @@ begin
             uc_wr(C_CTL_LASER_SCHED1, C_LC_CTL6_DEFAULT);
             uc_wr(C_CTL_LASER_SCHED2, C_LC_CTL7_LOCAL);
 
-            uc_wr(C_CTL_TDC_IMAGE_DATA, x"00001C00");
+            uc_wr(C_CTL_TDC_IMAGE_DATA, c_GPX_DEFAULT_IMAGE(0));
             v_uc_image_epoch := v_uc_image_epoch + 1;
             uc_wr(C_CTL_TDC_IMAGE_CMD,
                   fn_u_tdc_image_cmd(0, v_uc_image_epoch));
             wait_u8_match(uc_tdc_image_epoch, v_uc_image_epoch, 1000,
                 "full_int: TDC Reg0 image write was not accepted");
-            uc_wr(C_CTL_TDC_IMAGE_DATA, x"01800000");
+            uc_wr(C_CTL_TDC_IMAGE_DATA, c_GPX_DEFAULT_IMAGE(5));
             v_uc_image_epoch := v_uc_image_epoch + 1;
             uc_wr(C_CTL_TDC_IMAGE_CMD,
                   fn_u_tdc_image_cmd(5, v_uc_image_epoch));

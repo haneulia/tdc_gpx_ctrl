@@ -21,6 +21,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 use work.tdc_gpx_pkg.all;
+use work.tdc_gpx_cfg_pkg.all;
 
 entity tdc_gpx_external_chip_model is
     generic (
@@ -79,6 +80,7 @@ architecture behavioral of tdc_gpx_external_chip_model is
 
     subtype t_raw_word is std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
     type t_raw_fifo is array (0 to g_FIFO_DEPTH - 1) of t_raw_word;
+    type t_reg_bank is array (0 to c_CFG_IMAGE_N_REGS - 1) of t_raw_word;
     type t_time_array is array (natural range <>) of time;
 
     signal s_start_time   : time := 0 ns;
@@ -93,6 +95,8 @@ architecture behavioral of tdc_gpx_external_chip_model is
     signal s_fifo2_fill : t_natural_chip_array := (others => 0);
     signal s_last_hit   : t_raw_hit_array := (others => (others => '0'));
     signal s_capture_count : t_natural_chip_array := (others => 0);
+    signal s_cfg_error : std_logic_vector(g_NUM_CHIPS - 1 downto 0) :=
+        (others => '0');
 
     type t_chip_word_array is array (0 to g_NUM_CHIPS - 1) of t_raw_word;
     signal s_bus_data : t_chip_word_array := (others => (others => '0'));
@@ -159,9 +163,14 @@ begin
                 g_STOPS_PER_CHIP - 1 downto 0) := (others => '0');
             variable v_alu_prev   : std_logic := '0';
             variable v_rdn_prev   : std_logic := '1';
+            variable v_wrn_prev   : std_logic := '1';
+            variable v_wr_hold    : t_raw_word := (others => '0');
+            variable v_wr_addr    : natural range 0 to c_CFG_IMAGE_N_REGS - 1 := 0;
+            variable v_regs       : t_reg_bank := (others => (others => '0'));
             variable v_mtimer     : natural range 0 to c_CAPTURE_CLKS := 0;
             variable v_irflag     : std_logic := '0';
             variable v_armed      : boolean := false;
+            variable v_cfg_valid  : boolean;
             variable v_t0         : time := 0 ns;
             variable v_elapsed_ps : natural;
             variable v_hit        : natural;
@@ -184,6 +193,10 @@ begin
                     end loop;
                     v_alu_prev := i_tdc_alutrigger(chip);
                     v_rdn_prev := i_tdc_rdn(chip);
+                    v_wrn_prev := i_tdc_wrn(chip);
+                    v_wr_hold := (others => '0');
+                    v_wr_addr := 0;
+                    v_regs := (others => (others => '0'));
                     v_mtimer := 0;
                     v_irflag := '0';
                     v_armed := false;
@@ -193,8 +206,38 @@ begin
                     s_bus_oe(chip) <= '0';
                     s_last_hit(chip) <= (others => '0');
                     s_capture_count(chip) <= 0;
+                    s_cfg_error(chip) <= '0';
                 else
                     s_bus_oe(chip) <= '0';
+
+                    -- GPX configuration writes hold address/data throughout
+                    -- WRN low and commit on the rising edge. Sampling the held
+                    -- values avoids the delta-cycle in which bus_phy releases
+                    -- io_tdc_d as WRN returns high.
+                    if i_tdc_csn(chip) = '0' and i_tdc_wrn(chip) = '0' then
+                        v_wr_addr := to_integer(unsigned(i_tdc_adr(
+                            (chip + 1) * c_TDC_ADR_WIDTH - 1 downto
+                            chip * c_TDC_ADR_WIDTH)));
+                        v_wr_hold := io_tdc_d(
+                            (chip + 1) * c_TDC_BUS_WIDTH - 1 downto
+                            chip * c_TDC_BUS_WIDTH);
+                    end if;
+                    if i_tdc_wrn(chip) = '1' and v_wrn_prev = '0' then
+                        if v_wr_addr = 4 and v_wr_hold(22) = '1' then
+                            v_fifo1 := (others => (others => '0'));
+                            v_fifo2 := (others => (others => '0'));
+                            v_fill1 := 0;
+                            v_fill2 := 0;
+                            v_rd1 := 0;
+                            v_rd2 := 0;
+                            v_mtimer := 0;
+                            v_irflag := '0';
+                            v_armed := false;
+                            v_wr_hold(22) := '0';
+                        end if;
+                        v_regs(v_wr_addr) := v_wr_hold;
+                    end if;
+                    v_wrn_prev := i_tdc_wrn(chip);
 
                     -- ALU trigger clears the previous measurement result. It
                     -- never creates a START event in this system model.
@@ -212,7 +255,8 @@ begin
                     v_alu_prev := i_tdc_alutrigger(chip);
 
                     -- Physical START is common to all chips. A new START opens
-                    -- MTimer and starts a clean SINGLE_SHOT acquisition.
+                    -- MTimer and starts a clean SINGLE_SHOT acquisition only
+                    -- after the programmed image satisfies the RTL contract.
                     if s_start_toggle /= v_start_seen then
                         v_start_seen := s_start_toggle;
                         v_fifo1 := (others => (others => '0'));
@@ -222,9 +266,86 @@ begin
                         v_rd1 := 0;
                         v_rd2 := 0;
                         v_t0 := s_start_time;
-                        v_mtimer := c_CAPTURE_CLKS;
                         v_irflag := '0';
-                        v_armed := true;
+                        v_cfg_valid := true;
+
+                        if v_regs(0)(c_REG0_TSTART_RISE) /= '1'
+                           or v_regs(0)(c_REG0_TSTART_FALL) /= '0' then
+                            assert false
+                                report "tdc_gpx_external_chip_model: TStart must use the common rising edge"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+                        if v_regs(0)(9 downto 7) /= "001"
+                           or v_regs(0)(0) /= '1' then
+                            assert false
+                                report "tdc_gpx_external_chip_model: Reg0 service/start-oscillator bits are invalid"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+                        for stop_id in 0 to g_STOPS_PER_CHIP - 1 loop
+                            if g_CHIP_SLOPE_MASK(chip) = '1' then
+                                if v_regs(0)(c_REG0_TSTOP_RISE_LO + stop_id) /= '1' then
+                                    assert false
+                                        report "tdc_gpx_external_chip_model: rising STOP edge is not enabled"
+                                        severity failure;
+                                    v_cfg_valid := false;
+                                end if;
+                            else
+                                if v_regs(0)(c_REG0_TSTOP_FALL_LO + stop_id) /= '1' then
+                                    assert false
+                                        report "tdc_gpx_external_chip_model: falling STOP edge is not enabled"
+                                        severity failure;
+                                    v_cfg_valid := false;
+                                end if;
+                            end if;
+                        end loop;
+                        if v_regs(2) /= x"0000002" then
+                            assert false
+                                report "tdc_gpx_external_chip_model: Reg2 is not configured for I-mode"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+                        if v_regs(4)(26 downto 25) /= "11" then
+                            assert false
+                                report "tdc_gpx_external_chip_model: Reg4 quiet/EFlag policy is invalid"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+                        if v_regs(5)(c_REG5_MASTER_ALU_TRIG) /= '1' then
+                            assert false
+                                report "tdc_gpx_external_chip_model: Reg5 MasterAluTrig is disabled"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+                        if v_regs(7) = x"0000000" then
+                            assert false
+                                report "tdc_gpx_external_chip_model: Reg7 timing configuration is zero"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+                        if v_regs(12)(25) /= '1' then
+                            assert false
+                                report "tdc_gpx_external_chip_model: Reg12 MTimer interrupt is disabled"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+                        if v_regs(14)(4) /= '0' then
+                            assert false
+                                report "tdc_gpx_external_chip_model: unsupported 16-bit GPX bus mode"
+                                severity failure;
+                            v_cfg_valid := false;
+                        end if;
+
+                        if v_cfg_valid then
+                            v_mtimer := c_CAPTURE_CLKS;
+                            v_armed := true;
+                            s_cfg_error(chip) <= '0';
+                        else
+                            v_mtimer := 0;
+                            v_armed := false;
+                            s_cfg_error(chip) <= '1';
+                        end if;
                     end if;
 
                     -- Each asynchronous STOP edge becomes one I-Mode word.
@@ -317,7 +438,7 @@ begin
         o_tdc_ef2(chip) <= '1' when s_fifo2_fill(chip) = 0 else '0';
         o_tdc_lf1(chip) <= '1' when s_fifo1_fill(chip) >= g_LF_THRESHOLD else '0';
         o_tdc_lf2(chip) <= '1' when s_fifo2_fill(chip) >= g_LF_THRESHOLD else '0';
-        o_tdc_errflag(chip) <= '0';
+        o_tdc_errflag(chip) <= s_cfg_error(chip);
 
         io_tdc_d((chip + 1) * c_TDC_BUS_WIDTH - 1 downto
                  chip * c_TDC_BUS_WIDTH) <=

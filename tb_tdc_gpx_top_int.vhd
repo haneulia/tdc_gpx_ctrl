@@ -363,7 +363,7 @@ architecture sim of tb_tdc_gpx_top_int is
 
     function fn_expected_reg0(chip_id : natural) return std_logic_vector is
         variable v_word : std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0) :=
-            x"0301C00";
+            c_GPX_DEFAULT_IMAGE(0)(c_TDC_BUS_WIDTH - 1 downto 0);
         variable v_rise_enable : boolean;
         variable v_fall_enable : boolean;
     begin
@@ -1772,10 +1772,10 @@ begin
         --   Reg6 : LF threshold = 4 -> 0x0000_0004
         ----------------------------------------------------------------
         pl("[S2] Chip CSR: cfg_image Reg0/Reg5/Reg6 write");
-        -- Common rising START, with both STOP edge groups available for the
-        -- per-chip role filter. Falling START is deliberately disabled.
-        chip_wr(C_CHIP_CFG_REG0, x"00301C00");
-        chip_wr(C_CHIP_CFG_REG5, x"01800000");  -- Reg5: ALU trig bits
+        -- Common rising START and both STOP edge groups are available for the
+        -- per-chip role filter; service/start-oscillator bits remain enabled.
+        chip_wr(C_CHIP_CFG_REG0, c_GPX_DEFAULT_IMAGE(0));
+        chip_wr(C_CHIP_CFG_REG5, c_GPX_DEFAULT_IMAGE(5));
         chip_wr(C_CHIP_CFG_REG6, x"00000004");  -- Reg6: LF threshold
         case G_MAX_HITS_WRITE_MODE is
             when 0 =>

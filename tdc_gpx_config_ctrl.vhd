@@ -724,8 +724,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cfg_d1_r         : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0) := (others => '1');
     signal s_cfg_diff_r       : std_logic_vector((c_TDC_CFG_BITS + 31) / 32 - 1 downto 0) := (others => '0');
 
-    -- cfg_image is an array of 8 × 32-bit words = 256 bits.
-    constant c_CFG_IMAGE_BITS : natural := 8 * 32;
+    -- cfg_image covers GPX Reg0..15. Reg11/12/14 are part of the mandatory
+    -- initialization sequence, so all 16 words must cross atomically.
+    constant c_CFG_IMAGE_BITS : natural := c_CFG_IMAGE_N_REGS * 32;
     signal s_cfg_image_src_packed : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0);
     signal s_cfg_image_dst_packed : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0) := (others => '0');
     signal s_cfg_image_src_send_r : std_logic := '0';
@@ -1429,8 +1430,8 @@ begin
     -- Pack t_tdc_cfg into the handshake payload.
     s_cfg_src_packed <= fn_pack_tdc_cfg(s_cfg_merged);
 
-    -- Pack cfg_image (8 × 32-bit) into the handshake payload.
-    gen_cfg_image_pack : for i in 0 to 7 generate
+    -- Pack the complete Reg0..15 image into the handshake payload.
+    gen_cfg_image_pack : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
         s_cfg_image_src_packed(32 * (i + 1) - 1 downto 32 * i) <= o_cfg_image(i);
     end generate;
 
@@ -1525,7 +1526,7 @@ begin
     -- presents a registered, stable output on dest_out).
     s_cfg_tdc <= fn_unpack_tdc_cfg(s_cfg_dst_packed);
 
-    gen_cfg_image_unpack : for i in 0 to 7 generate
+    gen_cfg_image_unpack : for i in 0 to c_CFG_IMAGE_N_REGS - 1 generate
         s_cfg_image_tdc(i) <= s_cfg_image_dst_packed(32 * (i + 1) - 1 downto 32 * i);
     end generate;
 

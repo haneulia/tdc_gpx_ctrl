@@ -147,7 +147,7 @@ begin
         );
 
     p_stim : process
-        variable v_expected : t_cfg_image := (others => (others => '0'));
+        variable v_expected : t_cfg_image := c_GPX_DEFAULT_IMAGE;
         variable v_word     : std_logic_vector(31 downto 0);
         variable v_wait     : natural;
 
@@ -184,7 +184,12 @@ begin
             report "Initial cfg_image CDC did not become idle"
             severity failure;
         assert o_cfg_image = v_expected
-            report "Initial destination cfg_image is not zero"
+            report "Initial destination cfg_image does not match board-proven defaults"
+            severity failure;
+        assert o_cfg_image(11) = x"07FF0000"
+           and o_cfg_image(12) = x"02000000"
+           and o_cfg_image(14) = x"00000000"
+            report "Mandatory Reg11/12/14 defaults did not cross the packed CSR CDC"
             severity failure;
 
         -- Back-to-back writes force several source updates into one in-flight

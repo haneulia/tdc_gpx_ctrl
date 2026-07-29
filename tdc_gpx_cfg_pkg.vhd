@@ -352,15 +352,35 @@ package tdc_gpx_cfg_pkg is
     -- CTL2: RANGE_COLS init: max_range=267→[15:0]=0x010B, cols=2400→[31:16]=0x0960
     constant c_INIT_RANGE_COLS       : std_logic_vector(31 downto 0) := x"0960010B";
 
-    -- CTL3: START_OFF1 init
-    constant c_INIT_START_OFF1       : std_logic_vector(31 downto 0) := x"00000000";
+    -- CTL3: START_OFF1 init. Matches the board-proven GPX Reg5 offset.
+    constant c_INIT_START_OFF1       : std_logic_vector(31 downto 0) := x"000004DA";
 
-    -- CTL4: CFG_REG7 init
-    constant c_INIT_CFG_REG7         : std_logic_vector(31 downto 0) := x"00000000";
+    -- CTL4: CFG_REG7 init. Board-proven 40 MHz reference configuration.
+    constant c_INIT_CFG_REG7         : std_logic_vector(31 downto 0) := x"00281FB4";
 
     -- Preserve the historical dual-lane default. Bit 19 is the runtime
     -- falling-lane enable; max_scan_5ns_ticks=0 and max_hits_cfg=0 retain their
     -- existing aliases (watchdog disabled, build maximum hits).
     constant c_INIT_SCAN_TIMEOUT     : std_logic_vector(31 downto 0) := x"00080000";
+
+    -- Board-proven TDC-GPX I-mode register image. Reg0 is a topology-neutral
+    -- template: common rising START plus both STOP edge groups. The controller
+    -- removes unsupported STOP edges per chip immediately before programming.
+    -- Reg6 remains the proven baseline zero; a nonzero LF threshold is an
+    -- explicit runtime tuning choice rather than part of the hardware default.
+    constant c_GPX_DEFAULT_IMAGE : t_cfg_image := (
+        0      => x"0FF7FC81", -- START rise, STOP1..8 rise/fall, service bits
+        1      => x"00000000", -- channel adjustment
+        2      => x"00000002", -- I-mode
+        3      => x"00000000", -- service
+        4      => x"06000000", -- quiet mode, EFlag high impedance
+        5      => x"00E004DA", -- disable policy, ALU trigger, StartOff1
+        6      => x"00000000", -- LF threshold / PowerOnECL baseline
+        7      => x"00281FB4", -- HSDiv, RefClkDiv, MTimer
+        11     => x"07FF0000", -- error mask
+        12     => x"02000000", -- MTimer interrupt -> IrFlag
+        14     => x"00000000", -- 28-bit bus mode
+        others => x"00000000"
+    );
 
 end package tdc_gpx_cfg_pkg;

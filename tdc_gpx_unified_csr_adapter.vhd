@@ -232,10 +232,10 @@ architecture rtl of tdc_gpx_unified_csr_adapter is
         return v_cfg;
     end function fn_initial_cfg;
 
-    constant C_INITIAL_CFG : t_tdc_cfg := fn_initial_cfg;
-    constant C_ZERO_IMAGE  : t_cfg_image := (others => (others => '0'));
+    constant C_INITIAL_CFG   : t_tdc_cfg := fn_initial_cfg;
+    constant C_DEFAULT_IMAGE : t_cfg_image := c_GPX_DEFAULT_IMAGE;
 
-    signal s_image_staging : t_cfg_image := C_ZERO_IMAGE;
+    signal s_image_staging : t_cfg_image := C_DEFAULT_IMAGE;
     signal s_image_selected_index : natural range 0 to 31 := 0;
     signal s_image_seen_epoch     : std_logic_vector(7 downto 0) := (others => '0');
     signal s_image_accepted_epoch : std_logic_vector(7 downto 0) := (others => '0');
@@ -259,9 +259,9 @@ architecture rtl of tdc_gpx_unified_csr_adapter is
     signal s_n_faces_word     : std_logic_vector(2 downto 0);
 
     signal s_active_cfg    : t_tdc_cfg := C_INITIAL_CFG;
-    signal s_active_image  : t_cfg_image := C_ZERO_IMAGE;
+    signal s_active_image  : t_cfg_image := C_DEFAULT_IMAGE;
     signal s_pending_cfg   : t_tdc_cfg := C_INITIAL_CFG;
-    signal s_pending_image : t_cfg_image := C_ZERO_IMAGE;
+    signal s_pending_image : t_cfg_image := C_DEFAULT_IMAGE;
     signal s_pending_cfg_epoch : std_logic_vector(7 downto 0) := (others => '0');
     signal s_apply_pending : std_logic := '0';
     signal s_cfg_write_delay : std_logic := '0';
@@ -323,7 +323,7 @@ begin
     begin
         if rising_edge(i_cfg_clk) then
             if i_cfg_rst_n = '0' then
-                s_image_staging          <= C_ZERO_IMAGE;
+                s_image_staging          <= C_DEFAULT_IMAGE;
                 s_image_selected_index   <= 0;
                 s_image_seen_epoch       <= (others => '0');
                 s_image_accepted_epoch   <= (others => '0');
@@ -414,9 +414,9 @@ begin
         if rising_edge(i_axis_clk) then
             if i_axis_rst_n = '0' then
                 s_active_cfg            <= C_INITIAL_CFG;
-                s_active_image          <= C_ZERO_IMAGE;
+                s_active_image          <= C_DEFAULT_IMAGE;
                 s_pending_cfg           <= C_INITIAL_CFG;
-                s_pending_image         <= C_ZERO_IMAGE;
+                s_pending_image         <= C_DEFAULT_IMAGE;
                 s_pending_cfg_epoch     <= (others => '0');
                 s_apply_pending         <= '0';
                 s_cfg_write_delay       <= '0';
