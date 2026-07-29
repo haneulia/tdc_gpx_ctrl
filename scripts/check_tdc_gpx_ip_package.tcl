@@ -20,6 +20,47 @@ foreach required [list $component $xgui $unified_bus_xml $unified_rtl_xml] {
     }
 }
 
+proc tdc_read_binary {path} {
+    set handle [open $path r]
+    fconfigure $handle -translation binary
+    set data [read $handle]
+    close $handle
+    return $data
+}
+
+proc tdc_require_file_equal {canonical packaged label} {
+    if {![file exists $canonical] || ![file exists $packaged]} {
+        error "$label source is missing: $canonical or $packaged"
+    }
+    if {[tdc_read_binary $canonical] ne [tdc_read_binary $packaged]} {
+        error "$label package copy is stale: $packaged"
+    }
+}
+
+set ip_root [file normalize [file join $hdl_dir ../..]]
+source [file join $script_dir tdc_gpx_rtl_manifest.tcl]
+source [file join $script_dir tdc_gpx_csr_source_manifest.tcl]
+set canonical_rtl [lsearch -all -inline -not -exact \
+    [tdc_gpx_rtl_manifest] px_utility_pkg.vhd]
+foreach filename $canonical_rtl {
+    tdc_require_file_equal [file join $hdl_dir $filename] \
+        [file join $package_dir src $filename] "TDC-GPX RTL $filename"
+}
+foreach canonical [tdc_gpx_csr_source_manifest $ip_root] {
+    set filename [file tail $canonical]
+    tdc_require_file_equal $canonical \
+        [file join $package_dir src csr $filename] "CSR source $filename"
+}
+tdc_require_file_equal [file join $hdl_dir tdc_gpx_xgui.tcl] $xgui \
+    {TDC-GPX XGUI}
+tdc_require_file_equal [file join $hdl_dir interfaces \
+    tdc_gpx_unified_csr.xml] $unified_bus_xml \
+    {TDC-GPX unified bus definition}
+tdc_require_file_equal [file join $hdl_dir interfaces \
+    tdc_gpx_unified_csr_rtl.xml] $unified_rtl_xml \
+    {TDC-GPX unified abstraction definition}
+puts {TDC_GPX_IP_PACKAGE_SOURCE_SYNC_PASS}
+
 # Avoid the damaged per-user Tcl Store on this workstation.
 set install_tcl_store [file normalize \
     [file join $::env(XILINX_VIVADO) data XilinxTclStore]]

@@ -1,5 +1,7 @@
-# Instantiate and synthesize the packaged tdc_gpx_top IP at 150/200 MHz for
-# every supported output width. Optional second argument selects one width.
+# Configure the packaged tdc_gpx_top IP and synthesize the exact packaged
+# source set at 150/200 MHz for every supported output width.  Synthesis runs
+# in the current Vivado process so the gate does not depend on the Windows
+# rundef.js child-run launcher.
 
 set script_dir [file normalize [file dirname [info script]]]
 set hdl_dir [file normalize [file join $script_dir ..]]
@@ -31,8 +33,9 @@ foreach vendor_dir [glob -nocomplain -type d \
 }
 package require ::tclapp::support::appinit 1.2
 
-create_project -force tdc_gpx_packaged_ooc \
-    [file join $out_dir project] -part xc7z020clg484-2
+set catalog_project [file join $out_dir catalog_project]
+create_project -force tdc_gpx_packaged_catalog \
+    $catalog_project -part xc7z020clg484-2
 set_property target_language VHDL [current_project]
 set_property simulator_language Mixed [current_project]
 set_property ip_repo_paths [list $package_dir] [current_project]
@@ -42,7 +45,6 @@ set vlnv victek.co.kr:my_ip:tdc_gpx_top:1.0
 if {[llength [get_ipdefs -all $vlnv]] != 1} {
     error "Packaged TDC-GPX VLNV is unavailable: $vlnv"
 }
-set synth_runs {}
 foreach width $output_widths {
     set module_name tdc_gpx_packaged_w${width}
     create_ip -vlnv $vlnv -module_name $module_name
@@ -58,19 +60,40 @@ foreach width $output_widths {
         CONFIG.g_AXIS_CLK_MHZ 150 \
         CONFIG.g_TDC_CLK_MHZ 200 \
         CONFIG.g_STREAM_CLK_MODE ASYNC] $packaged_ip
-    generate_target {instantiation_template synthesis} $packaged_ip
-    create_ip_run $packaged_ip
-
-    set synth_run [get_runs ${module_name}_synth_1]
-    if {[llength $synth_run] != 1} {
-        error "Packaged-IP synthesis run was not created for width $width"
+    generate_target instantiation_template $packaged_ip
+    if {[get_property CONFIG.g_OUTPUT_WIDTH $packaged_ip] != $width} {
+        error "Packaged-IP did not retain output width $width"
     }
-    lappend synth_runs $synth_run
 }
+close_project
 
-launch_runs $synth_runs -jobs 2
-foreach synth_run $synth_runs {
-    wait_on_run $synth_run
+set csr_files [list \
+    axil_fsm.vhd \
+    axil_ctrl_regs.vhd \
+    axil_stat_regs.vhd \
+    axil_intr.vhd \
+    my_axil_csr_top.vhd \
+    my_axil_csr32_pkg.vhd \
+    axil_fsm_32.vhd \
+    axil_ctrl_regs_32.vhd \
+    axil_stat_regs_32.vhd \
+    axil_intr_32.vhd \
+    my_axil_csr32_top.vhd]
+
+source [file join $script_dir tdc_gpx_rtl_manifest.tcl]
+set packaged_sources {}
+foreach file_name $csr_files {
+    lappend packaged_sources [file join $package_dir src csr $file_name]
+}
+set packaged_rtl [lsearch -all -inline -not -exact \
+    [tdc_gpx_rtl_manifest] px_utility_pkg.vhd]
+foreach file_name $packaged_rtl {
+    lappend packaged_sources [file join $package_dir src $file_name]
+}
+foreach source_file $packaged_sources {
+    if {![file exists $source_file]} {
+        error "Packaged source is missing: $source_file"
+    }
 }
 
 proc require_port_width {port_name expected_width} {
@@ -80,15 +103,36 @@ proc require_port_width {port_name expected_width} {
     }
 }
 
-foreach width $output_widths synth_run $synth_runs {
-    set progress [get_property PROGRESS $synth_run]
-    set status [get_property STATUS $synth_run]
-    puts "TDC_GPX_PACKAGED_IP_RUN width=$width status=$status progress=$progress"
-    if {$progress ne {100%} || [string first {Complete} $status] < 0} {
-        error "Packaged-IP width-$width synthesis did not complete: $status ($progress)"
+foreach width $output_widths {
+    create_project -in_memory -part xc7z020clg484-2
+    set_property target_language VHDL [current_project]
+    set_property simulator_language Mixed [current_project]
+    set_property default_lib xil_defaultlib [current_project]
+    foreach source_file $packaged_sources {
+        read_vhdl -vhdl2008 -library xil_defaultlib $source_file
     }
+    update_compile_order -fileset sources_1
 
-    open_run $synth_run
+    set generics [list \
+        {g_ENABLE_LOCAL_CSR=true} \
+        "g_OUTPUT_WIDTH=$width" \
+        {g_NUM_CHIPS=4} \
+        {g_PRESENT_CHIP_MASK=4'b1111} \
+        {g_RISE_CHIP_MASK=4'b0011} \
+        {g_FALL_CHIP_MASK=4'b1100} \
+        {g_MAX_STOPS_PER_CHIP=8} \
+        {g_MAX_HITS_PER_STOP=7} \
+        {g_AXIS_CLK_MHZ=150} \
+        {g_TDC_CLK_MHZ=200} \
+        {g_STREAM_CLK_MODE=ASYNC}]
+
+    synth_design \
+        -top tdc_gpx_top \
+        -part xc7z020clg484-2 \
+        -mode out_of_context \
+        -flatten_hierarchy none \
+        -generic $generics
+
     report_utilization -hierarchical \
         -file [file join $out_dir utilization_hier_w${width}.rpt]
     set black_boxes [get_cells -quiet -hier -filter {IS_BLACKBOX == 1}]
@@ -109,9 +153,8 @@ foreach width $output_widths synth_run $synth_runs {
     }
 
     puts "TDC_GPX_PACKAGED_IP_OOC_PASS axis_mhz=150 tdc_mhz=200 width=$width chips=4"
-    close_design
+    close_project
 }
 
 puts "TDC_GPX_PACKAGED_IP_WIDTH_MATRIX_PASS widths=$output_widths"
-close_project
 exit

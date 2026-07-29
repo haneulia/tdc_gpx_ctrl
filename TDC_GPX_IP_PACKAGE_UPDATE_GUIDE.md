@@ -109,6 +109,11 @@ TDC_GPX_IP_PACKAGE_PASS
 세 인스턴스를 모두 합성한다. 각 netlist에서 Rise/Fall `TDATA`와
 `TKEEP/TSTRB`가 각각 32/64/128 bit와 4/8/16 byte인지 검사한다.
 
+검사는 IP Catalog가 각 XGUI 설정을 수용하는지 먼저 확인한 뒤, 패키지에 포함된
+정확한 source set을 현재 Vivado process에서 직접 OOC 합성한다. Windows
+`rundef.js` child-run launcher를 사용하지 않으므로 batch/보안 환경에서도 같은
+검증 경로를 사용한다.
+
 두 번째 Tcl 인수에 폭을 주면 한 폭만 진단할 수 있다.
 
 ```powershell

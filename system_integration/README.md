@@ -47,6 +47,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_unified_csr_top.ps1
 ```
 
+The IPI-distributable owner is generated separately at
+`C:/Projects/my_sp/lib/IP/lidar_unified_csr/ip_repo`. Its thin
+`rtl/lidar_unified_csr_ip_top.vhd` wrapper gives Motor, Laser, Echo, and TDC
+one custom Master interface each while retaining exactly one internal CSR32
+owner. Regenerate and check it with:
+
+```powershell
+vivado.bat -mode batch -source package_lidar_unified_csr_ip.tcl
+vivado.bat -mode batch `
+  -source system_integration/scripts/check_lidar_unified_csr_ip_package.tcl
+vivado.bat -mode batch `
+  -source system_integration/scripts/run_lidar_unified_csr_packaged_ip_ooc.tcl
+```
+
 ## Encoder modes
 
 `motor_laser_ctrl_top` contains `motor_decoder_top`, which already contains

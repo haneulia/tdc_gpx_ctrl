@@ -1,8 +1,10 @@
 # LiDAR Unified CSR Top 사용 및 검증 가이드
 
-문서 기준일: 2026-07-28
+문서 기준일: 2026-07-29
 
 대상 RTL: `system_integration/rtl/lidar_unified_csr_top.vhd`
+
+IPI 패키지 wrapper: `system_integration/rtl/lidar_unified_csr_ip_top.vhd`
 
 ## 1. 역할과 경계
 
@@ -32,6 +34,21 @@ VDMA AXIS는 이 모듈을 통과하지 않는다. 이 경계 덕분에 CSR 통�
 
 Clock fan-out은 parent에서 직접 연결한다. 이 RTL은 AXI clock을 새 clock output으로
 재생성하거나 buffer하지 않는다.
+
+### IPI wrapper
+
+`lidar_unified_csr_ip_top`은 기능 또는 레지스터를 추가하지 않는다. 공통
+`SYS_CTRL`과 `SYS_CFG_APPLY`를 Motor/Laser/Echo/TDC별 물리 포트로 fan-out하여
+Vivado가 다음 네 사용자 정의 Master 인터페이스를 각각 하나의 소유 포트 집합으로
+묶을 수 있게 한다.
+
+- `motor_unified_csr`
+- `laser_unified_csr`
+- `echo_unified_csr`
+- `tdc_unified_csr`
+
+XGUI에서는 ABI version/capability를 읽기 전용으로 표시하고, register/interrupt/IPI
+연결 계약을 탭별로 보여준다. 변경 가능한 합성 파라미터는 없다.
 
 ## 3. Reset 이후 초기화
 
@@ -110,6 +127,9 @@ parent interrupt fabric도 이 계약에 맞춰야 한다.
 | Static address/capability contract | `UNIFIED_CSR_CONTRACT_PASS` |
 | AXI/control/status/epoch/IRQ TB | `[SUMMARY] Passed=7 Failed=0` |
 | xc7z020clg484-2 synthesis | 0 errors, 0 critical warnings |
+| Packaged-IP source synchronization | `LIDAR_UNIFIED_CSR_IP_SOURCE_SYNC_PASS` |
+| Four child custom-bus connections | `LIDAR_UNIFIED_CSR_IP_CHILD_INTERFACE_PASS` |
+| Packaged-IP OOC synthesis | `LIDAR_UNIFIED_CSR_PACKAGED_IP_OOC_PASS` |
 | Black boxes | 0 |
 | CSR32 owners | 1 |
 | Legacy/local CSR owners | 0 |
@@ -132,9 +152,57 @@ vivado.bat -mode batch `
   -tclargs C:/tmp/unified_csr_top_synth
 ```
 
-## 7. Closure 범위
+## 7. 별도 IP repository
 
-이 단계는 통합 **제어 평면**의 sign-off다. 다음 단계에서 실제 네 IP를 unified mode로
-연결한 뒤 150/200 MHz 신호처리 회귀를 수행해야 한다. 그때 local/unified mode의
-shot 수, START/STOP, Return-7, 28-bit I-Mode, 17-bit Hit, VDMA geometry, IRQ와
-HTML contract가 동일해야 전체 시스템 sign-off가 된다.
+생성 위치:
+
+```text
+C:\Projects\my_sp\lib\IP\lidar_unified_csr\ip_repo
+```
+
+canonical RTL과 패키징 스크립트는 이 Git 저장소에서 관리하고, 위 `ip_repo`는
+재생성 가능한 배포 산출물로 관리한다. 패키지에는 `my_axil_csr32` 소스가 포함되며
+child XCI나 `../HDL` 외부 참조는 포함되지 않는다.
+
+패키지 생성:
+
+```powershell
+& 'C:\AMDDesignTools\2025.2.1\Vivado\bin\vivado.bat' `
+  -mode batch -nojournal `
+  -source 'C:\Projects\my_sp\lib\IP\tdc_gpx_ctrl\HDL\package_lidar_unified_csr_ip.tcl'
+```
+
+패키지/XGUI/source-sync 및 현재 child IP 연결 검사:
+
+```powershell
+& 'C:\AMDDesignTools\2025.2.1\Vivado\bin\vivado.bat' `
+  -mode batch -nojournal -nolog `
+  -source 'C:\Projects\my_sp\lib\IP\tdc_gpx_ctrl\HDL\system_integration\scripts\check_lidar_unified_csr_ip_package.tcl'
+```
+
+생성 패키지 소스 OOC 합성:
+
+```powershell
+& 'C:\AMDDesignTools\2025.2.1\Vivado\bin\vivado.bat' `
+  -mode batch -nojournal -nolog `
+  -source 'C:\Projects\my_sp\lib\IP\tdc_gpx_ctrl\HDL\system_integration\scripts\run_lidar_unified_csr_packaged_ip_ooc.tcl'
+```
+
+중앙과 child repository가 동일한 사용자 정의 interface XML을 포함하므로 Catalog
+갱신 시 duplicate-interface warning이 나타날 수 있다. 정적 검사는 네 XML 쌍이
+byte 단위로 동일한지 먼저 확인하므로 중앙 repository가 우선 선택되어도 연결 계약은
+바뀌지 않는다.
+
+Parent Project Settings의 IP Repository에는 중앙 repository와 실제로 사용하는
+Motor/Laser/Echo/TDC repository를 함께 등록한다. Child IP의
+`g_ENABLE_LOCAL_CSR=false` 설정 후 같은 이름의 Master/Slave 인터페이스를 직접
+연결하고, `s_axi_csr_aclk/aresetn`을 모든 child unified configuration clock/reset에
+fan-out한다.
+
+## 8. Closure 범위
+
+통합 **제어 평면 RTL과 배포 IP**는 sign-off 상태다. 다음 단계에서는 실제 parent
+Block Design에 네 IP를 unified mode로 연결한 뒤 150/200 MHz 신호처리 회귀를
+수행해야 한다. 그때 local/unified mode의 shot 수, START/STOP, Return-7, 28-bit
+I-Mode, 17-bit Hit, VDMA geometry, IRQ와 HTML contract가 동일해야 전체 시스템
+sign-off가 된다.
