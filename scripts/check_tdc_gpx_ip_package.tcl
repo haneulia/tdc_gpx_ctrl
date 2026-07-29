@@ -95,6 +95,27 @@ foreach interface_name {
         -of_objects $core] "bus interface $interface_name"
 }
 
+foreach {interface_name ready_port} {
+    o_m_axis      i_m_axis_tready
+    o_m_axis_fall i_m_axis_fall_tready
+} {
+    set interface [require_one [ipx::get_bus_interfaces $interface_name \
+        -of_objects $core] "interface $interface_name"]
+    if {[get_property interface_mode $interface] ne {master}} {
+        error "$interface_name must remain an AXI4-Stream master"
+    }
+    set ready_map [require_one [ipx::get_port_maps TREADY \
+        -of_objects $interface] "$interface_name TREADY map"]
+    if {[get_property physical_name $ready_map] ne $ready_port} {
+        error "$interface_name TREADY must map to $ready_port"
+    }
+    set physical [require_one [ipx::get_ports $ready_port -of_objects $core] \
+        "physical READY port $ready_port"]
+    if {[get_property direction $physical] ne {in}} {
+        error "$ready_port must remain an input"
+    }
+}
+
 foreach {clock_name expected_busif} {
     i_axis_aclk {o_m_axis:o_m_axis_fall}
     s_axi_aclk {s_axi:s_axi_pipe}

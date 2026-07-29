@@ -89,6 +89,8 @@ TDC_GPX_IP_PACKAGE_PASS
 검사 항목:
 
 - 두 AXI4-Lite, 두 AXI4-Stream, 세 clock, 두 interrupt interface
+- Rise/Fall AXI4-Stream의 `TREADY`가 각각 `i_m_axis_tready`,
+  `i_m_axis_fall_tready`에 명시적으로 매핑되는지
 - clock generic에 종속된 `FREQ_HZ`
 - `g_NUM_CHIPS`에 종속된 물리 핀 폭
 - `g_OUTPUT_WIDTH` 기본값 32와 선택 목록 32/64/128

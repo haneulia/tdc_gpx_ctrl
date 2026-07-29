@@ -325,6 +325,25 @@ set axis_clock [tdc_find_interface $core CLK i_axis_aclk]
 set tdc_clock [tdc_find_interface $core CLK i_tdc_clk]
 set axi_clock [tdc_find_interface $core CLK s_axi_aclk]
 
+# Vivado infers each AXI4-Stream from the o_m_axis* output prefix, but the
+# corresponding READY ports intentionally use the i_m_axis* input prefix.
+# Bind them explicitly so an IPI interface connection carries backpressure all
+# the way into the RTL instead of leaving READY as an unrelated loose pin.
+foreach {interface physical_name} [list \
+        $rise_axis i_m_axis_tready \
+        $fall_axis i_m_axis_fall_tready] {
+    set ready_map [ipx::get_port_maps -quiet TREADY -of_objects $interface]
+    if {[llength $ready_map] == 0} {
+        ipx::add_port_map TREADY $interface
+        set ready_map [ipx::get_port_maps -quiet TREADY \
+            -of_objects $interface]
+    }
+    if {[llength $ready_map] != 1} {
+        error "Expected one TREADY map on [get_property name $interface], found [llength $ready_map]"
+    }
+    set_property physical_name $physical_name $ready_map
+}
+
 set axis_frequency_dependency \
     {(spirit:decode(id('PARAM_VALUE.g_AXIS_CLK_MHZ')) * 1000000)}
 foreach interface [list $rise_axis $fall_axis $axis_clock] {
@@ -578,7 +597,8 @@ foreach file_group [ipx::get_file_groups -of_objects $core] {
 
 foreach required_port {
     i_axis_aclk i_tdc_clk s_axi_aclk i_unified_cfg_clk io_tdc_d o_tdc_csn
-    i_shot_start i_stop_tdc o_m_axis_tdata o_m_axis_fall_tdata
+    i_shot_start i_stop_tdc o_m_axis_tdata i_m_axis_tready
+    o_m_axis_fall_tdata i_m_axis_fall_tready
     o_vdma_hsize_bytes_rise o_irq o_irq_pipe
     i_unified_sys_ctrl o_unified_tdc_pipeline_status
 } {
