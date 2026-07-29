@@ -139,13 +139,27 @@ begin
     end process p_start_timestamp;
 
     gen_stop_timestamp : for channel in 0 to c_CHANNELS - 1 generate
-        p_stop_timestamp : process(i_tdc_stop(channel))
-        begin
-            if rising_edge(i_tdc_stop(channel)) then
-                s_stop_time(channel)   <= now;
-                s_stop_toggle(channel) <= not s_stop_toggle(channel);
-            end if;
-        end process p_stop_timestamp;
+        constant c_CHIP : natural := channel / g_STOPS_PER_CHIP;
+    begin
+        gen_rising_stop : if g_CHIP_SLOPE_MASK(c_CHIP) = '1' generate
+            p_stop_timestamp : process(i_tdc_stop(channel))
+            begin
+                if rising_edge(i_tdc_stop(channel)) then
+                    s_stop_time(channel)   <= now;
+                    s_stop_toggle(channel) <= not s_stop_toggle(channel);
+                end if;
+            end process p_stop_timestamp;
+        end generate gen_rising_stop;
+
+        gen_falling_stop : if g_CHIP_SLOPE_MASK(c_CHIP) = '0' generate
+            p_stop_timestamp : process(i_tdc_stop(channel))
+            begin
+                if falling_edge(i_tdc_stop(channel)) then
+                    s_stop_time(channel)   <= now;
+                    s_stop_toggle(channel) <= not s_stop_toggle(channel);
+                end if;
+            end process p_stop_timestamp;
+        end generate gen_falling_stop;
     end generate gen_stop_timestamp;
 
     gen_chip : for chip in 0 to g_NUM_CHIPS - 1 generate

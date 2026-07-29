@@ -596,7 +596,7 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_ER_N_STOPS : natural := c_MAX_STOPS_PER_CHIP;
     constant C_PD_WIDTH   : natural := c_MAX_CHIPS * C_ER_N_STOPS;
     constant C_EXPECT_REF_DEPTH : positive :=
-        C_MON_SHOT_DEPTH * c_MAX_HITS_PER_STOP;
+        C_MON_SHOT_DEPTH * 2 * c_MAX_HITS_PER_STOP;
     type t_hit_reference_array is array (0 to C_EXPECT_REF_DEPTH - 1) of
         unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
     type t_channel_count_array is array (0 to C_PD_WIDTH - 1) of natural;
@@ -608,10 +608,14 @@ architecture sim of tb_tdc_gpx_full_int is
         hit_idx  : natural
     ) return natural is
     begin
-        -- Every integration profile drives the same Return time to all active
-        -- channels. One canonical pin timestamp is therefore sufficient; the
-        -- raw bus and every Cell still compare their own words against it.
-        return shot_idx * c_MAX_HITS_PER_STOP + hit_idx;
+        -- Every integration profile drives the same pulse to all active
+        -- channels. Rising-role chips timestamp the leading edge and
+        -- falling-role chips timestamp the trailing edge, so one reference
+        -- per slope is sufficient while still checking every raw word/Cell.
+        if G_CHIP_SLOPE_MASK(channel / C_ER_N_STOPS) = '1' then
+            return (shot_idx * 2) * c_MAX_HITS_PER_STOP + hit_idx;
+        end if;
+        return (shot_idx * 2 + 1) * c_MAX_HITS_PER_STOP + hit_idx;
     end function;
 
     function fn_expected_returns(channel : natural) return natural is
@@ -1031,6 +1035,8 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_expected_shots : natural range 0 to C_MON_SHOT_DEPTH := 0;
     signal mon_expected_hit_refs : t_hit_reference_array :=
         (others => (others => '0'));
+    signal mon_last_expected_fall_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
+        (others => '0');
     signal mon_td_rise_face_seen : std_logic_vector(4 downto 0) := (others => '0');
     signal mon_td_fall_face_seen : std_logic_vector(4 downto 0) := (others => '0');
     signal mon_shot_interval_min_clks : natural := 0;
@@ -1044,7 +1050,7 @@ architecture sim of tb_tdc_gpx_full_int is
     signal mon_shot_to_fall_tlast_min_clks : natural := 0;
     signal mon_shot_to_fall_tlast_max_clks : natural := 0;
     signal mon_schedule_overrun : natural := 0;
-    signal mon_last_expected_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
+    signal mon_last_expected_rise_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
         (others => '0');
     signal mon_last_rise_hit : unsigned(c_RAW_HIT_WIDTH - 1 downto 0) :=
         (others => '0');
@@ -1927,16 +1933,17 @@ begin
             o_capture_count  => gpx_capture_count
         );
 
-    -- Independent pin-domain reference. It timestamps every physical STOP
-    -- channel and every Return instead of trusting the GPX model's internal
-    -- calculation. The flattened reference is later consumed by both the raw
-    -- 28-bit bus checker and the packed VDMA Cell checker.
+    -- Independent pin-domain reference. It timestamps both edges of the
+    -- canonical STOP pulse instead of trusting the GPX model's calculation.
+    -- The slope-aware reference is consumed by both the raw 28-bit bus checker
+    -- and the packed VDMA Cell checker.
     p_expected_hit : process(rst_n, gpx_start_tdc_mux, er_tdc_stop(0))
         variable v_t0           : time := 0 ns;
         variable v_armed        : boolean := false;
         variable v_shot_count   : natural range 0 to C_MON_SHOT_DEPTH := 0;
         variable v_current_shot : natural range 0 to C_MON_SHOT_DEPTH - 1 := 0;
-        variable v_hit_count    : natural range 0 to c_MAX_HITS_PER_STOP := 0;
+        variable v_rise_hit_count : natural range 0 to c_MAX_HITS_PER_STOP := 0;
+        variable v_fall_hit_count : natural range 0 to c_MAX_HITS_PER_STOP := 0;
         variable v_elapsed_ps   : natural;
         variable v_hit          : natural;
         variable v_ref_idx      : natural;
@@ -1946,10 +1953,12 @@ begin
             v_armed := false;
             v_shot_count := 0;
             v_current_shot := 0;
-            v_hit_count := 0;
+            v_rise_hit_count := 0;
+            v_fall_hit_count := 0;
             mon_expected_hit_refs <= (others => (others => '0'));
             mon_expected_shots <= 0;
-            mon_last_expected_hit <= (others => '0');
+            mon_last_expected_rise_hit <= (others => '0');
+            mon_last_expected_fall_hit <= (others => '0');
         else
             if rising_edge(gpx_start_tdc_mux) then
                 assert v_shot_count < C_MON_SHOT_DEPTH
@@ -1962,28 +1971,50 @@ begin
                 end if;
                 v_t0 := now;
                 v_armed := true;
-                v_hit_count := 0;
+                v_rise_hit_count := 0;
+                v_fall_hit_count := 0;
             end if;
 
             if rising_edge(er_tdc_stop(0)) then
                 assert v_armed
                     report "full_int: Echo STOP arrived without a GPX START"
                     severity failure;
-                assert v_hit_count < fn_expected_returns(0)
+                assert v_rise_hit_count < fn_expected_returns(0)
                     report "full_int: Echo emitted more Returns than configured"
                     severity failure;
-                if v_armed and v_hit_count < fn_expected_returns(0) then
+                if v_armed and v_rise_hit_count < fn_expected_returns(0) then
                     v_elapsed_ps := (now - v_t0) / 1 ps;
                     v_hit := v_elapsed_ps / C_BIN_RESOLUTION_PS;
                     assert v_hit < 2 ** c_RAW_HIT_WIDTH
                         report "full_int: reference hit exceeds 17-bit I-Mode field"
                         severity failure;
                     v_ref_idx := fn_hit_ref_index(
-                        v_current_shot, 0, v_hit_count);
+                        v_current_shot, 0, v_rise_hit_count);
                     mon_expected_hit_refs(v_ref_idx) <=
                         to_unsigned(v_hit, c_RAW_HIT_WIDTH);
-                    v_hit_count := v_hit_count + 1;
-                    mon_last_expected_hit <=
+                    v_rise_hit_count := v_rise_hit_count + 1;
+                    mon_last_expected_rise_hit <=
+                        to_unsigned(v_hit, c_RAW_HIT_WIDTH);
+                end if;
+            elsif falling_edge(er_tdc_stop(0)) then
+                assert v_armed
+                    report "full_int: Echo STOP falling edge arrived without a GPX START"
+                    severity failure;
+                assert v_fall_hit_count < fn_expected_returns(0)
+                    report "full_int: Echo emitted more falling Returns than configured"
+                    severity failure;
+                if v_armed and v_fall_hit_count < fn_expected_returns(0) then
+                    v_elapsed_ps := (now - v_t0) / 1 ps;
+                    v_hit := v_elapsed_ps / C_BIN_RESOLUTION_PS;
+                    assert v_hit < 2 ** c_RAW_HIT_WIDTH
+                        report "full_int: falling reference hit exceeds 17-bit I-Mode field"
+                        severity failure;
+                    v_ref_idx := (v_current_shot * 2 + 1)
+                        * c_MAX_HITS_PER_STOP + v_fall_hit_count;
+                    mon_expected_hit_refs(v_ref_idx) <=
+                        to_unsigned(v_hit, c_RAW_HIT_WIDTH);
+                    v_fall_hit_count := v_fall_hit_count + 1;
+                    mon_last_expected_fall_hit <=
                         to_unsigned(v_hit, c_RAW_HIT_WIDTH);
                 end if;
             end if;
@@ -3737,8 +3768,10 @@ begin
            & integer'image(mon_i_mode_bus_checks));
         pl("  td     expected raw pin hits = "
            & integer'image(mon_expected_shots * C_EXPECT_RAW_WORDS_PER_SHOT));
-        pl("  td     last expected/rise/fall Hit = "
-           & integer'image(to_integer(mon_last_expected_hit)) & "/"
+        pl("  td     last expected rise/fall Hit = "
+           & integer'image(to_integer(mon_last_expected_rise_hit)) & "/"
+           & integer'image(to_integer(mon_last_expected_fall_hit)));
+        pl("  td     last observed rise/fall Hit = "
            & integer'image(to_integer(mon_last_rise_hit)) & "/"
            & integer'image(to_integer(mon_last_fall_hit)));
         pl("  td     rise/fall face seen masks = "
@@ -3869,7 +3902,10 @@ begin
              & " i_mode_rise_checks=" & integer'image(mon_td_rise_hit_checks)
              & " i_mode_fall_checks=" & integer'image(mon_td_fall_hit_checks)
              & " i_mode_bus_checks=" & integer'image(mon_i_mode_bus_checks)
-             & " i_mode_expected_hit=" & integer'image(to_integer(mon_last_expected_hit))
+             & " i_mode_expected_hit="
+             & integer'image(to_integer(mon_last_expected_rise_hit))
+             & " i_mode_expected_fall_hit="
+             & integer'image(to_integer(mon_last_expected_fall_hit))
              & " i_mode_rise_hit=" & integer'image(to_integer(mon_last_rise_hit))
              & " i_mode_fall_hit=" & integer'image(to_integer(mon_last_fall_hit))
              & " cfg_rejected=" & integer'image(mon_cfg_rejected)
@@ -3919,8 +3955,8 @@ begin
                mon_expected_shots * C_EXPECT_RAW_WORDS_PER_SHOT
             report "full_int: not every active GPX chip read passed the 28-bit I-Mode field check"
             severity failure;
-        assert mon_last_rise_hit = mon_last_expected_hit
-               and mon_last_fall_hit = mon_last_expected_hit
+        assert mon_last_rise_hit = mon_last_expected_rise_hit
+               and mon_last_fall_hit = mon_last_expected_fall_hit
             report "full_int: final 17-bit Hit differs across GPX reference and VDMA lanes"
             severity failure;
         for chip in 0 to c_MAX_CHIPS - 1 loop
