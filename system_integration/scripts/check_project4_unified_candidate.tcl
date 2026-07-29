@@ -68,13 +68,44 @@ if {[llength $argv] > 0} {
 set project_xpr [file join $project_dir project_4.xpr]
 set candidate_bd [file join $project_dir project_4.srcs sources_1 bd \
     design_1_unified design_1_unified.bd]
-foreach required [list $project_xpr $candidate_bd] {
+set clock_domain_xdc [file join $project_dir project_4.srcs constrs_1 \
+    imports XDC project4_unified_clock_domains.xdc]
+set candidate_constrset_name design_1_unified_constrs
+foreach required [list $project_xpr $candidate_bd $clock_domain_xdc] {
     if {![file exists $required]} {
         error "Required candidate artifact is missing: $required"
     }
 }
 
 open_project $project_xpr
+set candidate_constrset [require_one \
+    [get_filesets -quiet $candidate_constrset_name] \
+    {unified candidate constraint set}]
+assert_count [get_files -quiet -of_objects [get_filesets constrs_1] \
+    $clock_domain_xdc] 0 {baseline clock-domain constraint}
+set clock_domain_file [require_one [get_files -quiet \
+    -of_objects $candidate_constrset $clock_domain_xdc] \
+    {unified clock-domain constraint}]
+assert_equal [get_property PROCESSING_ORDER $clock_domain_file] LATE \
+    {unified clock-domain processing order}
+set channel [open $clock_domain_xdc r]
+set clock_domain_text [read $channel]
+close $channel
+foreach contract_text {
+    clk_out1_design_1_unified_proc_clk_wiz_0
+    clk_fpga_1
+    {set_clock_groups -name lidar_unified_async_domains -asynchronous}
+    {-group [get_clocks clk_fpga_0]}
+    {-group [get_clocks clk_fpga_2]}
+} {
+    if {[string first $contract_text $clock_domain_text] < 0} {
+        error "Unified clock-domain XDC lacks contract text: $contract_text"
+    }
+}
+set baseline_synth [require_one [get_runs -quiet synth_1] \
+    {baseline synthesis run}]
+assert_equal [get_property CONSTRSET $baseline_synth] constrs_1 \
+    {baseline synthesis constraint set}
 open_bd_design $candidate_bd
 
 foreach cell_name {
@@ -112,9 +143,9 @@ assert_config tdc_gpx_top_0 g_TDC_CLK_MHZ 200
 assert_config tdc_gpx_top_0 g_STREAM_CLK_MODE ASYNC
 assert_config tdc_gpx_top_0 g_OUTPUT_WIDTH 32
 assert_config tdc_gpx_top_0 g_NUM_CHIPS 4
-assert_config tdc_gpx_top_0 g_PRESENT_CHIP_MASK 1111
-assert_config tdc_gpx_top_0 g_RISE_CHIP_MASK 0011
-assert_config tdc_gpx_top_0 g_FALL_CHIP_MASK 1100
+assert_config tdc_gpx_top_0 g_PRESENT_CHIP_MASK {"1111"}
+assert_config tdc_gpx_top_0 g_RISE_CHIP_MASK {"0011"}
+assert_config tdc_gpx_top_0 g_FALL_CHIP_MASK {"1100"}
 assert_config tdc_gpx_top_0 g_MAX_STOPS_PER_CHIP 8
 assert_config tdc_gpx_top_0 g_MAX_HITS_PER_STOP 7
 
@@ -223,6 +254,31 @@ foreach mapping {
 } {
     if {[string first $mapping $generated_text] < 0} {
         error "Generated candidate VHDL lacks AXIS mapping: $mapping"
+    }
+}
+
+foreach {relative_path mappings} [list \
+    [file join ip design_1_unified_tdc_gpx_top_0_0 synth \
+        design_1_unified_tdc_gpx_top_0_0.vhd] [list \
+        {g_RISE_CHIP_MASK => B"0011"} \
+        {g_FALL_CHIP_MASK => B"1100"} \
+        {g_PRESENT_CHIP_MASK => B"1111"}] \
+    [file join ip design_1_unified_lidar_unified_csr_0_0 synth \
+        design_1_unified_lidar_unified_csr_0_0.vhd] [list \
+        {g_VERSION_WORD => B"01001100000000010000000000000000"} \
+        {g_CAPABILITY_WORD => B"00000001000001000001101011111111"}]] {
+    set wrapper [file join $project_dir project_4.gen sources_1 bd \
+        design_1_unified $relative_path]
+    if {![file exists $wrapper]} {
+        error "Generated IP wrapper is missing: $wrapper"
+    }
+    set channel [open $wrapper r]
+    set wrapper_text [read $channel]
+    close $channel
+    foreach mapping $mappings {
+        if {[string first $mapping $wrapper_text] < 0} {
+            error "Generated IP wrapper lacks VHDL vector mapping: $mapping"
+        }
     }
 }
 

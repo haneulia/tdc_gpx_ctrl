@@ -142,6 +142,11 @@ set source_bd [file join $project_dir \
 set candidate_name design_1_unified
 set candidate_bd [file join $project_dir \
     project_4.srcs sources_1 bd $candidate_name $candidate_name.bd]
+set clock_domain_xdc_source [file join $hdl_dir system_integration \
+    constraints project4_unified_clock_domains.xdc]
+set clock_domain_xdc [file join $project_dir project_4.srcs constrs_1 \
+    imports XDC project4_unified_clock_domains.xdc]
+set candidate_constrset_name design_1_unified_constrs
 
 set motor_laser_repo [file join $ip_root motor_laser_ctrl ip_repo]
 set echo_repo [file join $ip_root echo_receiver ip_repo]
@@ -149,6 +154,7 @@ set tdc_repo [file join $ip_root tdc_gpx_ctrl ip_repo]
 set unified_repo [file join $ip_root lidar_unified_csr ip_repo]
 
 foreach required [list $project_xpr $source_bd \
+        $clock_domain_xdc_source \
         [file join $motor_laser_repo component.xml] \
         [file join $echo_repo component.xml] \
         [file join $tdc_repo component.xml] \
@@ -165,6 +171,36 @@ foreach repo [list $motor_laser_repo $echo_repo $tdc_repo $unified_repo] {
 }
 set_property IP_REPO_PATHS $repo_paths [current_project]
 update_ip_catalog -rebuild
+
+# Register the clock-domain contract in a candidate-only constraint set.  It
+# must not enter constrs_1 because that set belongs to the validated design_1
+# baseline and does not contain the generated 150 MHz candidate clock.
+file mkdir [file dirname $clock_domain_xdc]
+file copy -force $clock_domain_xdc_source $clock_domain_xdc
+set baseline_clock_file [get_files -quiet -of_objects \
+    [get_filesets constrs_1] $clock_domain_xdc]
+if {[llength $baseline_clock_file] == 1} {
+    remove_files -fileset constrs_1 $baseline_clock_file
+} elseif {[llength $baseline_clock_file] > 1} {
+    error "Duplicate unified clock constraints in constrs_1: $baseline_clock_file"
+}
+set candidate_constrset [get_filesets -quiet $candidate_constrset_name]
+if {[llength $candidate_constrset] == 0} {
+    create_fileset -constrset $candidate_constrset_name
+    set candidate_constrset [get_filesets -quiet $candidate_constrset_name]
+}
+set candidate_constrset [require_one $candidate_constrset \
+    {unified candidate constraint set}]
+set clock_domain_file [get_files -quiet -of_objects $candidate_constrset \
+    $clock_domain_xdc]
+if {[llength $clock_domain_file] == 0} {
+    add_files -fileset $candidate_constrset -norecurse $clock_domain_xdc
+    set clock_domain_file [get_files -quiet -of_objects $candidate_constrset \
+        $clock_domain_xdc]
+}
+set clock_domain_file [require_one $clock_domain_file \
+    {unified clock-domain constraint}]
+set_property PROCESSING_ORDER LATE $clock_domain_file
 
 foreach vlnv {
     victek.co.kr:my_ip:motor_laser_ctrl_top:1.0
@@ -273,9 +309,9 @@ set_property -dict [list \
     CONFIG.g_STREAM_CLK_MODE {ASYNC} \
     CONFIG.g_OUTPUT_WIDTH {32} \
     CONFIG.g_NUM_CHIPS {4} \
-    CONFIG.g_PRESENT_CHIP_MASK {1111} \
-    CONFIG.g_RISE_CHIP_MASK {0011} \
-    CONFIG.g_FALL_CHIP_MASK {1100} \
+    CONFIG.g_PRESENT_CHIP_MASK {"1111"} \
+    CONFIG.g_RISE_CHIP_MASK {"0011"} \
+    CONFIG.g_FALL_CHIP_MASK {"1100"} \
     CONFIG.g_MAX_STOPS_PER_CHIP {8} \
     CONFIG.g_MAX_HITS_PER_STOP {7}] $tdc
 
@@ -442,5 +478,7 @@ puts "PROJECT4_UNIFIED_CANDIDATE_BD=$candidate_bd"
 puts {PROJECT4_UNIFIED_CSR_BASE=0x40000000}
 puts {PROJECT4_UNIFIED_AXIS_MHZ=150}
 puts {PROJECT4_UNIFIED_TDC_MHZ=200}
+puts "PROJECT4_UNIFIED_CLOCK_XDC=$clock_domain_xdc"
+puts "PROJECT4_UNIFIED_CONSTRSET=$candidate_constrset_name"
 close_project
 exit

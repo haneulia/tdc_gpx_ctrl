@@ -181,14 +181,14 @@ set_property display_name {LiDAR Unified CSR (32 Control / 32 Status)} $core
 set_property description \
     {Single AXI4-Lite control-plane owner for Motor, Laser, Echo Receiver, and TDC-GPX with coherent status, epoch handshakes, and 32 interrupt causes.} \
     $core
-set_property core_revision 1 $core
+set_property core_revision 2 $core
 set_property supported_families {zynq Production} $core
 
 foreach {name display description value} {
     g_VERSION_WORD {ABI Version Word} \
-        {Read-only STAT0 ABI identity word.} {01001100000000010000000000000000}
+        {Read-only STAT0 ABI identity word.} {"01001100000000010000000000000000"}
     g_CAPABILITY_WORD {Capability Word} \
-        {Read-only STAT1 capability word.} {00000001000001000001101011111111}
+        {Read-only STAT1 capability word.} {"00000001000001000001101011111111"}
 } {
     set user_param [ipx::get_user_parameters -quiet $name -of_objects $core]
     set hdl_param [ipx::get_hdl_parameters -quiet $name -of_objects $core]
@@ -197,8 +197,13 @@ foreach {name display description value} {
     }
     set_property display_name $display $user_param
     set_property description $description $user_param
+    set_property value_format bitString $user_param
+    set_property value_bit_string_length 32 $user_param
     set_property value $value $user_param
     set_property value_resolve_type user $user_param
+    set_property data_type {std_logic_vector(31 downto 0)} $hdl_param
+    set_property value_format bitString $hdl_param
+    set_property value_bit_string_length 32 $hdl_param
     set_property value $value $hdl_param
     set_property value_resolve_type generated $hdl_param
 }

@@ -28,7 +28,7 @@
 --   - GPX EF1/EF2 are the only normal drain-completion authority. External
 --     STOP edge counters cannot prove how many words the GPX accepted.
 --   - LF1/LF2 and Reg6 Fill select safe burst opportunities; accepted bus
---     responses are the only actual drained-word count.
+--     responses consume the configured per-IFIFO output-cap budget.
 --
 -- ST_CAPTURE cmd_stop policy — GRACEFUL (Q&A #29, Round 4):
 --   On i_cmd_stop during ST_CAPTURE, we latch s_stop_pending_r and raise
@@ -232,13 +232,12 @@ architecture rtl of tdc_gpx_chip_run is
         lf1_sync          : std_logic;
         lf2_sync          : std_logic;
         n_drain_cap       : unsigned(3 downto 0);
-        drain_cnt_ififo1  : unsigned(7 downto 0);
-        drain_cnt_ififo2  : unsigned(7 downto 0);
+        cap_remaining_ififo1 : unsigned(7 downto 0);
+        cap_remaining_ififo2 : unsigned(7 downto 0);
         ififo1_capped     : std_logic;
         ififo2_capped     : std_logic
     ) return t_drain_eval is
         variable v_result               : t_drain_eval := c_DRAIN_EVAL_ZERO;
-        variable v_cap                  : unsigned(7 downto 0);
         variable v_cap_enabled          : boolean;
         variable v_ififo1_done         : boolean;
         variable v_ififo2_done         : boolean;
@@ -247,7 +246,6 @@ architecture rtl of tdc_gpx_chip_run is
         variable v_ififo1_cap_hit      : boolean;
         variable v_ififo2_cap_hit      : boolean;
     begin
-        v_cap := shift_left(resize(n_drain_cap, 8), 2);
         v_cap_enabled := purge_mode = '0' and n_drain_cap /= "0000";
 
         -- A configured cap is a protection boundary, not evidence that the
@@ -255,9 +253,9 @@ architecture rtl of tdc_gpx_chip_run is
         -- for the other IFIFO, then purge any physical remainder before the
         -- final faulted drain_done.
         v_ififo1_cap_hit := v_cap_enabled and ififo1_capped = '0'
-            and drain_cnt_ififo1 >= v_cap and ef1_sync = '0';
+            and cap_remaining_ififo1 = 0 and ef1_sync = '0';
         v_ififo2_cap_hit := v_cap_enabled and ififo2_capped = '0'
-            and drain_cnt_ififo2 >= v_cap and ef2_sync = '0';
+            and cap_remaining_ififo2 = 0 and ef2_sync = '0';
 
         if purge_mode = '1' then
             v_ififo1_done := ef1_sync = '1';
@@ -293,13 +291,13 @@ architecture rtl of tdc_gpx_chip_run is
         if purge_mode = '0' and drain_mode = '1' and fill >= 2
            and ef1_sync = '0' and lf1_sync = '1'
            and v_ififo1_can_read
-           and ((not v_cap_enabled) or drain_cnt_ififo1 + 2 <= v_cap) then
+           and ((not v_cap_enabled) or cap_remaining_ififo1 >= 2) then
             v_result.ififo1_burst := '1';
         end if;
         if purge_mode = '0' and drain_mode = '1' and fill >= 2
            and ef2_sync = '0' and lf2_sync = '1'
            and v_ififo2_can_read
-           and ((not v_cap_enabled) or drain_cnt_ififo2 + 2 <= v_cap) then
+           and ((not v_cap_enabled) or cap_remaining_ififo2 >= 2) then
             v_result.ififo2_burst := '1';
         end if;
 
@@ -349,8 +347,12 @@ architecture rtl of tdc_gpx_chip_run is
     signal s_irflag_prev_r     : std_logic := '0';
     signal s_shot_seq_r        : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0) := (others => '0');
 
-    signal s_drain_cnt_ififo1_r : unsigned(7 downto 0) := (others => '0');
-    signal s_drain_cnt_ififo2_r : unsigned(7 downto 0) := (others => '0');
+    -- Remaining output budget for each physical IFIFO. This replaces the
+    -- drained-count form so burst planning no longer performs
+    -- cap - drained_count followed by a second comparison in one 200 MHz
+    -- cycle. Zero is ignored when n_drain_cap is disabled.
+    signal s_cap_remaining_ififo1_r : unsigned(7 downto 0) := (others => '0');
+    signal s_cap_remaining_ififo2_r : unsigned(7 downto 0) := (others => '0');
     signal s_ififo1_capped_r     : std_logic := '0';
     signal s_ififo2_capped_r     : std_logic := '0';
     signal s_drain_fault_pending_r : std_logic := '0';
@@ -420,6 +422,7 @@ begin
         variable v_burst_words : unsigned(7 downto 0);
     begin
         if rising_edge(i_clk) then
+            v_cap_words := shift_left(resize(i_n_drain_cap, 8), 2);
             v_eval := fn_drain_eval(
                 purge_mode      => s_purge_mode_r,
                 drain_mode      => i_drain_mode,
@@ -429,8 +432,8 @@ begin
                 lf1_sync        => i_lf1_sync,
                 lf2_sync        => i_lf2_sync,
                 n_drain_cap     => i_n_drain_cap,
-                drain_cnt_ififo1 => s_drain_cnt_ififo1_r,
-                drain_cnt_ififo2 => s_drain_cnt_ififo2_r,
+                cap_remaining_ififo1 => s_cap_remaining_ififo1_r,
+                cap_remaining_ififo2 => s_cap_remaining_ififo2_r,
                 ififo1_capped    => s_ififo1_capped_r,
                 ififo2_capped    => s_ififo2_capped_r
             );
@@ -452,8 +455,8 @@ begin
                 s_ififo1_done_beat_r <= '0';
                 s_ififo1_done_sent_r <= '0';
                 s_shot_seq_r        <= (others => '0');
-                s_drain_cnt_ififo1_r <= (others => '0');
-                s_drain_cnt_ififo2_r <= (others => '0');
+                s_cap_remaining_ififo1_r <= (others => '0');
+                s_cap_remaining_ififo2_r <= (others => '0');
                 s_ififo1_capped_r    <= '0';
                 s_ififo2_capped_r    <= '0';
                 s_drain_fault_pending_r <= '0';
@@ -513,8 +516,8 @@ begin
                         elsif i_shot_start = '1' then
                             s_busy_r             <= '1';
                             s_range_active_r     <= '1';
-                            s_drain_cnt_ififo1_r <= (others => '0');
-                            s_drain_cnt_ififo2_r <= (others => '0');
+                            s_cap_remaining_ififo1_r <= v_cap_words;
+                            s_cap_remaining_ififo2_r <= v_cap_words;
                             s_ififo1_capped_r     <= '0';
                             s_ififo2_capped_r     <= '0';
                             s_drain_fault_pending_r <= '0';
@@ -561,8 +564,8 @@ begin
                             if i_drain_mode = '1' then
                                 s_oen_permanent_r <= '1';
                             end if;
-                            s_drain_cnt_ififo1_r <= (others => '0');
-                            s_drain_cnt_ififo2_r <= (others => '0');
+                            s_cap_remaining_ififo1_r <= v_cap_words;
+                            s_cap_remaining_ififo2_r <= v_cap_words;
                             s_ififo1_capped_r     <= '0';
                             s_ififo2_capped_r     <= '0';
                             s_drain_fault_pending_r <= '0';
@@ -575,8 +578,8 @@ begin
                             if s_wait_expired_r = '1' then
                                 s_range_active_r     <= '0';
                                 s_raw_valid_r        <= '0';
-                                s_drain_cnt_ififo1_r <= (others => '0');
-                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_cap_remaining_ififo1_r <= v_cap_words;
+                                s_cap_remaining_ififo2_r <= v_cap_words;
                                 s_ififo1_capped_r     <= '0';
                                 s_ififo2_capped_r     <= '0';
                                 s_drain_done_r       <= '0';
@@ -607,7 +610,7 @@ begin
                         s_wait_cnt_r <= (others => '0');  -- clear raw_busy watchdog
                         -- Register only compact predicates here. The following
                         -- DECIDE state drives requests and state controls from
-                        -- these one-bit values, cutting the drain counters and
+                        -- these one-bit values, cutting the cap counters and
                         -- cap arithmetic out of those timing cones.
                         s_eval_r <= v_eval;
                         s_state_r <= ST_DRAIN_DECIDE;
@@ -734,18 +737,17 @@ begin
                     when ST_DRAIN_BURST_PLAN =>
                         -- LF guarantees Reg6 Fill words are available. A
                         -- configured output cap may shorten this burst.
-                        v_cap_words   := shift_left(resize(i_n_drain_cap, 8), 2);
                         v_burst_words := s_fill_r;
                         if s_ififo_id_r = '0' then
                             if i_n_drain_cap /= 0 then
-                                if v_cap_words - s_drain_cnt_ififo1_r < v_burst_words then
-                                    v_burst_words := v_cap_words - s_drain_cnt_ififo1_r;
+                                if s_cap_remaining_ififo1_r < v_burst_words then
+                                    v_burst_words := s_cap_remaining_ififo1_r;
                                 end if;
                             end if;
                         else
                             if i_n_drain_cap /= 0 then
-                                if v_cap_words - s_drain_cnt_ififo2_r < v_burst_words then
-                                    v_burst_words := v_cap_words - s_drain_cnt_ififo2_r;
+                                if s_cap_remaining_ififo2_r < v_burst_words then
+                                    v_burst_words := s_cap_remaining_ififo2_r;
                                 end if;
                             end if;
                         end if;
@@ -773,7 +775,11 @@ begin
                             if s_purge_mode_r = '0' then
                                 s_raw_valid_r    <= '1';
                             end if;
-                            s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
+                            if s_purge_mode_r = '0' and i_n_drain_cap /= 0
+                               and s_cap_remaining_ififo1_r /= 0 then
+                                s_cap_remaining_ififo1_r <=
+                                    s_cap_remaining_ififo1_r - 1;
+                            end if;
                             s_wait_cnt_r         <= (others => '0');
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
@@ -826,7 +832,11 @@ begin
                             if s_purge_mode_r = '0' then
                                 s_raw_valid_r    <= '1';
                             end if;
-                            s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
+                            if s_purge_mode_r = '0' and i_n_drain_cap /= 0
+                               and s_cap_remaining_ififo2_r /= 0 then
+                                s_cap_remaining_ififo2_r <=
+                                    s_cap_remaining_ififo2_r - 1;
+                            end if;
                             s_wait_cnt_r         <= (others => '0');
                             s_pending_stuck_cnt_r <= (others => '0');
                             s_state_r            <= ST_DRAIN_SETTLE;
@@ -873,9 +883,17 @@ begin
                             s_wait_cnt_r  <= (others => '0');
                             s_pending_stuck_cnt_r <= (others => '0');
                             if s_ififo_id_r = '0' then
-                                s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
+                                if s_purge_mode_r = '0' and i_n_drain_cap /= 0
+                                   and s_cap_remaining_ififo1_r /= 0 then
+                                    s_cap_remaining_ififo1_r <=
+                                        s_cap_remaining_ififo1_r - 1;
+                                end if;
                             else
-                                s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
+                                if s_purge_mode_r = '0' and i_n_drain_cap /= 0
+                                   and s_cap_remaining_ififo2_r /= 0 then
+                                    s_cap_remaining_ififo2_r <=
+                                        s_cap_remaining_ififo2_r - 1;
+                                end if;
                             end if;
                             if s_burst_remaining_r(7 downto 1) = 0 then
                                 s_req_burst_r <= '0';
@@ -930,9 +948,17 @@ begin
                             s_wait_cnt_r  <= (others => '0');
                             s_pending_stuck_cnt_r <= (others => '0');
                             if s_ififo_id_r = '0' then
-                                s_drain_cnt_ififo1_r <= s_drain_cnt_ififo1_r + 1;
+                                if s_purge_mode_r = '0' and i_n_drain_cap /= 0
+                                   and s_cap_remaining_ififo1_r /= 0 then
+                                    s_cap_remaining_ififo1_r <=
+                                        s_cap_remaining_ififo1_r - 1;
+                                end if;
                             else
-                                s_drain_cnt_ififo2_r <= s_drain_cnt_ififo2_r + 1;
+                                if s_purge_mode_r = '0' and i_n_drain_cap /= 0
+                                   and s_cap_remaining_ififo2_r /= 0 then
+                                    s_cap_remaining_ififo2_r <=
+                                        s_cap_remaining_ififo2_r - 1;
+                                end if;
                             end if;
                         elsif i_bus_rsp_pending = '0' then
                             -- Nothing lingering at bus_phy/skid; advance watchdog
@@ -1013,8 +1039,8 @@ begin
                                 s_overrun_deferred_r <= '0';
                                 s_raw_valid_r        <= '0';
                                 s_range_active_r     <= '1';
-                                s_drain_cnt_ififo1_r <= (others => '0');
-                                s_drain_cnt_ififo2_r <= (others => '0');
+                                s_cap_remaining_ififo1_r <= v_cap_words;
+                                s_cap_remaining_ififo2_r <= v_cap_words;
                                 s_ififo1_capped_r     <= '0';
                                 s_ififo2_capped_r     <= '0';
                                 s_drain_fault_pending_r <= '0';
@@ -1049,8 +1075,8 @@ begin
                         -- bus_phy/skid unfired (Round 5 #2).
                         if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
                             s_purge_mode_r       <= '1';
-                            s_drain_cnt_ififo1_r <= (others => '0');
-                            s_drain_cnt_ififo2_r <= (others => '0');
+                            s_cap_remaining_ififo1_r <= v_cap_words;
+                            s_cap_remaining_ififo2_r <= v_cap_words;
                             s_ififo1_capped_r     <= '0';
                             s_ififo2_capped_r     <= '0';
                             s_drain_fault_pending_r <= '0';
@@ -1100,8 +1126,8 @@ begin
                             s_req_burst_r        <= '0';
                             s_raw_valid_r        <= '0';
                             s_range_active_r     <= '1';
-                            s_drain_cnt_ififo1_r <= (others => '0');
-                            s_drain_cnt_ififo2_r <= (others => '0');
+                            s_cap_remaining_ififo1_r <= v_cap_words;
+                            s_cap_remaining_ififo2_r <= v_cap_words;
                             s_ififo1_capped_r     <= '0';
                             s_ififo2_capped_r     <= '0';
                             s_drain_fault_pending_r <= '0';

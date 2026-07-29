@@ -121,6 +121,25 @@ if {[get_property vlnv $core] ne \
         {victek.co.kr:my_ip:lidar_unified_csr:1.0}} {
     error "Unexpected unified CSR VLNV: [get_property vlnv $core]"
 }
+if {[get_property core_revision $core] != 2} {
+    error "Unexpected unified CSR core revision: [get_property core_revision $core]"
+}
+foreach {name expected_value} {
+    g_VERSION_WORD {"01001100000000010000000000000000"}
+    g_CAPABILITY_WORD {"00000001000001000001101011111111"}
+} {
+    set user_param [require_one [ipx::get_user_parameters -quiet $name \
+        -of_objects $core] "user parameter $name"]
+    set hdl_param [require_one [ipx::get_hdl_parameters -quiet $name \
+        -of_objects $core] "HDL parameter $name"]
+    foreach parameter [list $user_param $hdl_param] {
+        if {[get_property value_format $parameter] ne {bitString} ||
+            [get_property value_bit_string_length $parameter] != 32 ||
+            [get_property value $parameter] ne $expected_value} {
+            error "$name must remain a quoted 32-bit VHDL bit string"
+        }
+    }
+}
 foreach interface_name {
     s_axi_csr s_axi_csr_aclk s_axi_csr_aresetn o_irq
     motor_unified_csr laser_unified_csr echo_unified_csr tdc_unified_csr
