@@ -345,8 +345,8 @@ begin
                 severity failure;
         end loop;
         for index in 0 to 15 loop
-            assert s_image_out(index) = x"00000000"
-                report "staged GPX image leaked before CFG_EPOCH"
+            assert s_image_out(index) = c_GPX_DEFAULT_IMAGE(index)
+                report "staged GPX image leaked before CFG_EPOCH or reset default changed"
                 severity failure;
         end loop;
 

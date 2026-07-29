@@ -97,10 +97,18 @@ The profile is valid only when all of the following hold:
 - the mirror-derived shot interval completes without Laser schedule overrun;
 - the final rise/fall VDMA lines preserve every expected 17-bit Hit.
 
-The 200 MHz GPX reference profile uses a 6,000 ns drain margin. This value was
-closed with `bus_clk_div=2`, `bus_ticks=5`, eight STOP channels and seven
-Returns per STOP. A slower runtime GPX bus setting requires a new margin sweep;
-the range value alone does not cover FIFO readout time.
+The 200 MHz GPX dedicated 2-rise + 2-fall reference profile uses a 6,000 ns
+drain margin. This value was closed with `bus_clk_div=2`, `bus_ticks=5`, eight
+STOP channels and seven Returns per STOP on each independently drained chip.
+It is not a topology-independent constant. When one GPX chip timestamps both
+STOP edges, the same R7 shot serializes 112 I-Mode words on one physical bus.
+The verified one-chip dual-edge point uses a 12,000 ns drain margin and a
+0.26-degree operating resolution at 1,200 RPM. Its 150 MHz AXIS measurements
+are 2,709 clocks per planned shot, 2,584 clocks to the latest output, and 125
+clocks of remaining point budget. A 0.24-degree point reaches the next shot
+before the previous IFIFO/Cell tail is complete. A slower runtime GPX bus
+setting requires a new margin sweep; the range value alone does not cover FIFO
+readout time.
 
 ## Result contract
 
@@ -123,9 +131,13 @@ not recalculated by the runner.
 The contract also carries the topology in two layers. The elaborated build
 profile is reported as `present_chip_mask`, `rise_capability_mask`, and
 `fall_capability_mask`; the CTL21/active-mask result is reported separately as
-`runtime_rise_chip_mask` and `runtime_fall_chip_mask`. `chip_slope_mask` is only
-the slope bit emitted by the behavioral GPX model. It is stimulus data and must
-not be used as a substitute for the DUT's build-time topology.
+`runtime_rise_chip_mask` and `runtime_fall_chip_mask`. Schema-v3 scenarios use
+independent `rise_chip_mask` and `fall_chip_mask` fields. Their bits may overlap,
+which means one physical GPX chip captures both STOP edges. With
+`runtime_falling_enable=false`, every active chip is routed to rising and the
+runtime fall mask is zero. The legacy `chip_slope_mask` field is accepted only
+for schema-v1/v2 compatibility and is converted to complementary masks; it
+cannot describe an overlapping dual-edge chip.
 
 The TB writes Chip CSR `CTL21` before `CFG_WRITE` and `START`. Its explicit
 `max_hits_cfg` value controls the Cell capacity independently of target
@@ -176,9 +188,12 @@ bus word, and reconstructs the final Hit from the canonical VDMA cell:
 `Hit[15:0]` in the hit slot plus `Hit[16]` in metadata bit 0. The result
 contract publishes `i_mode_hit_refs`, rise/fall check counts, raw bus check
 count, and the last expected/rise/fall Hit values. In `physical_multi` mode,
-all eight STOP pins of each of the four GPX chips are exercised. This is the
-32 physical STOP-pin representation of 16 APD channels split across dedicated
-rising and falling GPX pairs.
+all eight STOP pins of every active GPX chip are exercised for Return 1..7.
+Dedicated 2-rise + 2-fall mode is the 32-STOP-pin representation of 16 APD
+channels split across slope-specific GPX pairs. An overlapping mask instead
+checks both edge directions on each enabled STOP of the same chip; the model
+queues both slope words into that chip's physical IFIFOs and the scoreboard
+checks them independently through the final VDMA streams.
 
 The Stage I1 pass marker is `SYSTEM_INTEGRATION_SMOKE_PASS`. It requires
 activity through Motor, Laser, Echo, GPX acquisition, and both VDMA slope

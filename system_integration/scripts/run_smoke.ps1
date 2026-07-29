@@ -53,6 +53,30 @@ foreach ($Entry in $ScenarioDefaults.GetEnumerator()) {
     }
 }
 
+# Schema-v1 compatibility. The legacy stimulus encoded exactly one slope per
+# chip (1=rise, 0=fall). New scenarios carry independent capability masks so
+# an overlapping same-chip dual-edge topology is representable.
+if ($null -eq $Cfg.rise_chip_mask) {
+    if ($null -eq $Cfg.chip_slope_mask) {
+        throw "Scenario needs rise_chip_mask or legacy chip_slope_mask"
+    }
+    $Cfg | Add-Member -NotePropertyName rise_chip_mask `
+        -NotePropertyValue ([string]$Cfg.chip_slope_mask)
+}
+if ($null -eq $Cfg.fall_chip_mask) {
+    if ($null -eq $Cfg.chip_slope_mask) {
+        throw "Scenario needs fall_chip_mask or legacy chip_slope_mask"
+    }
+    $LegacyRise = [Convert]::ToInt32([string]$Cfg.chip_slope_mask, 2)
+    $LegacyFall = $LegacyRise -bxor 0xF
+    $Cfg | Add-Member -NotePropertyName fall_chip_mask `
+        -NotePropertyValue ([Convert]::ToString($LegacyFall, 2).PadLeft(4, '0'))
+}
+if ($null -eq $Cfg.runtime_falling_enable) {
+    $Cfg | Add-Member -NotePropertyName runtime_falling_enable `
+        -NotePropertyValue $true
+}
+
 # Keep product operating requirements separate from the accelerated encoder
 # profile used to shorten xsim runtime. Legacy scenarios represent themselves.
 if ($null -eq $Cfg.operating_motor_rpm) {
@@ -121,8 +145,26 @@ if ([int]$Cfg.tdc_drain_margin_time_ns -le 0) {
 if ([int]$Cfg.returns_per_stop -gt [int]$Cfg.max_hits_cfg) {
     throw "returns_per_stop must not exceed max_hits_cfg"
 }
+foreach ($MaskName in @("active_chip_mask", "rise_chip_mask", "fall_chip_mask")) {
+    if ([string]$Cfg.$MaskName -notmatch '^[01]{4}$') {
+        throw "$MaskName must be a four-bit binary string"
+    }
+}
+$RiseMaskValue = [Convert]::ToInt32([string]$Cfg.rise_chip_mask, 2)
+$FallMaskValue = [Convert]::ToInt32([string]$Cfg.fall_chip_mask, 2)
+if (($RiseMaskValue -bor $FallMaskValue) -ne 0xF) {
+    throw "Every present chip needs a rise and/or fall capability"
+}
+if ([Convert]::ToString($RiseMaskValue, 2).Replace("0", "").Length -lt
+    [Convert]::ToString($FallMaskValue, 2).Replace("0", "").Length) {
+    throw "rise-capable chip count must be >= fall-capable chip count"
+}
 if ([string]$Cfg.echo_stimulus_mode -notin @("synthetic_single", "physical_multi")) {
     throw "echo_stimulus_mode must be synthetic_single or physical_multi"
+}
+if ([int]$Cfg.returns_per_stop -gt 1 -and
+    [string]$Cfg.echo_stimulus_mode -ne "physical_multi") {
+    throw "returns_per_stop > 1 requires physical_multi stimulus"
 }
 if ([string]$Cfg.echo_stimulus_mode -eq "physical_multi" -and
     [int]$Cfg.stops_per_chip -ne 8) {
@@ -407,7 +449,9 @@ try {
         "--generic_top `"G_COLS_PER_FACE=$($Cfg.columns_per_face)`"",
         "--generic_top `"G_N_FACES=$($Cfg.faces_per_frame)`"",
         "--generic_top `"G_ACTIVE_CHIP_MASK=4'b$($Cfg.active_chip_mask)`"",
-        "--generic_top `"G_CHIP_SLOPE_MASK=4'b$($Cfg.chip_slope_mask)`"",
+        "--generic_top `"G_RISE_CHIP_MASK=4'b$($Cfg.rise_chip_mask)`"",
+        "--generic_top `"G_FALL_CHIP_MASK=4'b$($Cfg.fall_chip_mask)`"",
+        "--generic_top `"G_RUNTIME_FALLING_ENABLE=$($Cfg.runtime_falling_enable.ToString().ToLowerInvariant())`"",
         "--generic_top `"G_ENCODER_SOURCE=$($Cfg.encoder_source)`"",
         "--generic_top `"G_ECHO_STIM_MODE=$($Cfg.echo_stimulus_mode)`"",
         "--generic_top `"G_REARM_GUARD_5NS_TICKS=$($Cfg.rearm_guard_5ns_ticks)`"",

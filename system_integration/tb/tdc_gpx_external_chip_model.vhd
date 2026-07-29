@@ -30,9 +30,10 @@ entity tdc_gpx_external_chip_model is
         g_TDC_CLK_MHZ            : positive := 200;
         g_CAPTURE_WINDOW_5NS_TICKS : positive := 1335;
         g_BIN_RESOLUTION_PS      : positive := 81;
-        g_FIFO_DEPTH             : positive := 32;
+        g_FIFO_DEPTH             : positive := 64;
         g_LF_THRESHOLD           : positive := 4;
-        g_CHIP_SLOPE_MASK        : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := "0011"
+        g_RISE_CHIP_MASK         : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := "0011";
+        g_FALL_CHIP_MASK         : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := "1100"
     );
     port (
         i_tdc_clk       : in  std_logic;
@@ -85,9 +86,13 @@ architecture behavioral of tdc_gpx_external_chip_model is
 
     signal s_start_time   : time := 0 ns;
     signal s_start_toggle : std_logic := '0';
-    signal s_stop_time    : t_time_array(0 to c_CHANNELS - 1) :=
+    signal s_stop_rise_time : t_time_array(0 to c_CHANNELS - 1) :=
         (others => 0 ns);
-    signal s_stop_toggle  : std_logic_vector(c_CHANNELS - 1 downto 0) :=
+    signal s_stop_fall_time : t_time_array(0 to c_CHANNELS - 1) :=
+        (others => 0 ns);
+    signal s_stop_rise_toggle : std_logic_vector(c_CHANNELS - 1 downto 0) :=
+        (others => '0');
+    signal s_stop_fall_toggle : std_logic_vector(c_CHANNELS - 1 downto 0) :=
         (others => '0');
 
     type t_natural_chip_array is array (0 to g_NUM_CHIPS - 1) of natural;
@@ -119,6 +124,59 @@ architecture behavioral of tdc_gpx_external_chip_model is
         return v_word;
     end function;
 
+    procedure capture_stop_event(
+        constant stop_id    : in natural;
+        constant slope      : in std_logic;
+        constant event_time : in time;
+        constant start_time : in time;
+        variable fifo1      : inout t_raw_fifo;
+        variable fifo2      : inout t_raw_fifo;
+        variable fill1      : inout natural;
+        variable fill2      : inout natural;
+        variable count      : inout natural;
+        signal last_hit     : out unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+        signal capture_count: out natural
+    ) is
+        variable v_elapsed_ps : natural;
+        variable v_hit        : natural;
+        variable v_word       : t_raw_word;
+    begin
+        assert event_time >= start_time
+            report "tdc_gpx_external_chip_model: STOP preceded START"
+            severity failure;
+        v_elapsed_ps := (event_time - start_time) / 1 ps;
+        v_hit := v_elapsed_ps / g_BIN_RESOLUTION_PS;
+        assert v_hit <= c_MAX_HIT
+            report "tdc_gpx_external_chip_model: Hit exceeds 17-bit I-Mode field"
+            severity failure;
+        if v_hit > c_MAX_HIT then
+            v_hit := c_MAX_HIT;
+        end if;
+
+        v_word := fn_i_mode_word(stop_id, slope, v_hit);
+        if stop_id < 4 then
+            assert fill1 < g_FIFO_DEPTH
+                report "tdc_gpx_external_chip_model: IFIFO1 overflow"
+                severity failure;
+            if fill1 < g_FIFO_DEPTH then
+                fifo1(fill1) := v_word;
+                fill1 := fill1 + 1;
+            end if;
+        else
+            assert fill2 < g_FIFO_DEPTH
+                report "tdc_gpx_external_chip_model: IFIFO2 overflow"
+                severity failure;
+            if fill2 < g_FIFO_DEPTH then
+                fifo2(fill2) := v_word;
+                fill2 := fill2 + 1;
+            end if;
+        end if;
+
+        count := (count + 1) mod 65536;
+        last_hit <= to_unsigned(v_hit, c_RAW_HIT_WIDTH);
+        capture_count <= count;
+    end procedure capture_stop_event;
+
 begin
     assert g_LF_THRESHOLD <= g_FIFO_DEPTH
         report "tdc_gpx_external_chip_model: LF threshold exceeds FIFO depth"
@@ -127,6 +185,14 @@ begin
     assert fn_range_clk_mhz_supported(g_TDC_CLK_MHZ)
         report "tdc_gpx_external_chip_model: unsupported TDC clock frequency"
         severity failure;
+
+    gen_role_contract : for chip in 0 to g_NUM_CHIPS - 1 generate
+    begin
+        assert g_RISE_CHIP_MASK(chip) = '1'
+               or g_FALL_CHIP_MASK(chip) = '1'
+            report "tdc_gpx_external_chip_model: every modeled chip needs a STOP edge role"
+            severity failure;
+    end generate gen_role_contract;
 
     -- The GPX time interpolator is asynchronous to the FPGA bus clock. Capture
     -- exact event timestamps here, then transfer event toggles into p_chip.
@@ -139,27 +205,18 @@ begin
     end process p_start_timestamp;
 
     gen_stop_timestamp : for channel in 0 to c_CHANNELS - 1 generate
-        constant c_CHIP : natural := channel / g_STOPS_PER_CHIP;
-    begin
-        gen_rising_stop : if g_CHIP_SLOPE_MASK(c_CHIP) = '1' generate
-            p_stop_timestamp : process(i_tdc_stop(channel))
-            begin
-                if rising_edge(i_tdc_stop(channel)) then
-                    s_stop_time(channel)   <= now;
-                    s_stop_toggle(channel) <= not s_stop_toggle(channel);
-                end if;
-            end process p_stop_timestamp;
-        end generate gen_rising_stop;
-
-        gen_falling_stop : if g_CHIP_SLOPE_MASK(c_CHIP) = '0' generate
-            p_stop_timestamp : process(i_tdc_stop(channel))
-            begin
-                if falling_edge(i_tdc_stop(channel)) then
-                    s_stop_time(channel)   <= now;
-                    s_stop_toggle(channel) <= not s_stop_toggle(channel);
-                end if;
-            end process p_stop_timestamp;
-        end generate gen_falling_stop;
+        p_stop_timestamp : process(i_tdc_stop(channel))
+        begin
+            if rising_edge(i_tdc_stop(channel)) then
+                s_stop_rise_time(channel) <= now;
+                s_stop_rise_toggle(channel) <=
+                    not s_stop_rise_toggle(channel);
+            elsif falling_edge(i_tdc_stop(channel)) then
+                s_stop_fall_time(channel) <= now;
+                s_stop_fall_toggle(channel) <=
+                    not s_stop_fall_toggle(channel);
+            end if;
+        end process p_stop_timestamp;
     end generate gen_stop_timestamp;
 
     gen_chip : for chip in 0 to g_NUM_CHIPS - 1 generate
@@ -173,7 +230,9 @@ begin
             variable v_rd1   : natural range 0 to g_FIFO_DEPTH := 0;
             variable v_rd2   : natural range 0 to g_FIFO_DEPTH := 0;
             variable v_start_seen : std_logic := '0';
-            variable v_stop_seen  : std_logic_vector(
+            variable v_stop_rise_seen : std_logic_vector(
+                g_STOPS_PER_CHIP - 1 downto 0) := (others => '0');
+            variable v_stop_fall_seen : std_logic_vector(
                 g_STOPS_PER_CHIP - 1 downto 0) := (others => '0');
             variable v_alu_prev   : std_logic := '0';
             variable v_rdn_prev   : std_logic := '1';
@@ -186,9 +245,6 @@ begin
             variable v_armed      : boolean := false;
             variable v_cfg_valid  : boolean;
             variable v_t0         : time := 0 ns;
-            variable v_elapsed_ps : natural;
-            variable v_hit        : natural;
-            variable v_word       : t_raw_word;
             variable v_addr       : std_logic_vector(c_TDC_ADR_WIDTH - 1 downto 0);
             variable v_channel    : natural;
             variable v_count      : natural := 0;
@@ -203,7 +259,10 @@ begin
                     v_rd2 := 0;
                     v_start_seen := s_start_toggle;
                     for stop_id in 0 to g_STOPS_PER_CHIP - 1 loop
-                        v_stop_seen(stop_id) := s_stop_toggle(c_STOP_BASE + stop_id);
+                        v_stop_rise_seen(stop_id) :=
+                            s_stop_rise_toggle(c_STOP_BASE + stop_id);
+                        v_stop_fall_seen(stop_id) :=
+                            s_stop_fall_toggle(c_STOP_BASE + stop_id);
                     end loop;
                     v_alu_prev := i_tdc_alutrigger(chip);
                     v_rdn_prev := i_tdc_rdn(chip);
@@ -298,20 +357,33 @@ begin
                             v_cfg_valid := false;
                         end if;
                         for stop_id in 0 to g_STOPS_PER_CHIP - 1 loop
-                            if g_CHIP_SLOPE_MASK(chip) = '1' then
-                                if v_regs(0)(c_REG0_TSTOP_RISE_LO + stop_id) /= '1' then
-                                    assert false
-                                        report "tdc_gpx_external_chip_model: rising STOP edge is not enabled"
-                                        severity failure;
-                                    v_cfg_valid := false;
-                                end if;
-                            else
-                                if v_regs(0)(c_REG0_TSTOP_FALL_LO + stop_id) /= '1' then
-                                    assert false
-                                        report "tdc_gpx_external_chip_model: falling STOP edge is not enabled"
-                                        severity failure;
-                                    v_cfg_valid := false;
-                                end if;
+                            if v_regs(0)(c_REG0_TSTOP_RISE_LO + stop_id) /=
+                               g_RISE_CHIP_MASK(chip) then
+                                assert false
+                                    report "tdc_gpx_external_chip_model: rising STOP edge role mismatch"
+                                        & " chip=" & integer'image(chip)
+                                        & " stop=" & integer'image(stop_id)
+                                        & " reg0=0x" & to_hstring(v_regs(0))
+                                        & " actual=" & std_logic'image(
+                                            v_regs(0)(c_REG0_TSTOP_RISE_LO + stop_id))
+                                        & " expected=" & std_logic'image(
+                                            g_RISE_CHIP_MASK(chip))
+                                    severity failure;
+                                v_cfg_valid := false;
+                            end if;
+                            if v_regs(0)(c_REG0_TSTOP_FALL_LO + stop_id) /=
+                               g_FALL_CHIP_MASK(chip) then
+                                assert false
+                                    report "tdc_gpx_external_chip_model: falling STOP edge role mismatch"
+                                        & " chip=" & integer'image(chip)
+                                        & " stop=" & integer'image(stop_id)
+                                        & " reg0=0x" & to_hstring(v_regs(0))
+                                        & " actual=" & std_logic'image(
+                                            v_regs(0)(c_REG0_TSTOP_FALL_LO + stop_id))
+                                        & " expected=" & std_logic'image(
+                                            g_FALL_CHIP_MASK(chip))
+                                    severity failure;
+                                v_cfg_valid := false;
                             end if;
                         end loop;
                         if v_regs(2) /= x"0000002" then
@@ -362,46 +434,38 @@ begin
                         end if;
                     end if;
 
-                    -- Each asynchronous STOP edge becomes one I-Mode word.
+                    -- Each enabled asynchronous STOP edge becomes one I-Mode
+                    -- word. Overlapping masks intentionally create both a
+                    -- leading-edge and trailing-edge result for one chip.
                     for stop_id in 0 to g_STOPS_PER_CHIP - 1 loop
                         v_channel := c_STOP_BASE + stop_id;
-                        if s_stop_toggle(v_channel) /= v_stop_seen(stop_id) then
-                            v_stop_seen(stop_id) := s_stop_toggle(v_channel);
+                        if g_RISE_CHIP_MASK(chip) = '1'
+                           and s_stop_rise_toggle(v_channel) /=
+                               v_stop_rise_seen(stop_id) then
+                            v_stop_rise_seen(stop_id) :=
+                                s_stop_rise_toggle(v_channel);
                             if v_armed and v_mtimer > 0
                                and i_tdc_stopdis(chip) = '0' then
-                                assert s_stop_time(v_channel) >= v_t0
-                                    report "tdc_gpx_external_chip_model: STOP preceded START"
-                                    severity failure;
-                                v_elapsed_ps := (s_stop_time(v_channel) - v_t0) / 1 ps;
-                                v_hit := v_elapsed_ps / g_BIN_RESOLUTION_PS;
-                                assert v_hit <= c_MAX_HIT
-                                    report "tdc_gpx_external_chip_model: Hit exceeds 17-bit I-Mode field"
-                                    severity failure;
-                                if v_hit > c_MAX_HIT then
-                                    v_hit := c_MAX_HIT;
-                                end if;
-                                v_word := fn_i_mode_word(
-                                    stop_id, g_CHIP_SLOPE_MASK(chip), v_hit);
-                                if stop_id < 4 then
-                                    assert v_fill1 < g_FIFO_DEPTH
-                                        report "tdc_gpx_external_chip_model: IFIFO1 overflow"
-                                        severity failure;
-                                    if v_fill1 < g_FIFO_DEPTH then
-                                        v_fifo1(v_fill1) := v_word;
-                                        v_fill1 := v_fill1 + 1;
-                                    end if;
-                                else
-                                    assert v_fill2 < g_FIFO_DEPTH
-                                        report "tdc_gpx_external_chip_model: IFIFO2 overflow"
-                                        severity failure;
-                                    if v_fill2 < g_FIFO_DEPTH then
-                                        v_fifo2(v_fill2) := v_word;
-                                        v_fill2 := v_fill2 + 1;
-                                    end if;
-                                end if;
-                                v_count := (v_count + 1) mod 65536;
-                                s_last_hit(chip) <= to_unsigned(v_hit, c_RAW_HIT_WIDTH);
-                                s_capture_count(chip) <= v_count;
+                                capture_stop_event(
+                                    stop_id, '1', s_stop_rise_time(v_channel),
+                                    v_t0, v_fifo1, v_fifo2, v_fill1, v_fill2,
+                                    v_count, s_last_hit(chip),
+                                    s_capture_count(chip));
+                            end if;
+                        end if;
+
+                        if g_FALL_CHIP_MASK(chip) = '1'
+                           and s_stop_fall_toggle(v_channel) /=
+                               v_stop_fall_seen(stop_id) then
+                            v_stop_fall_seen(stop_id) :=
+                                s_stop_fall_toggle(v_channel);
+                            if v_armed and v_mtimer > 0
+                               and i_tdc_stopdis(chip) = '0' then
+                                capture_stop_event(
+                                    stop_id, '0', s_stop_fall_time(v_channel),
+                                    v_t0, v_fifo1, v_fifo2, v_fill1, v_fill2,
+                                    v_count, s_last_hit(chip),
+                                    s_capture_count(chip));
                             end if;
                         end if;
                     end loop;
