@@ -1,5 +1,7 @@
 param(
     [string]$Scenario = "",
+    [ValidateSet("local", "unified")]
+    [string]$ControlMode = "local",
     [ValidateSet("", "internal", "external")]
     [string]$EncoderSource = "",
     [ValidateSet(0, 32, 64, 128)]
@@ -8,6 +10,10 @@ param(
     [int]$ReturnsPerStop = 0,
     [ValidateRange(0, 7)]
     [int]$MaxHits = 0,
+    [ValidateRange(60, 3600)]
+    [int]$SimulationTimeoutSeconds = 600,
+    [ValidateRange(64, 4096)]
+    [int]$MaxWdbMB = 512,
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss")
 )
 
@@ -157,6 +163,74 @@ function Invoke-Checked {
     }
 }
 
+function Stop-ProcessTree {
+    param([int]$ProcessId)
+
+    $Children = @(Get-CimInstance Win32_Process `
+        -Filter "ParentProcessId=$ProcessId" -ErrorAction SilentlyContinue)
+    foreach ($Child in $Children) {
+        Stop-ProcessTree -ProcessId $Child.ProcessId
+    }
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+function Invoke-XsimChecked {
+    param(
+        [string]$Exe,
+        [string[]]$ArgList,
+        [string]$WorkingDirectory
+    )
+
+    $CommandLine = "call $Exe $($ArgList -join ' ')"
+    $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $StartInfo.FileName = $env:ComSpec
+    $StartInfo.Arguments = "/d /c $CommandLine"
+    $StartInfo.WorkingDirectory = $WorkingDirectory
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.CreateNoWindow = $true
+
+    $Process = [System.Diagnostics.Process]::new()
+    $Process.StartInfo = $StartInfo
+    if (-not $Process.Start()) {
+        throw "Failed to start xsim: $CommandLine"
+    }
+
+    $Deadline = (Get-Date).AddSeconds($SimulationTimeoutSeconds)
+    try {
+        while (-not $Process.HasExited) {
+            Start-Sleep -Seconds 2
+            $Process.Refresh()
+
+            $OversizeWave = Get-ChildItem -LiteralPath $WorkingDirectory `
+                -Recurse -File -Filter "*.wdb" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -gt ($MaxWdbMB * 1MB) } |
+                Select-Object -First 1
+            if ($null -ne $OversizeWave) {
+                throw "xsim WDB exceeded ${MaxWdbMB}MB: $($OversizeWave.FullName)"
+            }
+            if ((Get-Date) -ge $Deadline) {
+                throw "xsim exceeded ${SimulationTimeoutSeconds}s wall-clock timeout"
+            }
+        }
+        $Process.WaitForExit()
+        if ($Process.ExitCode -ne 0) {
+            throw "xsim failed with exit code $($Process.ExitCode)"
+        }
+    }
+    catch {
+        if (-not $Process.HasExited) {
+            Stop-ProcessTree -ProcessId $Process.Id
+        }
+        throw
+    }
+    finally {
+        $Process.Dispose()
+        Get-ChildItem -LiteralPath $WorkingDirectory -Recurse -File `
+            -Filter "*.wdb" -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Assert-FileExists {
     param([string[]]$Files)
     foreach ($File in $Files) {
@@ -235,6 +309,8 @@ $EchoFiles = @(
 )
 
 $TdcFiles = @(
+    "$Hdl/system_integration/rtl/lidar_unified_csr_pkg.vhd",
+    "$Hdl/system_integration/rtl/lidar_unified_csr_top.vhd",
     "$Hdl/px_utility_pkg.vhd",
     "$Hdl/tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_cfg_pkg.vhd",
@@ -338,14 +414,15 @@ try {
         "--generic_top `"G_TDC_STIM_MODE=$($Cfg.tdc_stimulus_mode)`"",
         "--generic_top `"G_BP_TREADY_GAP=$($Cfg.backpressure_gap_clocks)`"",
         "--generic_top `"G_ENC_RUN_US=$($Cfg.encoder_observation_us)`"",
+        "--generic_top `"G_CONTROL_MODE=$ControlMode`"",
         "xil_defaultlib.tb_tdc_gpx_full_int",
         "xil_defaultlib.glbl",
         "-log `"$ElabLog`""
     ) | Set-Content -Encoding ASCII -LiteralPath $ElabArgFile
     Invoke-Checked "$Vivado/xelab.bat" @("-f", $ElabArgFile)
-    Invoke-Checked "$Vivado/xsim.bat" @(
+    Invoke-XsimChecked "$Vivado/xsim.bat" @(
         $Snapshot, "-runall", "-log", $SimLog
-    )
+    ) $Work
 }
 finally {
     Pop-Location
@@ -401,6 +478,7 @@ $Result = [ordered]@{
     scenario_source = $Scenario.Replace('\', '/')
     scenario = $Cfg
     verdict = "PASS"
+    control_mode = $ControlMode
     pass_marker = "SYSTEM_INTEGRATION_SMOKE_PASS"
     tdc_git_commit = $TdcCommit
     tdc_git_worktree_dirty = $TdcWorktreeDirty
@@ -417,6 +495,7 @@ $ContractResult = [ordered]@{
     schema_version = 2
     scenario_id = $Cfg.scenario_id
     verdict = "PASS"
+    control_mode = $ControlMode
     scenario = $Cfg
     metrics = $Metrics
 }

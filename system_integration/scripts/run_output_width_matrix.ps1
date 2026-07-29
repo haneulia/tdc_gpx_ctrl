@@ -1,5 +1,7 @@
 param(
     [string]$Scenario = "",
+    [ValidateSet("local", "unified")]
+    [string]$ControlMode = "local",
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss")
 )
 
@@ -15,7 +17,8 @@ $Scenario = (Resolve-Path $Scenario).Path
 $Rows = foreach ($Width in @(32, 64, 128)) {
     $CaseStamp = "${Stamp}_w${Width}"
     Write-Host "=== TDC-GPX output-width integration: ${Width} bit ==="
-    & $Runner -Scenario $Scenario -OutputWidth $Width -Stamp $CaseStamp |
+    & $Runner -Scenario $Scenario -ControlMode $ControlMode `
+        -OutputWidth $Width -Stamp $CaseStamp |
         Out-Host
 
     $ResultPath = Join-Path $Hdl "sim_results/vivado_xsim/sessions/${CaseStamp}_system_integration_smoke/rtl_result.json"
@@ -30,6 +33,7 @@ $Rows = foreach ($Width in @(32, 64, 128)) {
 
     [pscustomobject]@{
         WidthBits = $Width
+        ControlMode = $ControlMode
         AxisMhz   = [int]$Result.scenario.axis_clock_mhz
         TdcMhz    = [int]$Result.scenario.tdc_clock_mhz
         RiseBeats = [int64]$Result.metrics.rise_beats
