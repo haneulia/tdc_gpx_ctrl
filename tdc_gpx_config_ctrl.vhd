@@ -616,12 +616,17 @@ architecture rtl of tdc_gpx_config_ctrl is
     attribute ASYNC_REG of s_cmd_soft_reset_sync_tdc_r     : signal is "TRUE";
     attribute ASYNC_REG of s_cmd_force_reinit_sync_tdc_r   : signal is "TRUE";
     signal s_cmd_cfg_write_g_tdc : std_logic;
+    signal s_cmd_cfg_write_g_axi : std_logic;
+    signal s_cfg_write_cdc_pending_r : std_logic := '0';
+    signal s_cfg_write_cdc_src_r     : std_logic := '0';
+    signal s_cfg_cdc_quiet_count_r   : natural range 0 to 3 := 0;
     signal s_stop_tdc_tdc        : std_logic;  -- stop_tdc after xpm_cdc_pulse (#13)
     -- Round 7 B-5: i_err_soft_clear CDC'd to TDC domain so chip_reg can
     -- follow the same sticky-clear policy as status_agg / err_handler.
     signal s_soft_clear_tdc      : std_logic;
     -- Per-chip command pulses
     signal s_err_cmd_soft_reset_tdc : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    signal s_cmd_start_chip_tdc      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_shot_start_tdc         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_cmd_reg_read_tdc       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_cmd_reg_write_tdc      : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
@@ -736,6 +741,11 @@ architecture rtl of tdc_gpx_config_ctrl is
     signal s_cfg_image_d1_r       : std_logic_vector(c_CFG_IMAGE_BITS - 1 downto 0) := (others => '1');
     signal s_cfg_image_diff_r     : std_logic_vector((c_CFG_IMAGE_BITS + 31) / 32 - 1 downto 0) := (others => '0');
 
+    -- The cfg/image change detectors each have two registered stages. Three
+    -- consecutive quiet source clocks therefore prove that no latent update
+    -- can still launch after the command barrier opens.
+    constant c_CFG_CDC_QUIET_CLKS : positive := 3;
+
     -- ASYNC_REG already declared above (Round 12 A3 sync signals).
 
     -- Round 9 #5: cmd_reg bundle moved from 2-FF sync to xpm_cdc_handshake.
@@ -779,7 +789,11 @@ begin
             o_tdc_rdn(c_PHYSICAL_CHIP)        <= s_tdc_rdn(logical_chip);
             o_tdc_wrn(c_PHYSICAL_CHIP)        <= s_tdc_wrn(logical_chip);
             o_tdc_oen(c_PHYSICAL_CHIP)        <= s_tdc_oen(logical_chip);
-            o_tdc_stopdis(c_PHYSICAL_CHIP)    <= s_tdc_stopdis(logical_chip);
+            -- Chip-init intentionally releases StopDis after configuration.
+            -- Runtime-inactive chips override that idle policy at the final
+            -- physical pin so they cannot accumulate undrained GPX words.
+            o_tdc_stopdis(c_PHYSICAL_CHIP) <= s_tdc_stopdis(logical_chip)
+                or not s_cfg_tdc.active_chip_mask(logical_chip);
             o_tdc_alutrigger(c_PHYSICAL_CHIP) <= s_tdc_alutrigger(logical_chip);
             o_tdc_puresn(c_PHYSICAL_CHIP)     <= s_tdc_puresn(logical_chip);
 
@@ -1209,7 +1223,7 @@ begin
             i_hdr_idle           => i_hdr_idle,
             i_hdr_fall_idle      => i_hdr_fall_idle,
             i_cmd_reg_done       => s_cmd_reg_done_axi,
-            o_cmd_cfg_write_g    => o_cmd_cfg_write_g,
+            o_cmd_cfg_write_g    => s_cmd_cfg_write_g_axi,
             o_cmd_reg_read_g     => s_cmd_reg_read_g,
             o_cmd_reg_write_g    => s_cmd_reg_write_g,
             o_reg_outstanding    => s_reg_outstanding,
@@ -1373,12 +1387,63 @@ begin
     end process;
     -- synthesis translate_on
 
+    o_cmd_cfg_write_g <= s_cmd_cfg_write_g_axi;
+
+    -- A cfg_write must never outrun either coherent payload handshake. This
+    -- can otherwise program a new GPX image with the previous t_tdc_cfg (for
+    -- example, the old falling-enable policy). Latch the gated request, wait
+    -- until both source mailboxes and their change detectors are quiescent,
+    -- then release exactly one command pulse. The three-cycle quiet window
+    -- also covers a live update that has entered s_cfg_sample_r but has not
+    -- reached s_cfg_diff_r yet.
+    p_cfg_write_cdc_barrier : process(i_axis_aclk)
+    begin
+        if rising_edge(i_axis_aclk) then
+            if i_axis_aresetn = '0'
+               or i_cmd_soft_reset = '1'
+               or i_cmd_stop = '1' then
+                s_cfg_write_cdc_pending_r <= '0';
+                s_cfg_write_cdc_src_r     <= '0';
+                s_cfg_cdc_quiet_count_r   <= 0;
+            else
+                s_cfg_write_cdc_src_r <= '0';
+
+                if s_cmd_cfg_write_g_axi = '1' then
+                    s_cfg_write_cdc_pending_r <= '1';
+                    s_cfg_cdc_quiet_count_r   <= 0;
+                elsif s_cfg_write_cdc_pending_r = '1' then
+                    if s_cfg_src_send_r = '0'
+                       and s_cfg_src_rcv = '0'
+                       and s_cfg_diff_r = (s_cfg_diff_r'range => '0')
+                       and s_cfg_image_src_send_r = '0'
+                       and s_cfg_image_src_rcv = '0'
+                       and s_cfg_image_diff_r =
+                           (s_cfg_image_diff_r'range => '0') then
+                        if s_cfg_cdc_quiet_count_r =
+                           c_CFG_CDC_QUIET_CLKS - 1 then
+                            s_cfg_write_cdc_src_r     <= '1';
+                            s_cfg_write_cdc_pending_r <= '0';
+                            s_cfg_cdc_quiet_count_r   <= 0;
+                        else
+                            s_cfg_cdc_quiet_count_r <=
+                                s_cfg_cdc_quiet_count_r + 1;
+                        end if;
+                    else
+                        s_cfg_cdc_quiet_count_r <= 0;
+                    end if;
+                else
+                    s_cfg_cdc_quiet_count_r <= 0;
+                end if;
+            end if;
+        end if;
+    end process p_cfg_write_cdc_barrier;
+
     u_cdc_cmd_cfg_write : xpm_cdc_pulse
         generic map (DEST_SYNC_FF => 2, RST_USED => 0, SIM_ASSERT_CHK => 0)
         port map (
             src_clk    => i_axis_aclk,
             src_rst    => '0',
-            src_pulse  => o_cmd_cfg_write_g,
+            src_pulse  => s_cfg_write_cdc_src_r,
             dest_clk   => i_tdc_clk,
             dest_rst   => '0',
             dest_pulse => s_cmd_cfg_write_g_tdc
@@ -1422,9 +1487,9 @@ begin
     -- fields — per-bit metastability AND per-bundle atomicity are now
     -- structurally protected.
     --
-    -- SW timing contract is relaxed: writing CFG + pulsing a command in
-    -- the same AXI-Lite transaction is now safe (previously the 2-FF sync
-    -- could torn-sample a mid-update bundle).
+    -- The cfg_write command is held by p_cfg_write_cdc_barrier until both
+    -- handshakes have delivered their latest snapshot. Other commands still
+    -- require their own acceptance contract at the control-plane boundary.
     -- =========================================================================
 
     -- Pack t_tdc_cfg into the handshake payload.
@@ -1602,6 +1667,11 @@ begin
     --   bus_phy + sk_brsp + chip_ctrl + sk_raw + per-chip CDC
     -- =========================================================================
     gen_chip : for i in 0 to c_MAX_CHIPS - 1 generate
+
+        -- Runtime-inactive chips stay in ST_OFF with StopDis asserted. Gating
+        -- only shot_start would arm their GPX inputs without a matching drain.
+        s_cmd_start_chip_tdc(i) <= s_cmd_start_tdc
+            and s_cfg_tdc.active_chip_mask(i);
 
         -- ----- bus_phy: bus timing FSM + split D-bus + 2-FF status sync -----
         u_bus_phy : entity work.tdc_gpx_bus_phy
@@ -1891,7 +1961,7 @@ begin
                 i_rst_n             => s_chip_rst_n(i),
                 i_cfg               => s_cfg_tdc,
                 i_cfg_image         => s_cfg_image_tdc_per_chip(i),
-                i_cmd_start         => s_cmd_start_tdc,
+                i_cmd_start         => s_cmd_start_chip_tdc(i),
                 i_cmd_stop          => s_cmd_stop_tdc,
                 i_cmd_soft_reset    => s_cmd_soft_reset_tdc,
                 i_cmd_soft_reset_err => s_err_cmd_soft_reset_tdc(i),
