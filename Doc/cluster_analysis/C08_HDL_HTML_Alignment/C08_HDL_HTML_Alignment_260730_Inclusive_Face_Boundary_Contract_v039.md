@@ -27,17 +27,24 @@ contract to a half-open interval, removes one active position, and makes the
 integer sample set asymmetric about `C`. It also needs a special case at
 `H = 0`.
 
-## 2. Direction-independent naming
+## 2. Direction-aware XGUI naming
 
-The two XGUI values are counter coordinates, not temporal entry/exit events.
-With an increasing counter the temporal exit is the inclusive upper boundary.
-With a decreasing counter the temporal exit is the inclusive lower boundary.
-The XGUI therefore presents them as `Lower boundary (inclusive)` and
-`Upper boundary (inclusive)`.
+The RTL keeps `lower` and `upper` as direction-independent counter coordinates.
+The XGUI presents the operational traversal as `Entry` and `Exit` and derives
+their read-only values from the selected initial direction.
+
+```text
+CW  (g_DIR=0, increasing count): Entry=lower, Exit=upper
+CCW (g_DIR=1, decreasing count): Entry=upper, Exit=lower
+```
+
+The existing IP-XACT parameter identifiers `c_FACE_START_n` and
+`c_FACE_END_n` remain unchanged for compatibility. Only their displayed
+meaning is clarified as direction-aware Entry and Exit.
 
 Motor AXIS `TLAST` continues to identify the final active beat in the actual
 travel direction. Laser `face_end` is derived from that `TLAST`, so no RTL
-latency or firing behavior is changed by the XGUI clarification.
+latency or firing behavior is changed by the XGUI reference calculation.
 
 ## 3. C08 comparison policy
 
