@@ -265,7 +265,12 @@ package lidar_unified_csr_pkg is
     constant C_MOTOR_STATUS_DEC_MODE_HI       : natural := 12;
     constant C_MOTOR_STATUS_N_FACES_LO        : natural := 13;
     constant C_MOTOR_STATUS_N_FACES_HI        : natural := 15;
-    constant C_MOTOR_STATUS_DIR_BIT            : natural := 16;
+    -- Bit 16 is the applied configuration/polarity correction. Bit 17 is the
+    -- direction actually reported by the quadrature decoder with position.
+    constant C_MOTOR_STATUS_APPLIED_DIR_BIT    : natural := 16;
+    constant C_MOTOR_STATUS_DIR_BIT            : natural :=
+        C_MOTOR_STATUS_APPLIED_DIR_BIT;
+    constant C_MOTOR_STATUS_DECODED_DIR_BIT    : natural := 17;
 
     constant C_MOTOR_CFG_STATUS_CFG_EPOCH_LO   : natural := 0;
     constant C_MOTOR_CFG_STATUS_CFG_EPOCH_HI   : natural := 7;

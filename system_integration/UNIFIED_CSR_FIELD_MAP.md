@@ -107,7 +107,7 @@ duplicated in `MOTOR_CFG`.
 
 | Unified slot | Meaning |
 |---|---|
-| STAT6 `MOTOR_STATUS` | Current Face, active/simulation/busy state, faults, applied decode mode, static face count and direction |
+| STAT6 `MOTOR_STATUS` | Current Face, active/simulation/busy state, faults, applied decode mode, static face count, applied direction/polarity `[16]`, actual decoded direction `[17]` |
 | STAT7 `MOTOR_FACE_GEOMETRY` | Selected applied center/half and valid bit |
 | STAT8 `MOTOR_CFG_STATUS` | Accepted config/Face/reset epochs, read index, busy/apply/reject/valid flags |
 | STAT9 `MOTOR_QUAD_INVALID` | Modulo-2^32 invalid quadrature transition count |
