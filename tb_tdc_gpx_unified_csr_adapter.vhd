@@ -602,6 +602,57 @@ begin
             report "legacy TDC STATUS_EXT2 packing changed"
             severity failure;
 
+        -- A board without external ERRFLAG pins audits GPX Reg12 through the
+        -- existing broadcast register-read command. Read-only fault bits
+        -- [10:0] are retained per chip until the normal error-clear command.
+        wait until falling_edge(s_axis_clk);
+        s_status.chip_error_mask <= (others => '0');
+        issue_command(4, 8, 3);
+        for i in 0 to 1000 loop
+            wait until rising_edge(s_cfg_clk);
+            exit when s_status_ext2(23 downto 20) = x"0"
+                and s_pipe_status(7 downto 4) = x"0";
+        end loop;
+
+        wait until falling_edge(s_axis_clk);
+        s_addr_done <= c_TDC_REG12;
+        s_rdata0 <= x"0000400";  -- Reg12[10]: PLL not locked
+        s_rdata1 <= (others => '0');
+        s_rdata2 <= x"0000100";  -- Reg12[8]: Interface FIFO full
+        s_rdata3 <= (others => '0');
+        s_rvalid <= "0101";
+        s_reg_done <= '1';
+        wait until falling_edge(s_axis_clk);
+        s_rvalid <= (others => '0');
+        s_reg_done <= '0';
+        for i in 0 to 2000 loop
+            wait until rising_edge(s_cfg_clk);
+            exit when s_status_ext2(23 downto 20) = x"5"
+                and s_pipe_status(7 downto 4) = x"5";
+        end loop;
+        assert s_status_ext2(23 downto 20) = x"5"
+            and s_pipe_status(7 downto 4) = x"5"
+            report "GPX Reg12 fault mask was not retained per chip"
+            severity failure;
+        for i in 0 to 1000 loop
+            wait until rising_edge(s_cfg_clk);
+            exit when s_irq_count(2) = 2;
+        end loop;
+        assert s_irq_count(2) = 2
+            report "GPX Reg12 fault did not raise chip-error IRQ"
+            severity failure;
+
+        issue_command(4, 9, 3);
+        for i in 0 to 1000 loop
+            wait until rising_edge(s_cfg_clk);
+            exit when s_status_ext2(23 downto 20) = x"0"
+                and s_pipe_status(7 downto 4) = x"0";
+        end loop;
+        assert s_status_ext2(23 downto 20) = x"0"
+            and s_pipe_status(7 downto 4) = x"0"
+            report "GPX Reg12 fault mask did not clear"
+            severity failure;
+
         report "TDC_GPX_UNIFIED_CSR_ADAPTER_PASS" severity note;
         s_done <= true;
         stop;

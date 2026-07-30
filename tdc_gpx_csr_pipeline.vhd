@@ -476,7 +476,9 @@ begin
     s_stat7_src(c_STAT7_MASKED_SLOPE_DROP) <= i_status.masked_slope_drop_any;
     s_stat7_src(c_STAT7_FS_COLL_RISE_HI downto c_STAT7_FS_COLL_RISE_LO)
         <= std_logic_vector(i_status.rise_face_start_collapsed_count(3 downto 0));
-    s_stat7_src(c_STAT7_RESERVED_HI downto c_STAT7_RESERVED_LO)
+    -- The standalone/local CSR has no board-level Reg12 audit command. Keep
+    -- the unified adapter's Reg12 fault field clear in this compatibility map.
+    s_stat7_src(c_STAT7_REG12_FAULT_HI downto c_STAT7_REG12_FAULT_LO)
         <= (others => '0');
     s_stat7_src(c_STAT7_FS_COLL_FALL_HI downto c_STAT7_FS_COLL_FALL_LO)
         <= std_logic_vector(i_status.fall_face_start_collapsed_count(3 downto 0));

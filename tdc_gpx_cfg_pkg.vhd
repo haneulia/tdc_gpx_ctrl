@@ -294,8 +294,11 @@ package tdc_gpx_cfg_pkg is
     constant c_STAT7_MASKED_SLOPE_DROP : natural := 15;
     constant c_STAT7_FS_COLL_RISE_HI   : natural := 19;
     constant c_STAT7_FS_COLL_RISE_LO   : natural := 16;
-    constant c_STAT7_RESERVED_HI       : natural := 23;
-    constant c_STAT7_RESERVED_LO       : natural := 20;
+    -- When a board does not route the GPX ERRFLAG pins, software can issue
+    -- one broadcast Reg12 read. The unified adapter latches bits [10:0]
+    -- (Hit FIFO full, Interface FIFO full, PLL unlocked) per chip here.
+    constant c_STAT7_REG12_FAULT_HI    : natural := 23;
+    constant c_STAT7_REG12_FAULT_LO    : natural := 20;
     constant c_STAT7_FS_COLL_FALL_HI   : natural := 27;
     constant c_STAT7_FS_COLL_FALL_LO   : natural := 24;
     constant c_STAT7_INIT_COALESCE_HI  : natural := 31;

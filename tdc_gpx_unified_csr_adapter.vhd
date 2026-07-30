@@ -294,6 +294,8 @@ architecture rtl of tdc_gpx_unified_csr_adapter is
     signal s_cmd_reg_write_pulse    : std_logic := '0';
 
     signal s_result_r : t_result_array := (others => (others => '0'));
+    signal s_reg12_fault_mask_r : std_logic_vector(c_MAX_CHIPS - 1 downto 0) :=
+        (others => '0');
     signal s_pipeline_status_word : std_logic_vector(31 downto 0);
     signal s_status_ext_word      : std_logic_vector(31 downto 0);
     signal s_status_ext2_word     : std_logic_vector(31 downto 0);
@@ -572,18 +574,41 @@ begin
         if rising_edge(i_axis_clk) then
             if i_axis_rst_n = '0' then
                 s_result_r <= (others => (others => '0'));
+                s_reg12_fault_mask_r <= (others => '0');
+            elsif s_err_soft_clear_pulse = '1' then
+                s_reg12_fault_mask_r <= (others => '0');
             else
                 if i_cmd_reg_rvalid(0) = '1' then
                     s_result_r(0) <= i_cmd_reg_addr_done & i_cmd_reg_rdata_0;
+                    if i_cmd_reg_addr_done = c_TDC_REG12
+                       and i_cmd_reg_rdata_0(10 downto 0) /=
+                           (i_cmd_reg_rdata_0(10 downto 0)'range => '0') then
+                        s_reg12_fault_mask_r(0) <= '1';
+                    end if;
                 end if;
                 if i_cmd_reg_rvalid(1) = '1' then
                     s_result_r(1) <= i_cmd_reg_addr_done & i_cmd_reg_rdata_1;
+                    if i_cmd_reg_addr_done = c_TDC_REG12
+                       and i_cmd_reg_rdata_1(10 downto 0) /=
+                           (i_cmd_reg_rdata_1(10 downto 0)'range => '0') then
+                        s_reg12_fault_mask_r(1) <= '1';
+                    end if;
                 end if;
                 if i_cmd_reg_rvalid(2) = '1' then
                     s_result_r(2) <= i_cmd_reg_addr_done & i_cmd_reg_rdata_2;
+                    if i_cmd_reg_addr_done = c_TDC_REG12
+                       and i_cmd_reg_rdata_2(10 downto 0) /=
+                           (i_cmd_reg_rdata_2(10 downto 0)'range => '0') then
+                        s_reg12_fault_mask_r(2) <= '1';
+                    end if;
                 end if;
                 if i_cmd_reg_rvalid(3) = '1' then
                     s_result_r(3) <= i_cmd_reg_addr_done & i_cmd_reg_rdata_3;
+                    if i_cmd_reg_addr_done = c_TDC_REG12
+                       and i_cmd_reg_rdata_3(10 downto 0) /=
+                           (i_cmd_reg_rdata_3(10 downto 0)'range => '0') then
+                        s_reg12_fault_mask_r(3) <= '1';
+                    end if;
                 end if;
             end if;
         end if;
@@ -599,7 +624,7 @@ begin
         v_status(c_STAT_OVERRUN) := i_status.pipeline_overrun;
         v_status(c_STAT_ERR_FATAL) := i_status.err_fatal;
         v_status(c_STAT_CHIP_ERR_HI downto c_STAT_CHIP_ERR_LO) :=
-            i_status.chip_error_mask;
+            i_status.chip_error_mask or s_reg12_fault_mask_r;
         v_status(c_STAT_DRAIN_TO_HI downto c_STAT_DRAIN_TO_LO) :=
             i_status.drain_timeout_mask;
         v_status(c_STAT_SEQ_ERR_HI downto c_STAT_SEQ_ERR_LO) :=
@@ -640,6 +665,8 @@ begin
         v_ext2(c_STAT7_MASKED_SLOPE_DROP) := i_status.masked_slope_drop_any;
         v_ext2(c_STAT7_FS_COLL_RISE_HI downto c_STAT7_FS_COLL_RISE_LO) :=
             std_logic_vector(i_status.rise_face_start_collapsed_count(3 downto 0));
+        v_ext2(c_STAT7_REG12_FAULT_HI downto c_STAT7_REG12_FAULT_LO) :=
+            s_reg12_fault_mask_r;
         v_ext2(c_STAT7_FS_COLL_FALL_HI downto c_STAT7_FS_COLL_FALL_LO) :=
             std_logic_vector(i_status.fall_face_start_collapsed_count(3 downto 0));
         v_ext2(c_STAT7_INIT_COALESCE_HI downto c_STAT7_INIT_COALESCE_LO) :=
@@ -716,7 +743,8 @@ begin
     -- Seven independent interrupt identities. Sticky diagnostics are converted
     -- to one event on their inactive-to-active transition.
     s_irq_level(0) <= i_status.pipeline_overrun or i_status.err_fatal;
-    s_irq_level(1) <= fn_any(i_status.chip_error_mask);
+    s_irq_level(1) <= fn_any(i_status.chip_error_mask)
+        or fn_any(s_reg12_fault_mask_r);
     s_irq_level(2) <= fn_any(i_status.drain_timeout_mask)
         or fn_any(i_status.reg_timeout_mask)
         or i_status.err_read_timeout
