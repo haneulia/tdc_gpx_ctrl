@@ -196,7 +196,7 @@ architecture rtl of tdc_gpx_bus_phy is
     -- =========================================================================
     -- Tick counter
     -- In ST_READ: runs 1 .. i_bus_ticks-1. ST_WRITE starts at 0 after its
-    -- setup guard. Tick 0 (Phase A) is consumed at IDLE entry.
+    -- setup guard. Tick 0 (Phase A) is consumed at request launch.
     -- =========================================================================
     signal s_tick_r          : unsigned(2 downto 0) := (others => '0');
 
@@ -320,7 +320,8 @@ begin
     --   ST_IDLE captures a complete request into local registers.
     --   ST_REQUEST/TURNAROUND launch tick 0 (Phase A: ADR setup).
     --   ST_READ ticks = 1 .. i_bus_ticks-1
-    --   ST_WRITE_SETUP and ST_WRITE tick 0 provide guarded setup phases;
+    --   ST_WRITE_SETUP holds two ticks and ST_WRITE tick 0 adds the final
+    --   guarded setup phase;
     --   ST_WRITE then runs through tick i_bus_ticks-1 and enters
     --   ST_WRITE_HOLD for three guarded hold phases.
     --
@@ -567,10 +568,10 @@ begin
                     -- ---------------------------------------------------------
                     -- WRITE setup guard
                     --
-                    -- Phase A pins are already registered. Hold them for one
-                    -- additional phase interval before ST_WRITE tick 0. WRN
-                    -- can therefore fall only after three phase intervals
-                    -- (15 ns at 200 MHz, div=1).
+                    -- Phase A pins are already registered. Hold them for two
+                    -- additional phase intervals before ST_WRITE tick 0.
+                    -- WRN can therefore fall only after four phase intervals
+                    -- (20 ns at 200 MHz, div=1).
                     -- ---------------------------------------------------------
                     when ST_WRITE_SETUP =>
                         s_wrn_r   <= '1';
@@ -579,8 +580,12 @@ begin
                         s_busy_r  <= '1';
 
                         if i_tick_en = '1' then
-                            s_tick_r <= to_unsigned(0, 3);
-                            s_state_r <= ST_WRITE;
+                            if s_tick_r >= to_unsigned(1, s_tick_r'length) then
+                                s_tick_r  <= to_unsigned(0, s_tick_r'length);
+                                s_state_r <= ST_WRITE;
+                            else
+                                s_tick_r <= s_tick_r + 1;
+                            end if;
                         end if;
 
                     -- ---------------------------------------------------------
@@ -686,7 +691,7 @@ begin
                     -- Entered with Phase A pins already set at
                     -- ST_REQUEST/TURNAROUND. s_tick_r starts at 0 so the first
                     -- tick_en keeps WRN high. Together with ST_WRITE_SETUP,
-                    -- Phase L starts after three complete phase intervals.
+                    -- Phase L starts after four complete phase intervals.
                     --
                     -- D-bus = drive throughout (FPGA outputs write data)
                     -- OEN = '1' throughout [INV-1]

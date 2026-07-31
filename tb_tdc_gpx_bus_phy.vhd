@@ -903,12 +903,12 @@ begin
         wait_not_busy(c_TIMEOUT, v_found);
         wait_clk(2);
 
-        if s_last_wr_setup >= 5 ns then
-            pr_pass("[13] tS-DW (WRITE data setup) = "
-                    & time'image(s_last_wr_setup) & " >= 5 ns");
+        if s_last_wr_setup >= 20 ns then
+            pr_pass("[13] board-safe WRITE data setup guard = "
+                    & time'image(s_last_wr_setup) & " >= 20 ns");
         else
-            pr_fail("[13] tS-DW (WRITE data setup) = "
-                    & time'image(s_last_wr_setup) & " < 5 ns", v_fail);
+            pr_fail("[13] board-safe WRITE data setup guard = "
+                    & time'image(s_last_wr_setup) & " < 20 ns", v_fail);
         end if;
 
         if s_last_wr_hold >= 4 ns then
