@@ -315,7 +315,7 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 | `g_POWERUP_TIME_NS` | 240 ns | GPX power-up 단계 | 데이터시트/보드 reset |
 | `g_RECOVERY_TIME_NS` | 40 ns | ALU 후 recovery | Shot 간격 예산 |
 | `g_ALU_PULSE_TIME_NS` | 20 ns | ALU trigger 폭 | GPX timing |
-| `g_BUS_READ_PERIOD_MIN_TIME_NS` | 25 ns | CSR와 PHY가 공유하는 최소 read initiation 시간 | GPX 40 MHz 한계 |
+| `g_BUS_READ_PERIOD_MIN_TIME_NS` | 25 ns | CSR와 PHY가 공유하는 RDN low에서 FPGA 입력 캡처까지의 최소 시간 창 | GPX `tV-DR`, FPGA pad 지연, PCB skew 예산 |
 | `g_BUS_IDLE_STABLE_TIME_NS` | 20,480 ns | bus-fatal 후 자동 복구 전 연속 idle 시간 | PCB 안정성/복구 지연 |
 | `g_DRAIN_MARGIN_TIME_NS` | 6,000 ns | TDC drain watchdog의 range 이후 여유 | 200 MHz, bus_clk_div=2, bus_ticks=5, 8 STOP x 7 Return 기준; 더 느린 bus 설정은 재검증 필요 |
 | `g_ERR_DEBOUNCE_TIME_NS` | 25 ns | ErrFlag debounce 시간 | board noise |

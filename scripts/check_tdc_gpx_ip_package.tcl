@@ -79,6 +79,10 @@ set unified_abstraction_definition \
     [ipx::open_abstraction_definition $unified_rtl_xml]
 set core [ipx::open_core $component]
 
+if {[get_property core_revision $core] != 5} {
+    error "Unexpected TDC-GPX core revision: [get_property core_revision $core]"
+}
+
 proc require_one {objects label} {
     if {[llength $objects] != 1} {
         error "Expected one $label, found [llength $objects]"
@@ -332,7 +336,13 @@ foreach {label command expected} [list \
     invalid_axis_faster \
         {::tdc_gpx_xgui::validate_clocks 200 150 ASYNC} false \
     invalid_sync_split \
-        {::tdc_gpx_xgui::validate_clocks 150 200 SYNC} false] {
+        {::tdc_gpx_xgui::validate_clocks 150 200 SYNC} false \
+    read_capture_default \
+        {::tdc_gpx_xgui::validate_time_limit 25 200 253 {Bus read capture window}} true \
+    read_capture_user_max \
+        {::tdc_gpx_xgui::validate_time_limit 140 200 253 {Bus read capture window}} true \
+    read_capture_capacity_overflow \
+        {::tdc_gpx_xgui::validate_time_limit 1270 200 253 {Bus read capture window}} false] {
     lassign [uplevel #0 $command] valid message
     if {$valid ne $expected} {
         error "$label expected valid=$expected, got valid=$valid: $message"

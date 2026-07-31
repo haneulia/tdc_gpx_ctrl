@@ -137,7 +137,7 @@ set_property display_name {TDC-GPX Multi-chip Acquisition Controller} $core
 set_property description \
     {Configurable one-to-four-chip TDC-GPX acquisition with selectable local or unified CSR ownership, rising/falling lane processing, dual VDMA-ready AXI4-Stream outputs, diagnostics, and interrupts.} \
     $core
-set_property core_revision 4 $core
+set_property core_revision 5 $core
 set_property supported_families {zynq Production} $core
 
 proc tdc_ensure_long {
@@ -271,7 +271,7 @@ foreach {name value maximum display_name description} {
     g_POWERUP_TIME_NS 240 327675000 {Power-up wait (ns)} {TDC-domain wait after reset; local clocks are rounded up.}
     g_RECOVERY_TIME_NS 40 1000000 {Recovery wait (ns)} {TDC-domain recovery wait after a retry or reinitialization request.}
     g_ALU_PULSE_TIME_NS 20 1000000 {ALU trigger pulse (ns)} {TDC-domain ALUTRIGGER pulse width.}
-    g_BUS_READ_PERIOD_MIN_TIME_NS 25 140 {Minimum bus read period (ns)} {Converted count must fit the seven-clock bus scheduler limit.}
+    g_BUS_READ_PERIOD_MIN_TIME_NS 25 140 {Minimum bus read capture window (ns)} {Minimum RDN-low-to-input-capture interval. Runtime divider and ticks are clamped together; the converted count must fit the div=63/ticks=7 scheduler capacity.}
     g_BUS_IDLE_STABLE_TIME_NS 20480 2147483647 {Bus idle stable time (ns)} {Idle qualification before a new command sequence.}
     g_DRAIN_MARGIN_TIME_NS 6000 1000000 {Drain margin (ns)} {Extra TDC-domain allowance while draining IFIFO data. Return 7 at the default 200 MHz TDC timing requires the 6 us verified budget.}
     g_ERR_DEBOUNCE_TIME_NS 25 1000000 {Error debounce (ns)} {AXIS-domain error qualification time.}

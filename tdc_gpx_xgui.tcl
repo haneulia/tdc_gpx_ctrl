@@ -245,7 +245,7 @@ proc validate_PARAM_VALUE.g_POWERUP_TIME_NS {PARAM_VALUE.g_POWERUP_TIME_NS PARAM
   return [tdc_set_time_error ${PARAM_VALUE.g_POWERUP_TIME_NS} [get_property value ${PARAM_VALUE.g_POWERUP_TIME_NS}] [get_property value ${PARAM_VALUE.g_TDC_CLK_MHZ}] 65535 {Power-up time}]
 }
 proc validate_PARAM_VALUE.g_BUS_READ_PERIOD_MIN_TIME_NS {PARAM_VALUE.g_BUS_READ_PERIOD_MIN_TIME_NS PARAM_VALUE.g_TDC_CLK_MHZ} {
-  return [tdc_set_time_error ${PARAM_VALUE.g_BUS_READ_PERIOD_MIN_TIME_NS} [get_property value ${PARAM_VALUE.g_BUS_READ_PERIOD_MIN_TIME_NS}] [get_property value ${PARAM_VALUE.g_TDC_CLK_MHZ}] 7 {Bus read period}]
+  return [tdc_set_time_error ${PARAM_VALUE.g_BUS_READ_PERIOD_MIN_TIME_NS} [get_property value ${PARAM_VALUE.g_BUS_READ_PERIOD_MIN_TIME_NS}] [get_property value ${PARAM_VALUE.g_TDC_CLK_MHZ}] 253 {Bus read capture window}]
 }
 proc validate_PARAM_VALUE.g_BUS_IDLE_STABLE_TIME_NS {PARAM_VALUE.g_BUS_IDLE_STABLE_TIME_NS PARAM_VALUE.g_TDC_CLK_MHZ} {
   return [tdc_set_time_error ${PARAM_VALUE.g_BUS_IDLE_STABLE_TIME_NS} [get_property value ${PARAM_VALUE.g_BUS_IDLE_STABLE_TIME_NS}] [get_property value ${PARAM_VALUE.g_TDC_CLK_MHZ}] 16777215 {Bus idle stable time}]
