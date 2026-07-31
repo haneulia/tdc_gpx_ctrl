@@ -320,12 +320,13 @@ begin
 
         -- [1] Local bus_phy clamp matrix samples. These prove the leaf
         -- boundary still protects GPX timing even if CSR policy is bypassed.
-        check_dyn_read_low("[1a] div=0,ticks=0 local clamp", 0, 0, 15 ns);
-        check_dyn_read_low("[1b] div=1,ticks=4 local clamp", 1, 4, 15 ns);
-        check_dyn_read_low("[1c] div=2,ticks=3 local clamp", 2, 3, 20 ns);
-        check_dyn_read_low("[1d] div=3,ticks=4 legal timing", 3, 4, 30 ns);
+        check_dyn_read_low("[1a] div=0,ticks=0 local clamp", 0, 0, 25 ns);
+        check_dyn_read_low("[1b] div=1,ticks=4 local clamp", 1, 4, 25 ns);
+        check_dyn_read_low("[1c] div=2,ticks=3 local clamp", 2, 3, 30 ns);
+        check_dyn_read_low("[1d] div=3,ticks=4 local clamp", 3, 4, 45 ns);
 
-        -- [2] div=1,ticks=5 burst READ II must be 25 ns at 200 MHz.
+        -- [2] div=1,ticks=5 is clamped to ticks=7. Burst READ II is 35 ns
+        -- while the RDN-low-to-IOB-capture window is the required 25 ns.
         s_dyn_div       <= 1;
         s_dyn_ticks     <= to_unsigned(5, 3);
         wait until rising_edge(s_clk);
@@ -338,8 +339,8 @@ begin
         wait until s_dyn_rdn = '1';
         wait until s_dyn_rdn = '0';
         v_fall_2 := now;
-        assert v_fall_2 - v_fall_1 = 25 ns
-            report "div=1,ticks=5 burst READ II is not 25 ns"
+        assert v_fall_2 - v_fall_1 = 35 ns
+            report "div=1,ticks=5 clamp did not produce 35 ns burst READ II"
             severity failure;
         s_dyn_req_burst <= '0';
         s_dyn_req_valid <= '0';

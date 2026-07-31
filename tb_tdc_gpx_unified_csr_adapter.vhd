@@ -371,7 +371,8 @@ begin
 
         -- Configure deliberately out-of-range values to prove compatibility
         -- clamps: absent chip mask -> first present, 9 stops -> build max,
-        -- div1/ticks4 -> ticks5, zero columns -> one.
+        -- div1/ticks4 -> ticks7 for the 25 ns capture policy,
+        -- zero columns -> one.
         wait until falling_edge(s_cfg_clk);
         s_bus   <= fn_bus(1, 4, 0, 0, 0);
         s_start <= x"00012345";
@@ -399,7 +400,7 @@ begin
             severity failure;
         assert s_cfg_out.active_chip_mask = "0001"
             and s_cfg_out.bus_clk_div = 1
-            and s_cfg_out.bus_ticks = 5
+            and s_cfg_out.bus_ticks = 7
             and s_cfg_out.stops_per_chip = 8
             and s_cfg_out.cols_per_face = 1
             and s_cfg_out.max_range_5ns_ticks = 500

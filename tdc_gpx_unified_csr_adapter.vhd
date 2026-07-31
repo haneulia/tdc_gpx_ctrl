@@ -184,14 +184,13 @@ architecture rtl of tdc_gpx_unified_csr_adapter is
             main_word(c_MC_STOPDIS_HI downto c_MC_STOPDIS_LO);
 
         v_div := unsigned(bus_word(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO));
-        if v_div < to_unsigned(c_BUS_CLK_DIV_MIN, v_div'length) then
-            v_div := to_unsigned(c_BUS_CLK_DIV_MIN, v_div'length);
+        if v_div < to_unsigned(fn_bus_min_div_for_capture(
+                g_BUS_READ_PERIOD_MIN_CLKS), v_div'length) then
+            v_div := to_unsigned(fn_bus_min_div_for_capture(
+                g_BUS_READ_PERIOD_MIN_CLKS), v_div'length);
         end if;
-        if v_div = to_unsigned(1, v_div'length) then
-            v_ticks_min := to_unsigned(g_BUS_READ_PERIOD_MIN_CLKS, 3);
-        else
-            v_ticks_min := to_unsigned(c_BUS_TICKS_MIN, 3);
-        end if;
+        v_ticks_min := to_unsigned(fn_bus_min_ticks_for_capture(
+            to_integer(v_div), g_BUS_READ_PERIOD_MIN_CLKS), 3);
         v_ticks := unsigned(bus_word(c_BT_TICKS_HI downto c_BT_TICKS_LO));
         if v_ticks < v_ticks_min then
             v_ticks := v_ticks_min;
@@ -313,8 +312,8 @@ begin
     assert g_PRESENT_CHIP_MASK /= (g_PRESENT_CHIP_MASK'range => '0')
         report "g_PRESENT_CHIP_MASK must enable at least one GPX chip"
         severity failure;
-    assert g_BUS_READ_PERIOD_MIN_CLKS <= 7
-        report "g_BUS_READ_PERIOD_MIN_CLKS must fit the 3-bit bus-ticks field"
+    assert g_BUS_READ_PERIOD_MIN_CLKS <= c_BUS_CAPTURE_MAX_CLKS
+        report "g_BUS_READ_PERIOD_MIN_CLKS exceeds div=63/ticks=7 capacity"
         severity failure;
 
     -- Indexed image staging is local to the unified CSR clock domain.

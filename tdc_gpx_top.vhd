@@ -753,8 +753,8 @@ begin
         report "tdc_gpx_top: TDC-domain physical timing exceeds a 16-bit local counter"
         severity failure;
 
-    assert c_TDC_BUS_READ_PERIOD_MIN_CLKS <= 7
-        report "tdc_gpx_top: bus read minimum exceeds the 3-bit BUS_TICKS field"
+    assert c_TDC_BUS_READ_PERIOD_MIN_CLKS <= c_BUS_CAPTURE_MAX_CLKS
+        report "tdc_gpx_top: bus read capture minimum exceeds div=63/ticks=7 capacity"
         severity failure;
 
     assert c_TDC_BUS_IDLE_STABLE_CLKS <= 16777215

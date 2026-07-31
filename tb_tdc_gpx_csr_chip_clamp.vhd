@@ -11,9 +11,9 @@
 -- read CTL1 back and confirm the written raw value persists in the CSR
 -- register:
 --
---   div >= c_BUS_CLK_DIV_MIN (=1)
---   if div = 1, ticks >= c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS (=5)
---   else        ticks >= c_BUS_TICKS_MIN (=4)
+--   capture clocks = ((ticks - 3) * div + 1)
+--   capture clocks >= c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS (=5)
+--   div is raised only when the capture window cannot fit at ticks=7.
 --
 -- BUS_TIMING register layout (CTL1 @ 0x04):
 --   [5:0]  bus_clk_div
@@ -288,15 +288,15 @@ begin
         -- ---------------------------------------------------------------------
         -- Clamp matrix
         -- ---------------------------------------------------------------------
-        check_clamp("[c01] div=0,ticks=4", 0, 4, 1, 5);  -- div clamp -> 1, ticks_min=5
-        check_clamp("[c02] div=1,ticks=3", 1, 3, 1, 5);  -- ticks clamp at div=1
-        check_clamp("[c03] div=1,ticks=4", 1, 4, 1, 5);  -- C01 contract: ticks=4 illegal at div=1
-        check_clamp("[c04] div=1,ticks=5", 1, 5, 1, 5);  -- legal boundary
+        check_clamp("[c01] div=0,ticks=4", 0, 4, 1, 7);  -- div clamp -> 1, ticks_min=7
+        check_clamp("[c02] div=1,ticks=3", 1, 3, 1, 7);  -- 25 ns capture policy
+        check_clamp("[c03] div=1,ticks=4", 1, 4, 1, 7);
+        check_clamp("[c04] div=1,ticks=5", 1, 5, 1, 7);
         check_clamp("[c05] div=1,ticks=7", 1, 7, 1, 7);  -- legal, max
-        check_clamp("[c06] div=2,ticks=3", 2, 3, 2, 4);  -- ticks clamp at div=2
-        check_clamp("[c07] div=2,ticks=4", 2, 4, 2, 4);  -- legal boundary
+        check_clamp("[c06] div=2,ticks=3", 2, 3, 2, 5);  -- ticks clamp at div=2
+        check_clamp("[c07] div=2,ticks=4", 2, 4, 2, 5);
         check_clamp("[c08] div=2,ticks=5", 2, 5, 2, 5);  -- default-equivalent
-        check_clamp("[c09] div=3,ticks=4", 3, 4, 3, 4);  -- legal
+        check_clamp("[c09] div=3,ticks=4", 3, 4, 3, 5);
         check_clamp("[c10] div=8,ticks=7", 8, 7, 8, 7);  -- legal, large div
 
         -- Exhaustive illegal/legal matrix for the timing-sensitive range.
@@ -304,17 +304,16 @@ begin
         -- ticks=0..7 covers every encodable 3-bit BUS_TICKS value.
         for div_idx in 0 to 5 loop
             for ticks_idx in 0 to 7 loop
-                if div_idx < c_BUS_CLK_DIV_MIN then
-                    v_exp_div := c_BUS_CLK_DIV_MIN;
+                if div_idx < fn_bus_min_div_for_capture(
+                        c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS) then
+                    v_exp_div := fn_bus_min_div_for_capture(
+                        c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS);
                 else
                     v_exp_div := div_idx;
                 end if;
 
-                if v_exp_div = 1 then
-                    v_exp_ticks_min := c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS;
-                else
-                    v_exp_ticks_min := c_BUS_TICKS_MIN;
-                end if;
+                v_exp_ticks_min := fn_bus_min_ticks_for_capture(
+                    v_exp_div, c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS);
 
                 if ticks_idx < v_exp_ticks_min then
                     v_exp_ticks := v_exp_ticks_min;
@@ -328,7 +327,7 @@ begin
             end loop;
         end loop;
 
-        -- Large divider edge: all ticks still use the absolute ticks>=4 rule.
+        -- Large divider edge resolves to the absolute ticks>=4 floor.
         for ticks_idx in 0 to 7 loop
             if ticks_idx < c_BUS_TICKS_MIN then
                 v_exp_ticks := c_BUS_TICKS_MIN;

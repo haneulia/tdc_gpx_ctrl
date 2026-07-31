@@ -251,8 +251,14 @@ architecture rtl of tdc_gpx_csr_chip is
     -- =========================================================================
     signal s_div_clamped  : unsigned(5 downto 0);
     signal s_ticks_min    : unsigned(2 downto 0);
+    constant c_CAPTURE_DIV_MIN : natural := fn_bus_min_div_for_capture(
+        g_BUS_READ_PERIOD_MIN_CLKS);
 
 begin
+
+    assert g_BUS_READ_PERIOD_MIN_CLKS <= c_BUS_CAPTURE_MAX_CLKS
+        report "tdc_gpx_csr_chip: capture minimum exceeds div=63/ticks=7 capacity"
+        severity failure;
 
     -- =========================================================================
     -- [1] Canonical source-level my_axil_csr32_top (32 CTL, 32 STAT)
@@ -810,18 +816,19 @@ begin
     -- =========================================================================
 
     -- Bus timing clamping ---------------------------------------------------
-    -- bus_clk_div: clamp >= c_BUS_CLK_DIV_MIN.
+    -- bus_clk_div: raise it when the requested capture window cannot fit in
+    -- the 3-bit ticks field even at ticks=7.
     s_div_clamped <= unsigned(s_ctl1_out(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
                      when unsigned(s_ctl1_out(c_BT_CLK_DIV_HI downto c_BT_CLK_DIV_LO))
-                          >= c_BUS_CLK_DIV_MIN
-                     else to_unsigned(c_BUS_CLK_DIV_MIN, 6);
+                          >= c_CAPTURE_DIV_MIN
+                     else to_unsigned(c_CAPTURE_DIV_MIN, 6);
     o_bus_clk_div <= s_div_clamped;
 
-    -- bus_ticks: absolute min is 4. At 200 MHz, div=1 also needs ticks>=5
-    -- so the burst READ II stays >=25 ns (GPX datasheet 40 MHz max).
-    s_ticks_min   <= to_unsigned(g_BUS_READ_PERIOD_MIN_CLKS, 3)
-                     when s_div_clamped = to_unsigned(1, 6)
-                     else to_unsigned(c_BUS_TICKS_MIN, 3);
+    -- Apply the same capture-window formula used by bus_phy. At the default
+    -- 200 MHz / 25 ns policy this maps div=1 to ticks=7 and div=2 to ticks=5.
+    s_ticks_min   <= to_unsigned(fn_bus_min_ticks_for_capture(
+                         to_integer(s_div_clamped),
+                         g_BUS_READ_PERIOD_MIN_CLKS), 3);
     o_bus_ticks   <= unsigned(s_ctl1_out(c_BT_TICKS_HI downto c_BT_TICKS_LO))
                      when unsigned(s_ctl1_out(c_BT_TICKS_HI downto c_BT_TICKS_LO))
                           >= s_ticks_min

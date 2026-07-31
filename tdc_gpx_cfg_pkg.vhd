@@ -330,23 +330,38 @@ package tdc_gpx_cfg_pkg is
     --   At the fastest div=1 profile this gives 15 ns setup and 15 ns hold,
     --   leaving explicit pad/PCB skew margin beyond the 5 ns/4 ns minima.
     --
-    -- Combined constraint: (ticks - 3) * div >= 2
-    --   div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
+    -- Board-safe capture policy:
+    --   ((ticks - 3) * div + 1) >= capture_min_clks.
+    --   The 25 ns default at 200 MHz means capture_min_clks=5. This reserves
+    --   timing for the GPX 11.8 ns output delay, FPGA RDN/data-pad paths, and
+    --   PCB skew rather than treating the full 3.2 ns remainder as free.
     --
     -- Legal combination table (T_clk = 5 ns):
     --   div  ticks  capture   tPW-RL   tPW-RH(burst)  rate      status
     --   ---  -----  --------  -------  -------------  --------  --------
-    --    1     4     10 ns     10 ns    10 ns          50 MHz    ILLEGAL (tV-DR)
-    --    1     5     15 ns     15 ns    10 ns          40 MHz    OK (fastest)
-    --    1     6     25 ns     20 ns    10 ns          33 MHz    OK
-    --    1     7     35 ns     25 ns    10 ns          29 MHz    OK
-    --    2     4     15 ns     20 ns    20 ns          25 MHz    OK
+    --    1     4     10 ns     10 ns    10 ns          50 MHz    ILLEGAL
+    --    1     5     15 ns     15 ns    10 ns          40 MHz    ILLEGAL
+    --    1     6     20 ns     20 ns    10 ns          33 MHz    ILLEGAL
+    --    1     7     25 ns     25 ns    10 ns          29 MHz    OK
+    --    2     4     15 ns     20 ns    20 ns          25 MHz    ILLEGAL
     --    2     5     25 ns     30 ns    20 ns          20 MHz    OK (default)
-    --    3     4     20 ns     30 ns    30 ns          17 MHz    OK
+    --    3     4     20 ns     30 ns    30 ns          17 MHz    ILLEGAL
+    --    3     5     35 ns     45 ns    30 ns          13 MHz    OK
+    --    4     4     25 ns     40 ns    40 ns          13 MHz    OK
     --    2     7     45 ns     50 ns    20 ns          14 MHz    OK (slowest 3-bit)
     -- =========================================================================
     constant c_BUS_TICKS_MIN        : natural := 4;     -- absolute minimum
-    constant c_BUS_CLK_DIV_MIN      : natural := 1;     -- div=1 allowed when ticks>=5 at 200 MHz
+    constant c_BUS_CLK_DIV_MIN      : natural := 1;
+    constant c_BUS_CAPTURE_MAX_CLKS : natural := (7 - 3) * 63 + 1;
+
+    function fn_bus_min_ticks_for_capture(
+        div_value        : natural;
+        capture_min_clks : positive
+    ) return natural;
+
+    function fn_bus_min_div_for_capture(
+        capture_min_clks : positive
+    ) return natural;
     -- =========================================================================
     -- Init values
     -- =========================================================================
@@ -395,3 +410,47 @@ package tdc_gpx_cfg_pkg is
     );
 
 end package tdc_gpx_cfg_pkg;
+
+package body tdc_gpx_cfg_pkg is
+
+    function fn_bus_min_div_for_capture(
+        capture_min_clks : positive
+    ) return natural is
+        variable v_div : natural;
+    begin
+        -- ticks=7 provides four divided intervals plus the final IOB clock.
+        -- Raise div when a requested physical window cannot fit in 3-bit ticks.
+        v_div := (capture_min_clks + 2) / 4;
+        if v_div < c_BUS_CLK_DIV_MIN then
+            return c_BUS_CLK_DIV_MIN;
+        elsif v_div > 63 then
+            return 63;
+        else
+            return v_div;
+        end if;
+    end function fn_bus_min_div_for_capture;
+
+    function fn_bus_min_ticks_for_capture(
+        div_value        : natural;
+        capture_min_clks : positive
+    ) return natural is
+        variable v_div : positive := 1;
+    begin
+        if div_value > 0 then
+            v_div := div_value;
+        end if;
+
+        -- Explicit bounded comparisons avoid synthesizing a variable divider.
+        -- Capture clocks = (ticks - 3) * div + 1, ticks in [4, 7].
+        if capture_min_clks <= v_div + 1 then
+            return 4;
+        elsif capture_min_clks <= (2 * v_div) + 1 then
+            return 5;
+        elsif capture_min_clks <= (3 * v_div) + 1 then
+            return 6;
+        else
+            return 7;
+        end if;
+    end function fn_bus_min_ticks_for_capture;
+
+end package body tdc_gpx_cfg_pkg;

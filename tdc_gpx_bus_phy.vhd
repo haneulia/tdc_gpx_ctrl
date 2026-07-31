@@ -17,11 +17,13 @@
 --   chip_ctrl receives this via AXI-Stream slave (through skid buffer in top).
 --
 -- Bus Timing (per deep_analysis section 12.3):
---   1 transaction = locally clamped i_bus_ticks ticks.
+--   Once Phase A launches, 1 transaction = locally clamped i_bus_ticks ticks.
+--   A newly accepted request first crosses one registered-request phase; burst
+--   reads restart inside ST_READ and therefore do not repeat that overhead.
 --   C01 contract: csr_chip and bus_phy receive the same clock-derived
---   minimum. At 200 MHz, div=1 requires ticks>=5 so the burst initiation
---   interval is not faster than the GPX 40 MHz readout limit.
---   For div>=2 the legacy minimum ticks>=4 is retained.
+--   minimum capture window. At 200 MHz the 25 ns default requires div=1,
+--   ticks=7 or div=2, ticks=5; every runtime combination is clamped by the
+--   same package function used by both CSR ownership modes.
 --   Phase A (1 tick):                address setup, strobe high
 --   Phase L (i_bus_ticks - 2 ticks): strobe low (RDN or WRN)
 --   Phase H (1 tick):                strobe high, transaction complete
@@ -45,16 +47,16 @@
 --   tV-DR constraint (data valid <= 11.8 ns after RDN low):
 --     ticks=3: 5 ns  => VIOLATION (sample_en coincides with RDN low)
 --     ticks=4, div=1: 10 ns < 11.8 ns => VIOLATION
---     ticks=4, div=2: 15 ns => OK (3.2 ns margin)
---     ticks=5, div=1: 15 ns => OK (3.2 ns margin, fastest: 40 MHz)
+--     ticks=4, div=2: 15 ns => device-only timing passes, board policy fails
+--     ticks=5, div=1: 15 ns => device-only timing passes, board policy fails
 --     ticks=5, div=2: 25 ns => OK (default)
 --
 --   Burst tPW-RH (RDN high between back-to-back reads):
 --     Burst restarts at tick 0 (Phase A gap), so RDN high = 2 ticks.
 --     div=1: 2*5 = 10 ns >= 6 ns OK.
 --
---   CSR combined constraint: (ticks-3)*div >= 2
---     div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
+--   Board-safe constraint:
+--     ((ticks-3)*div + 1) >= g_BUS_READ_PERIOD_MIN_CLKS.
 --   See tdc_gpx_cfg_pkg for legal combination table.
 --
 -- OEN mode contract:
@@ -168,16 +170,10 @@ architecture rtl of tdc_gpx_bus_phy is
     constant c_OEN_PULLUP_OR_NC      : boolean := g_OEN_MODE = "PULLUP_OR_NOT_CONNECTED";
 
     function fn_min_ticks_for_div(div_value : unsigned(5 downto 0)) return unsigned is
-        variable v_min_ticks : natural := c_BUS_TICKS_MIN;
+        variable v_min_ticks : natural;
     begin
-        if to_integer(div_value) <= 1
-           and g_BUS_READ_PERIOD_MIN_CLKS > c_BUS_TICKS_MIN then
-            v_min_ticks := g_BUS_READ_PERIOD_MIN_CLKS;
-        end if;
-
-        if v_min_ticks > 7 then
-            v_min_ticks := 7;
-        end if;
+        v_min_ticks := fn_bus_min_ticks_for_capture(
+            to_integer(div_value), g_BUS_READ_PERIOD_MIN_CLKS);
 
         return to_unsigned(v_min_ticks, 3);
     end function fn_min_ticks_for_div;
@@ -187,6 +183,7 @@ architecture rtl of tdc_gpx_bus_phy is
     -- =========================================================================
     type t_bus_state is (
         ST_IDLE,            -- bus idle, waiting for request
+        ST_REQUEST,         -- locally registered request, awaiting launch
         ST_READ,            -- read transaction (tick counter drives phases)
         ST_WRITE_SETUP,     -- extend ADR/DATA setup before WRN falls
         ST_WRITE,           -- write transaction (tick counter drives phases)
@@ -228,7 +225,6 @@ architecture rtl of tdc_gpx_bus_phy is
     attribute IOB of s_wrn_r      : signal is "TRUE";
     attribute IOB of s_oen_r      : signal is "TRUE";
     attribute IOB of s_d_out_r    : signal is "TRUE";
-    attribute IOB of s_d_tri_r    : signal is "TRUE";
 
     -- =========================================================================
     -- Response
@@ -294,6 +290,10 @@ architecture rtl of tdc_gpx_bus_phy is
 
 begin
 
+    assert g_BUS_READ_PERIOD_MIN_CLKS <= c_BUS_CAPTURE_MAX_CLKS
+        report "bus_phy: capture minimum exceeds div=63/ticks=7 capacity"
+        severity failure;
+
     o_d     <= s_d_out_r;
     o_d_tri <= s_d_tri_r;
 
@@ -317,7 +317,8 @@ begin
     -- Main FSM
     --
     -- Transaction tick assignment:
-    --   IDLE/TURNAROUND acceptance on tick_en = tick 0 (Phase A: ADR setup)
+    --   ST_IDLE captures a complete request into local registers.
+    --   ST_REQUEST/TURNAROUND launch tick 0 (Phase A: ADR setup).
     --   ST_READ ticks = 1 .. i_bus_ticks-1
     --   ST_WRITE_SETUP and ST_WRITE tick 0 provide guarded setup phases;
     --   ST_WRITE then runs through tick i_bus_ticks-1 and enters
@@ -404,8 +405,8 @@ begin
                 case s_state_r is
 
                     -- ---------------------------------------------------------
-                    -- IDLE: wait for request
-                    -- Acceptance on tick_en IS tick 0 (Phase A).
+                    -- IDLE: wait for and register a complete request.
+                    -- No IOB-facing pin changes are launched in this state.
                     -- ---------------------------------------------------------
                     when ST_IDLE =>
                         s_read_phase_h_done_r <= '0';
@@ -444,97 +445,79 @@ begin
                                        integer'image(to_integer(i_bus_clk_div)) &
                                        ", ticks=" & integer'image(to_integer(i_bus_ticks)) & ")"
                                 severity warning;
+                            assert to_integer(i_bus_clk_div) >=
+                                   fn_bus_min_div_for_capture(g_BUS_READ_PERIOD_MIN_CLKS)
+                                report "bus_phy: bus divider cannot satisfy configured capture window"
+                                severity warning;
                             -- synthesis translate_on
-                            s_busy_r <= '1';
-
-                            if i_req_rw = '1' then
-                                -- ===== WRITE request =====
-                                if c_OEN_DYNAMIC_CONNECTED and i_oen_permanent = '1' then
-                                    -- [INV-7] WRITE forbidden during oen_permanent
-                                    -- synthesis translate_off
-                                    assert false
-                                        report "bus_phy: write request ignored (oen_permanent='1')"
-                                        severity warning;
-                                    -- synthesis translate_on
-                                    s_busy_r <= '0';
-
-                                elsif s_last_was_read_r = '1' then
-                                    -- [INV-6] Need turnaround: OEN='1' first
-                                    s_req_addr_r      <= i_req_addr;
-                                    s_req_wdata_r     <= i_req_wdata;
-                                    s_oen_r           <= '1';
-                                    s_turn_to_write_r <= '1';
-                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
-                                        s_bus_ticks_r <= i_bus_ticks;
-                                    else
-                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
-                                    end if;
-                                    s_axis_rw_r       <= '1';
-                                    s_axis_addr_r     <= i_req_addr;
-                                    s_state_r         <= ST_TURNAROUND;
-
+                            if i_req_rw = '1' and c_OEN_DYNAMIC_CONNECTED
+                               and i_oen_permanent = '1' then
+                                -- [INV-7] WRITE forbidden during oen_permanent.
+                                -- synthesis translate_off
+                                assert false
+                                    report "bus_phy: write request ignored (oen_permanent='1')"
+                                    severity warning;
+                                -- synthesis translate_on
+                            else
+                                -- Register the complete request before any
+                                -- IOB-facing pin changes. This removes the
+                                -- chip-controller-to-IOB combinational path.
+                                s_req_addr_r   <= i_req_addr;
+                                s_req_wdata_r  <= i_req_wdata;
+                                s_req_burst_r  <= i_req_burst;
+                                s_oen_perm_r   <= i_oen_permanent;
+                                s_axis_rw_r    <= i_req_rw;
+                                s_axis_addr_r  <= i_req_addr;
+                                if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
+                                    s_bus_ticks_r <= i_bus_ticks;
                                 else
-                                    -- Direct entry: Phase A (tick 0)
-                                    s_adr_r       <= i_req_addr;
+                                    s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
+                                end if;
+                                s_busy_r  <= '1';
+                                s_state_r <= ST_REQUEST;
+                            end if;
+                        end if;
+
+                    -- ---------------------------------------------------------
+                    -- Registered request launch
+                    --
+                    -- Requests enter this state through a local register bank.
+                    -- IOB-facing outputs therefore depend only on local state
+                    -- and registered request fields at the 200 MHz boundary.
+                    -- ---------------------------------------------------------
+                    when ST_REQUEST =>
+                        s_csn_r   <= '1';
+                        s_rdn_r   <= '1';
+                        s_wrn_r   <= '1';
+                        s_d_tri_r <= '1';
+                        s_oen_r   <= '1';
+                        s_busy_r  <= '1';
+
+                        if i_tick_en = '1' then
+                            if s_axis_rw_r = '1' then
+                                if s_last_was_read_r = '1' then
+                                    s_turn_to_write_r <= '1';
+                                    s_state_r         <= ST_TURNAROUND;
+                                else
+                                    s_adr_r       <= s_req_addr_r;
                                     s_csn_r       <= '0';
-                                    s_oen_r       <= '1';           -- [INV-1]
-                                    s_d_out_r     <= i_req_wdata;
-                                    s_d_tri_r     <= '0';           -- drive D-bus
-                                    s_wrn_r       <= '1';           -- high during Phase A
-                                    -- Local clamp: enforce datasheet-derived legal timing.
-                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
-                                        s_bus_ticks_r <= i_bus_ticks;
-                                    else
-                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
-                                    end if;
-                                    s_axis_rw_r   <= '1';           -- WRITE
-                                    s_axis_addr_r <= i_req_addr;
-                                    -- ST_WRITE_SETUP plus ST_WRITE tick 0
-                                    -- keep WRN high for three phase intervals.
+                                    s_d_out_r     <= s_req_wdata_r;
+                                    s_d_tri_r     <= '0';
                                     s_tick_r      <= to_unsigned(0, 3);
                                     s_state_r     <= ST_WRITE_SETUP;
                                 end if;
-
                             else
-                                -- ===== READ request =====
                                 if s_last_was_write_r = '1' then
-                                    -- [INV-5] Need turnaround
-                                    s_req_addr_r      <= i_req_addr;
                                     s_turn_to_write_r <= '0';
-                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
-                                        s_bus_ticks_r <= i_bus_ticks;
-                                    else
-                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
-                                    end if;
-                                    s_req_burst_r     <= i_req_burst;
-                                    s_oen_perm_r      <= i_oen_permanent;
-                                    s_axis_rw_r       <= '0';
-                                    s_axis_addr_r     <= i_req_addr;
                                     s_state_r         <= ST_TURNAROUND;
-
                                 else
-                                    -- Direct entry: Phase A (tick 0)
-                                    s_adr_r       <= i_req_addr;
-                                    s_csn_r       <= '0';
+                                    s_adr_r   <= s_req_addr_r;
+                                    s_csn_r   <= '0';
                                     if c_OEN_DYNAMIC_CONNECTED then
-                                        s_oen_r   <= '0';           -- chip drives D-bus
-                                    else
-                                        s_oen_r   <= '1';           -- pull-up/NC: RDN gates output
+                                        s_oen_r <= '0';
                                     end if;
-                                    s_d_tri_r     <= '1';           -- FPGA Hi-Z [INV-2]
-                                    s_rdn_r       <= '1';           -- high during Phase A
-                                    -- Local clamp: enforce datasheet-derived legal timing.
-                                    if i_bus_ticks >= fn_min_ticks_for_div(i_bus_clk_div) then
-                                        s_bus_ticks_r <= i_bus_ticks;
-                                    else
-                                        s_bus_ticks_r <= fn_min_ticks_for_div(i_bus_clk_div);
-                                    end if;
-                                    s_req_burst_r <= i_req_burst;   -- latch burst
-                                    s_oen_perm_r  <= i_oen_permanent; -- latch oen
-                                    s_axis_rw_r   <= '0';           -- READ
-                                    s_axis_addr_r <= i_req_addr;
-                                    s_tick_r      <= to_unsigned(1, 3);
-                                    s_state_r     <= ST_READ;
+                                    s_tick_r  <= to_unsigned(1, 3);
+                                    s_state_r <= ST_READ;
                                 end if;
                             end if;
                         end if;
@@ -604,7 +587,7 @@ begin
                     -- READ transaction
                     --
                     -- Entered with Phase A pins already set (tick 0 consumed
-                    -- at IDLE/TURNAROUND). s_tick_r starts at 1.
+                    -- at ST_REQUEST/TURNAROUND). s_tick_r starts at 1.
                     --
                     -- Pin control uses independent if-statements so conditions
                     -- can overlap for small BUS_TICKS (e.g., BUS_TICKS=3:
@@ -701,7 +684,7 @@ begin
                     -- WRITE transaction
                     --
                     -- Entered with Phase A pins already set at
-                    -- IDLE/TURNAROUND. s_tick_r starts at 0 so the first
+                    -- ST_REQUEST/TURNAROUND. s_tick_r starts at 0 so the first
                     -- tick_en keeps WRN high. Together with ST_WRITE_SETUP,
                     -- Phase L starts after three complete phase intervals.
                     --
