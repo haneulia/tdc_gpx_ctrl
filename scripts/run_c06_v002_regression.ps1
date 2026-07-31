@@ -2,6 +2,7 @@ param(
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [switch]$RunProjectSyntax,
     [switch]$CsrModeOnly,
+    [switch]$TopWidth150200Only,
     [switch]$NoArchiveOnExit
 )
 
@@ -94,6 +95,8 @@ $vhdl2008Files = @(
     "$Hdl/tdc_gpx_atomic_snapshot_cdc.vhd",
     "$Hdl/tb_tdc_gpx_pkg.vhd",
     "$Hdl/tdc_gpx_bus_phy.vhd",
+    "$Hdl/tb_tdc_gpx_bus_phy.vhd",
+    "$Hdl/tb_tdc_gpx_bus_phy_c01_contract.vhd",
     "$Hdl/tdc_gpx_skid_buffer.vhd",
     "$Hdl/tdc_gpx_sync_fifo.vhd",
     "$Hdl/tdc_gpx_cell_builder.vhd",
@@ -165,6 +168,22 @@ try {
     Invoke-Checked "$Vivado/xvlog.bat" @("--relax", "-prj", $vlogPrj, "-log", "xvlog_c06_v002_$Stamp.log")
     Invoke-Checked "$Vivado/xvhdl.bat" @("--relax", "-prj", $vhdlPrj, "-log", "xvhdl_c06_v002_$Stamp.log")
 
+    Invoke-Xelab "tb_c06_v002_bus_phy_snap" "xelab_c06_v002_bus_phy_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_bus_phy"
+    Invoke-Checked "$Vivado/xsim.bat" @(
+        "tb_c06_v002_bus_phy_snap", "-runall",
+        "-log", "xsim_c06_v002_bus_phy_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_bus_phy_$Stamp.log" `
+        "ALL TESTS PASSED"
+
+    Invoke-Xelab "tb_c06_v002_bus_phy_c01_snap" "xelab_c06_v002_bus_phy_c01_$Stamp.log" `
+        "xil_defaultlib.tb_tdc_gpx_bus_phy_c01_contract"
+    Invoke-Checked "$Vivado/xsim.bat" @(
+        "tb_c06_v002_bus_phy_c01_snap", "-runall",
+        "-log", "xsim_c06_v002_bus_phy_c01_$Stamp.log")
+    Assert-SimLog "xsim_c06_v002_bus_phy_c01_$Stamp.log" `
+        "tb_tdc_gpx_bus_phy_c01_contract PASS"
+
     Invoke-Xelab "tb_c06_v002_unified_config_ctrl_snap" `
         "xelab_c06_v002_unified_config_ctrl_$Stamp.log" `
         "xil_defaultlib.tb_tdc_gpx_unified_config_ctrl"
@@ -173,6 +192,26 @@ try {
         "-log", "xsim_c06_v002_unified_config_ctrl_$Stamp.log")
     Assert-SimLog "xsim_c06_v002_unified_config_ctrl_$Stamp.log" `
         "TDC_GPX_UNIFIED_CONFIG_CTRL_PASS"
+
+    if ($TopWidth150200Only) {
+        foreach ($w in @(32, 64, 128)) {
+            $snap = "tb_c06_v002_top_int_axis150_tdc200_w${w}_snap"
+            $xelabLog = "xelab_c06_v002_top_int_axis150_tdc200_w${w}_$Stamp.log"
+            $xsimLog = "xsim_c06_v002_top_int_axis150_tdc200_w${w}_$Stamp.log"
+            Invoke-Xelab $snap $xelabLog `
+                "xil_defaultlib.tb_tdc_gpx_top_int" @(
+                    "G_TDATA_WIDTH=$w",
+                    "G_AXIS_CLK_MHZ=150.0",
+                    "G_TDC_CLK_MHZ=200.0"
+                )
+            Invoke-Checked "$Vivado/xsim.bat" @(
+                $snap, "-runall", "-log", $xsimLog)
+            Assert-SimLog $xsimLog `
+                "output streams emitted beats/tlast as expected - PASS"
+        }
+        Write-Host "TDC_GPX_TOP_WIDTH_150_200_MATRIX_PASS widths=32,64,128"
+        return
+    }
 
     if ($CsrModeOnly) {
         Write-Host "TDC_GPX_CSR_MODE_FOCUSED_PASS"

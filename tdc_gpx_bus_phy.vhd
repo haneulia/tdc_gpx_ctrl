@@ -16,6 +16,13 @@
 --   Handshake: tvalid held until tready='1'. One beat per transaction.
 --   chip_ctrl receives this via AXI-Stream slave (through skid buffer in top).
 --
+-- Request interface contract:
+--   i_req_valid is level-held until the response path accepts the request.
+--   A non-burst request is accepted only once while i_req_valid remains high;
+--   the requester must drive i_req_valid low for at least one i_clk edge before
+--   presenting the next independent request. Burst reads remain continuous
+--   inside ST_READ and use the live i_req_burst input to terminate the burst.
+--
 -- Bus Timing (per deep_analysis section 12.3):
 --   Once Phase A launches, 1 transaction = locally clamped i_bus_ticks ticks.
 --   A newly accepted request first crosses one registered-request phase; burst
@@ -248,6 +255,7 @@ architecture rtl of tdc_gpx_bus_phy is
     signal s_bus_ticks_r      : unsigned(2 downto 0) := "101";  -- default 5
     signal s_req_burst_r      : std_logic := '0';  -- latched at accept
     signal s_oen_perm_r       : std_logic := '0';  -- latched at accept
+    signal s_req_seen_r       : std_logic := '0';  -- rearm only after req_valid goes low
 
     -- Direction tracking for turnaround
     signal s_last_was_write_r : std_logic := '0';
@@ -364,10 +372,19 @@ begin
                 s_axis_tuser_r      <= (others => '0');
                 s_axis_rw_r         <= '0';
                 s_axis_addr_r       <= (others => '0');
+                s_req_seen_r        <= '0';
             else
                 -- Default: clear single-cycle pulses
                 s_rsp_valid_r <= '0';
                 s_sample_en   <= '0';
+
+                -- The request channel has no READY signal. Treat each
+                -- contiguous req_valid-high interval as one request so a
+                -- response/skid latency cannot replay the same transaction
+                -- when the FSM returns to IDLE.
+                if i_req_valid = '0' then
+                    s_req_seen_r <= '0';
+                end if;
 
                 -- AXI-Stream handshake: clear tvalid when tready accepted
                 if s_axis_tvalid_r = '1' and i_m_axis_tready = '1' then
@@ -433,10 +450,15 @@ begin
                         -- VHDL signal semantics mean the ST_IDLE check below
                         -- still sees the OLD value ('0'), causing spurious
                         -- re-acceptance of the same request.
-                        if i_req_valid = '1' and i_tick_en = '1'
+                        if i_req_valid = '1' and s_req_seen_r = '0'
+                           and i_tick_en = '1'
                            and s_rsp_valid_r = '0'
                            and s_rsp_pending_r = '0'
                            and s_axis_tvalid_r = '0' then  -- AXI-Stream response fully consumed
+                            -- Mark even a policy-rejected request as consumed.
+                            -- A retry is a new request and therefore requires
+                            -- req_valid to return low first.
+                            s_req_seen_r <= '1';
                             -- synthesis translate_off
                             assert c_OEN_DYNAMIC_CONNECTED or c_OEN_PULLUP_OR_NC
                                 report "bus_phy: unsupported g_OEN_MODE"

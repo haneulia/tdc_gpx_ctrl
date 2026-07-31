@@ -17,6 +17,7 @@
 --  [11] BUS_TICKS sweep (3, 4, 6, 7)
 --  [12] BUS_CLK_DIV sweep (2, 4)
 --  [13] Timing assertion (READ pulse/address + WRITE setup/hold)
+--  [14] Held req_valid is accepted once, then rearms after a low cycle
 --
 -- DUT instantiation uses Xilinx IOBUF via UNISIM.
 -- For non-Vivado simulators, a behavioral IOBUF model is needed.
@@ -130,6 +131,7 @@ architecture sim of tb_tdc_gpx_bus_phy is
     -- Monitor counters (shared verification signals)
     -- =========================================================================
     signal sv_rsp_count     : natural := 0;
+    signal sv_write_count   : natural := 0;
     signal sv_last_rdata    : std_logic_vector(c_DATA_W - 1 downto 0) := (others => '0');
 
     -- =========================================================================
@@ -303,6 +305,15 @@ begin
         end if;
     end process p_rsp_monitor;
 
+    p_write_monitor : process(s_clk)
+    begin
+        if rising_edge(s_clk) then
+            if s_chip_wr_done = '1' then
+                sv_write_count <= sv_write_count + 1;
+            end if;
+        end if;
+    end process p_write_monitor;
+
     -- =========================================================================
     -- Timing monitor: RDN pulse width
     -- =========================================================================
@@ -350,6 +361,7 @@ begin
         variable v_fail     : natural := 0;
         variable v_found    : boolean;
         variable v_rsp_cnt  : natural;
+        variable v_write_cnt : natural;
         variable v_expected : std_logic_vector(c_DATA_W - 1 downto 0);
 
         -- Local convenience procedures
@@ -554,6 +566,7 @@ begin
         end if;
 
         clear_req;
+        wait_clk(1);  -- rearm the level-held request channel
 
         -- But READ should work with oen_permanent
         pr_info("[5b] READ with oen_permanent='1' (should work)");
@@ -917,6 +930,56 @@ begin
         else
             pr_fail("[13] tH-DW (WRITE data hold) = "
                     & time'image(s_last_wr_hold) & " < 4 ns", v_fail);
+        end if;
+
+        -- =============================================================
+        -- [14] Held-valid request one-shot and rearm
+        --   Keep req_valid high well past the first write response. The
+        --   physical bus and response stream must each observe exactly one
+        --   transaction. A low interval then rearms the next request.
+        -- =============================================================
+        pr_info("[14] Held req_valid one-shot and low-cycle rearm");
+
+        v_rsp_cnt   := sv_rsp_count;
+        v_write_cnt := sv_write_count;
+        issue_req(rw => '1', addr => c_TDC_REG3,
+                  wdata => x"13579BD");
+        wait_rsp(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[14] first held-valid WRITE rsp timeout", v_fail);
+        end if;
+
+        -- Deliberately do not call clear_req here.
+        wait_clk(c_BUS_TICKS * 6);
+        if sv_rsp_count = v_rsp_cnt + 1
+           and sv_write_count = v_write_cnt + 1 then
+            pr_pass("[14] held req_valid produced exactly one WRITE/response");
+        else
+            pr_fail("[14] held req_valid replayed: rsp_delta="
+                    & nat_img(sv_rsp_count - v_rsp_cnt)
+                    & " write_delta=" & nat_img(sv_write_count - v_write_cnt),
+                    v_fail);
+        end if;
+
+        clear_req;
+        wait_clk(2);
+        issue_req(rw => '1', addr => c_TDC_REG3,
+                  wdata => x"2468ACE");
+        wait_rsp(c_TIMEOUT, v_found);
+        if not v_found then
+            pr_fail("[14] rearmed WRITE rsp timeout", v_fail);
+        else
+            clear_req;
+            wait_clk(2);
+            if sv_rsp_count = v_rsp_cnt + 2
+               and sv_write_count = v_write_cnt + 2 then
+                pr_pass("[14] req_valid low interval rearmed the next WRITE");
+            else
+                pr_fail("[14] rearm count mismatch: rsp_delta="
+                        & nat_img(sv_rsp_count - v_rsp_cnt)
+                        & " write_delta=" & nat_img(sv_write_count - v_write_cnt),
+                        v_fail);
+            end if;
         end if;
 
         -- =============================================================
