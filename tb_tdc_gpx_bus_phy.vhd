@@ -16,7 +16,7 @@
 --  [10] Burst read 64 entries
 --  [11] BUS_TICKS sweep (3, 4, 6, 7)
 --  [12] BUS_CLK_DIV sweep (2, 4)
---  [13] Timing assertion (tPW-RL >= 6ns, tS-AD >= 2ns)
+--  [13] Timing assertion (READ pulse/address + WRITE setup/hold)
 --
 -- DUT instantiation uses Xilinx IOBUF via UNISIM.
 -- For non-Vivado simulators, a behavioral IOBUF model is needed.
@@ -140,6 +140,8 @@ architecture sim of tb_tdc_gpx_bus_phy is
     signal s_csn_fall_time  : time := 0 ns;
     signal s_last_rdn_pw    : time := 0 ns;    -- last RDN pulse width measured
     signal s_last_adr_setup : time := 0 ns;    -- last ADR setup time measured
+    signal s_last_wr_setup  : time := 0 ns;    -- DATA valid to WRN falling
+    signal s_last_wr_hold   : time := 0 ns;    -- WRN rising to DATA release
 
     -- =========================================================================
     -- Tick generation
@@ -323,6 +325,23 @@ begin
         wait until s_rdn = '0' or s_wrn = '0';
         s_last_adr_setup <= now - s_csn_fall_time;
     end process p_adr_timing;
+
+    -- =========================================================================
+    -- Timing monitor: WRITE data setup and hold around WRN
+    -- =========================================================================
+    p_write_timing : process
+        variable v_data_drive_time : time := 0 ns;
+        variable v_wrn_rise_time   : time := 0 ns;
+    begin
+        wait until s_d_tri = '0';
+        v_data_drive_time := now;
+        wait until s_wrn = '0';
+        s_last_wr_setup <= now - v_data_drive_time;
+        wait until s_wrn = '1';
+        v_wrn_rise_time := now;
+        wait until s_d_tri = '1';
+        s_last_wr_hold <= now - v_wrn_rise_time;
+    end process p_write_timing;
 
     -- =========================================================================
     -- Stimulus process
@@ -842,8 +861,9 @@ begin
         wait_clk(5);
 
         -- =============================================================
-        -- [13] Timing assertion (tPW-RL >= 6ns, tS-AD >= 2ns)
-        --   Run a fresh read at BUS_TICKS=5 to measure nominal timing.
+        -- [13] Timing assertions
+        --   Run fresh read/write operations at BUS_CLK_DIV=1 and
+        --   BUS_TICKS=5 to measure the fastest legal profile.
         --   (BUS_TICKS=3 from [11] gives 5ns which is below spec — correct
         --    behavior; BUS_TICKS=3 should only be used with slower clocks.)
         -- =============================================================
@@ -874,6 +894,29 @@ begin
         else
             pr_fail("[13] tS-AD (ADR setup) = "
                     & time'image(s_last_adr_setup) & " < 2 ns", v_fail);
+        end if;
+
+        issue_req(rw => '1', addr => c_TDC_REG0,
+                  wdata => x"55AA55A");
+        wait_rsp(c_TIMEOUT, v_found);
+        clear_req;
+        wait_not_busy(c_TIMEOUT, v_found);
+        wait_clk(2);
+
+        if s_last_wr_setup >= 5 ns then
+            pr_pass("[13] tS-DW (WRITE data setup) = "
+                    & time'image(s_last_wr_setup) & " >= 5 ns");
+        else
+            pr_fail("[13] tS-DW (WRITE data setup) = "
+                    & time'image(s_last_wr_setup) & " < 5 ns", v_fail);
+        end if;
+
+        if s_last_wr_hold >= 4 ns then
+            pr_pass("[13] tH-DW (WRITE data hold) = "
+                    & time'image(s_last_wr_hold) & " >= 4 ns");
+        else
+            pr_fail("[13] tH-DW (WRITE data hold) = "
+                    & time'image(s_last_wr_hold) & " < 4 ns", v_fail);
         end if;
 
         -- =============================================================

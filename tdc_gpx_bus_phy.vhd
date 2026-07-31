@@ -28,11 +28,13 @@
 --
 --   READ:  tick 0=ADR setup, tick 1..N-2=RDN low,
 --          sample at tick N-2, tick N-1=RDN high + rsp_valid
---   WRITE: tick 0=ADR+DATA setup, tick 1..N-2=WRN low,
---          tick N-1=WRN high + rsp_valid
+--   WRITE: tick 0 plus one guarded tick=ADR+DATA setup,
+--          tick 1..N-2=WRN low, tick N-1=WRN high,
+--          one final tick=DATA hold + rsp_valid
 --
 --   The IDLE->ST_READ/ST_WRITE transition on tick_en IS tick 0 (Phase A).
---   The first tick_en inside ST_READ/ST_WRITE is tick 1.
+--   READ starts its internal counter at 1. WRITE deliberately starts at 0
+--   to add one setup interval before WRN can fall.
 --
 -- Read sample timing analysis (200 MHz, T_clk = 5 ns):
 --   RDN low at tick 1 (clock C_k).
@@ -187,6 +189,7 @@ architecture rtl of tdc_gpx_bus_phy is
         ST_IDLE,            -- bus idle, waiting for request
         ST_READ,            -- read transaction (tick counter drives phases)
         ST_WRITE,           -- write transaction (tick counter drives phases)
+        ST_WRITE_HOLD,      -- keep DATA driven after WRN rises (tH-DW)
         ST_TURNAROUND       -- 1-tick gap for direction change (INV-5, INV-6)
     );
 
@@ -307,7 +310,9 @@ begin
     --
     -- Transaction tick assignment:
     --   IDLE/TURNAROUND acceptance on tick_en = tick 0 (Phase A: ADR setup)
-    --   ST_READ/ST_WRITE ticks = 1 .. i_bus_ticks-1
+    --   ST_READ ticks = 1 .. i_bus_ticks-1
+    --   ST_WRITE starts at tick 0 to add one guarded setup tick, then runs
+    --   through tick i_bus_ticks-1 and enters ST_WRITE_HOLD.
     --
     -- Phase A (tick 0):   ADR valid, strobe high, CSN low
     -- Phase L (tick 1..N-2): strobe low, sample_en at tick N-2
@@ -475,7 +480,10 @@ begin
                                     end if;
                                     s_axis_rw_r   <= '1';           -- WRITE
                                     s_axis_addr_r <= i_req_addr;
-                                    s_tick_r      <= to_unsigned(1, 3);
+                                    -- Keep one extra phase tick before WRN
+                                    -- falls. At div=1 this gives 10 ns of
+                                    -- ADR/DATA setup against tS-DW >= 5 ns.
+                                    s_tick_r      <= to_unsigned(0, 3);
                                     s_state_r     <= ST_WRITE;
                                 end if;
 
@@ -546,7 +554,8 @@ begin
                                 s_d_out_r <= s_req_wdata_r;
                                 s_d_tri_r <= '0';       -- drive
                                 s_wrn_r   <= '1';
-                                s_tick_r  <= to_unsigned(1, 3);
+                                -- Same guarded setup phase as direct entry.
+                                s_tick_r  <= to_unsigned(0, 3);
                                 s_state_r <= ST_WRITE;
                             else
                                 -- Enter READ Phase A (tick 0)
@@ -664,8 +673,10 @@ begin
                     -- ---------------------------------------------------------
                     -- WRITE transaction
                     --
-                    -- Entered with Phase A pins already set (tick 0 consumed
-                    -- at IDLE/TURNAROUND). s_tick_r starts at 1.
+                    -- Entered with Phase A pins already set at
+                    -- IDLE/TURNAROUND. s_tick_r starts at 0 so the first
+                    -- tick_en keeps WRN high. Phase L therefore starts only
+                    -- after two complete phase intervals of ADR/DATA setup.
                     --
                     -- D-bus = drive throughout (FPGA outputs write data)
                     -- OEN = '1' throughout [INV-1]
@@ -681,23 +692,44 @@ begin
                             -- Phase H: transaction complete (tick N-1)
                             if s_tick_r = s_bus_ticks_r - 1 then
                                 s_wrn_r            <= '1';
-                                s_rsp_valid_r      <= '1';
                                 s_last_was_write_r <= '1';
                                 s_last_was_read_r  <= '0';
                                 s_csn_r            <= '1';
-                                s_d_tri_r          <= '1';  -- release D-bus
-                                s_busy_r           <= '0';
+                                -- Keep the D-bus driven after WRN rises.
+                                -- ST_WRITE_HOLD releases it on the next
+                                -- tick_en, providing tH-DW >= 4 ns even for
+                                -- the 200 MHz, div=1 profile.
+                                s_d_tri_r          <= '0';
                                 s_tick_r           <= (others => '0');
-                                s_state_r          <= ST_IDLE;
-                                -- AXI-Stream: write ack (tdata=0)
-                                s_axis_tvalid_r    <= '1';
-                                s_axis_tdata_r     <= (others => '0');
-                                s_axis_tuser_r     <= "000" & s_axis_addr_r & '1';
-                                s_rsp_pending_out_r <= '1';
+                                s_state_r          <= ST_WRITE_HOLD;
                             else
                                 s_tick_r <= s_tick_r + 1;
                             end if;
 
+                        end if;
+
+                    -- ---------------------------------------------------------
+                    -- WRITE data-hold phase
+                    --
+                    -- WRN is already high and CSN may be released. Keep DATA
+                    -- actively driven until one more phase tick has elapsed,
+                    -- then publish the write acknowledgement and return IDLE.
+                    -- ---------------------------------------------------------
+                    when ST_WRITE_HOLD =>
+                        s_wrn_r   <= '1';
+                        s_oen_r   <= '1';
+                        s_d_tri_r <= '0';
+                        s_busy_r  <= '1';
+
+                        if i_tick_en = '1' then
+                            s_d_tri_r           <= '1';
+                            s_busy_r            <= '0';
+                            s_state_r           <= ST_IDLE;
+                            s_rsp_valid_r       <= '1';
+                            s_axis_tvalid_r     <= '1';
+                            s_axis_tdata_r      <= (others => '0');
+                            s_axis_tuser_r      <= "000" & s_axis_addr_r & '1';
+                            s_rsp_pending_out_r <= '1';
                         end if;
 
                     when others =>

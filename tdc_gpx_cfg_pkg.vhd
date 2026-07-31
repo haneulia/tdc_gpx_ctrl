@@ -309,6 +309,8 @@ package tdc_gpx_cfg_pkg is
     --
     -- Datasheet parameters:
     --   tS-AD  >= 2 ns    address setup before strobe low
+    --   tS-DW  >= 5 ns    write data setup before WRN low
+    --   tH-DW  >= 4 ns    write data hold after WRN high
     --   tPW-RL >= 6 ns    RDN/WRN low pulse width
     --   tV-DR  <= 11.8 ns data valid delay after RDN low (worst case 40pF)
     --   tPW-RH >= 6 ns    RDN high pulse width (burst inter-read gap)
@@ -321,6 +323,11 @@ package tdc_gpx_cfg_pkg is
     --   Burst restarts at tick 0 (Phase A gap included).
     --   RDN high = 2 ticks = 2 * div * T_clk (Phase H + Phase A).
     --   Per-burst-read initiation interval = ticks * div * T_clk.
+    --
+    -- bus_phy write guard:
+    --   ADR/DATA remain valid for two phase intervals before WRN falls, and
+    --   DATA remains driven for one phase interval after WRN rises.
+    --   At the fastest div=1 profile this gives 10 ns setup and 5 ns hold.
     --
     -- Combined constraint: (ticks - 3) * div >= 2
     --   div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
