@@ -325,9 +325,10 @@ package tdc_gpx_cfg_pkg is
     --   Per-burst-read initiation interval = ticks * div * T_clk.
     --
     -- bus_phy write guard:
-    --   ADR/DATA remain valid for two phase intervals before WRN falls, and
-    --   DATA remains driven for one phase interval after WRN rises.
-    --   At the fastest div=1 profile this gives 10 ns setup and 5 ns hold.
+    --   ADR/DATA remain valid for three phase intervals before WRN falls, and
+    --   DATA remains driven for three phase intervals after WRN rises.
+    --   At the fastest div=1 profile this gives 15 ns setup and 15 ns hold,
+    --   leaving explicit pad/PCB skew margin beyond the 5 ns/4 ns minima.
     --
     -- Combined constraint: (ticks - 3) * div >= 2
     --   div=1 => ticks >= 5;  div >= 2 => ticks >= 4.
