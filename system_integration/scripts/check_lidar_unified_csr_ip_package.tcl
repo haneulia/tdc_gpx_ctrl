@@ -37,12 +37,14 @@ proc require_file_equal {canonical packaged label} {
 }
 
 set csr32_dir [file join $ip_root my_axil_csr32 HDL]
+set compared_file_count 0
 foreach filename {
     my_axil_csr32_pkg.vhd axil_fsm_32.vhd axil_ctrl_regs_32.vhd
     axil_stat_regs_32.vhd axil_intr_32.vhd my_axil_csr32_top.vhd
 } {
     require_file_equal [file join $csr32_dir $filename] \
         [file join $package_dir src csr $filename] "CSR32 $filename"
+    incr compared_file_count
 }
 set rtl_dir [file join $hdl_dir system_integration rtl]
 foreach filename {
@@ -51,9 +53,11 @@ foreach filename {
 } {
     require_file_equal [file join $rtl_dir $filename] \
         [file join $package_dir src $filename] "Unified RTL $filename"
+    incr compared_file_count
 }
 require_file_equal [file join $hdl_dir system_integration \
     lidar_unified_csr_xgui.tcl] $xgui {Unified CSR XGUI}
+incr compared_file_count
 
 foreach {canonical packaged_name} [list \
     [file join $ip_root motor_decoder HDL \
@@ -75,7 +79,12 @@ foreach {canonical packaged_name} [list \
     require_file_equal $canonical \
         [file join $package_dir interfaces $packaged_name] \
         "Interface $packaged_name"
+    incr compared_file_count
 }
+if {$compared_file_count != 18} {
+    error "Unexpected unified CSR package source count: $compared_file_count"
+}
+puts "LIDAR_UNIFIED_CSR_IP_SOURCE_FILE_COUNT=$compared_file_count"
 puts {LIDAR_UNIFIED_CSR_IP_SOURCE_SYNC_PASS}
 
 set install_tcl_store [file normalize \
@@ -121,7 +130,7 @@ if {[get_property vlnv $core] ne \
         {victek.co.kr:my_ip:lidar_unified_csr:1.0}} {
     error "Unexpected unified CSR VLNV: [get_property vlnv $core]"
 }
-if {[get_property core_revision $core] != 2} {
+if {[get_property core_revision $core] != 3} {
     error "Unexpected unified CSR core revision: [get_property core_revision $core]"
 }
 foreach {name expected_value} {

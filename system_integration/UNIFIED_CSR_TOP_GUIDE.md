@@ -1,6 +1,8 @@
 # LiDAR Unified CSR Top 사용 및 검증 가이드
 
-문서 기준일: 2026-07-29
+문서 기준일: 2026-08-03
+
+검증된 IP-XACT core revision: `3`
 
 대상 RTL: `system_integration/rtl/lidar_unified_csr_top.vhd`
 
@@ -129,6 +131,7 @@ parent interrupt fabric도 이 계약에 맞춰야 한다.
 | AXI/control/status/epoch/IRQ TB | `[SUMMARY] Passed=7 Failed=0` |
 | xc7z020clg484-2 synthesis | 0 errors, 0 critical warnings |
 | Packaged-IP source synchronization | `LIDAR_UNIFIED_CSR_IP_SOURCE_SYNC_PASS` |
+| Canonical/package 구성 파일 | 18/18 byte-identical |
 | Four child custom-bus connections | `LIDAR_UNIFIED_CSR_IP_CHILD_INTERFACE_PASS` |
 | Parent topology: combined Motor/Laser + Echo + TDC | `LIDAR_UNIFIED_CSR_IP_PARENT_INTERFACE_PASS` |
 | Packaged-IP OOC synthesis | `LIDAR_UNIFIED_CSR_PACKAGED_IP_OOC_PASS` |
@@ -162,6 +165,12 @@ vivado.bat -mode batch `
 C:\Projects\my_sp\lib\IP\lidar_unified_csr\ip_repo
 ```
 
+Revision 3은 register ABI를 변경하지 않는다. 이전 package revision 2에 남아 있던
+`lidar_unified_csr_pkg.vhd`, `lidar_unified_csr_top.vhd`,
+`lidar_unified_csr_ip_top.vhd`, `axil_intr_32.vhd`의 오래된 snapshot을 canonical
+소스로 갱신한 배포 revision이다. Package check는 CSR32 6개, unified RTL 3개,
+XGUI 1개, child interface XML 8개 등 총 18개 파일을 byte 단위로 비교한다.
+
 canonical RTL과 패키징 스크립트는 이 Git 저장소에서 관리하고, 위 `ip_repo`는
 재생성 가능한 배포 산출물로 관리한다. 패키지에는 `my_axil_csr32` 소스가 포함되며
 child XCI나 `../HDL` 외부 참조는 포함되지 않는다.
@@ -178,6 +187,10 @@ Echo, TDC에 연결해 parent 배치 전 bus 호환성을 검사한다.
   -mode batch -nojournal `
   -source 'C:\Projects\my_sp\lib\IP\tdc_gpx_ctrl\HDL\package_lidar_unified_csr_ip.tcl'
 ```
+
+패키징 작업 프로젝트는 기본적으로 `%TEMP%\lidar_unified_csr_package_work`에서
+생성 후 삭제된다. 저장소 내부의 `.package_work_unified_csr`는 더 이상 기본
+패키징 경로로 사용하지 않는다.
 
 패키지/XGUI/source-sync 및 현재 child IP 연결 검사:
 

@@ -2,7 +2,9 @@
 #
 # Vivado batch:
 #   vivado -mode batch -source HDL/package_lidar_unified_csr_ip.tcl
-# Optional first argument: alternate package directory.
+# Optional arguments:
+#   0: alternate package directory
+#   1: alternate temporary package-work directory
 
 set script_dir [file normalize [file dirname [info script]]]
 set ip_root [file normalize [file join $script_dir ../..]]
@@ -97,7 +99,15 @@ foreach vendor_dir [glob -nocomplain -type d \
 }
 package require ::tclapp::support::appinit 1.2
 
-set package_work [file join $script_dir .package_work_unified_csr]
+if {[llength $argv] > 1} {
+    set package_work [file normalize [lindex $argv 1]]
+} elseif {[info exists ::env(TEMP)]} {
+    set package_work [file normalize \
+        [file join $::env(TEMP) lidar_unified_csr_package_work]]
+} else {
+    set package_work [file normalize \
+        [file join C:/tmp lidar_unified_csr_package_work]]
+}
 if {[file exists $package_work]} {
     file delete -force $package_work
 }
@@ -181,7 +191,7 @@ set_property display_name {LiDAR Unified CSR (32 Control / 32 Status)} $core
 set_property description \
     {Single AXI4-Lite control-plane owner for Motor, Laser, Echo Receiver, and TDC-GPX with coherent status, epoch handshakes, and 32 interrupt causes.} \
     $core
-set_property core_revision 2 $core
+set_property core_revision 3 $core
 set_property supported_families {zynq Production} $core
 
 foreach {name display description value} {
