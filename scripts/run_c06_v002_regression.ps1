@@ -3,6 +3,7 @@ param(
     [switch]$RunProjectSyntax,
     [switch]$CsrModeOnly,
     [switch]$TopWidth150200Only,
+    [switch]$Signoff150200Only,
     [switch]$NoArchiveOnExit
 )
 
@@ -193,7 +194,7 @@ try {
     Assert-SimLog "xsim_c06_v002_unified_config_ctrl_$Stamp.log" `
         "TDC_GPX_UNIFIED_CONFIG_CTRL_PASS"
 
-    if ($TopWidth150200Only) {
+    if ($TopWidth150200Only -or $Signoff150200Only) {
         foreach ($w in @(32, 64, 128)) {
             $snap = "tb_c06_v002_top_int_axis150_tdc200_w${w}_snap"
             $xelabLog = "xelab_c06_v002_top_int_axis150_tdc200_w${w}_$Stamp.log"
@@ -210,6 +211,62 @@ try {
                 "output streams emitted beats/tlast as expected - PASS"
         }
         Write-Host "TDC_GPX_TOP_WIDTH_150_200_MATRIX_PASS widths=32,64,128"
+        if (-not $Signoff150200Only) {
+            return
+        }
+
+        foreach ($w in @(32, 64, 128)) {
+            $snap = "tb_c06_v002_shot_stall_axis150_tdc200_w${w}_snap"
+            $xelabLog = "xelab_c06_v002_shot_stall_axis150_tdc200_w${w}_$Stamp.log"
+            $xsimLog = "xsim_c06_v002_shot_stall_axis150_tdc200_w${w}_$Stamp.log"
+            Invoke-Xelab $snap $xelabLog `
+                "xil_defaultlib.tb_tdc_gpx_top_int" @(
+                    "G_TDATA_WIDTH=$w",
+                    "G_AXIS_CLK_MHZ=150.0",
+                    "G_TDC_CLK_MHZ=200.0",
+                    "G_BP_SHOT_STALL_CLKS=40"
+                )
+            Invoke-Checked "$Vivado/xsim.bat" @(
+                $snap, "-runall", "-log", $xsimLog)
+            Assert-SimLog $xsimLog `
+                "shot-boundary stall preserved beats/tlast - PASS"
+            Assert-SimLog $xsimLog `
+                "output streams emitted beats/tlast as expected - PASS"
+        }
+        Write-Host "TDC_GPX_SHOT_BOUNDARY_150_200_MATRIX_PASS widths=32,64,128"
+
+        $bpSnap = "tb_c06_v002_bp_axis150_tdc200_w64_snap"
+        $bpXelabLog = "xelab_c06_v002_bp_axis150_tdc200_w64_$Stamp.log"
+        $bpXsimLog = "xsim_c06_v002_bp_axis150_tdc200_w64_$Stamp.log"
+        Invoke-Xelab $bpSnap $bpXelabLog `
+            "xil_defaultlib.tb_tdc_gpx_top_int" @(
+                "G_TDATA_WIDTH=64",
+                "G_AXIS_CLK_MHZ=150.0",
+                "G_TDC_CLK_MHZ=200.0",
+                "G_BP_TREADY_GAP=17"
+            )
+        Invoke-Checked "$Vivado/xsim.bat" @(
+            $bpSnap, "-runall", "-log", $bpXsimLog)
+        Assert-SimLog $bpXsimLog `
+            "bounded output backpressure preserved beats/tlast - PASS"
+        Assert-SimLog $bpXsimLog `
+            "output streams emitted beats/tlast as expected - PASS"
+        Write-Host "TDC_GPX_BOUNDED_BACKPRESSURE_150_200_PASS width=64 gap=17"
+
+        $statSnap = "tb_c06_v002_masked_slope_stat_axis150_tdc200_snap"
+        $statXelabLog = "xelab_c06_v002_masked_slope_stat_axis150_tdc200_$Stamp.log"
+        $statXsimLog = "xsim_c06_v002_masked_slope_stat_axis150_tdc200_$Stamp.log"
+        Invoke-Xelab $statSnap $statXelabLog `
+            "xil_defaultlib.tb_tdc_gpx_top_int_masked_slope_stat"
+        Invoke-Checked "$Vivado/xsim.bat" @(
+            $statSnap, "-runall", "-log", $statXsimLog)
+        Assert-SimLog $statXsimLog `
+            "masked-slope sticky soft-clear lifecycle - PASS"
+        Assert-SimLog $statXsimLog `
+            "output streams emitted beats/tlast as expected - PASS"
+        Write-Host "TDC_GPX_MASKED_SLOPE_STAT_150_200_PASS stat7_bit=15"
+
+        Write-Host "TDC_GPX_FUNCTIONAL_SIGNOFF_150_200_PASS"
         return
     }
 

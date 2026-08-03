@@ -42,23 +42,33 @@ source [file join $script_dir tdc_gpx_rtl_manifest.tcl]
 source [file join $script_dir tdc_gpx_csr_source_manifest.tcl]
 set canonical_rtl [lsearch -all -inline -not -exact \
     [tdc_gpx_rtl_manifest] px_utility_pkg.vhd]
+set compared_file_count 0
 foreach filename $canonical_rtl {
     tdc_require_file_equal [file join $hdl_dir $filename] \
         [file join $package_dir src $filename] "TDC-GPX RTL $filename"
+    incr compared_file_count
 }
 foreach canonical [tdc_gpx_csr_source_manifest $ip_root] {
     set filename [file tail $canonical]
     tdc_require_file_equal $canonical \
         [file join $package_dir src csr $filename] "CSR source $filename"
+    incr compared_file_count
 }
 tdc_require_file_equal [file join $hdl_dir tdc_gpx_xgui.tcl] $xgui \
     {TDC-GPX XGUI}
+incr compared_file_count
 tdc_require_file_equal [file join $hdl_dir interfaces \
     tdc_gpx_unified_csr.xml] $unified_bus_xml \
     {TDC-GPX unified bus definition}
+incr compared_file_count
 tdc_require_file_equal [file join $hdl_dir interfaces \
     tdc_gpx_unified_csr_rtl.xml] $unified_rtl_xml \
     {TDC-GPX unified abstraction definition}
+incr compared_file_count
+if {$compared_file_count != 45} {
+    error "Unexpected TDC-GPX package source count: $compared_file_count"
+}
+puts "TDC_GPX_IP_PACKAGE_SOURCE_FILE_COUNT=$compared_file_count"
 puts {TDC_GPX_IP_PACKAGE_SOURCE_SYNC_PASS}
 
 # Avoid the damaged per-user Tcl Store on this workstation.
