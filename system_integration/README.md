@@ -37,6 +37,12 @@ The migration does not place real-time Motor, Laser, Echo, or GPX event signals
 behind software registers. It changes configuration ownership and software
 observability only.
 
+The bit-accurate software and data-format reference is
+[`TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE.md`](TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE.md).
+It defines every unified CTL/STAT/IRQ field, traces the external GPX 28-bit
+I-Mode word through the 17-bit Cell format, and gives the authoritative VDMA
+SOF/EOL, HSIZE, VSIZE, and DDR layout contract.
+
 The Stage 6 source-level owner is
 `rtl/lidar_unified_csr_top.vhd`; its register, startup, status and interrupt
 contract is documented in `UNIFIED_CSR_TOP_GUIDE.md`. Run its focused AXI and
