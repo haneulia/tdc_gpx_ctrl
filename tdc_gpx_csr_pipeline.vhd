@@ -509,6 +509,9 @@ begin
     -- =========================================================================
     -- [4] STAT CDC: i_axis_aclk → s_axi_aclk (1 live register)
     -- =========================================================================
+    -- Sender processes below wait for src_rcv='0' before starting another
+    -- transfer. This preserves a pending latest-value replay across extreme
+    -- source/destination clock ratios.
     u_cdc_stat5 : xpm_cdc_handshake
         generic map (
             DEST_EXT_HSK   => 1,
@@ -520,7 +523,7 @@ begin
         )
         port map (
             src_clk   => i_axis_aclk,
-            src_in    => s_stat_src,
+            src_in    => s_stat_d1,
             src_send  => s_src_send_stat,
             src_rcv   => s_src_rcv_stat,
             dest_clk  => s_axi_aclk,
@@ -536,11 +539,13 @@ begin
                 s_src_send_stat <= '0';
                 s_stat_d1       <= (others => '1');
             else
-                if s_src_send_stat = '0' and s_stat_src /= s_stat_d1 then
+                if s_src_send_stat = '1' then
+                    if s_src_rcv_stat = '1' then
+                        s_src_send_stat <= '0';
+                    end if;
+                elsif s_src_rcv_stat = '0' and s_stat_src /= s_stat_d1 then
                     s_src_send_stat <= '1';
                     s_stat_d1       <= s_stat_src;
-                elsif s_src_rcv_stat = '1' then
-                    s_src_send_stat <= '0';
                 end if;
             end if;
         end if;
@@ -558,7 +563,7 @@ begin
         )
         port map (
             src_clk   => i_axis_aclk,
-            src_in    => s_stat6_src,
+            src_in    => s_stat6_d1,
             src_send  => s_src_send_stat6,
             src_rcv   => s_src_rcv_stat6,
             dest_clk  => s_axi_aclk,
@@ -574,11 +579,14 @@ begin
                 s_src_send_stat6 <= '0';
                 s_stat6_d1       <= (others => '1');
             else
-                if s_src_send_stat6 = '0' and s_stat6_src /= s_stat6_d1 then
+                if s_src_send_stat6 = '1' then
+                    if s_src_rcv_stat6 = '1' then
+                        s_src_send_stat6 <= '0';
+                    end if;
+                elsif s_src_rcv_stat6 = '0'
+                    and s_stat6_src /= s_stat6_d1 then
                     s_src_send_stat6 <= '1';
                     s_stat6_d1       <= s_stat6_src;
-                elsif s_src_rcv_stat6 = '1' then
-                    s_src_send_stat6 <= '0';
                 end if;
             end if;
         end if;
@@ -592,7 +600,7 @@ begin
         )
         port map (
             src_clk  => i_axis_aclk,
-            src_in   => s_stat7_src,
+            src_in   => s_stat7_d1,
             src_send => s_src_send_stat7,
             src_rcv  => s_src_rcv_stat7,
             dest_clk => s_axi_aclk,
@@ -608,11 +616,14 @@ begin
                 s_src_send_stat7 <= '0';
                 s_stat7_d1       <= (others => '1');
             else
-                if s_src_send_stat7 = '0' and s_stat7_src /= s_stat7_d1 then
+                if s_src_send_stat7 = '1' then
+                    if s_src_rcv_stat7 = '1' then
+                        s_src_send_stat7 <= '0';
+                    end if;
+                elsif s_src_rcv_stat7 = '0'
+                    and s_stat7_src /= s_stat7_d1 then
                     s_src_send_stat7 <= '1';
                     s_stat7_d1       <= s_stat7_src;
-                elsif s_src_rcv_stat7 = '1' then
-                    s_src_send_stat7 <= '0';
                 end if;
             end if;
         end if;
@@ -633,7 +644,7 @@ begin
             )
             port map (
                 src_clk   => s_axi_aclk,
-                src_in    => s_ctl_src(i),
+                src_in    => s_ctl_d1(i),
                 src_send  => s_src_send_ctl(i),
                 src_rcv   => s_src_rcv_ctl(i),
                 dest_clk  => i_axis_aclk,
@@ -649,11 +660,14 @@ begin
                     s_src_send_ctl(i) <= '0';
                     s_ctl_d1(i)       <= (others => '1');
                 else
-                    if s_src_send_ctl(i) = '0' and s_ctl_src(i) /= s_ctl_d1(i) then
+                    if s_src_send_ctl(i) = '1' then
+                        if s_src_rcv_ctl(i) = '1' then
+                            s_src_send_ctl(i) <= '0';
+                        end if;
+                    elsif s_src_rcv_ctl(i) = '0'
+                        and s_ctl_src(i) /= s_ctl_d1(i) then
                         s_src_send_ctl(i) <= '1';
                         s_ctl_d1(i)       <= s_ctl_src(i);
-                    elsif s_src_rcv_ctl(i) = '1' then
-                        s_src_send_ctl(i) <= '0';
                     end if;
                 end if;
             end if;
@@ -669,6 +683,7 @@ begin
             if s_axi_aresetn = '0' then
                 s_cdc_all_idle_src_r <= '1';
             elsif s_src_send_ctl = (s_src_send_ctl'range => '0')
+              and s_src_rcv_ctl = (s_src_rcv_ctl'range => '0')
               and i_chip_csr_cdc_idle = '1' then
                 s_cdc_all_idle_src_r <= '1';
             else

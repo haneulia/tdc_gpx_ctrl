@@ -89,7 +89,7 @@ set unified_abstraction_definition \
     [ipx::open_abstraction_definition $unified_rtl_xml]
 set core [ipx::open_core $component]
 
-if {[get_property core_revision $core] != 9} {
+if {[get_property core_revision $core] != 10} {
     error "Unexpected TDC-GPX core revision: [get_property core_revision $core]"
 }
 

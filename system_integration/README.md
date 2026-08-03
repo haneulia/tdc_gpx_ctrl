@@ -254,6 +254,19 @@ The parent reference structurally validates the AXI 100 MHz clock, but this TB
 does not yet dynamically exercise an independent AXI clock. Board pin timing,
 long-stall behavior, and post-route closure remain separate sign-off gates.
 
+Every `xpm_cdc_handshake` latest-value sender follows the complete four-phase
+contract: assert `src_send`, observe `src_rcv`, deassert `src_send`, then wait
+for `src_rcv` to return low before replaying a value that changed in flight.
+The transmitted payload comes from a hold register rather than the live bus,
+and CDC idle requires both `src_send=0` and `src_rcv=0`. This rule is required
+in both frequency orderings; checking only whether the source is slower than
+the destination is not sufficient.
+
+The Motor/Laser feasibility gate also treats the angular point interval and
+the inactive gap between adjacent active Face windows as independent budgets.
+Both must cover the worst re-arm time. A positive point margin cannot hide a
+Face-boundary request that arrives while the previous shot is still busy.
+
 ## C08 HTML comparison
 
 Open
@@ -323,6 +336,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_smoke.ps1 `
   -Scenario system_integration/scenarios/return7_external_axis150_tdc150_sync_v001.json
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_smoke.ps1 `
+  -Scenario system_integration/scenarios/return7_external_axis150_tdc150_sync_5face_boundary_v001.json
 ```
 
 `SYNC` in the testbench drives `i_tdc_clk` from the AXIS clock signal itself;

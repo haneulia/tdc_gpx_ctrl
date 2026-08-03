@@ -387,6 +387,9 @@ begin
 
     -- =========================================================================
     -- [2] CTL1 CDC: s_axi_aclk -> i_axis_aclk (BUS_TIMING)
+    -- All sender processes below wait for src_rcv='0' before starting the next
+    -- transfer. This closes the full four-phase handshake before replaying a
+    -- value that changed while the preceding transfer was in flight.
     -- =========================================================================
     u_cdc_ctl1 : xpm_cdc_handshake
         generic map (
@@ -399,7 +402,7 @@ begin
         )
         port map (
             src_clk   => s_axi_aclk,
-            src_in    => s_ctl1_src,
+            src_in    => s_ctl1_d1,
             src_send  => s_src_send_ctl1,
             src_rcv   => s_src_rcv_ctl1,
             dest_clk  => i_axis_aclk,
@@ -415,11 +418,13 @@ begin
                 s_src_send_ctl1 <= '0';
                 s_ctl1_d1       <= (others => '1');
             else
-                if s_src_send_ctl1 = '0' and s_ctl1_src /= s_ctl1_d1 then
+                if s_src_send_ctl1 = '1' then
+                    if s_src_rcv_ctl1 = '1' then
+                        s_src_send_ctl1 <= '0';
+                    end if;
+                elsif s_src_rcv_ctl1 = '0' and s_ctl1_src /= s_ctl1_d1 then
                     s_src_send_ctl1 <= '1';
                     s_ctl1_d1       <= s_ctl1_src;
-                elsif s_src_rcv_ctl1 = '1' then
-                    s_src_send_ctl1 <= '0';
                 end if;
             end if;
         end if;
@@ -439,7 +444,7 @@ begin
         )
         port map (
             src_clk   => s_axi_aclk,
-            src_in    => s_ctl3_src,
+            src_in    => s_ctl3_d1,
             src_send  => s_src_send_ctl3,
             src_rcv   => s_src_rcv_ctl3,
             dest_clk  => i_axis_aclk,
@@ -455,11 +460,13 @@ begin
                 s_src_send_ctl3 <= '0';
                 s_ctl3_d1       <= (others => '1');
             else
-                if s_src_send_ctl3 = '0' and s_ctl3_src /= s_ctl3_d1 then
+                if s_src_send_ctl3 = '1' then
+                    if s_src_rcv_ctl3 = '1' then
+                        s_src_send_ctl3 <= '0';
+                    end if;
+                elsif s_src_rcv_ctl3 = '0' and s_ctl3_src /= s_ctl3_d1 then
                     s_src_send_ctl3 <= '1';
                     s_ctl3_d1       <= s_ctl3_src;
-                elsif s_src_rcv_ctl3 = '1' then
-                    s_src_send_ctl3 <= '0';
                 end if;
             end if;
         end if;
@@ -479,7 +486,7 @@ begin
         )
         port map (
             src_clk   => s_axi_aclk,
-            src_in    => s_ctl4_src,
+            src_in    => s_ctl4_d1,
             src_send  => s_src_send_ctl4,
             src_rcv   => s_src_rcv_ctl4,
             dest_clk  => i_axis_aclk,
@@ -495,11 +502,13 @@ begin
                 s_src_send_ctl4 <= '0';
                 s_ctl4_d1       <= (others => '1');
             else
-                if s_src_send_ctl4 = '0' and s_ctl4_src /= s_ctl4_d1 then
+                if s_src_send_ctl4 = '1' then
+                    if s_src_rcv_ctl4 = '1' then
+                        s_src_send_ctl4 <= '0';
+                    end if;
+                elsif s_src_rcv_ctl4 = '0' and s_ctl4_src /= s_ctl4_d1 then
                     s_src_send_ctl4 <= '1';
                     s_ctl4_d1       <= s_ctl4_src;
-                elsif s_src_rcv_ctl4 = '1' then
-                    s_src_send_ctl4 <= '0';
                 end if;
             end if;
         end if;
@@ -519,7 +528,7 @@ begin
         )
         port map (
             src_clk   => s_axi_aclk,
-            src_in    => s_ctl21_src,
+            src_in    => s_ctl21_d1,
             src_send  => s_src_send_ctl21,
             src_rcv   => s_src_rcv_ctl21,
             dest_clk  => i_axis_aclk,
@@ -535,11 +544,14 @@ begin
                 s_src_send_ctl21 <= '0';
                 s_ctl21_d1       <= (others => '1');
             else
-                if s_src_send_ctl21 = '0' and s_ctl21_src /= s_ctl21_d1 then
+                if s_src_send_ctl21 = '1' then
+                    if s_src_rcv_ctl21 = '1' then
+                        s_src_send_ctl21 <= '0';
+                    end if;
+                elsif s_src_rcv_ctl21 = '0'
+                    and s_ctl21_src /= s_ctl21_d1 then
                     s_src_send_ctl21 <= '1';
                     s_ctl21_d1       <= s_ctl21_src;
-                elsif s_src_rcv_ctl21 = '1' then
-                    s_src_send_ctl21 <= '0';
                 end if;
             end if;
         end if;
@@ -653,7 +665,7 @@ begin
             )
             port map (
                 src_clk   => i_axis_aclk,
-                src_in    => s_reg_stat_r(i),
+                src_in    => s_stat_d1,
                 src_send  => s_src_send_stat,
                 src_rcv   => s_src_rcv_stat,
                 dest_clk  => s_axi_aclk,
@@ -669,11 +681,14 @@ begin
                     s_src_send_stat <= '0';
                     s_stat_d1       <= (others => '1');
                 else
-                    if s_src_send_stat = '0' and s_reg_stat_r(i) /= s_stat_d1 then
+                    if s_src_send_stat = '1' then
+                        if s_src_rcv_stat = '1' then
+                            s_src_send_stat <= '0';
+                        end if;
+                    elsif s_src_rcv_stat = '0'
+                        and s_reg_stat_r(i) /= s_stat_d1 then
                         s_src_send_stat <= '1';
                         s_stat_d1       <= s_reg_stat_r(i);
-                    elsif s_src_rcv_stat = '1' then
-                        s_src_send_stat <= '0';
                     end if;
                 end if;
             end if;
@@ -716,6 +731,12 @@ begin
               and s_src_send_ctl4  = '0'
               and s_src_send_ctl21 = '0'
               and s_src_send_img   = '0'
+              and s_src_rcv_ctl1   = '0'
+              and s_src_rcv_ctl3   = '0'
+              and s_src_rcv_ctl4   = '0'
+              and s_src_rcv_ctl21  = '0'
+              and s_src_rcv_img    = '0'
+              and s_img_wait_ack_low_r = '0'
               and s_img_write_inflight_r = '0'
               and s_img_snapshot_pending_r = '0'
               and s_img_aw_hs = '0' then

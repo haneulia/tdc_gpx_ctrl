@@ -137,7 +137,7 @@ set_property display_name {TDC-GPX Multi-chip Acquisition Controller} $core
 set_property description \
     {Configurable one-to-four-chip TDC-GPX acquisition with selectable local or unified CSR ownership, rising/falling lane processing, dual VDMA-ready AXI4-Stream outputs, diagnostics, and interrupts.} \
     $core
-set_property core_revision 9 $core
+set_property core_revision 10 $core
 set_property supported_families {zynq Production} $core
 
 proc tdc_ensure_long {

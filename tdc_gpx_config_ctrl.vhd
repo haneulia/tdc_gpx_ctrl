@@ -769,11 +769,8 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- Round 9 #5: cmd_reg bundle moved from 2-FF sync to xpm_cdc_handshake.
     -- Per-reg-op the bundle changes every time SW issues a read/write, so
     -- bit-skew risk is much higher than for quasi-static cfg/cfg_image.
-    -- 32-bit handshake packs addr[3:0] + wdata[27:0].
-    -- (cfg / cfg_image remain on 2-FF + ASYNC_REG — atomicity there is
-    --  guaranteed by SW holding the payload stable for several cycles
-    --  before the cfg_write / cmd_start pulse; the race window closed by
-    --  the command pulse's own ~4-cycle CDC latency.)
+    -- 32-bit handshake packs addr[3:0] + wdata[27:0]. The cfg and cfg_image
+    -- bundles now use the same atomic-handshake policy above.
     signal s_cmd_reg_src_packed : std_logic_vector(31 downto 0);
     signal s_cmd_reg_dst_packed : std_logic_vector(31 downto 0) := (others => '0');
     signal s_cmd_reg_src_send_r : std_logic := '0';
@@ -1513,6 +1510,9 @@ begin
     -- The cfg_write command is held by p_cfg_write_cdc_barrier until both
     -- handshakes have delivered their latest snapshot. Other commands still
     -- require their own acceptance contract at the control-plane boundary.
+    -- A new transfer may start only after src_rcv returns low. Reasserting
+    -- src_send while the previous acknowledgement is still high can lose a
+    -- coalesced update when the source clock is faster than the destination.
     -- =========================================================================
 
     -- Pack t_tdc_cfg into the handshake payload.
@@ -1577,11 +1577,14 @@ begin
             else
                 s_cfg_sample_r <= s_cfg_src_packed;
                 s_cfg_diff_r   <= fn_chunk_diff(s_cfg_sample_r, s_cfg_d1_r);
-                if s_cfg_src_send_r = '0' and s_cfg_diff_r /= (s_cfg_diff_r'range => '0') then
+                if s_cfg_src_send_r = '1' then
+                    if s_cfg_src_rcv = '1' then
+                        s_cfg_src_send_r <= '0';
+                    end if;
+                elsif s_cfg_src_rcv = '0'
+                    and s_cfg_diff_r /= (s_cfg_diff_r'range => '0') then
                     s_cfg_src_send_r <= '1';
                     s_cfg_d1_r       <= s_cfg_sample_r;
-                elsif s_cfg_src_rcv = '1' then
-                    s_cfg_src_send_r <= '0';
                 end if;
             end if;
         end if;
@@ -1598,12 +1601,15 @@ begin
             else
                 s_cfg_image_sample_r <= s_cfg_image_src_packed;
                 s_cfg_image_diff_r   <= fn_chunk_diff(s_cfg_image_sample_r, s_cfg_image_d1_r);
-                if s_cfg_image_src_send_r = '0'
-                    and s_cfg_image_diff_r /= (s_cfg_image_diff_r'range => '0') then
+                if s_cfg_image_src_send_r = '1' then
+                    if s_cfg_image_src_rcv = '1' then
+                        s_cfg_image_src_send_r <= '0';
+                    end if;
+                elsif s_cfg_image_src_rcv = '0'
+                    and s_cfg_image_diff_r /=
+                    (s_cfg_image_diff_r'range => '0') then
                     s_cfg_image_src_send_r <= '1';
                     s_cfg_image_d1_r       <= s_cfg_image_sample_r;
-                elsif s_cfg_image_src_rcv = '1' then
-                    s_cfg_image_src_send_r <= '0';
                 end if;
             end if;
         end if;
@@ -1675,11 +1681,14 @@ begin
                     s_cmd_reg_diff_r <= '0';
                 end if;
 
-                if s_cmd_reg_src_send_r = '0' and s_cmd_reg_diff_r = '1' then
+                if s_cmd_reg_src_send_r = '1' then
+                    if s_cmd_reg_src_rcv = '1' then
+                        s_cmd_reg_src_send_r <= '0';
+                    end if;
+                elsif s_cmd_reg_src_rcv = '0'
+                    and s_cmd_reg_diff_r = '1' then
                     s_cmd_reg_src_send_r <= '1';
                     s_cmd_reg_d1_r       <= s_cmd_reg_sample_r;
-                elsif s_cmd_reg_src_rcv = '1' then
-                    s_cmd_reg_src_send_r <= '0';
                 end if;
             end if;
         end if;

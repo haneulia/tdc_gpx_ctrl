@@ -188,6 +188,25 @@ architecture sim of tb_tdc_gpx_full_int is
         G_REV_TIME_US * G_OPTICAL_SHOT_INTERVAL_DEG / 720.0;
     constant C_OPERATING_POINT_INTERVAL_CLKS : natural := natural(ceil(
         C_OPERATING_POINT_INTERVAL_US * G_AXIS_CLK_MHZ));
+    -- Face pitch is a mechanical angle. The configured half-width is stored in
+    -- decoded-state units, so the full active face width is 2 * half-width.
+    -- The inactive gap is an independent re-arm opportunity at every face
+    -- boundary; keep its real operating profile separate from the accelerated
+    -- encoder period used to shorten functional simulation time.
+    constant C_FACE_PITCH_MECH_DEG : real :=
+        360.0 / real(G_N_FACES);
+    constant C_FACE_ACTIVE_MECH_DEG : real :=
+        720.0 * real(C_MD_FACE_HALF_ST) / real(C_MD_TOTAL_STATES);
+    constant C_FACE_INACTIVE_GAP_MECH_DEG : real :=
+        C_FACE_PITCH_MECH_DEG - C_FACE_ACTIVE_MECH_DEG;
+    constant C_SIM_FACE_GAP_US : real :=
+        G_REV_TIME_US * C_FACE_INACTIVE_GAP_MECH_DEG / 360.0;
+    constant C_OPERATING_FACE_GAP_US : real :=
+        C_OPERATING_REV_TIME_US * C_FACE_INACTIVE_GAP_MECH_DEG / 360.0;
+    constant C_SIM_FACE_GAP_AXIS_CLKS : natural := natural(floor(
+        C_SIM_FACE_GAP_US * G_AXIS_CLK_MHZ));
+    constant C_OPERATING_FACE_GAP_AXIS_CLKS : natural := natural(floor(
+        C_OPERATING_FACE_GAP_US * G_AXIS_CLK_MHZ));
 
     -- Clock periods (rounded to integer ps to keep xsim arithmetic exact).
     constant C_AXIS_CLK_PERIOD_PS : natural := natural(1000000.0 / G_AXIS_CLK_MHZ);
@@ -350,6 +369,9 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_LASER_WORST_REARM_CLKS : natural :=
         C_FIRE_DONE_TIMEOUT_AXIS_CLKS + C_LASER_RANGE_AXIS_CLKS
         + C_REARM_GUARD_AXIS_CLKS + C_LASER_FSM_OVERHEAD_CLKS;
+    constant C_OPERATING_FACE_GAP_MARGIN_CLKS : integer :=
+        integer(C_OPERATING_FACE_GAP_AXIS_CLKS)
+        - integer(C_LASER_WORST_REARM_CLKS);
     constant C_CTL1_VAL_LOCAL : std_logic_vector(31 downto 0) :=
         std_logic_vector(to_unsigned(C_FIRE_DONE_TIMEOUT_5NS_TICKS, 16)) &
         std_logic_vector(to_unsigned(C_FIRE_WIDTH, 16));
@@ -1251,6 +1273,14 @@ begin
 
     assert C_SHOT_PERIOD_AXIS_CLKS >= C_LASER_WORST_REARM_CLKS
         report "tb_tdc_gpx_full_int: angular interval is shorter than fire_done timeout + range + guard"
+        severity failure;
+
+    assert C_FACE_INACTIVE_GAP_MECH_DEG >= 0.0
+        report "tb_tdc_gpx_full_int: active face width overlaps the next face"
+        severity failure;
+
+    assert C_OPERATING_FACE_GAP_AXIS_CLKS >= C_LASER_WORST_REARM_CLKS
+        report "tb_tdc_gpx_full_int: operating face gap is shorter than the Laser re-arm contract"
         severity failure;
 
     -- =========================================================================
@@ -3347,6 +3377,11 @@ begin
                & integer'image(C_FIRE_DONE_TIMEOUT_AXIS_CLKS)
                & "  worst_rearm_clks=" & integer'image(C_LASER_WORST_REARM_CLKS)
                & "  shot_period=" & integer'image(C_SHOT_PERIOD_AXIS_CLKS)
+               & "  sim/operating_face_gap_clks="
+               & integer'image(C_SIM_FACE_GAP_AXIS_CLKS) & "/"
+               & integer'image(C_OPERATING_FACE_GAP_AXIS_CLKS)
+               & "  face_gap_margin_clks="
+               & integer'image(C_OPERATING_FACE_GAP_MARGIN_CLKS)
                & "  step_interval=" & integer'image(C_STEP_INTERVAL)
                & "  rev_us=" & integer'image(integer(G_REV_TIME_US))
                & "  optical_step_mdeg="
@@ -4043,6 +4078,18 @@ begin
              & integer'image(C_FIRE_DONE_TIMEOUT_AXIS_CLKS)
              & " worst_rearm_clks="
              & integer'image(C_LASER_WORST_REARM_CLKS)
+             & " face_active_mech_mdeg="
+             & integer'image(integer(round(C_FACE_ACTIVE_MECH_DEG * 1000.0)))
+             & " face_inactive_gap_mech_mdeg="
+             & integer'image(integer(round(
+                 C_FACE_INACTIVE_GAP_MECH_DEG * 1000.0)))
+             & " sim_face_gap_axis_clks="
+             & integer'image(C_SIM_FACE_GAP_AXIS_CLKS)
+             & " operating_face_gap_axis_clks="
+             & integer'image(C_OPERATING_FACE_GAP_AXIS_CLKS)
+             & " face_gap_margin_clks="
+             & integer'image(C_OPERATING_FACE_GAP_MARGIN_CLKS)
+             & " face_gap_contract_pass=1"
              & " range_wait_min_clks="
              & integer'image(mon_range_wait_min_clks)
              & " range_wait_max_clks="

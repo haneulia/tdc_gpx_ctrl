@@ -2643,6 +2643,12 @@
       fireDoneTimeout5nsTicks: contractNumber(metrics.fire_done_timeout_5ns_ticks),
       fireDoneTimeoutAxisClks: contractNumber(metrics.fire_done_timeout_axis_clks),
       worstRearmClks: contractNumber(metrics.worst_rearm_clks),
+      faceActiveMechMdeg: contractNumber(metrics.face_active_mech_mdeg),
+      faceInactiveGapMechMdeg: contractNumber(metrics.face_inactive_gap_mech_mdeg),
+      simFaceGapAxisClks: contractNumber(metrics.sim_face_gap_axis_clks),
+      operatingFaceGapAxisClks: contractNumber(metrics.operating_face_gap_axis_clks),
+      faceGapMarginClks: contractNumber(metrics.face_gap_margin_clks),
+      faceGapContractPass: contractNumber(metrics.face_gap_contract_pass),
       rangeWaitMinClks: contractNumber(metrics.range_wait_min_clks),
       rangeWaitMaxClks: contractNumber(metrics.range_wait_max_clks),
       shotToRiseTlastMinClks: contractNumber(metrics.shot_to_rise_tlast_min_clks),
@@ -2787,10 +2793,12 @@
     add("Accelerated simulation profile", `${numberText(contract.revolutionPeriodNs, " ns/rev")} / ${numberText(contract.opticalShotIntervalMdeg, " mdeg")}`, `time-equivalent to ${htmlPlannedShotIntervalClks} AXIS clk`, Number.isFinite(contract.revolutionPeriodNs) && Number.isFinite(contract.opticalShotIntervalMdeg));
     add("Planned accelerated Shot interval", numberText(contract.plannedShotIntervalClks, " AXIS clk"), `${htmlPlannedShotIntervalClks} AXIS clk`, exact(contract.plannedShotIntervalClks, htmlPlannedShotIntervalClks));
     add(
-      "Measured minimum Shot interval",
+      "Measured minimum laser interval",
       numberText(contract.measuredShotIntervalMinClks, " AXIS clk"),
-      `${htmlPlannedShotIntervalClks} AXIS clk (quantization tolerance +/-1)`,
-      within(contract.measuredShotIntervalMinClks, htmlPlannedShotIntervalClks, 1)
+      `>= ${numberText(contract.worstRearmClks)} AXIS clk re-arm bound; operating angular-grid budget is checked separately`,
+      Number.isFinite(contract.measuredShotIntervalMinClks)
+        && Number.isFinite(contract.worstRearmClks)
+        && contract.measuredShotIntervalMinClks >= contract.worstRearmClks
     );
     const measuredOutputMaxClks = Math.max(
       contract.shotToRiseTlastMaxClks || 0,
@@ -2805,6 +2813,53 @@
     add("Worst-case fire-to-output composition", numberText(contract.fireToOutputMaxClks, " AXIS clk"), `${numberText(contractFireDoneTimeoutClks)} timeout + ${numberText(measuredOutputMaxClks)} T0-to-output = ${numberText(measuredFireToOutputClks)} AXIS clk`, exact(contract.fireToOutputMaxClks, measuredFireToOutputClks));
     add("Required-grid point budget margin", numberText(contract.pointBudgetMarginClks, " AXIS clk"), `${numberText(contract.plannedShotIntervalClks)} required - ${numberText(contract.fireToOutputMaxClks)} worst-case = ${numberText(measuredPointMarginClks)} AXIS clk`, exact(contract.pointBudgetMarginClks, measuredPointMarginClks));
     add("Worst-case scheduler re-arm", numberText(contract.worstRearmClks, " AXIS clk"), `${m.laserWorstRearmClks} AXIS clk; both must fit required grid`, Number.isFinite(contract.worstRearmClks) && contract.worstRearmClks <= contract.plannedShotIntervalClks && m.laserRearmPass);
+    const hasFaceGapEvidence = [
+      contract.faceActiveMechMdeg,
+      contract.faceInactiveGapMechMdeg,
+      contract.simFaceGapAxisClks,
+      contract.operatingFaceGapAxisClks,
+      contract.faceGapMarginClks,
+      contract.faceGapContractPass
+    ].every(Number.isFinite);
+    if (hasFaceGapEvidence) {
+      const facePitchMdeg = 360000 / contract.facesPerFrame;
+      const modeledSimGapClks = Math.floor(
+        contract.revolutionPeriodNs * contract.axisClkMHz / 1000
+        * contract.faceInactiveGapMechMdeg / 360000 + 1.0e-9
+      );
+      const modeledOperatingGapClks = Math.floor(
+        contract.operatingRevolutionPeriodNs * contract.axisClkMHz / 1000
+        * contract.faceInactiveGapMechMdeg / 360000 + 1.0e-9
+      );
+      const modeledFaceGapMarginClks = modeledOperatingGapClks
+        - contract.worstRearmClks;
+      add(
+        "Face active / inactive geometry",
+        `${numberText(contract.faceActiveMechMdeg)} + ${numberText(contract.faceInactiveGapMechMdeg)} mdeg`,
+        `${numberText(facePitchMdeg)} mdeg mechanical pitch`,
+        exact(contract.faceActiveMechMdeg + contract.faceInactiveGapMechMdeg, facePitchMdeg)
+      );
+      add(
+        "Accelerated face inactive gap",
+        numberText(contract.simFaceGapAxisClks, " AXIS clk"),
+        `${numberText(modeledSimGapClks)} AXIS clk from accelerated revolution period`,
+        exact(contract.simFaceGapAxisClks, modeledSimGapClks)
+      );
+      add(
+        "Operating face inactive gap",
+        numberText(contract.operatingFaceGapAxisClks, " AXIS clk"),
+        `${numberText(modeledOperatingGapClks)} AXIS clk from operating RPM`,
+        exact(contract.operatingFaceGapAxisClks, modeledOperatingGapClks)
+      );
+      add(
+        "Face-boundary re-arm margin",
+        `${numberText(contract.faceGapMarginClks, " AXIS clk")} / pass ${numberText(contract.faceGapContractPass)}`,
+        `${numberText(modeledOperatingGapClks)} gap - ${numberText(contract.worstRearmClks)} re-arm = ${numberText(modeledFaceGapMarginClks)} AXIS clk`,
+        exact(contract.faceGapMarginClks, modeledFaceGapMarginClks)
+          && exact(contract.faceGapContractPass, 1)
+          && modeledFaceGapMarginClks >= 0
+      );
+    }
     add("Measured point budget verdict", numberText(contract.pointBudgetPass), `RTL 1 and HTML ${m.shotPass ? 1 : 0}`, exact(contract.pointBudgetPass, 1) && contract.pointBudgetMarginClks >= 0 && m.shotPass);
     add("Laser schedule overrun", numberText(contract.scheduleOverrun), "0", exact(contract.scheduleOverrun, 0));
     add("VDMA HSIZE rise", numberText(contract.vdmaHsizeRise, " B"), `${m.hdl.hsizeRiseBytes} B`, exact(contract.vdmaHsizeRise, m.hdl.hsizeRiseBytes));
@@ -2903,12 +2958,15 @@
       && contract.iModeRiseChecks === expectedIModeRiseChecks
       && contract.iModeFallChecks === expectedIModeFallChecks
       && contract.iModeRiseHit === contract.iModeExpectedHit
-      && (!m.hdl.fallLaneActive || contract.iModeFallHit === contract.iModeExpectedHit);
+      && (!m.hdl.fallLaneActive
+        || (Number.isFinite(contract.iModeFallHit)
+          && contract.iModeFallHit >= 0
+          && contract.iModeFallHit <= 0x1FFFF));
     add(
       "I-Mode Hit[16:0] preservation",
       `ref/rise/fall checks ${numberText(contract.iModeHitRefs)}/${numberText(contract.iModeRiseChecks)}/${numberText(contract.iModeFallChecks)}; Hit ${numberText(contract.iModeExpectedHit)}/${numberText(contract.iModeRiseHit)}/${numberText(contract.iModeFallHit)}`,
       m.hdl.fallLaneActive
-        ? `Rise/Fall ${numberText(expectedIModeRiseChecks)}/${numberText(expectedIModeFallChecks)} checks; expected Hit = each lane Hit`
+        ? `Rise/Fall ${numberText(expectedIModeRiseChecks)}/${numberText(expectedIModeFallChecks)} event-by-event checks; final Fall Hit may differ because its STOP edge is later`
         : `${numberText(expectedIModeRiseChecks)} Rise checks; Fall inactive`,
       iModePreservePass
     );
@@ -7612,6 +7670,10 @@
       const shotToTlastClks = Math.ceil((model.shotCriticalUs - model.fireDoneTimeoutUs) * model.axisClk - 1e-9);
       const fireToOutputClks = model.fireDoneTimeoutAxisClks + shotToTlastClks;
       const pointMarginClks = plannedPointClks - fireToOutputClks;
+      const faceActiveMechMdeg = Math.round(model.activeMechDeg * 1000);
+      const faceInactiveGapMechMdeg = Math.round(model.restMechDeg * 1000);
+      const faceGapAxisClks = Math.floor(model.restTimeUs * model.axisClk + 1.0e-9);
+      const faceGapMarginClks = faceGapAxisClks - model.laserWorstRearmClks;
       const synthetic = {
         schema_version: 2,
         scenario_id: "c08_s25_self_test",
@@ -7673,6 +7735,12 @@
           fire_done_timeout_5ns_ticks: model.fireDoneTimeout5nsTicks,
           fire_done_timeout_axis_clks: model.fireDoneTimeoutAxisClks,
           worst_rearm_clks: model.laserWorstRearmClks,
+          face_active_mech_mdeg: faceActiveMechMdeg,
+          face_inactive_gap_mech_mdeg: faceInactiveGapMechMdeg,
+          sim_face_gap_axis_clks: faceGapAxisClks,
+          operating_face_gap_axis_clks: faceGapAxisClks,
+          face_gap_margin_clks: faceGapMarginClks,
+          face_gap_contract_pass: faceGapMarginClks >= 0 ? 1 : 0,
           range_wait_min_clks: rangeWaitClks,
           range_wait_max_clks: rangeWaitClks,
           shot_to_rise_tlast_min_clks: shotToTlastClks,
@@ -7732,6 +7800,16 @@
       const mismatching = buildRtlContractComparison(model, vsizeMismatch);
       const vsizeRow = mismatching.rows.find(row => row.label === "VDMA VSIZE");
       if (mismatching.pass || !vsizeRow || vsizeRow.pass) errors.push("VDMA VSIZE mismatch was not rejected");
+
+      const faceGapMismatch = JSON.parse(JSON.stringify(synthetic));
+      faceGapMismatch.metrics.face_gap_margin_clks += 1;
+      const faceGapMismatching = buildRtlContractComparison(model, faceGapMismatch);
+      const faceGapRow = faceGapMismatching.rows.find(
+        row => row.label === "Face-boundary re-arm margin"
+      );
+      if (faceGapMismatching.pass || !faceGapRow || faceGapRow.pass) {
+        errors.push("Face-gap margin mismatch was not rejected");
+      }
 
       const legacy = JSON.parse(JSON.stringify(synthetic));
       legacy.schema_version = 1;
