@@ -246,8 +246,10 @@ It is not the next-shot deadline or a GPX session-stop command. A sequence
 error is raised only when that pulse arrives before synchronized GPX IrFlag;
 arrival after IrFlag while the chip drains or runs the ALU is normal.
 
-The 150/200 and 150/100 MHz scenarios prove both AXIS/TDC frequency orderings
-on the functional CDC path in simulation.
+The maintained clock-corner scenarios prove AXIS 50/TDC 200 MHz and AXIS
+200/TDC 50 MHz ASYNC operation, plus the same-net 150/150 MHz SYNC bypass.
+ASYNC synthesis retains four raw-stream CDC FIFO roots; SYNC synthesis removes
+all four. Equal-frequency clocks on independent nets must still use ASYNC.
 The parent reference structurally validates the AXI 100 MHz clock, but this TB
 does not yet dynamically exercise an independent AXI clock. Board pin timing,
 long-stall behavior, and post-route closure remain separate sign-off gates.
@@ -306,6 +308,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/scripts/run_smoke.ps1 `
   -Scenario system_integration/scenarios/return7_external_axis150_tdc100_bus2_v001.json
 ```
+
+Run the extreme ASYNC clock ratios, followed by the shared-clock SYNC profile:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_smoke.ps1 `
+  -Scenario system_integration/scenarios/return7_external_axis50_tdc200_async_v001.json
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_smoke.ps1 `
+  -Scenario system_integration/scenarios/return7_external_axis200_tdc50_async_v001.json
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_smoke.ps1 `
+  -Scenario system_integration/scenarios/return7_external_axis150_tdc150_sync_v001.json
+```
+
+`SYNC` in the testbench drives `i_tdc_clk` from the AXIS clock signal itself;
+it does not model two unrelated 150 MHz oscillators.
 
 `-EncoderSource` remains available for short experiments, but archived
 `scenario.json` always contains the effective configuration after overrides.

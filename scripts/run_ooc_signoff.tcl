@@ -138,6 +138,29 @@ foreach spec $physical_port_contract {
 close $port_report
 puts "OOC_PHYSICAL_PORT_CONTRACT_PASS chips=$num_chips"
 
+# Prove the selected generated topology after synthesis. The fixed four-chip
+# processing array retains four raw-stream CDC FIFO roots in ASYNC mode; SYNC
+# must remove every u_raw_cdc instance.
+# Match only the four XPM wrapper roots, not all descendants whose hierarchical
+# path also contains u_raw_cdc.
+set raw_cdc_cells [get_cells -hierarchical -quiet \
+    -filter {NAME =~ *.gen_raw_async.u_raw_cdc}]
+set raw_cdc_count [llength $raw_cdc_cells]
+set topology_report [open [file join $out_dir raw_stream_topology.txt] w]
+puts $topology_report "stream_mode=$stream_mode"
+puts $topology_report "raw_cdc_cell_count=$raw_cdc_count"
+foreach cell $raw_cdc_cells {
+    puts $topology_report $cell
+}
+close $topology_report
+if {$stream_mode eq "ASYNC" && $raw_cdc_count != 4} {
+    error "ASYNC topology expected four raw-stream CDC FIFOs, got $raw_cdc_count"
+}
+if {$stream_mode eq "SYNC" && $raw_cdc_count != 0} {
+    error "SYNC topology unexpectedly contains $raw_cdc_count raw-stream CDC cell(s)"
+}
+puts "OOC_RAW_STREAM_TOPOLOGY_PASS mode=$stream_mode raw_cdc_cells=$raw_cdc_count"
+
 set black_boxes [get_cells -hierarchical -filter {IS_BLACKBOX == 1}]
 if {[llength $black_boxes] != 0} {
     set black_box_report [open [file join $out_dir post_synth_black_boxes.rpt] w]

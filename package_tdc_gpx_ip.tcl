@@ -137,7 +137,7 @@ set_property display_name {TDC-GPX Multi-chip Acquisition Controller} $core
 set_property description \
     {Configurable one-to-four-chip TDC-GPX acquisition with selectable local or unified CSR ownership, rising/falling lane processing, dual VDMA-ready AXI4-Stream outputs, diagnostics, and interrupts.} \
     $core
-set_property core_revision 8 $core
+set_property core_revision 9 $core
 set_property supported_families {zynq Production} $core
 
 proc tdc_ensure_long {
@@ -291,7 +291,7 @@ set_property enablement_resolve_type immediate $oen_mode
 set_property enablement_value false $oen_mode
 tdc_set_string $core g_STREAM_CLK_MODE ASYNC {ASYNC SYNC} \
     {Internal stream clock mode} \
-    {ASYNC supports independent AXIS and TDC frequencies in either order. SYNC requires equal clocks. Slower TDC profiles require GPX bus/drain throughput verification.}
+    {ASYNC supports independent AXIS and TDC frequencies in either order. SYNC requires equal values and one shared physical clock net; independent equal-frequency clocks must remain ASYNC. Slower TDC profiles require GPX bus/drain throughput verification.}
 
 proc tdc_find_interface {core logical_name physical_name} {
     foreach interface [ipx::get_bus_interfaces -of_objects $core] {

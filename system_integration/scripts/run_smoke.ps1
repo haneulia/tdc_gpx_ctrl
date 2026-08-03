@@ -38,6 +38,7 @@ if ($null -eq $Cfg.tdc_clock_mhz) {
 }
 
 $ScenarioDefaults = [ordered]@{
+    stream_clock_mode = "ASYNC"
     revolution_period_us = 100.0
     optical_shot_interval_deg = 36.5
     returns_per_stop = 1
@@ -96,6 +97,14 @@ if ([double]$Cfg.axis_clock_mhz -notin $SupportedClocksMhz) {
 }
 if ([double]$Cfg.tdc_clock_mhz -notin $SupportedClocksMhz) {
     throw "Unsupported tdc_clock_mhz '$($Cfg.tdc_clock_mhz)'"
+}
+$Cfg.stream_clock_mode = ([string]$Cfg.stream_clock_mode).ToUpperInvariant()
+if ([string]$Cfg.stream_clock_mode -notin @("ASYNC", "SYNC")) {
+    throw "stream_clock_mode must be ASYNC or SYNC"
+}
+if ([string]$Cfg.stream_clock_mode -eq "SYNC" -and
+    [double]$Cfg.axis_clock_mhz -ne [double]$Cfg.tdc_clock_mhz) {
+    throw "SYNC stream_clock_mode requires equal AXIS and TDC clock frequencies"
 }
 if (-not [string]::IsNullOrWhiteSpace($EncoderSource)) {
     $Cfg.encoder_source = $EncoderSource
@@ -446,6 +455,7 @@ try {
         "--snapshot $Snapshot",
         "--generic_top `"G_AXIS_CLK_MHZ=$($Cfg.axis_clock_mhz)`"",
         "--generic_top `"G_TDC_CLK_MHZ=$($Cfg.tdc_clock_mhz)`"",
+        "--generic_top `"G_STREAM_CLK_MODE=$($Cfg.stream_clock_mode)`"",
         "--generic_top `"G_MAX_RANGE_M=$($Cfg.max_range_m)`"",
         "--generic_top `"G_SIM_TARGET_M=$($Cfg.target_distance_m)`"",
         "--generic_top `"G_REV_TIME_US=$($Cfg.revolution_period_us)`"",

@@ -248,9 +248,9 @@ flowchart LR
 | `g_STREAM_CLK_MODE` | 동작 | 제약 |
 |---|---|---|
 | `ASYNC` | TDC raw stream을 `xpm_fifo_async`로 TDC->AXIS 전달 | 분리 클럭 기본 선택; 두 주파수의 순서 무관 |
-| `SYNC` | raw stream CDC FIFO를 bypass | 두 포트가 같은 clock domain이거나 명시적으로 synchronous여야 함 |
+| `SYNC` | raw stream CDC FIFO를 bypass | `i_axis_aclk`와 `i_tdc_clk`에 동일한 물리 clock net을 연결해야 함 |
 
-`SYNC`에서 `g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ`라는 elaboration assertion은 숫자만 검사한다. 서로 독립된 두 PLL 출력이 우연히 같은 MHz인 것만으로는 안전하지 않다. 두 clock의 위상 관계가 보장되고 STA가 synchronous path로 분석할 수 있어야 하며, 가장 단순한 통합은 두 포트에 같은 clock net을 연결하는 것이다.
+`SYNC`에서 `g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ`라는 elaboration assertion은 숫자만 검사한다. 서로 독립된 두 PLL/FCLK 출력이 우연히 같은 MHz인 것만으로는 안전하지 않다. 현재 IP 계약은 두 포트에 동일한 clock net을 직접 연결하는 것이다. 동일 주파수라도 두 net으로 분리되어 있으면 `ASYNC`를 선택한다.
 
 `ASYNC`의 독립성은 CDC 안전성 계약이다. 처리량 계약은 별도이며 다음 두 경로 중 늦은 쪽이 한 shot 안에 완료되어야 한다.
 
@@ -258,6 +258,14 @@ flowchart LR
 2. AXIS domain: raw CDC FIFO read -> I-Mode decode -> Cell/Face 조립 -> VDMA AXIS 출력
 
 따라서 TDC clock을 낮추면 AXIS clock이 빠르더라도 GPX word read 수가 많은 Return-7 운용점에서 수평 각 간격을 넓히거나 RPM을 낮춰야 할 수 있다.
+
+raw FIFO reset은 TDC clock 수로 고정하지 않고 다음과 같이 합성 시 계산한다.
+
+```text
+raw_fifo_reset_tdc_clks = max(16, ceil(5 * TDC_MHz / AXIS_MHz) + 1)
+```
+
+따라서 가장 빠른 TDC/가장 느린 AXIS 조합인 200/50 MHz에서도 reset이 21 TDC clocks, 즉 5.25 AXIS clocks 동안 유지된다. 이 계산은 runtime 연산이나 CSR를 추가하지 않으며 지원 주파수 집합에서만 elaboration된다.
 
 ### 6.3 주요 CDC 방식
 
@@ -330,7 +338,7 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 | `g_CELL_QUARANTINE_MARGIN_TIME_NS` | 3,410 ns | Cell DROP/QUARANTINE 여유 | late drain bound |
 | `g_CELL_IFIFO2_MARGIN_TIME_NS` | 1,705 ns | Cell IFIFO2 대기 여유 | output-side bound |
 | `g_OEN_MODE` | `DYNAMIC_CONNECTED` | GPX OEN 연결 방식 | 실제 schematic |
-| `g_STREAM_CLK_MODE` | `ASYNC` | raw stream CDC 구조 | 분리 clock은 ASYNC; SYNC는 같은 clock net 권장 |
+| `g_STREAM_CLK_MODE` | `ASYNC` | raw stream CDC 구조 | 분리 clock은 ASYNC; SYNC는 동일한 물리 clock net일 때만 사용 |
 
 `parent_ref/rtl/tdc_gpx_parent_core.vhd`는 위 top generic을 모두 같은 이름으로 노출하고 그대로 전달한다. 따라서 parent에서 값을 바꾸면 `tdc_gpx_top`을 거쳐 실제 소비 하위 모듈까지 한 경로로 내려간다. `parent_ref/scripts/verify_parent_generic_parity.ps1`는 top 선언, parent 선언, generic map의 이름과 개수를 자동 대조하며 누락·개명·간접 매핑을 오류로 처리한다. 반대로 `g_CHIP_ID`, `g_SLOPE_VALUE`, FIFO data/depth, CDC synchronizer stage처럼 instance identity나 구조에서 파생되는 generic은 top에 중복 노출하지 않는다. 이 구분은 사용자가 정해야 하는 build policy만 최상위에서 관리하고, 서로 모순될 수 있는 중복 설정을 만들지 않기 위한 것이다.
 
@@ -1914,7 +1922,7 @@ p_run_timeout_sticky
 11. `cfg_rejected`는 published CSR에 없지만 invalid start pending은 즉시 삭제된다. 드라이버는 사전 검증하고 reject 후 설정을 고쳐 새 start edge를 내야 한다.
 12. `i_stop_tdc`는 session stop이나 물리 GPX stop 출력이 아니라 현재 Shot 측정 window 종료 표지이다. 동기화된 `IrFlag`보다 먼저 도착하면 순서 오류이고, IrFlag 이후 drain/ALU 중 도착하는 것은 정상 순서이다.
 13. VDMA geometry 출력은 Face snapshot 후 갱신되므로 첫 Shot 전 software programming 값으로 바로 사용할 수 없다.
-14. `SYNC` mode의 generic equality assertion은 실제 clock-net 동기 관계까지 검증하지 않는다.
+14. `SYNC` mode의 generic equality assertion은 실제로 동일한 clock net이 연결됐는지 검증하지 않는다.
 15. Shot 경계에서 assembler 입력 FIFO flush는 의도된 귀속 보호지만, 출력 FIFO reset은 occupancy=0일 때만 허용된다. 이 guard를 단순화하면 backpressure 중 이전 line이 손상된다.
 
 ---
@@ -1925,7 +1933,7 @@ p_run_timeout_sticky
 
 - [ ] 실제 AXIS/TDC clock이 generic 및 XDC와 일치한다.
 - [ ] 분리 clock이면 `g_STREAM_CLK_MODE=ASYNC`이다.
-- [ ] `SYNC` mode이면 단순 동주파수가 아니라 같은/synchronous clock domain임을 STA로 보장한다.
+- [ ] `SYNC` mode이면 두 포트에 동일한 물리 clock net을 연결한다.
 - [ ] 선택한 AXIS/TDC 주파수와 BUS timing에서 최악 STOP/Return의 shot 처리 margin이 양수이다.
 - [ ] reset deassert 순서와 clock 안정 조건을 만족한다.
 - [ ] OEN mode가 보드 schematic과 일치한다.
@@ -2026,6 +2034,7 @@ p_run_timeout_sticky
 | [C08 Slope Mask/Falling Simulator v015](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Contract_Simulator_v015.html) | Present/Rise/Fall generic, runtime Fall, APD coverage, HSIZE/DDR/Ethernet 상호작용 | 브라우저 계산/검증 도구 |
 | [C08 Unified CSR Timing Contract Simulator v025](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260729_Unified_CSR_Timing_Contract_Simulator_v025.html) | 독립 AXIS/TDC clock, BUS div/ticks, 5 ns CSR 변환, Return/shot margin | 현재 timing 계약 계산/검증 도구 |
 | [C09 AXIS150/TDC100 Independent Clock v001](cluster_analysis/C09_Implementation_Signoff/C09_Implementation_Signoff_260803120000_AXIS150_TDC100_Independent_Clock_v001.md) | TDC가 AXIS보다 느린 profile의 기능/OOC/post-route 결과와 운용 경계 | 저속 TDC clock sign-off 근거 |
+| [C09 Extreme ASYNC and 150 MHz SYNC v001](cluster_analysis/C09_Implementation_Signoff/C09_Implementation_Signoff_260803144500_Extreme_ASYNC_and_SYNC150_v001.md) | 50/200, 200/50 ASYNC와 동일-net 150/150 SYNC의 기능·구조·post-route 검증 | stream clock mode sign-off 근거 |
 | [C08 Physical Chip Pin Contract Simulator v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Simulator_v017.html) | `g_NUM_CHIPS`, sparse Present mask, compact physical lane과 D/ADR/control 핀 폭 | 현재 physical pin 계약 계산/검증 도구 |
 | [C08 GPX FIFO Ownership Simulator v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Simulator_v018.html) | Echo 진단 분리, EF 완료 권한, LF/Fill burst 힌트, cap fault/purge | 현재 FIFO 소유권과 전체 C08 계산/검증 도구 |
 | [C08 Physical T0/AXIS Handoff Simulator v021](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_Physical_T0_AXIS_Handoff_Simulator_v021.html) | motor/laser/echo AXIS 비트맵과 역압, 물리 GPX START와 논리 Shot event 분리, 전체 계산 | 현재 IP 전달 계약과 전체 C08 계산/검증 도구 |

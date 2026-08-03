@@ -301,6 +301,14 @@ architecture rtl of tdc_gpx_config_ctrl is
     constant c_HAS_FALLING : boolean :=
         fn_count_ones(g_FALL_CHIP_MASK and g_PRESENT_CHIP_MASK) > 0;
 
+    function fn_max_positive(a, b : positive) return positive is
+    begin
+        if a >= b then
+            return a;
+        end if;
+        return b;
+    end function;
+
     -- Reduce a wide payload comparison to one registered flag per 32-bit
     -- chunk. The source send FSM only sees the small flag vector, keeping
     -- wide CSR/image decode away from its clock-enable path at 200 MHz.
@@ -560,10 +568,19 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- c_RAW_FIFO_RST_CLKS cycles before deassert. Covers both the global
     -- soft_reset (s_cmd_soft_reset_tdc) and per-chip err recovery
     -- (s_err_cmd_soft_reset_tdc(i)).
-    -- Round 7 B-1: widened from 8 to 16 TDC cycles so the reset holds ≥ 5
-    -- cycles of the slowest expected AXI clock (even if it drops below the
-    -- current 150 MHz). XPM async FIFO requires rst hold ≥ 5 × slowest-clk.
-    constant c_RAW_FIFO_RST_CLKS : natural := 16;
+    -- Preserve the established 16-TDC-clock reset at ordinary clock ratios.
+    -- When TDC is much faster than AXIS, extend it at elaboration so the
+    -- async FIFO reset spans at least five AXIS clocks plus one TDC-clock
+    -- phase guard. This closes the supported AXIS 50 / TDC 200 MHz corner
+    -- without adding runtime arithmetic or another configuration field.
+    constant c_RAW_FIFO_RST_BASE_CLKS : positive := 16;
+    constant c_RAW_FIFO_RST_MIN_AXIS_CLKS : positive := 5;
+    constant c_RAW_FIFO_RST_RATIO_CLKS : positive := positive(
+        fn_ceil_div(c_RAW_FIFO_RST_MIN_AXIS_CLKS * g_TDC_CLK_MHZ,
+                    g_AXIS_CLK_MHZ) + 1);
+    constant c_RAW_FIFO_RST_CLKS : positive := positive(
+        fn_max_positive(c_RAW_FIFO_RST_BASE_CLKS,
+                        c_RAW_FIFO_RST_RATIO_CLKS));
     type t_raw_fifo_rst_cnt_arr is array (0 to c_MAX_CHIPS - 1)
         of unsigned(4 downto 0);
     signal s_raw_fifo_rst_cnt_r : t_raw_fifo_rst_cnt_arr := (others => (others => '0'));
@@ -847,6 +864,15 @@ begin
 
     assert g_STREAM_CLK_MODE /= "SYNC" or g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ
         report "config_ctrl: SYNC stream mode requires identical AXIS and TDC clocks"
+        severity failure;
+
+    assert c_RAW_FIFO_RST_CLKS * g_AXIS_CLK_MHZ >=
+           c_RAW_FIFO_RST_MIN_AXIS_CLKS * g_TDC_CLK_MHZ
+        report "config_ctrl: raw async FIFO reset does not span five AXIS clocks"
+        severity failure;
+
+    assert c_RAW_FIFO_RST_CLKS <= 31
+        report "config_ctrl: raw async FIFO reset counter is too narrow"
         severity failure;
     -- synthesis translate_on
 
@@ -2024,8 +2050,8 @@ begin
         -- ----- chip_ctrl raw stream -> decode_pipe clock strategy -----
         gen_raw_sync : if g_STREAM_CLK_MODE = "SYNC" generate
         begin
-            -- Contract: i_tdc_clk and i_axis_aclk are the same clock or a
-            -- timing-constrained synchronous clock pair.
+            -- Contract: i_tdc_clk and i_axis_aclk are driven by the same
+            -- physical clock net. Equal frequency alone is not sufficient.
             s_raw_axis_tready(i) <= i_raw_sk_tready(i);
             s_sk_raw_tvalid(i)   <= s_raw_axis_tvalid(i);
             s_sk_raw_tdata(i)    <= s_raw_axis_tdata(i);
@@ -2033,6 +2059,17 @@ begin
             s_raw_cdc_full(i)    <= '0';
             s_raw_cdc_empty(i)   <= not s_raw_axis_tvalid(i);
             s_raw_fifo_rst(i)    <= '0';
+
+            -- synthesis translate_off
+            gen_sync_marker : if i = 0 generate
+            begin
+                assert false
+                    report "SYNC raw stream bypass generate active; axis_mhz="
+                           & integer'image(g_AXIS_CLK_MHZ)
+                           & ", tdc_mhz=" & integer'image(g_TDC_CLK_MHZ)
+                    severity note;
+            end generate gen_sync_marker;
+            -- synthesis translate_on
         end generate gen_raw_sync;
 
         gen_raw_async : if g_STREAM_CLK_MODE = "ASYNC" generate
@@ -2127,7 +2164,10 @@ begin
             gen_async_marker : if i = 0 generate
             begin
                 assert false
-                    report "ASYNC raw_cdc FIFO generate active"
+                    report "ASYNC raw_cdc FIFO generate active; reset_tdc_clks="
+                           & integer'image(c_RAW_FIFO_RST_CLKS)
+                           & ", axis_mhz=" & integer'image(g_AXIS_CLK_MHZ)
+                           & ", tdc_mhz=" & integer'image(g_TDC_CLK_MHZ)
                     severity note;
             end generate gen_async_marker;
             -- synthesis translate_on

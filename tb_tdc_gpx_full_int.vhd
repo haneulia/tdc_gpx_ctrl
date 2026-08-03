@@ -78,6 +78,9 @@ entity tb_tdc_gpx_full_int is
         -- =================================================================
         G_AXIS_CLK_MHZ    : real    := 200.0;   -- processing clock (MHz)
         G_TDC_CLK_MHZ     : real    := 200.0;   -- GPX physical-bus clock (MHz)
+        -- ASYNC uses independent clock generators and the raw CDC FIFO.
+        -- SYNC ties the TDC clock to the AXIS clock and bypasses that FIFO.
+        G_STREAM_CLK_MODE : string  := "ASYNC";
         G_MAX_RANGE_M     : real    := 500.0;   -- LiDAR max range (meters)
         G_SIM_TARGET_M    : real    := 375.0;   -- Echo synthetic target (m)
         -- Motor/optical timing inputs. The mirror mechanical step is one half
@@ -318,10 +321,18 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_FIRE_WIDTH     : natural := fn_max_nat(C_FIRE_WIDTH_5NS_TICKS, 1);
     -- A zero timeout is a blocking configuration error in the current Laser
     -- contract. This watchdog bounds command-to-T0 response only; it is not the
-    -- target round-trip window. Give the fixed behavioral laser response a 2x
-    -- margin while keeping the two physical contracts independent.
+    -- target round-trip window. Include five AXIS clocks for the asynchronous
+    -- fire_done bridge and edge detector. This matters at 50 MHz, where the
+    -- same synchronizer latency occupies much more physical time.
+    constant C_FIRE_DONE_BRIDGE_MARGIN_CLKS : positive := 5;
+    constant C_FIRE_DONE_BRIDGE_MARGIN_5NS_TICKS : positive := positive(
+        integer(ceil(real(C_FIRE_DONE_BRIDGE_MARGIN_CLKS * 200)
+                     / G_AXIS_CLK_MHZ)));
     constant C_FIRE_DONE_TIMEOUT_5NS_TICKS : natural :=
-        2 * C_LASER_T0_DELAY_5NS_TICKS;
+        fn_max_nat(
+            2 * C_LASER_T0_DELAY_5NS_TICKS,
+            C_LASER_T0_DELAY_5NS_TICKS
+                + C_FIRE_DONE_BRIDGE_MARGIN_5NS_TICKS);
     constant C_FIRE_DONE_TIMEOUT_AXIS_CLKS : natural :=
         to_integer(fn_range_5ns_ticks_to_clks(
             to_unsigned(C_FIRE_DONE_TIMEOUT_5NS_TICKS, 16),
@@ -1208,6 +1219,15 @@ begin
         report "tb_tdc_gpx_full_int: G_TDC_CLK_MHZ must be an integer MHz value"
         severity failure;
 
+    assert G_STREAM_CLK_MODE = "ASYNC" or G_STREAM_CLK_MODE = "SYNC"
+        report "tb_tdc_gpx_full_int: G_STREAM_CLK_MODE must be ASYNC or SYNC"
+        severity failure;
+
+    assert G_STREAM_CLK_MODE /= "SYNC"
+        or C_AXIS_DOMAIN_CLK_MHZ = C_TDC_DOMAIN_CLK_MHZ
+        report "tb_tdc_gpx_full_int: SYNC mode requires equal AXIS and TDC clocks"
+        severity failure;
+
     assert ((G_BUS_TICKS - 3) * G_BUS_CLK_DIV + 1) >=
            C_BUS_CAPTURE_MIN_CLKS
         report "tb_tdc_gpx_full_int: requested bus timing does not satisfy the 25 ns read-capture window"
@@ -1237,7 +1257,17 @@ begin
     -- Clock / Reset
     -- =========================================================================
     clk <= not clk after C_AXIS_CLK_PERIOD / 2 when not sim_done else '0';
-    tdc_clk <= not tdc_clk after C_TDC_CLK_PERIOD / 2 when not sim_done else '0';
+
+    gen_tdc_clock_sync : if G_STREAM_CLK_MODE = "SYNC" generate
+        -- One signal driver models the required same-physical-clock-net
+        -- contract. Equal-frequency independent oscillators are not SYNC.
+        tdc_clk <= clk;
+    end generate gen_tdc_clock_sync;
+
+    gen_tdc_clock_async : if G_STREAM_CLK_MODE = "ASYNC" generate
+        tdc_clk <= not tdc_clk after C_TDC_CLK_PERIOD / 2
+                   when not sim_done else '0';
+    end generate gen_tdc_clock_async;
 
     uc_stat(C_STAT_TDC_MAX_ROWS)  <= C_U_TDC_MAX_ROWS_WORD;
     uc_stat(C_STAT_TDC_CELL_SIZE) <= C_U_TDC_CELL_SIZE_WORD;
@@ -1818,7 +1848,7 @@ begin
             g_AXIS_CLK_MHZ    => C_AXIS_DOMAIN_CLK_MHZ,
             g_TDC_CLK_MHZ     => C_TDC_DOMAIN_CLK_MHZ,
             g_DRAIN_MARGIN_TIME_NS => G_TDC_DRAIN_MARGIN_TIME_NS,
-            g_STREAM_CLK_MODE => "ASYNC",
+            g_STREAM_CLK_MODE => G_STREAM_CLK_MODE,
             -- Convert accelerated TB cycle knobs to the top-level physical
             -- time contract without changing the intended TDC cycle count.
             g_POWERUP_TIME_NS   => (G_POWERUP_CLKS * 1000) / C_TDC_DOMAIN_CLK_MHZ,
@@ -2201,6 +2231,7 @@ begin
     -- =========================================================================
     p_mon : process(clk)
         variable v_prev_fire, v_prev_start, v_prev_stop : std_logic := '0';
+        variable v_prev_schedule_warning               : std_logic := '0';
         variable v_prev_td_shot_start                  : std_logic := '0';
         variable v_prev_irflag                         : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
         variable v_prev_alutrigger                     : std_logic_vector(c_MAX_CHIPS - 1 downto 0) := (others => '0');
@@ -2283,6 +2314,7 @@ begin
                 v_prev_fire := '0';
                 v_prev_start := '0';
                 v_prev_stop := '0';
+                v_prev_schedule_warning := '0';
                 v_prev_td_shot_start := '0';
                 v_prev_irflag := (others => '0');
                 v_prev_alutrigger := (others => '0');
@@ -2469,9 +2501,29 @@ begin
                 v_prev_stop := lc_stop_tdc;
                 v_prev_irflag := i_tdc_irflag;
                 v_prev_alutrigger := o_tdc_alutrigger;
+                if lc_warning(c_WARNING_SCHEDULE_OVERRUN) = '1'
+                   and v_prev_schedule_warning = '0' then
+                    report "full_int timing: schedule_overrun first observed"
+                        & ", cycle=" & integer'image(v_axis_cycle)
+                        & ", fire_trig=" & std_logic'image(lc_dbg_fire_trig)
+                        & ", fire_busy=" & std_logic'image(lc_dbg_fire_busy)
+                        & ", result_valid=" & std_logic'image(lc_m_tvalid)
+                        & ", result_ready=" & std_logic'image(lc_m_tready)
+                        & ", face_start=" & std_logic'image(lc_dbg_face_start)
+                        & ", face_end=" & std_logic'image(lc_dbg_face_end)
+                        & ", shot_accept=" & std_logic'image(lc_dbg_shot_accept)
+                        & ", fsm=" & to_hstring(lc_dbg_fsm_state)
+                        & ", shot_count="
+                        & integer'image(to_integer(unsigned(lc_dbg_shot_cnt)))
+                        & ", decoded_count="
+                        & integer'image(to_integer(unsigned(md_dbg_dec_count)))
+                        severity note;
+                end if;
                 if lc_warning(c_WARNING_SCHEDULE_OVERRUN) = '1' then
                     mon_schedule_overrun <= 1;
                 end if;
+                v_prev_schedule_warning :=
+                    lc_warning(c_WARNING_SCHEDULE_OVERRUN);
 
                 if lc_m_tvalid = '1' then
                     mon_lc_m_beats <= mon_lc_m_beats + 1;
@@ -3281,7 +3333,8 @@ begin
             pl("  config :  axis/tdc clk="
                & integer'image(integer(G_AXIS_CLK_MHZ)) & "/"
                & integer'image(integer(G_TDC_CLK_MHZ))
-               & "MHz  range=" & integer'image(integer(G_MAX_RANGE_M)) & "m"
+               & "MHz  stream=" & G_STREAM_CLK_MODE
+               & "  range=" & integer'image(integer(G_MAX_RANGE_M)) & "m"
                & "  sim_tgt=" & integer'image(integer(G_SIM_TARGET_M)) & "m"
                & "  tdata=" & integer'image(G_TDATA_WIDTH) & "b");
             pl("  derived:  max_range_5ns_ticks=" & integer'image(C_MAX_RANGE_5NS_TICKS)
@@ -3736,6 +3789,18 @@ begin
             wait_clk(1);
             v_pipeline_drain_wait := v_pipeline_drain_wait + 1;
         end loop;
+        pl("  drain : starts/stops/laser_tlast="
+           & integer'image(mon_lc_start_cnt) & "/"
+           & integer'image(mon_lc_stop_cnt) & "/"
+           & integer'image(mon_lc_m_tlast)
+           & " rise actual/target="
+           & integer'image(mon_td_rise_line_end) & "/"
+           & integer'image(fn_lane_line_target(
+               C_RISE_CELL_COUNT, mon_lc_start_cnt))
+           & " fall actual/target="
+           & integer'image(mon_td_fall_line_end) & "/"
+           & integer'image(fn_lane_line_target(
+               C_FALL_CELL_COUNT, mon_lc_start_cnt)));
         assert mon_lc_stop_cnt = mon_lc_start_cnt and
                mon_lc_m_tlast = mon_lc_start_cnt and
                mon_td_rise_line_end = fn_lane_line_target(
@@ -3928,6 +3993,7 @@ begin
 
         report "RTL_RESULT encoder_source=" & G_ENCODER_SOURCE
              & " control_mode=" & G_CONTROL_MODE
+             & " stream_mode=" & G_STREAM_CLK_MODE
              & " axis_clk_mhz=" & integer'image(integer(G_AXIS_CLK_MHZ))
              & " tdc_clk_mhz=" & integer'image(integer(G_TDC_CLK_MHZ))
              & " bus_clk_div=" & integer'image(G_BUS_CLK_DIV)
