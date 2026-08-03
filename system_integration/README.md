@@ -91,19 +91,22 @@ following revolution is the first complete measurement interval.
 
 Motor, Laser, Echo, and the GPX processing path use `axis_clock_mhz`. The GPX
 physical-bus model and chip controller use the independent `tdc_clock_mhz`.
-Both values must be one of 50, 100, 125, 150, or 200 MHz and AXIS must not be
-faster than TDC. A scenario that omits `tdc_clock_mhz` remains a same-clock run
-for schema-v1 compatibility.
+Both values must be one of 50, 100, 125, 150, or 200 MHz. The maintained
+`ASYNC` stream path permits either frequency ordering, including AXIS 150 MHz /
+TDC 100 MHz. `SYNC` is legal only when both frequencies are equal and the
+physical clocks are synchronous. A scenario that omits `tdc_clock_mhz` remains
+a same-clock run for schema-v1 compatibility.
 
-The maintained integration gate is AXIS 150 MHz / TDC 200 MHz. It is run once
-with the internal encoder and once with the external A/B/Z path. Same-clock
-profiles remain available for diagnosis, but they are not part of the routine
-two-scenario regression.
+The routine integration gate remains AXIS 150 MHz / TDC 200 MHz. The slower-TDC
+closure adds AXIS 150 MHz / TDC 100 MHz external-encoder profiles for board
+bring-up. Same-clock profiles remain available for diagnosis.
 
 The shared CSR range remains in 5 ns ticks. `rtl_contract.json` reports the two
 derived values separately as `max_range_axis_clks` and
 `max_range_tdc_clks`; there is no ambiguous `max_range_local_clks` field in
-schema version 2.
+schema version 2. Scenario schema version 3 additionally records
+`bus_clk_div`, `bus_ticks`, and the resulting `bus_word_period_ns` so a PASS is
+bound to a reproducible physical-bus profile.
 
 Mirror and Return timing are independent scenario inputs. The revolution
 period and optical shot interval derive the real Motor-to-Laser cadence;
@@ -129,6 +132,19 @@ clocks of remaining point budget. A 0.24-degree point reaches the next shot
 before the previous IFIFO/Cell tail is complete. A slower runtime GPX bus
 setting requires a new margin sweep; the range value alone does not cover FIFO
 readout time.
+
+The verified AXIS 150 MHz / TDC 100 MHz operating points are:
+
+| BUS profile | Word period | RPM / optical interval | Drain margin | Measured point margin |
+|---|---:|---:|---:|---:|
+| div1 / ticks5 | 50 ns | 1200 RPM / 0.24 deg | 12 us | 202 AXIS clocks (1.347 us) |
+| div2 / ticks5 | 100 ns | 1200 RPM / 0.30 deg | 18 us | 322 AXIS clocks (2.147 us) |
+
+Both profiles exercise all 16 APD channels, four GPX chips in dedicated
+2-rise + 2-fall mode, and seven Returns per STOP. The 1200 RPM / 0.20 deg
+profile is intentionally not accepted at TDC 100 MHz: the next shot arrives
+before the previous Return-7 result completes. Clock-domain safety therefore
+does not replace the scan-rate budget check.
 
 ## Result contract
 
@@ -230,7 +246,8 @@ It is not the next-shot deadline or a GPX session-stop command. A sequence
 error is raised only when that pulse arrives before synchronized GPX IrFlag;
 arrival after IrFlag while the chip drains or runs the ALU is normal.
 
-The 150/200 MHz scenarios prove the AXIS/TDC functional CDC path in simulation.
+The 150/200 and 150/100 MHz scenarios prove both AXIS/TDC frequency orderings
+on the functional CDC path in simulation.
 The parent reference structurally validates the AXI 100 MHz clock, but this TB
 does not yet dynamically exercise an independent AXI clock. Board pin timing,
 long-stall behavior, and post-route closure remain separate sign-off gates.
@@ -238,7 +255,7 @@ long-stall behavior, and post-route closure remain separate sign-off gates.
 ## C08 HTML comparison
 
 Open
-`Doc/cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260727_External_GPX_I_Mode_Integration_Simulator_v022.html`
+`Doc/cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260729_Unified_CSR_Timing_Contract_Simulator_v025.html`
 and select either `rtl_contract.json` or the full `rtl_result.json` in the
 **RTL contract comparison** panel. With **Apply scenario** enabled, the HTML
 loads the clock pair, output width, range/scan CSR values, max hits, build and
@@ -277,6 +294,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```
 
 Add `-FullCrossProduct` only when all 21 Return/width combinations are needed.
+
+Run the slower-TDC board profiles:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_smoke.ps1 `
+  -Scenario system_integration/scenarios/return7_external_axis150_tdc100_bus1_v001.json
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/scripts/run_smoke.ps1 `
+  -Scenario system_integration/scenarios/return7_external_axis150_tdc100_bus2_v001.json
+```
 
 `-EncoderSource` remains available for short experiments, but archived
 `scenario.json` always contains the effective configuration after overrides.

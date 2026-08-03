@@ -25,17 +25,17 @@
 --   s_err_raw_overflow_r (sticky) captures "some raw/control beat was
 --   dropped for diagnostic reasons":
 --     - chip_ctrl raw FIFO exhausted its protocol credits
---     - PH_RESP_DRAIN hard cap (15 cycles) hit while bus still busy/pending
+--     - PH_RESP_DRAIN protocol grace cap hit while bus still busy/pending
 --       (s_err_drain_cap_r, OR'd into o_err_raw_overflow)
 --   Round 5 #5 removed the overrun-drop path; the matching OR fold and
 --   the chip_run s_run_overrun_drop signal were deleted in Round 6 B2.
 --   Exposed via o_err_raw_overflow port.
 --
--- PH_RESP_DRAIN hard-cap behavior (Round 3 #9):
+-- PH_RESP_DRAIN grace-cap behavior (Round 3 #9, clock-profile closure):
 --   Every PH_RUN completion enters PH_RESP_DRAIN to flush potential stale
---   bus responses. Normal exit: bus idle + ≥3 cycles. Hard cap 15 cycles
---   forces onward to PH_IDLE/PH_INIT but sets s_err_drain_cap_r if bus
---   was still active — SW can diagnose the forced drain.
+--   bus responses. Normal exit requires bus idle plus a settling guard.
+--   The 1023-cycle cap covers every legal runtime div/ticks transaction;
+--   activity beyond that point is diagnosed as a stuck physical bus.
 --
 -- PH_RESP_DRAIN auto-recover (Round 13 follow-up, audit 3번):
 --   After s_err_bus_fatal_r is latched (quarantine counter reached 65K
@@ -193,7 +193,7 @@ entity tdc_gpx_chip_ctrl is
         o_err_raw_overflow  : out std_logic;    -- sticky: OR of raw-drop + drain-cap (legacy, retained)
         -- Distinguish a raw FIFO beat loss from the response-drain hard cap.
         o_err_raw_drop      : out std_logic;    -- sticky: raw FIFO beat dropped
-        o_err_drain_cap     : out std_logic;    -- sticky: PH_RESP_DRAIN hit 15-cycle hard cap while bus busy
+        o_err_drain_cap     : out std_logic;    -- sticky: protocol grace cap hit while bus busy
         o_err_reg_overflow  : out std_logic;    -- sticky: chip_reg 3rd-pulse queue overflow (Round 5 #12)
         o_run_timeout       : out std_logic;    -- 1-clk pulse: chip_run abnormal drain exit
         -- Round 11 C: surface chip_run's timeout cause code for SW diagnosis.
@@ -232,11 +232,14 @@ architecture coordinator of tdc_gpx_chip_ctrl is
         end case;
     end function;
     -- synthesis translate_on
+    -- 10 bits cover every legal runtime bus profile without a multiplier:
+    -- max div=63, ticks=7 plus request/turnaround/setup/hold is <1023 clocks.
+    constant c_RESP_DRAIN_GRACE_CLKS : positive := 1023;
     signal s_phase_r      : t_phase := PH_INIT;
-    signal s_drain_cnt_r    : unsigned(3 downto 0) := (others => '0');  -- stale response drain counter
+    signal s_drain_cnt_r  : unsigned(9 downto 0) := (others => '0');
     signal s_drain_to_init_r : std_logic := '0';  -- '1' = drain→PH_INIT (soft reset), '0' = drain→PH_IDLE (timeout)
     -- Round 9 #6 + Round 11 item 5: secondary quarantine counter.
-    -- Runs while the phase is stuck in quarantine (cnt saturated at 15 AND
+    -- Runs while the phase is stuck in quarantine (grace counter saturated AND
     -- bus still active). Round 9 #6 used its overflow (65K cycles) to
     -- force-exit to PH_INIT. Round 11 item 5 reverts that escalation: the
     -- forced PH_INIT transition risked routing stale responses into the
@@ -760,13 +763,16 @@ begin
                     when PH_RESP_DRAIN =>
                         -- Drain stale bus responses after timeout or soft reset.
                         -- tready='1' (above), routing='0' (all discarded).
-                        -- Counter saturates at 15 while the bus is still active
-                        -- (quarantine — see below).
-                        if s_drain_cnt_r /= to_unsigned(15, 4) then
+                        -- The 10-bit counter covers every legal runtime bus
+                        -- transaction before quarantine (see below).
+                        if s_drain_cnt_r /= to_unsigned(
+                            c_RESP_DRAIN_GRACE_CLKS,
+                            s_drain_cnt_r'length) then
                             s_drain_cnt_r <= s_drain_cnt_r + 1;
                         end if;
                         if i_bus_busy = '0' and i_bus_rsp_pending = '0'
-                           and s_drain_cnt_r >= to_unsigned(3, 4)
+                           and s_drain_cnt_r >= to_unsigned(
+                               3, s_drain_cnt_r'length)
                            and s_err_bus_fatal_r = '0' then
                             if s_drain_to_init_r = '1' then
                                 -- synthesis translate_off
@@ -797,10 +803,13 @@ begin
                                 s_phase_r <= PH_IDLE;
                             end if;
                             s_drain_to_init_r <= '0';  -- always clear on drain exit
-                        elsif s_drain_cnt_r = to_unsigned(15, 4) then
-                            -- Hard cap reached. Round 5 #9 + Round 9 #6 + Round 11 item 5:
+                        elsif s_drain_cnt_r = to_unsigned(
+                            c_RESP_DRAIN_GRACE_CLKS,
+                            s_drain_cnt_r'length) then
+                            -- Protocol grace cap reached. Round 5 #9 +
+                            -- Round 9 #6 + Round 11 item 5:
                             --   Round 5 #9 made this a QUARANTINE — stay in
-                            --   PH_RESP_DRAIN with cnt saturated at 15 and
+                            --   PH_RESP_DRAIN with its grace counter saturated and
                             --   routing disabled so any stale response is
                             --   absorbed. Round 9 #6 added a secondary
                             --   watchdog (s_drain_quarantine_cnt_r) that

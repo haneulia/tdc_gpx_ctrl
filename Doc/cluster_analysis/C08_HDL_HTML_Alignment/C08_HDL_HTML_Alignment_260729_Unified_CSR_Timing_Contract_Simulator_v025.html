@@ -867,7 +867,7 @@
           <span class="unit">mode</span>
         </div>
         <div class="field">
-          <label for="readNs">TDC read 단위</label>
+          <label for="readNs">GPX bus word 주기</label>
           <input id="readNs" type="number" min="1" step="1" value="50">
           <span class="unit">ns</span>
         </div>
@@ -2611,6 +2611,9 @@
       encoderSource: String(metrics.encoder_source ?? scenario.encoder_source ?? "internal").toLowerCase(),
       axisClkMHz: contractNumber(metrics.axis_clk_mhz, scenario.axis_clock_mhz),
       tdcClkMHz: contractNumber(metrics.tdc_clk_mhz, scenario.tdc_clock_mhz, metrics.axis_clk_mhz, scenario.axis_clock_mhz),
+      busClkDiv: contractNumber(metrics.bus_clk_div, scenario.bus_clk_div),
+      busTicks: contractNumber(metrics.bus_ticks, scenario.bus_ticks),
+      busWordPeriodNs: contractNumber(metrics.bus_word_period_ns),
       outputWidth: contractNumber(metrics.output_width, scenario.output_width_bits),
       maxRange5nsTicks: contractNumber(metrics.max_range_5ns_ticks),
       maxRangeAxisClks: contractNumber(metrics.max_range_axis_clks, metrics.max_range_local_clks),
@@ -2738,6 +2741,8 @@
     add("Control plane", contract.controlMode, "local or unified", ["local", "unified"].includes(contract.controlMode));
     add("AXIS clock", numberText(contract.axisClkMHz, " MHz"), `${m.hdl.axisClkMHz} MHz`, exact(contract.axisClkMHz, m.hdl.axisClkMHz));
     add("TDC clock", numberText(contract.tdcClkMHz, " MHz"), `${m.hdl.tdcClkMHz} MHz`, exact(contract.tdcClkMHz, m.hdl.tdcClkMHz));
+    add("GPX bus timing", `${numberText(contract.busClkDiv)} / ${numberText(contract.busTicks)}`, "clk_div / ticks", Number.isFinite(contract.busClkDiv) && contract.busClkDiv >= 1 && contract.busClkDiv <= 63 && Number.isFinite(contract.busTicks) && contract.busTicks >= 3 && contract.busTicks <= 7);
+    add("GPX bus word period", numberText(contract.busWordPeriodNs, " ns"), `${m.readNs} ns`, within(contract.busWordPeriodNs, m.readNs, 1.0e-9));
     add("g_OUTPUT_WIDTH", numberText(contract.outputWidth, " bit"), `${m.hdl.outputWidth} bit`, exact(contract.outputWidth, m.hdl.outputWidth));
     add("max_range_5ns_ticks", numberText(contract.maxRange5nsTicks), m.hdl.range5nsTicks, exact(contract.maxRange5nsTicks, m.hdl.range5nsTicks));
     add("Range clocks / AXIS", numberText(contract.maxRangeAxisClks), m.hdl.axisRangeClks, exact(contract.maxRangeAxisClks, m.hdl.axisRangeClks));
@@ -3250,8 +3255,7 @@
     ) && hdlErrMaxRetries === HDL_MODEL.defaultErrMaxRetries;
     const hdlClockFrequencyOk =
       HDL_MODEL.supportedClocks.includes(tdcClk) &&
-      HDL_MODEL.supportedClocks.includes(axisClk) &&
-      axisClk <= tdcClk;
+      HDL_MODEL.supportedClocks.includes(axisClk);
     const hdlStreamModeOk = hdlStreamClkMode === "ASYNC" || axisClk === tdcClk;
     const hdlClockPairOk = hdlClockFrequencyOk && hdlStreamModeOk;
     const hdlRangeClockSafe = hdlRange5nsTicks > 0 &&
@@ -4144,7 +4148,7 @@
       rowT("timing", "fire_done watchdog", "fire_done 감시 한계", `${m.fireDoneTimeout5nsTicks} -> ${m.fireDoneTimeoutAxisClks}`, "5ns tick -> AXIS clk", "must exceed the T0 response and must not exceed target round-trip", "T0 응답보다 길고 타겟 왕복시간보다 길 수 없음"),
       rowT("timing", "Worst-case scheduler re-arm", "최악조건 스케줄러 재무장", `${m.laserWorstRearmClks} / ${Math.ceil(m.activePeriodUs * m.axisClk - 1e-9)}`, "required / available AXIS clk", m.laserRearmPass ? "PASS: next angular-grid point remains serviceable" : "CHECK: a due grid point can be skipped", m.laserRearmPass ? "PASS: 다음 각도 격자점 처리 가능" : "CHECK: 예정 각도 격자점을 건너뛸 수 있음"),
       rowT("timing", "거리 왕복 ToF", "거리 왕복 ToF", fmt(m.tofUs), "us", "2 x distance / c", "2 x 거리 / 광속"),
-      rowT("timing", "Range counter domains", "Range counter clock domain", `${m.hdl.range5nsTicks} -> ${m.hdl.tdcRangeClks} / ${m.hdl.axisRangeClks}`, "5ns ticks -> TDC / AXIS clk", `one 200 MHz-reference CSR; TDC ${fmt(m.hdl.tdcRangeUs, 6)} us, AXIS ${fmt(m.hdl.axisRangeUs, 6)} us; ${m.hdl.clockPairOk ? "clock contract OK" : "AXIS must not exceed TDC"}`, `200 MHz 기준 CSR 하나; TDC ${fmt(m.hdl.tdcRangeUs, 6)} us, AXIS ${fmt(m.hdl.axisRangeUs, 6)} us; ${m.hdl.clockPairOk ? "clock 계약 OK" : "AXIS는 TDC보다 빠를 수 없음"}`),
+      rowT("timing", "Range counter domains", "Range counter clock domain", `${m.hdl.range5nsTicks} -> ${m.hdl.tdcRangeClks} / ${m.hdl.axisRangeClks}`, "5ns ticks -> TDC / AXIS clk", `one 200 MHz-reference CSR; TDC ${fmt(m.hdl.tdcRangeUs, 6)} us, AXIS ${fmt(m.hdl.axisRangeUs, 6)} us; ${m.hdl.clockPairOk ? "independent-clock contract OK" : "unsupported clock or invalid SYNC split"}`, `200 MHz 기준 CSR 하나; TDC ${fmt(m.hdl.tdcRangeUs, 6)} us, AXIS ${fmt(m.hdl.axisRangeUs, 6)} us; ${m.hdl.clockPairOk ? "독립 클럭 계약 OK" : "미지원 클럭 또는 잘못된 SYNC 분리"}`),
       rowT("timing", "HDL range budget", "HDL range 시간 budget", fmt(m.hdl.rangeBudgetUs), "us", `max(physical ToF, TDC-local range, AXIS-local range), source ${m.hdl.rangeSource}`, `max(물리 ToF, TDC-local range, AXIS-local range), source ${m.hdl.rangeSource}`),
       rowT("timing", "IrFlag capture boundary", "IrFlag 수집 종료 경계", fmt(m.hdl.rangeBudgetUs), "us after T0", "integrated model closes capture at the programmed maximum-range bound; target-distance slack is not reused", "통합 모델은 설정 최대거리 경계에서 capture 종료; 목표거리 차이는 drain 여유로 재사용하지 않음"),
       rowT("timing", "Post-IrFlag drain allowance", "IrFlag 이후 drain 허용시간", fmt(m.drainAvailableUs, 6), "us", `${m.hdl.timingNs.drainMargin} ns -> ${m.hdl.timingClks.drainMargin} TDC clocks`, `${m.hdl.timingNs.drainMargin} ns -> TDC ${m.hdl.timingClks.drainMargin} clocks`),
@@ -4612,7 +4616,7 @@
       if (!m.hdl.physicalChipCountContractOk) failures.push("g_NUM_CHIPS = popcount(Present mask)");
       if (!m.hdl.ipHandoffContractOk) failures.push("motor/laser/TDC ownership and transfer contract");
       if (!m.hdl.fieldConfigOk) failures.push("CSR/generic field or hit-capacity contract");
-      if (!m.hdl.clockPairOk) failures.push("supported clocks, AXIS <= TDC, and SYNC/ASYNC mode");
+      if (!m.hdl.clockPairOk) failures.push("supported clocks and valid SYNC/ASYNC mode");
       if (!m.hdl.rangeClockSafe) failures.push("5 ns range coverage");
       if (!m.hdl.scanClockSafe) failures.push("5 ns scan timeout coverage");
       if (!m.hdl.timingContractOk) failures.push("physical-time generic conversion/counter bounds");
@@ -4763,6 +4767,7 @@
 
     setNumber("axisClk", contract.axisClkMHz);
     setNumber("tdcClk", contract.tdcClkMHz);
+    setNumber("readNs", contract.busWordPeriodNs);
     setNumber("axisWidth", contract.outputWidth);
     setNumber("hdlStopsPerChip", contract.stopsPerChip);
     setNumber("hdlMaxHits", contract.maxHits);
@@ -5060,7 +5065,7 @@
       `<tr><td>${trText("verdict", "VDMA width / DDR contract", "VDMA 폭 / DDR 계약")}</td><td>${ddrContractProfile}</td><td>${trText("verdict", `${m.ddrTimingLabel}; canonical ${m.hdl.packedCellBytes} B/cell, HSIZE R/F ${m.hdl.hsizeRiseBytes}/${m.hdl.hsizeFallBytes}, VSIZE ${m.hdl.vsizeLines}; 32/64/128 regression ${m.hdl.widthRegressionOk ? "PASS" : "CHECK"}`, `${m.ddrTimingLabel}; canonical cell당 ${m.hdl.packedCellBytes} B, HSIZE R/F ${m.hdl.hsizeRiseBytes}/${m.hdl.hsizeFallBytes}, VSIZE ${m.hdl.vsizeLines}; 32/64/128 회귀 ${m.hdl.widthRegressionOk ? "PASS" : "CHECK"}`)}</td></tr>`,
       `<tr><td>${trText("verdict", "C07 comparison profile", "C07 비교 프로파일")}</td><td>${c07Profile}</td><td>${trText("verdict", "Optional 128-bit comparison only; the RTL generic default is 32-bit", "선택적 128-bit 비교값이며 RTL generic 기본값은 32-bit")}</td></tr>`,
       `<tr><td>${trText("verdict", "GPX FIFO ownership", "GPX FIFO 소유권")}</td><td>${b(m.hdl.fifoOwnershipOk)}</td><td>${trText("verdict", `${m.hdl.fifoCompletionAuthority} normal completion; LF/Fill ${m.hdl.loadFlagRole}; Echo count diagnostic only; cap fault+purge`, `${m.hdl.fifoCompletionAuthority} 정상 완료; LF/Fill ${m.hdl.loadFlagRole}; Echo count 진단 전용; cap fault+purge`)}</td></tr>`,
-      `<tr><td>${trText("verdict", "HDL clock contract", "HDL 클럭 계약")}</td><td>${b(m.hdl.clockPairOk)}</td><td>${trText("verdict", `${m.hdl.streamClkMode}: AXIS ${fmt(m.axisClk, 0)} MHz <= TDC ${fmt(m.tdcClk, 0)} MHz; SYNC requires equal clocks`, `${m.hdl.streamClkMode}: AXIS ${fmt(m.axisClk, 0)} MHz <= TDC ${fmt(m.tdcClk, 0)} MHz; SYNC는 동일 클럭 필요`)}</td></tr>`,
+      `<tr><td>${trText("verdict", "HDL clock contract", "HDL 클럭 계약")}</td><td>${b(m.hdl.clockPairOk)}</td><td>${trText("verdict", `${m.hdl.streamClkMode}: AXIS ${fmt(m.axisClk, 0)} MHz / TDC ${fmt(m.tdcClk, 0)} MHz; ASYNC permits either order, SYNC requires equality`, `${m.hdl.streamClkMode}: AXIS ${fmt(m.axisClk, 0)} MHz / TDC ${fmt(m.tdcClk, 0)} MHz; ASYNC는 순서 무관, SYNC는 동일 클럭 필요`)}</td></tr>`,
       `<tr><td>${trText("verdict", "Physical-time generic conversion", "물리시간 generic 변환")}</td><td>${b(m.hdl.timingContractOk)}</td><td>${trText("verdict", `TDC P/R/A/B/D/EF ${m.hdl.timingClks.powerup}/${m.hdl.timingClks.recovery}/${m.hdl.timingClks.aluPulse}/${m.hdl.timingClks.busIdle}/${m.hdl.timingClks.drainMargin}/${m.hdl.timingClks.efSyncGuard}; AXIS Q/I ${m.hdl.timingClks.cellQuarantine}/${m.hdl.timingClks.cellIfifo2}`, `TDC P/R/A/B/D/EF ${m.hdl.timingClks.powerup}/${m.hdl.timingClks.recovery}/${m.hdl.timingClks.aluPulse}/${m.hdl.timingClks.busIdle}/${m.hdl.timingClks.drainMargin}/${m.hdl.timingClks.efSyncGuard}; AXIS Q/I ${m.hdl.timingClks.cellQuarantine}/${m.hdl.timingClks.cellIfifo2}`)}</td></tr>`,
       phaseRow("verdict", "V02", "Encoder trigger and shot acquisition", "Encoder trigger와 shot 수집", 3),
       `<tr><td>${trText("verdict", "Encoder same-position fire", "엔코더 동일 위치 발사")}</td><td>${b(m.encoderAlignment.samePositionOk)}</td><td>${trText("verdict", `${m.encoderAlignment.mismatchCountPerFace}/${m.shotsPerFace} mismatched shots/face, recommended CPR ${m.encoderAlignment.recommendedCpr}`, `면당 ${m.encoderAlignment.mismatchCountPerFace}/${m.shotsPerFace} shot 불일치, 추천 CPR ${m.encoderAlignment.recommendedCpr}`)}</td></tr>`,
@@ -7096,7 +7101,7 @@
     els.frameRate.disabled = true;
     els.frameRate.title = "Motor RPM / 60으로 자동 계산";
     els.motorRpm.title = "모터 회전 속도. 낮추면 미러 위상, frame rate, PRF, encoder/decoder 파형 속도가 모두 함께 느려짐";
-    els.readNs.title = "TDC-GPX v1 최고 40 MHz = 25 ns period. 기본값 1000 ns는 보수적인 채널 read/order 모델";
+    els.readNs.title = "GPX bus word 주기. RTL 결과를 불러오면 bus_clk_div x bus_ticks / g_TDC_CLK_MHZ 값으로 자동 반영됩니다.";
     simToggle.textContent = state.running ? "Stop" : "Start";
     simToggle.classList.toggle("paused", !state.running);
     simStateText.textContent = state.running ? "RUN" : "HOLD";
@@ -7291,6 +7296,7 @@
       hits: els.hdlMaxHits.value,
       tdcClk: els.tdcClk.value,
       axisClk: els.axisClk.value,
+      streamMode: els.hdlStreamClkMode.value,
       maxScan: els.hdlMaxScanTicks.value,
       timing: {
         powerup: els.hdlPowerupNs.value,
@@ -7419,6 +7425,18 @@
         "28-bit I-Mode field layout");
       expect(model.hdl.tdcHitCalculationGenericRequired === false,
         "tdc_gpx_top has no external-Hit calculation generic");
+      els.axisClk.value = "150";
+      els.tdcClk.value = "100";
+      els.hdlStreamClkMode.value = "ASYNC";
+      model = calc();
+      expect(model.hdl.clockPairOk, "ASYNC permits AXIS 150 MHz / TDC 100 MHz");
+      expect(model.hdl.timingClks.powerup === 24,
+        "100 MHz TDC power-up conversion with 150 MHz AXIS");
+      els.hdlStreamClkMode.value = "SYNC";
+      model = calc();
+      expect(!model.hdl.clockPairOk,
+        "SYNC rejects unequal AXIS 150 MHz / TDC 100 MHz clocks");
+      els.hdlStreamClkMode.value = "ASYNC";
       state.facets = HDL_MODEL.nFacesMax;
       model = calc();
       expect(model.hdl.faceCountContractOk && model.hdl.nFaces === 5, "n_faces upper build limit");
@@ -7455,6 +7473,7 @@
       els.hdlMaxHits.value = snapshot.hits;
       els.tdcClk.value = snapshot.tdcClk;
       els.axisClk.value = snapshot.axisClk;
+      els.hdlStreamClkMode.value = snapshot.streamMode;
       els.hdlMaxScanTicks.value = snapshot.maxScan;
       els.hdlPowerupNs.value = snapshot.timing.powerup;
       els.hdlRecoveryNs.value = snapshot.timing.recovery;
@@ -7611,6 +7630,8 @@
           returns_per_stop: model.echoes,
           max_hits_cfg: model.hdl.maxHitsCfg,
           tdc_drain_margin_time_ns: model.hdl.timingNs.drainMargin,
+          bus_clk_div: 2,
+          bus_ticks: 5,
           rearm_guard_5ns_ticks: model.rearmGuard5nsTicks,
           columns_per_face: model.hdl.colsPerFace,
           faces_per_frame: model.hdl.nFaces,
@@ -7622,6 +7643,9 @@
         metrics: {
           axis_clk_mhz: model.hdl.axisClkMHz,
           tdc_clk_mhz: model.hdl.tdcClkMHz,
+          bus_clk_div: 2,
+          bus_ticks: 5,
+          bus_word_period_ns: model.readNs,
           output_width: model.hdl.outputWidth,
           max_range_5ns_ticks: model.hdl.range5nsTicks,
           max_range_axis_clks: model.hdl.axisRangeClks,

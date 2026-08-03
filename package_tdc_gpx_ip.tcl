@@ -137,7 +137,7 @@ set_property display_name {TDC-GPX Multi-chip Acquisition Controller} $core
 set_property description \
     {Configurable one-to-four-chip TDC-GPX acquisition with selectable local or unified CSR ownership, rising/falling lane processing, dual VDMA-ready AXI4-Stream outputs, diagnostics, and interrupts.} \
     $core
-set_property core_revision 7 $core
+set_property core_revision 8 $core
 set_property supported_families {zynq Production} $core
 
 proc tdc_ensure_long {
@@ -256,7 +256,7 @@ set_property value_validation_type list $max_hits
 set_property value_validation_list {1 2 3 4 5 6 7} $max_hits
 
 foreach {name value display_name description} {
-    g_AXIS_CLK_MHZ 150 {AXIS processing clock frequency (MHz)} {Must equal i_axis_aclk and must not exceed the TDC clock.}
+    g_AXIS_CLK_MHZ 150 {AXIS processing clock frequency (MHz)} {Must equal i_axis_aclk. ASYNC stream mode permits either clock-frequency order.}
     g_TDC_CLK_MHZ 200 {TDC bus clock frequency (MHz)} {Must equal i_tdc_clk. Physical timing generics are converted using this value.}
 } {
     set parameter [tdc_ensure_long $core $name $value 50 200 $display_name $description]
@@ -291,7 +291,7 @@ set_property enablement_resolve_type immediate $oen_mode
 set_property enablement_value false $oen_mode
 tdc_set_string $core g_STREAM_CLK_MODE ASYNC {ASYNC SYNC} \
     {Internal stream clock mode} \
-    {ASYNC supports the verified 150/200 MHz split. SYNC requires equal AXIS and TDC clocks.}
+    {ASYNC supports independent AXIS and TDC frequencies in either order. SYNC requires equal clocks. Slower TDC profiles require GPX bus/drain throughput verification.}
 
 proc tdc_find_interface {core logical_name physical_name} {
     foreach interface [ipx::get_bus_interfaces -of_objects $core] {

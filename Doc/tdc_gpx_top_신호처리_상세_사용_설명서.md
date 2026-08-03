@@ -241,16 +241,23 @@ flowchart LR
 - elaboration assertion
 - timeout/throughput 계약 설명
 
-허용값은 `50, 100, 125, 150, 200 MHz`이고 `g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ`여야 한다. 실제 clock generator와 XDC 값이 generic과 다르면 거리 window와 timeout의 물리 시간이 틀어진다.
+허용값은 `50, 100, 125, 150, 200 MHz`이다. `ASYNC` mode에서는 AXIS와 TDC의 주파수 대소관계에 제한이 없으며 AXIS 150 MHz/TDC 100 MHz처럼 TDC가 더 느린 구성도 허용한다. 실제 clock generator와 XDC 값이 generic과 다르면 거리 window, timeout, GPX BUS timing의 물리 시간이 틀어진다.
 
 ### 6.2 stream clock mode
 
 | `g_STREAM_CLK_MODE` | 동작 | 제약 |
 |---|---|---|
-| `ASYNC` | TDC raw stream을 `xpm_fifo_async`로 TDC->AXIS 전달 | 분리 클럭 기본 선택 |
+| `ASYNC` | TDC raw stream을 `xpm_fifo_async`로 TDC->AXIS 전달 | 분리 클럭 기본 선택; 두 주파수의 순서 무관 |
 | `SYNC` | raw stream CDC FIFO를 bypass | 두 포트가 같은 clock domain이거나 명시적으로 synchronous여야 함 |
 
 `SYNC`에서 `g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ`라는 elaboration assertion은 숫자만 검사한다. 서로 독립된 두 PLL 출력이 우연히 같은 MHz인 것만으로는 안전하지 않다. 두 clock의 위상 관계가 보장되고 STA가 synchronous path로 분석할 수 있어야 하며, 가장 단순한 통합은 두 포트에 같은 clock net을 연결하는 것이다.
+
+`ASYNC`의 독립성은 CDC 안전성 계약이다. 처리량 계약은 별도이며 다음 두 경로 중 늦은 쪽이 한 shot 안에 완료되어야 한다.
+
+1. TDC domain: GPX range 대기 -> 28-bit word read/drain -> raw CDC FIFO write
+2. AXIS domain: raw CDC FIFO read -> I-Mode decode -> Cell/Face 조립 -> VDMA AXIS 출력
+
+따라서 TDC clock을 낮추면 AXIS clock이 빠르더라도 GPX word read 수가 많은 Return-7 운용점에서 수평 각 간격을 넓히거나 RPM을 낮춰야 할 수 있다.
 
 ### 6.3 주요 CDC 방식
 
@@ -317,13 +324,13 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 | `g_ALU_PULSE_TIME_NS` | 20 ns | ALU trigger 폭 | GPX timing |
 | `g_BUS_READ_PERIOD_MIN_TIME_NS` | 25 ns | CSR와 PHY가 공유하는 RDN low에서 FPGA 입력 캡처까지의 최소 시간 창 | GPX `tV-DR`, FPGA pad 지연, PCB skew 예산 |
 | `g_BUS_IDLE_STABLE_TIME_NS` | 20,480 ns | bus-fatal 후 자동 복구 전 연속 idle 시간 | PCB 안정성/복구 지연 |
-| `g_DRAIN_MARGIN_TIME_NS` | 6,000 ns | TDC drain watchdog의 range 이후 여유 | 200 MHz, bus_clk_div=2, bus_ticks=5, 8 STOP x 7 Return 기준; 더 느린 bus 설정은 재검증 필요 |
+| `g_DRAIN_MARGIN_TIME_NS` | 6,000 ns | TDC drain watchdog의 range 이후 여유 | clock, `bus_clk_div`, `bus_ticks`, STOP/Return 수에 맞춰 재검증 필요 |
 | `g_ERR_DEBOUNCE_TIME_NS` | 25 ns | ErrFlag debounce 시간 | board noise |
 | `g_ERR_MAX_RETRIES` | 3 | 자동 복구 retry 횟수 | 시스템 오류 정책 |
 | `g_CELL_QUARANTINE_MARGIN_TIME_NS` | 3,410 ns | Cell DROP/QUARANTINE 여유 | late drain bound |
 | `g_CELL_IFIFO2_MARGIN_TIME_NS` | 1,705 ns | Cell IFIFO2 대기 여유 | output-side bound |
 | `g_OEN_MODE` | `DYNAMIC_CONNECTED` | GPX OEN 연결 방식 | 실제 schematic |
-| `g_STREAM_CLK_MODE` | `ASYNC` | raw stream CDC 구조 | 두 clock 관계 |
+| `g_STREAM_CLK_MODE` | `ASYNC` | raw stream CDC 구조 | 분리 clock은 ASYNC; SYNC는 같은 clock net 권장 |
 
 `parent_ref/rtl/tdc_gpx_parent_core.vhd`는 위 top generic을 모두 같은 이름으로 노출하고 그대로 전달한다. 따라서 parent에서 값을 바꾸면 `tdc_gpx_top`을 거쳐 실제 소비 하위 모듈까지 한 경로로 내려간다. `parent_ref/scripts/verify_parent_generic_parity.ps1`는 top 선언, parent 선언, generic map의 이름과 개수를 자동 대조하며 누락·개명·간접 매핑을 오류로 처리한다. 반대로 `g_CHIP_ID`, `g_SLOPE_VALUE`, FIFO data/depth, CDC synchronizer stage처럼 instance identity나 구조에서 파생되는 generic은 top에 중복 노출하지 않는다. 이 구분은 사용자가 정해야 하는 build policy만 최상위에서 관리하고, 서로 모순될 수 있는 중복 설정을 만들지 않기 위한 것이다.
 
@@ -333,17 +340,31 @@ runtime 거리/scan 설정은 CSR 호환성을 위해 5 ns tick으로 유지한�
 
 | Clock MHz | TDC power-up 240 ns | TDC bus-idle 20,480 ns | TDC drain 6,000 ns | AXIS Cell quarantine 3,410 ns |
 |---:|---:|---:|---:|---:|
-| 50 | 12 | 1,024 | 64 | 171 |
-| 100 | 24 | 2,048 | 128 | 341 |
-| 125 | 30 | 2,560 | 160 | 427 |
-| 150 | 36 | 3,072 | 192 | 512 |
-| 200 | 48 | 4,096 | 256 | 682 |
+| 50 | 12 | 1,024 | 300 | 171 |
+| 100 | 24 | 2,048 | 600 | 341 |
+| 125 | 30 | 2,560 | 750 | 427 |
+| 150 | 36 | 3,072 | 900 | 512 |
+| 200 | 48 | 4,096 | 1,200 | 682 |
 
 EF guard는 단순 고정 시간이 아니라 `ceil(11.8 ns / TDC period) + 2 synchronizer clocks`이며, 50/100/125/150/200 MHz에서 각각 3/4/4/4/5 clocks이다. 이 식의 `2`는 실제 `bus_phy` 2-FF 동기화 구조에 대응하므로 별도 top generic으로 중복 노출하지 않는다.
 
 예를 들어 `max_scan_5ns_ticks=1000`은 항상 5 us이고, AXIS 50/100/125/150/200 MHz에서 각각 250/500/625/750/1000 clocks로 변환된다.
 
-### 7.1 고정 ABI 상수와 build-profile generic의 경계
+### 7.1 GPX BUS timing과 저속 TDC clock
+
+`bus_clk_div`와 `bus_ticks`는 runtime CSR 값이며 실제 word 주기와 read capture 창은 다음 식으로 결정된다.
+
+```text
+Tclk_ns          = 1000 / g_TDC_CLK_MHZ
+bus_word_ns      = bus_clk_div * bus_ticks * Tclk_ns
+read_capture_ns  = ((bus_ticks - 3) * bus_clk_div + 1) * Tclk_ns
+```
+
+`read_capture_ns >= g_BUS_READ_PERIOD_MIN_TIME_NS`가 필수이다. TDC 100 MHz에서는 `div=1/ticks=5`가 50 ns/word, capture 30 ns이고 `div=2/ticks=5`가 100 ns/word, capture 50 ns이다. 둘 다 기본 25 ns board policy를 만족하지만 두 번째 설정은 drain 처리량이 절반이므로 shot 간격도 함께 재계산해야 한다.
+
+`tdc_gpx_chip_ctrl`의 `PH_RESP_DRAIN`은 정상 BUS 응답이 끝날 때까지 기다린다. 과거 15-clock 고정 cap은 100 MHz의 정상 soft-reset transaction도 오류로 오인할 수 있었다. 현재 1023-clock protocol grace는 최대 legal runtime 설정인 `div=63/ticks=7` transaction까지 포함하고, 그 뒤에도 BUS가 active이면 실제 stuck-bus로 quarantine한다. 이 값은 runtime 변수를 하나 더 만들지 않고 합성 상수로 유지한다.
+
+### 7.2 고정 ABI 상수와 build-profile generic의 경계
 
 `tdc_gpx_pkg.vhd`의 다음 세 값은 선택된 하드웨어 규모가 아니라 **인터페이스와 데이터 형식의 절대 상한**이다.
 
@@ -378,7 +399,7 @@ CSR 요청은 build profile 밖으로 나가지 못한다.
 
 `g_PRESENT_CHIP_MASK`는 비존재 Cell builder를 elaboration에서 제거하고 해당 chip-control slot을 reset/비활성 상태로 고정한다. 합성기는 이 constant-disabled cone을 제거할 수 있다. 반면 Stop/Hit generic은 현재 CSR legality, header, Cell/VDMA geometry를 제한하지만 고정 ABI record와 일부 내부 배열은 package 상한 크기를 유지한다. 따라서 Stop/Hit 상한 축소에 따른 LUT/FF/BRAM 절감은 합성 utilization 비교로 확인해야 하며, 저장 배열 자체를 반드시 축소하려면 별도의 type/interface 구조 변경이 필요하다.
 
-### 7.2 slope topology
+### 7.3 slope topology
 
 고정 enum 모드 대신 세 개의 generic mask가 합성 전 물리 역할을 정의하고, Chip CSR `SCAN_TIMEOUT[19] falling_enable`이 실행 시 lane 구성을 선택한다.
 
@@ -408,7 +429,7 @@ Rise builder가 `g_RISE_CHIP_MASK` 수보다 많을 수 있는 이유는 runtime
 
 Fall-capable build에서 `falling_enable=0`으로 바꾸는 것은 합성 제거가 아니다. 이미 생성된 Fall 회로를 실행 중 유휴화하고, HSIZE를 0으로 만들며, Face 완료가 Fall `frame_done`을 기다리지 않게 한다. 자원 절감이 목적이면 합성 전에 `g_FALL_CHIP_MASK=0000`으로 설정해야 한다.
 
-### 7.3 xc7z020 OOC 합성 확인
+### 7.4 xc7z020 OOC 합성 확인
 
 `xc7z020clg484-2`, AXIS 150 MHz, TDC 200 MHz, 32-bit 출력의 2026-07-22 topology 최적화 비교 결과는 다음과 같다.
 
@@ -1905,7 +1926,7 @@ p_run_timeout_sticky
 - [ ] 실제 AXIS/TDC clock이 generic 및 XDC와 일치한다.
 - [ ] 분리 clock이면 `g_STREAM_CLK_MODE=ASYNC`이다.
 - [ ] `SYNC` mode이면 단순 동주파수가 아니라 같은/synchronous clock domain임을 STA로 보장한다.
-- [ ] AXIS 주파수가 TDC보다 빠르지 않다.
+- [ ] 선택한 AXIS/TDC 주파수와 BUS timing에서 최악 STOP/Return의 shot 처리 margin이 양수이다.
 - [ ] reset deassert 순서와 clock 안정 조건을 만족한다.
 - [ ] OEN mode가 보드 schematic과 일치한다.
 
@@ -2003,7 +2024,8 @@ p_run_timeout_sticky
 | [`known_issues.md`](known_issues.md) | 과거 설계 판단 배경 | 일부 항목은 현재 RTL보다 오래됨 |
 | [`signoff_results/README.md`](../signoff_results/README.md) | OOC sign-off 실행 방법과 범위 | 현재 flow 참조 |
 | [C08 Slope Mask/Falling Simulator v015](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Slope_Mask_Falling_Contract_Simulator_v015.html) | Present/Rise/Fall generic, runtime Fall, APD coverage, HSIZE/DDR/Ethernet 상호작용 | 브라우저 계산/검증 도구 |
-| [C08 Clock/Timing Generic Simulator v016](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260721_Clock_Timing_Generic_Contract_Simulator_v016.html) | ns generic의 TDC/AXIS clock 변환, 5 ns scan CSR 변환과 시간 margin | 현재 timing 계약 계산/검증 도구 |
+| [C08 Unified CSR Timing Contract Simulator v025](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260729_Unified_CSR_Timing_Contract_Simulator_v025.html) | 독립 AXIS/TDC clock, BUS div/ticks, 5 ns CSR 변환, Return/shot margin | 현재 timing 계약 계산/검증 도구 |
+| [C09 AXIS150/TDC100 Independent Clock v001](cluster_analysis/C09_Implementation_Signoff/C09_Implementation_Signoff_260803120000_AXIS150_TDC100_Independent_Clock_v001.md) | TDC가 AXIS보다 느린 profile의 기능/OOC/post-route 결과와 운용 경계 | 저속 TDC clock sign-off 근거 |
 | [C08 Physical Chip Pin Contract Simulator v017](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_Physical_Chip_Pin_Contract_Simulator_v017.html) | `g_NUM_CHIPS`, sparse Present mask, compact physical lane과 D/ADR/control 핀 폭 | 현재 physical pin 계약 계산/검증 도구 |
 | [C08 GPX FIFO Ownership Simulator v018](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260722_GPX_FIFO_Ownership_Contract_Simulator_v018.html) | Echo 진단 분리, EF 완료 권한, LF/Fill burst 힌트, cap fault/purge | 현재 FIFO 소유권과 전체 C08 계산/검증 도구 |
 | [C08 Physical T0/AXIS Handoff Simulator v021](cluster_analysis/C08_HDL_HTML_Alignment/C08_HDL_HTML_Alignment_260723_Physical_T0_AXIS_Handoff_Simulator_v021.html) | motor/laser/echo AXIS 비트맵과 역압, 물리 GPX START와 논리 Shot event 분리, 전체 계산 | 현재 IP 전달 계약과 전체 C08 계산/검증 도구 |

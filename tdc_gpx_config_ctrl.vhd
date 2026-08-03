@@ -27,8 +27,9 @@
 --                  g_STREAM_CLK_MODE="ASYNC"; "SYNC" bypasses this FIFO.
 --   s_axi_aclk   : AXI4-Lite PS domain
 --   g_AXIS_CLK_MHZ/g_TDC_CLK_MHZ must match the physical clocks and XDC.
---   AXIS <= TDC is required; cross-domain processing margin is AXIS-limited,
---   while each domain-local watchdog uses its own converted clock count.
+--   ASYNC mode permits either frequency ordering. Cross-domain processing
+--   margin is limited by the slower active path, while each domain-local
+--   watchdog uses its own converted clock count. SYNC mode requires equality.
 --
 -- Reset-domain map (Round 6 C1):
 --   AXI-Stream clock (i_axis_aclk) uses i_axis_aresetn directly:
@@ -842,10 +843,6 @@ begin
 
     assert fn_range_clk_mhz_supported(g_TDC_CLK_MHZ)
         report "config_ctrl: unsupported g_TDC_CLK_MHZ"
-        severity failure;
-
-    assert g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ
-        report "config_ctrl: g_AXIS_CLK_MHZ must not exceed g_TDC_CLK_MHZ; cross-domain signal-processing margin is AXIS-limited"
         severity failure;
 
     assert g_STREAM_CLK_MODE /= "SYNC" or g_AXIS_CLK_MHZ = g_TDC_CLK_MHZ

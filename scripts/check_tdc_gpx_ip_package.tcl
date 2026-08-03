@@ -89,7 +89,7 @@ set unified_abstraction_definition \
     [ipx::open_abstraction_definition $unified_rtl_xml]
 set core [ipx::open_core $component]
 
-if {[get_property core_revision $core] != 7} {
+if {[get_property core_revision $core] != 8} {
     error "Unexpected TDC-GPX core revision: [get_property core_revision $core]"
 }
 
@@ -343,8 +343,12 @@ foreach {label command expected} [list \
         {::tdc_gpx_xgui::validate_topology 3 0111 0001 0110} false \
     valid_async_clock \
         {::tdc_gpx_xgui::validate_clocks 150 200 ASYNC} true \
-    invalid_axis_faster \
-        {::tdc_gpx_xgui::validate_clocks 200 150 ASYNC} false \
+    valid_async_axis_faster \
+        {::tdc_gpx_xgui::validate_clocks 150 100 ASYNC} true \
+    valid_async_tdc_faster \
+        {::tdc_gpx_xgui::validate_clocks 100 150 ASYNC} true \
+    valid_sync_equal \
+        {::tdc_gpx_xgui::validate_clocks 100 100 SYNC} true \
     invalid_sync_split \
         {::tdc_gpx_xgui::validate_clocks 150 200 SYNC} false \
     read_capture_default \

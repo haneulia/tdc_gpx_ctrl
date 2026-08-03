@@ -26,11 +26,21 @@
 `g_AXIS_CLK_MHZ`와 `g_TDC_CLK_MHZ`는 클럭을 생성하지 않는다. 실제 FCLK 및 XDC와 반드시 일치해야 한다.
 
 - 지원 주파수: 50, 100, 125, 150, 200 MHz
-- 필수 관계: `g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ`
-- `g_STREAM_CLK_MODE="SYNC"`: AXIS와 TDC 주파수가 같아야 한다.
-- 기본/권장 통합 profile: AXIS 150 MHz, TDC 200 MHz, `ASYNC`
+- `g_STREAM_CLK_MODE="ASYNC"`: AXIS/TDC의 주파수 대소관계와 무관하게 사용할 수 있다.
+- `g_STREAM_CLK_MODE="SYNC"`: 두 포트에 같은 clock net 또는 STA로 동기 관계가 증명된 동일 주파수 clock을 사용해야 한다.
+- 기준 profile: AXIS 150 MHz/TDC 200 MHz와 AXIS 150 MHz/TDC 100 MHz, 모두 `ASYNC`
 
-처리량과 shot 간 시간 margin은 더 느린 AXIS domain을 기준으로 닫는다. TDC-domain watchdog은 TDC clock으로, AXIS-domain watchdog은 AXIS clock으로 각각 변환된다.
+`ASYNC`가 주파수 순서를 허용한다는 것은 임의의 스캔 조건에서 처리량까지 보장한다는 뜻이 아니다. TDC BUS 수집 시간과 AXIS Cell/Face 출력 시간 중 더 늦게 끝나는 경로를 기준으로 shot 간 margin을 닫아야 한다. TDC-domain watchdog은 TDC clock으로, AXIS-domain watchdog은 AXIS clock으로 각각 변환된다.
+
+GPX word 주기와 read capture 창은 다음과 같다.
+
+```text
+TdcClockPeriodNs = 1000 / g_TDC_CLK_MHZ
+BusWordPeriodNs  = bus_clk_div * bus_ticks * TdcClockPeriodNs
+ReadCaptureNs    = ((bus_ticks - 3) * bus_clk_div + 1) * TdcClockPeriodNs
+```
+
+`ReadCaptureNs`는 `g_BUS_READ_PERIOD_MIN_TIME_NS` 이상이어야 한다. 검증된 100 MHz 예시는 `div=1/ticks=5`의 50 ns/word와 `div=2/ticks=5`의 100 ns/word이다. 후자는 PCB margin은 커지지만 GPX drain 시간이 길어지므로 더 넓은 수평 각 간격 또는 더 낮은 RPM이 필요하다.
 
 ## 3. 합성 전 설정
 
@@ -137,14 +147,18 @@ local_clocks = ceil(ticks_5ns * local_clock_MHz / 200)
 ## 8. 현재 검증 기준
 
 - Device: `xc7z020clg484-2`
-- AXIS/TDC: 150/200 MHz
+- 기준 회귀: AXIS/TDC 150/200 MHz
+- 저속 TDC 회귀: AXIS/TDC 150/100 MHz, `ASYNC`
 - Default topology: 4 chip, rise `0011`, fall `1100`
-- Output: 32 bit
+- Output: 32/64/128 bit
 - Source-level CSR, black box 0
-- Post-route timing: WNS `+0.260 ns`
+- 150/100 MHz 64-bit post-route: WNS `+0.770 ns`, WHS `+0.066 ns`, unrouted 0
 - Packaged-IP OOC: 112 IOBUF, black box 0, synthesis error 0
+- 150/100 MHz Return-7 기능 회귀:
+  - `div=1/ticks=5`, 1200 RPM, 0.24 deg: point margin 202 AXIS clocks
+  - `div=2/ticks=5`, 1200 RPM, 0.30 deg: point margin 322 AXIS clocks
 - Internal encoder integration: 2 shots, rise/fall line 2/2, pipeline abort 0
 - Physical encoder integration: 12 fire/start/stop/result, rise/fall line 12/12,
   AXIS TKEEP violation 0, pipeline abort 0
 
-상위 보드 XDC에서 TDC 핀 위치, bank 전압, I/O standard, clock source를 최종 확정해야 전체 system sign-off가 된다.
+1200 RPM, 0.20 deg, Return-7 조건은 TDC 100 MHz에서 다음 shot 전에 이전 결과가 끝나지 않아 허용 profile이 아니다. 상위 보드 XDC에서 TDC 핀 위치, bank 전압, I/O standard, clock source를 최종 확정하고 실물 GPX read timing을 계측해야 전체 system sign-off가 된다.

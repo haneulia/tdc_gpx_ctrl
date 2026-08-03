@@ -17,7 +17,8 @@
 --   Motor/Laser/Echo and GPX processing use G_AXIS_CLK_MHZ.  The GPX physical
 --   bus model and chip controller use the independent G_TDC_CLK_MHZ clock.
 --   Setting both generics to the same value preserves the single-clock smoke;
---   150/200 MHz exercises the product-reference AXIS/TDC CDC boundary.
+--   150/200 MHz exercises the product-reference CDC boundary, while 150/100
+--   MHz verifies that the ASYNC stream contract also permits a slower TDC bus.
 --
 --   enc_top drives A/B/Z pins of motor_laser_ctrl_top in physical-source mode.
 --   motor_laser_ctrl_top keeps the Motor-to-Laser AXI4-Stream private.
@@ -98,6 +99,11 @@ entity tb_tdc_gpx_full_int is
         -- Existing tdc_gpx_top physical-time policy, exposed here so every
         -- integration result records the exact post-IrFlag drain budget.
         G_TDC_DRAIN_MARGIN_TIME_NS : positive := 6000;
+        -- Runtime CSR bus timing applied by this TB in both local and unified
+        -- control modes. Keeping these explicit makes slow-TDC results
+        -- reproducible instead of silently inheriting c_INIT_BUS_TIMING.
+        G_BUS_CLK_DIV     : positive range 1 to 63 := 2;
+        G_BUS_TICKS       : positive range 3 to 7 := 5;
         G_COLS_PER_FACE   : natural := 2;        -- shots per face
         G_N_FACES         : positive range 1 to 5 := 1; -- compile-time faces
         -- All four behavioral GPX chips are active in the default profile.
@@ -185,13 +191,21 @@ architecture sim of tb_tdc_gpx_full_int is
     constant C_TDC_CLK_PERIOD_PS  : natural := natural(1000000.0 / G_TDC_CLK_MHZ);
     constant C_AXIS_CLK_PERIOD    : time := C_AXIS_CLK_PERIOD_PS * 1 ps;
     constant C_TDC_CLK_PERIOD     : time := C_TDC_CLK_PERIOD_PS * 1 ps;
-    -- AXIS is contractually no faster than TDC, so this covers both domains.
-    constant C_RST_HOLD           : time := 30 * C_AXIS_CLK_PERIOD;
+    -- Hold reset for at least 30 cycles of both independent domains.
+    constant C_RST_HOLD           : time :=
+        30 * C_AXIS_CLK_PERIOD + 30 * C_TDC_CLK_PERIOD;
 
     -- Range-derived counters. The CSR stores one physical 5 ns reference
     -- value, then each consumer converts it to its own domain clock count.
     constant C_AXIS_DOMAIN_CLK_MHZ : positive := positive(integer(G_AXIS_CLK_MHZ));
     constant C_TDC_DOMAIN_CLK_MHZ  : positive := positive(integer(G_TDC_CLK_MHZ));
+    constant C_BUS_TIMING_VAL : std_logic_vector(31 downto 0) :=
+        std_logic_vector(to_unsigned(
+            G_BUS_CLK_DIV + 64 * G_BUS_TICKS, 32));
+    constant C_BUS_CAPTURE_MIN_CLKS : positive := positive(ceil(
+        25.0 * G_TDC_CLK_MHZ / 1000.0));
+    constant C_BUS_WORD_PERIOD_NS : positive := positive(ceil(
+        real(G_BUS_CLK_DIV * G_BUS_TICKS) * 1000.0 / G_TDC_CLK_MHZ));
     constant C_MAX_RANGE_5NS_TICKS : natural := natural(ceil(
         2.0 * G_MAX_RANGE_M / C_LIGHT_M_PER_US * real(c_RANGE_REF_CLK_MHZ)));
     constant C_MAX_RANGE_AXIS_CLKS : natural :=
@@ -1194,8 +1208,9 @@ begin
         report "tb_tdc_gpx_full_int: G_TDC_CLK_MHZ must be an integer MHz value"
         severity failure;
 
-    assert G_AXIS_CLK_MHZ <= G_TDC_CLK_MHZ
-        report "tb_tdc_gpx_full_int: AXIS clock must not exceed TDC clock"
+    assert ((G_BUS_TICKS - 3) * G_BUS_CLK_DIV + 1) >=
+           C_BUS_CAPTURE_MIN_CLKS
+        report "tb_tdc_gpx_full_int: requested bus timing does not satisfy the 25 ns read-capture window"
         severity failure;
 
     assert C_SIM_TARGET_5NS_TICKS <= 65535
@@ -3412,6 +3427,7 @@ begin
         wait_clk(20);
 
         pl("[S1] tdc_gpx chip CSR: cfg_image Reg0/Reg5/Reg6 + CTL21");
+        td_wr("0" & x"04", C_BUS_TIMING_VAL);
         td_wr("0" & x"14", c_GPX_DEFAULT_IMAGE(0)); -- Reg0 safe edge template
         td_wr("0" & x"28", c_GPX_DEFAULT_IMAGE(5)); -- Reg5 proven control/offset
         td_wr("0" & x"2C", x"00000004");  -- Reg6 LF threshold
@@ -3590,7 +3606,7 @@ begin
                 report "full_int: valid TDC image write was rejected"
                 severity failure;
 
-            uc_wr(C_CTL_TDC_BUS_TIMING, c_INIT_BUS_TIMING);
+            uc_wr(C_CTL_TDC_BUS_TIMING, C_BUS_TIMING_VAL);
             uc_wr(C_CTL_TDC_START_OFFSET, c_INIT_START_OFF1);
             uc_wr(C_CTL_TDC_CFG_REG7, c_INIT_CFG_REG7);
             uc_wr(C_CTL_TDC_SCAN_CFG, C_SCAN_TIMEOUT_VAL);
@@ -3765,18 +3781,26 @@ begin
                           "STAT27 TDC_PIPELINE_STATUS", v_uc_word);
             v_stat5 := (others => '0');
             v_stat5(15 downto 0) := v_uc_word(15 downto 0);
-            assert v_stat5 = C_EXPECT_STAT5
-                report "full_int: unified TDC pipeline status mismatch"
-                severity failure;
             uc_rd_capture(C_STAT_TDC_STATUS_EXT,
                           "STAT28 TDC_STATUS_EXT", v_stat6);
-            assert v_stat6 = C_EXPECT_STAT6
-                report "full_int: unified TDC status-ext mismatch"
-                severity failure;
             uc_rd_capture(C_STAT_TDC_STATUS_EXT2,
                           "STAT29 TDC_STATUS_EXT2", v_stat7);
+            -- Read the complete diagnostic triplet before asserting. A first
+            -- failure in STAT5 must not hide the shot-overrun and timeout
+            -- causes carried by STAT6/STAT7.
+            assert v_stat5 = C_EXPECT_STAT5
+                report "full_int: unified TDC pipeline status mismatch; actual=0x"
+                    & to_hstring(v_stat5)
+                    & " stat6=0x" & to_hstring(v_stat6)
+                    & " stat7=0x" & to_hstring(v_stat7)
+                severity failure;
+            assert v_stat6 = C_EXPECT_STAT6
+                report "full_int: unified TDC status-ext mismatch; actual=0x"
+                    & to_hstring(v_stat6)
+                severity failure;
             assert v_stat7 = C_EXPECT_STAT7
-                report "full_int: unified TDC status-ext2 mismatch"
+                report "full_int: unified TDC status-ext2 mismatch; actual=0x"
+                    & to_hstring(v_stat7)
                 severity failure;
             uc_rd_capture(C_STAT_MOTOR_STATUS,
                           "STAT6 MOTOR_STATUS", v_hw_config);
@@ -3906,6 +3930,9 @@ begin
              & " control_mode=" & G_CONTROL_MODE
              & " axis_clk_mhz=" & integer'image(integer(G_AXIS_CLK_MHZ))
              & " tdc_clk_mhz=" & integer'image(integer(G_TDC_CLK_MHZ))
+             & " bus_clk_div=" & integer'image(G_BUS_CLK_DIV)
+             & " bus_ticks=" & integer'image(G_BUS_TICKS)
+             & " bus_word_period_ns=" & integer'image(C_BUS_WORD_PERIOD_NS)
              & " output_width=" & integer'image(G_TDATA_WIDTH)
              & " max_range_5ns_ticks=" & integer'image(C_MAX_RANGE_5NS_TICKS)
              & " max_range_axis_clks=" & integer'image(C_MAX_RANGE_AXIS_CLKS)

@@ -27,9 +27,12 @@
 -- Signal-processing clock contract:
 --   g_AXIS_CLK_MHZ and g_TDC_CLK_MHZ are timing metadata; they do not create
 --   clocks. Each generic must exactly match the implemented clock source and
---   XDC constraint. AXIS <= TDC is required, so cross-domain throughput and
---   end-to-end time margin are closed against the slower AXIS domain. A local
---   watchdog still counts clocks in its own domain.
+--   XDC constraint. ASYNC stream mode permits either frequency ordering;
+--   xpm_fifo_async and the explicit control CDC paths isolate the domains.
+--   Throughput and end-to-end time margin must therefore be closed against
+--   the slower producer/consumer path for the selected clock pair. SYNC mode
+--   still requires identical physical clocks. A local watchdog counts clocks
+--   in its own domain.
 --
 -- Standard: VHDL-2008
 -- =============================================================================
@@ -73,10 +76,12 @@ entity tdc_gpx_top is
         g_MAX_STOPS_PER_CHIP : positive range 2 to 8 := 8;
         g_MAX_HITS_PER_STOP  : positive range 1 to 7 := 7;
         -- Signal-processing clock contract. Supported values are
-        -- 50/100/125/150/200 MHz. AXIS must not be faster than TDC; therefore
-        -- end-to-end processing margin and throughput closure use AXIS timing.
-        -- Domain-local watchdogs still use counts converted for their clock.
-        -- These values must match the real clocks and XDC constraints.
+        -- 50/100/125/150/200 MHz. ASYNC mode permits either frequency order;
+        -- SYNC mode requires equality. End-to-end throughput must be closed
+        -- for the selected pair because a slower TDC clock or runtime GPX bus
+        -- timing can extend the post-IrFlag drain. Domain-local watchdogs use
+        -- counts converted for their own clock. These values must match the
+        -- real clocks and XDC constraints.
         g_AXIS_CLK_MHZ    : positive := 150;
         g_TDC_CLK_MHZ     : positive := 200;
         -- Physical timing policy. Values are expressed once in time units;
@@ -731,10 +736,6 @@ begin
 
     assert fn_range_clk_mhz_supported(g_TDC_CLK_MHZ)
         report "tdc_gpx_top: g_TDC_CLK_MHZ must be 50, 100, 125, 150, or 200"
-        severity failure;
-
-    assert g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ
-        report "tdc_gpx_top: signal-processing contract requires g_AXIS_CLK_MHZ <= g_TDC_CLK_MHZ; close cross-domain timing against AXIS"
         severity failure;
 
     assert g_STREAM_CLK_MODE = "ASYNC" or g_STREAM_CLK_MODE = "SYNC"

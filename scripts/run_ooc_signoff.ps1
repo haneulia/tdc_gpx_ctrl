@@ -38,9 +38,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ($AxisMhz -gt $TdcMhz) {
-    throw "g_AXIS_CLK_MHZ must not exceed g_TDC_CLK_MHZ"
-}
 if ($StreamMode -eq "SYNC" -and $AxisMhz -ne $TdcMhz) {
     throw "SYNC mode requires equal AXIS and TDC clock metadata"
 }

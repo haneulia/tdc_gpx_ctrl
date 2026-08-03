@@ -2385,11 +2385,13 @@ begin
         s_irflag_pin <= '0';
         pulse(s_cmd_stop);
 
-        tb_wait_sig_value(s_clk, s_err_drain_cap, '1', 200, v_found);
+        -- The protocol grace is 1023 clocks so every legal div/ticks
+        -- transaction can finish before quarantine is declared.
+        tb_wait_sig_value(s_clk, s_err_drain_cap, '1', 1200, v_found);
         if v_found then
-            pr_pass("[19] PH_RESP_DRAIN hard cap sticky asserted");
+            pr_pass("[19] PH_RESP_DRAIN protocol grace sticky asserted");
         else
-            pr_fail("[19] PH_RESP_DRAIN hard cap sticky did not assert",
+            pr_fail("[19] PH_RESP_DRAIN protocol grace sticky did not assert",
                     v_fail);
         end if;
 

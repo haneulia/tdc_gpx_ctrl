@@ -43,6 +43,8 @@ $ScenarioDefaults = [ordered]@{
     returns_per_stop = 1
     max_hits_cfg = 3
     tdc_drain_margin_time_ns = 6000
+    bus_clk_div = 2
+    bus_ticks = 5
     echo_stimulus_mode = "synthetic_single"
     rearm_guard_5ns_ticks = 0
 }
@@ -95,10 +97,6 @@ if ([double]$Cfg.axis_clock_mhz -notin $SupportedClocksMhz) {
 if ([double]$Cfg.tdc_clock_mhz -notin $SupportedClocksMhz) {
     throw "Unsupported tdc_clock_mhz '$($Cfg.tdc_clock_mhz)'"
 }
-if ([double]$Cfg.axis_clock_mhz -gt [double]$Cfg.tdc_clock_mhz) {
-    throw "axis_clock_mhz must not exceed tdc_clock_mhz"
-}
-
 if (-not [string]::IsNullOrWhiteSpace($EncoderSource)) {
     $Cfg.encoder_source = $EncoderSource
 }
@@ -141,6 +139,19 @@ if ([int]$Cfg.max_hits_cfg -lt 1 -or [int]$Cfg.max_hits_cfg -gt 7) {
 }
 if ([int]$Cfg.tdc_drain_margin_time_ns -le 0) {
     throw "tdc_drain_margin_time_ns must be positive"
+}
+if ([int]$Cfg.bus_clk_div -lt 1 -or [int]$Cfg.bus_clk_div -gt 63) {
+    throw "bus_clk_div must be in 1..63"
+}
+if ([int]$Cfg.bus_ticks -lt 3 -or [int]$Cfg.bus_ticks -gt 7) {
+    throw "bus_ticks must be in 3..7"
+}
+$BusCaptureMinClks = [math]::Ceiling(
+    25.0 * [double]$Cfg.tdc_clock_mhz / 1000.0)
+$BusCaptureClks = (([int]$Cfg.bus_ticks - 3) *
+    [int]$Cfg.bus_clk_div + 1)
+if ($BusCaptureClks -lt $BusCaptureMinClks) {
+    throw "bus_clk_div/bus_ticks provide $BusCaptureClks TDC clocks before capture; at least $BusCaptureMinClks are required for 25 ns"
 }
 if ([int]$Cfg.returns_per_stop -gt [int]$Cfg.max_hits_cfg) {
     throw "returns_per_stop must not exceed max_hits_cfg"
@@ -446,6 +457,8 @@ try {
         "--generic_top `"G_RETURNS_PER_STOP=$($Cfg.returns_per_stop)`"",
         "--generic_top `"G_MAX_HITS_CFG=$($Cfg.max_hits_cfg)`"",
         "--generic_top `"G_TDC_DRAIN_MARGIN_TIME_NS=$($Cfg.tdc_drain_margin_time_ns)`"",
+        "--generic_top `"G_BUS_CLK_DIV=$($Cfg.bus_clk_div)`"",
+        "--generic_top `"G_BUS_TICKS=$($Cfg.bus_ticks)`"",
         "--generic_top `"G_COLS_PER_FACE=$($Cfg.columns_per_face)`"",
         "--generic_top `"G_N_FACES=$($Cfg.faces_per_frame)`"",
         "--generic_top `"G_ACTIVE_CHIP_MASK=4'b$($Cfg.active_chip_mask)`"",

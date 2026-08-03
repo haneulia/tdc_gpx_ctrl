@@ -83,9 +83,6 @@ namespace eval ::tdc_gpx_xgui {
     if {$axis ni $supported_clocks || $tdc ni $supported_clocks} {
       return [list false {Clock frequency must be 50, 100, 125, 150, or 200 MHz.}]
     }
-    if {$axis > $tdc} {
-      return [list false {AXIS processing clock cannot be faster than the TDC bus clock.}]
-    }
     if {$mode ni {ASYNC SYNC}} {
       return [list false {Stream clock mode must be ASYNC or SYNC.}]
     }
@@ -156,7 +153,7 @@ proc init_gui {IPINST} {
   ipgui::add_param $IPINST -name g_AXIS_CLK_MHZ -parent $clocks -widget comboBox
   ipgui::add_param $IPINST -name g_TDC_CLK_MHZ -parent $clocks -widget comboBox
   ipgui::add_param $IPINST -name g_STREAM_CLK_MODE -parent $clocks -widget comboBox
-  ipgui::add_static_text $IPINST -name clock_help -parent $clocks -text {These values do not generate clocks. They must match the connected FCLKs. End-to-end processing margin is closed against AXIS because AXIS cannot be faster than TDC.}
+  ipgui::add_static_text $IPINST -name clock_help -parent $clocks -text {These values do not generate clocks and must match the connected FCLKs. ASYNC permits either frequency order; SYNC requires equal clocks. A slower TDC clock is supported structurally, but GPX bus timing, drain margin, and shot throughput must be re-verified for the selected clock pair.}
 
   set timing_page [ipgui::add_page $IPINST -name {Physical Timing}]
   set chip_timing [ipgui::add_group $IPINST -name {TDC Bus Domain (ns)} -parent $timing_page]
