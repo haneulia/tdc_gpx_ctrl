@@ -78,7 +78,8 @@ package lidar_build_pkg is
         CFG_RUNTIME_CAPTURE_WINDOW,
         CFG_RUNTIME_ACTIVE_CHIP_MASK,
         CFG_RUNTIME_MAX_HITS,
-        CFG_RUNTIME_BUS_TIMING
+        CFG_RUNTIME_BUS_TIMING,
+        CFG_INTERNAL_ARITHMETIC
     );
 
     constant C_DEFAULT_BUILD_CONFIG : lidar_build_config_t := (
@@ -262,6 +263,7 @@ package body lidar_build_pkg is
             when CFG_RUNTIME_ACTIVE_CHIP_MASK       => result := x"2F";
             when CFG_RUNTIME_MAX_HITS               => result := x"30";
             when CFG_RUNTIME_BUS_TIMING             => result := x"31";
+            when CFG_INTERNAL_ARITHMETIC             => result := x"70";
         end case;
         return std_logic_vector(result);
     end function fn_cfg_error_code;

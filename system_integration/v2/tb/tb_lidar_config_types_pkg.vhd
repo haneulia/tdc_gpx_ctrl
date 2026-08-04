@@ -319,7 +319,8 @@ begin
         -- Stable external error-code examples.
         check(fn_cfg_error_code(CFG_OK) = x"00"
               and fn_cfg_error_code(CFG_RUNTIME_SHOT_BELOW_ONE_STATE) = x"2A"
-              and fn_cfg_error_code(CFG_RUNTIME_BUS_TIMING) = x"31",
+              and fn_cfg_error_code(CFG_RUNTIME_BUS_TIMING) = x"31"
+              and fn_cfg_error_code(CFG_INTERNAL_ARITHMETIC) = x"70",
             "V2-CFG-024 stable error codes");
 
         report "LIDAR_V2_CONFIG_TYPES_PASS" severity note;

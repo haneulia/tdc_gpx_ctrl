@@ -1,8 +1,8 @@
 # TDC-GPX LiDAR Controller v2 Architecture
 
-> Status: Checkpoint A architecture contract is complete. Checkpoint B common
-> configuration types and the simulation-only reference arithmetic model are
-> under verification. No v2 functional datapath RTL exists yet.
+> Status: Checkpoints A and B are complete. Checkpoint C sequential configuration
+> calculator is verified at 150/200 MHz. The unified CSR/configuration manager,
+> domain gateways and integrated v2 datapath are not implemented yet.
 
 ## 1. Purpose
 
@@ -43,6 +43,7 @@ The redesign has four goals:
 | [V2_RTL_STYLE_RULES.md](V2_RTL_STYLE_RULES.md) | Module boundaries, sequential logic, timing and naming rules |
 | [V2_MIGRATION_VERIFICATION_PLAN.md](V2_MIGRATION_VERIFICATION_PLAN.md) | Incremental implementation, regression and Git stage gates |
 | [V2_CHECKPOINT_B_CONFIG_CONTRACT.md](V2_CHECKPOINT_B_CONFIG_CONTRACT.md) | Verified build/runtime/derived configuration contract and package-test result |
+| [V2_CHECKPOINT_C_COMMIT_CALCULATOR.md](V2_CHECKPOINT_C_COMMIT_CALCULATOR.md) | Sequential validator/deriver implementation and 150/200 MHz timing result |
 
 ## 4. Target Top-Level Shape
 

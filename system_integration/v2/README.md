@@ -10,18 +10,21 @@ unchanged and is used as the observable-behavior reference during migration.
 | `pkg/lidar_build_pkg.vhd` | Build topology, legal generic values and stable error codes | Yes |
 | `pkg/lidar_config_types_pkg.vhd` | Runtime source and derived record types | Yes |
 | `pkg/lidar_config_reference_pkg.vhd` | Exact arithmetic oracle for tests and equivalence checks | No |
+| `rtl/config/` | Sequential validator, derivation controller and shared arithmetic | Yes |
 | `tb/` | Self-checking package and RTL tests | No |
 | `scripts/` | Reproducible, compact regressions | No |
 
 `lidar_config_reference_pkg` contains wide division on purpose. Production RTL
-must not call it. The v2 commit calculator will derive the same values over
-multiple clocks and will be checked against this reference model.
+does not call it. The sequential commit calculator derives the same values over
+multiple clocks and is checked against this reference model.
 
 ## Current Status
 
 - Checkpoint A: architecture contracts complete and committed.
 - Checkpoint B: configuration types and reference arithmetic verified.
-- Functional cores and the v2 integrated top are not implemented yet.
+- Checkpoint C: sequential commit calculator verified at 150/200 MHz.
+- Unified CSR/configuration manager, domain gateways and the v2 integrated top
+  are not implemented yet.
 
 Run the current package regression with:
 
@@ -31,3 +34,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The pass marker is `LIDAR_V2_CONFIG_TYPES_PASS`.
+
+Run the commit-calculator functional and implementation regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_commit_calculator.ps1
+```
+
+The pass marker is `LIDAR_V2_COMMIT_CALCULATOR_PASS`. The detailed Checkpoint C
+result is in `system_integration/v2_architecture/V2_CHECKPOINT_C_COMMIT_CALCULATOR.md`.
