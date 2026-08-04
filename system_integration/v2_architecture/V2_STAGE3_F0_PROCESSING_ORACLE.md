@@ -59,7 +59,7 @@ Stage 3에서 직접 참조하는 하위 소스도 다음 해시로 고정한다
 |---|---|---|
 | Exact data | position, direction, Face, shot index, simulation flag | 값과 순서 완전 일치 |
 | Exact registered cycle | B0..B3 내부 동기 이벤트 | 고정 위상 TB에서 cycle 일치 |
-| Exact physical ordering | `fire_pulse`, raw `fire_done`, `start_tdc`, `shot_start`, `stop_tdc` | 선후관계와 pulse width 일치 |
+| Exact physical ordering | `fire_pulse`, raw `fire_done`, `start_tdc`, `shot_start`, `stop_tdc` | 선후관계와 v1 정상 raw-pulse 조건의 pulse-width 알고리즘 일치 |
 | Measured latency | Encoder 입력부터 B0/fire, raw START부터 동기 T0 | v2 실측값과 상태값이 일치 |
 | Intentional divergence | v1 AXIS backpressure 및 중복 runtime scheduler knobs | Section 8의 v2 규칙 적용 |
 
@@ -205,7 +205,10 @@ columns_per_face       = ceil(face_angular_intervals / interval)
 - 한 shot에 START와 STOP은 최대 한 번;
 - START 없는 STOP 금지;
 - timeout shot의 START/STOP 금지;
-- pulse width는 active config snapshot과 정확히 일치;
+- 등록형 `fire_pulse`, simulation START, `stop_tdc` 폭은 active config
+  snapshot과 정확히 일치;
+- 비동기 물리 START는 active config의 최소 완전 clock 수 이상이며 정상
+  raw-pulse 조건에서 v1 clock-aligned release와 일치;
 - shot metadata는 accept부터 완료까지 안정;
 - `shot_start`, Face index와 TDC acquisition command의 shot identity 일치.
 
@@ -220,6 +223,7 @@ columns_per_face       = ceil(face_angular_intervals / interval)
 | runtime `rearm_guard` | 제거 | 구현 고정 re-arm latency를 측정하여 read-only 계약으로 관리 |
 | v1 9/5 latency padding | 제거 | v2 실제 직접 경로 지연을 측정하고 보고 |
 | malformed/overlap config의 runtime fail-close 의존 | commit reject 후 기존 active 유지 | 잘못된 geometry가 기능 경로에 들어오지 않게 함 |
+| armed `fire_done` stuck-HIGH가 START를 계속 유지 | 설정 최소 폭에서 START 종료, raw LOW 재검증 전 re-arm 금지 | TDC START 무한 HIGH를 막는 fail-safe 보완; 정상 pulse oracle은 변하지 않음 |
 
 물리 mode의 실제 회전 속도는 CSR 설정만으로 확정할 수 없다. 따라서
 `angular interval time >= fire_done response + range window + re-arm`을 모든

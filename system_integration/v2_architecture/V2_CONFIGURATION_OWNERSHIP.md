@@ -60,7 +60,21 @@ show an active source value, but it does not become a second owner.
 | Distance calibration | Runtime source | calibration config | distance formatter | Coherent scale/offset snapshot |
 | Cell bytes and VDMA geometry | Derived | commit calculator | frame builder, status and software | Never independently writable |
 
-### 2.1 Operation and safety transition contract
+### 2.1 Fixed B3 implementation timing
+
+The following values are implementation contracts, not CSR settings and not
+build generics:
+
+| Value | Fixed value | Meaning |
+|---|---:|---|
+| Fire-done observation budget | 3 Processing clocks | Two synchronizer stages plus the consuming FSM edge; used to resolve a T0 captured at timeout/abort boundary |
+| Re-arm margin | 2 Processing clocks | Required quiet interval after every generated pulse is inactive |
+
+Both are exposed as read-only B3 outputs so software/HTML can report the actual
+implementation. They must change only with RTL and verification evidence; an
+operator cannot use them to repair an invalid shot-rate configuration.
+
+### 2.2 Operation and safety transition contract
 
 `lidar_operation_manager` is the only owner of persistent RUN and ARM state.
 The CSR bank emits W1S events, and an acknowledged one-entry mailbox transfers

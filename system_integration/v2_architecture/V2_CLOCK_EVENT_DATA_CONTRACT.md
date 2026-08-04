@@ -122,6 +122,11 @@ recorded as a diagnostic.
 `start_tdc`, `shot_start`, Face context and the TDC acquisition command must be
 derived from one accepted-shot record so they cannot refer to different shots.
 
+`shot_start_event_t` repeats the complete accepted request and adds the measured
+`fire_to_t0_clks`. `shot_result_t` repeats that same request and classifies the
+single terminal outcome as normal, timeout or abort. Timeout and abort are
+mutually exclusive, and a timeout/abort result never fabricates START or STOP.
+
 The v1 physical/virtual 9/5-clock values describe Encoder input to the old
 Motor AXIS boundary. They are evidence, not latency padding requirements for
 the v2 direct event path. v2 measures its own input-to-event and event-to-fire
@@ -129,6 +134,20 @@ latencies, reports them with an explicit valid bit, and updates software/HTML
 defaults only from that measured result. The physical `start_tdc` assertion
 remains a qualified low-latency response to raw `fire_done`; its synchronized
 copy owns `shot_start` and state-machine bookkeeping.
+
+The physical START edge is asynchronous, so its width cannot mean exactly N
+clock periods from an arbitrary input phase. The active configuration specifies
+a conservative minimum of N complete Processing-clock periods. Deassertion is
+clock-aligned and bounded even if `fire_done` remains HIGH; the bridge then
+stays unready until raw LOW is observed on two synchronized samples. Registered
+`fire_pulse`, simulation START and `stop_tdc` are exactly N Processing clocks.
+
+Post-synthesis structural evidence is mandatory for this exception:
+
+- one `FDPE` implements the physical START capture;
+- raw `fire_done` drives that cell's `PRE` directly;
+- the only other raw endpoint is the first LOW-qualification synchronizer D;
+- four `ASYNC_REG` cells preserve the raw and START observation chains.
 
 ## 5. Echo STOP Exception
 

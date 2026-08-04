@@ -117,6 +117,73 @@ package lidar_event_types_pkg is
         active_version       => (others => '0')
     );
 
+    -- B3 emits the accepted request again at the synchronized T0 boundary.
+    -- Keeping the complete request in the event prevents Face, geometric
+    -- column, source mode and configuration version from being reconstructed
+    -- by the TDC acquisition path.
+    type shot_start_event_t is record
+        valid             : std_logic;
+        request           : shot_request_t;
+        fire_to_t0_clks   : unsigned(31 downto 0);
+    end record shot_start_event_t;
+
+    constant C_SHOT_START_EVENT_IDLE : shot_start_event_t := (
+        valid           => '0',
+        request         => C_SHOT_REQUEST_IDLE,
+        fire_to_t0_clks => (others => '0')
+    );
+
+    -- A result is emitted once per accepted request. A normal result follows
+    -- STOP assertion; timeout and abort results never fabricate START/STOP.
+    -- timeout and aborted are mutually exclusive when valid is asserted.
+    type shot_result_t is record
+        valid             : std_logic;
+        timeout           : std_logic;
+        aborted           : std_logic;
+        request           : shot_request_t;
+        fire_to_t0_clks   : unsigned(31 downto 0);
+    end record shot_result_t;
+
+    constant C_SHOT_RESULT_IDLE : shot_result_t := (
+        valid           => '0',
+        timeout         => '0',
+        aborted         => '0',
+        request         => C_SHOT_REQUEST_IDLE,
+        fire_to_t0_clks => (others => '0')
+    );
+
+    -- Observation-only B3 diagnostics. Counts are modulo 2^32 by design;
+    -- sticky bits remain asserted until the explicit diagnostic clear event.
+    type laser_diagnostics_t is record
+        request_drop_pulse        : std_logic;
+        request_drop_sticky       : std_logic;
+        request_drop_count        : unsigned(31 downto 0);
+        fire_done_timeout_pulse   : std_logic;
+        fire_done_timeout_sticky  : std_logic;
+        fire_done_timeout_count   : unsigned(31 downto 0);
+        operation_abort_pulse     : std_logic;
+        operation_abort_sticky    : std_logic;
+        operation_abort_count     : unsigned(31 downto 0);
+        unexpected_done_pulse     : std_logic;
+        unexpected_done_sticky    : std_logic;
+        unexpected_done_count     : unsigned(31 downto 0);
+    end record laser_diagnostics_t;
+
+    constant C_LASER_DIAGNOSTICS_CLEAR : laser_diagnostics_t := (
+        request_drop_pulse       => '0',
+        request_drop_sticky      => '0',
+        request_drop_count       => (others => '0'),
+        fire_done_timeout_pulse  => '0',
+        fire_done_timeout_sticky => '0',
+        fire_done_timeout_count  => (others => '0'),
+        operation_abort_pulse    => '0',
+        operation_abort_sticky   => '0',
+        operation_abort_count    => (others => '0'),
+        unexpected_done_pulse    => '0',
+        unexpected_done_sticky   => '0',
+        unexpected_done_count    => (others => '0')
+    );
+
     -- Operation commands are one-shot events. They are deliberately separate
     -- from committed configuration so RUN/ARM state has one Processing-domain
     -- owner and can never be inferred from ACTIVE_VALID alone.

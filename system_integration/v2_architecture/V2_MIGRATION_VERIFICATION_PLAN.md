@@ -277,7 +277,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | C | Complete | `1b8b015`, `8789e7b` | Sequential validator/deriver and all runtime timebase conversions |
 | 2 | D | Complete | `67e0800` | Atomic configuration manager and Processing/TDC gateways |
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
-| 3 | F | In progress | F0/F1/F2/F3a/F3b complete; B3/F5 pending | Processing event pipeline |
+| 3 | F | In progress | F0..F4 complete; F5 production assembly pending | Processing event pipeline |
 | 4 | G | Pending | B4 evidence pending | Echo frontend |
 | 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
@@ -286,8 +286,9 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E. Stage 3 /
-Checkpoint F is in progress; F0a/F0b, F1/B0, F2/B1, F3a operation/safety and
-F3b/B2 are complete. The only valid next sub-step is **F4 laser_executor**.
+Checkpoint F is in progress; F0a/F0b, F1/B0, F2/B1, F3a operation/safety,
+F3b/B2 and F4/B3 are complete. The only valid next sub-step is **F5 direct
+Processing event-path integration**.
 Stage 4 or
 later work must not be treated as migrated merely because its v1
 implementation exists.
@@ -325,8 +326,8 @@ Current sub-step status:
 | F2 | Complete | `V2_CHECKPOINT_F2_FACE_TRACKER.md`; session `260804184000_v2_face_tracker` |
 | F3a | Complete | `V2_CHECKPOINT_F3A_OPERATION_SAFETY.md`; sessions `260804203000_v2_operation`, `260804204000_v2_unified_csr` |
 | F3b | Complete | `V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md`; session `260804211500_v2_shot_scheduler` |
-| F4 | Next | B3 physical/simulation lifecycle evidence not yet generated |
-| F5 | Blocked by order | F4 boundary has not passed |
+| F4 | Complete | `V2_CHECKPOINT_F4_LASER_EXECUTOR.md`; session `260804220300_v2_laser_executor` |
+| F5 | Next | Production B0..B3 assembly, monitor tap and dual-domain profile evidence pending |
 
 Rules for this package:
 

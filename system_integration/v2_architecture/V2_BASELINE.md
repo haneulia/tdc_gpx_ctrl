@@ -79,8 +79,8 @@ it explicitly.
 2. Face activity is based on decoded motor state and supports one to five
    polygon faces.
 3. Physical `fire_pulse` is suppressed in simulation mode.
-4. Physical `start_tdc` is generated only from synchronized `fire_done` after
-   a physical fire command.
+4. Physical `start_tdc` is asserted only from a qualified raw `fire_done` edge
+   after a physical fire command; a synchronized copy owns bookkeeping.
 5. Simulation `start_tdc` is generated only by the simulation execution path.
 6. Echo Receiver converts LVDS channels to physical GPX STOP signals without
    passing through CSR, AXIS buffering or the GPX processing pipeline.
