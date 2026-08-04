@@ -46,8 +46,13 @@ GPX 원시 데이터 해석은 현재 RTL의 SINGLE_SHOT I-Mode와 로컬
 | `RW` | 소프트웨어 읽기/쓰기 |
 | `RO` | 소프트웨어 읽기 전용 |
 | `RW1C` | 1을 쓰면 클리어되고 0을 쓰면 변화 없음 |
-| `Live` | 설정 commit 없이 즉시 적용되는 값 |
-| `Epoch` | 마지막 승인값과 다른 epoch를 쓸 때 한 번만 동작 |
+| `Live` | `CFG_EPOCH` 없이 소비 도메인에 도착하는 즉시 적용되는 값. CDC 관측 지연은 존재할 수 있음 |
+| `Staging` | 소프트웨어가 작성했지만 아직 active 동작에는 반영되지 않은 대기값 |
+| `Active` | 처리 로직이 현재 실제로 사용 중인 승인값 |
+| `Selector` | indexed window에서 읽거나 쓸 항목을 고르는 주소. 그 자체는 설정값이 아님 |
+| `Epoch token` | 시간을 뜻하지 않는 8-bit 요청 식별자. 직전 **관측값**과 달라질 때 새 거래 1건으로 인식 |
+| `Toggle token` | 직전 1-bit 값과 반대값을 써서 새 거래 1건을 표시하는 식별자 |
+| `Ack` | 요청이 소비 도메인에 도달하여 처리됐음을 알려주는 회신값. Reject와 함께 확인해야 함 |
 | `Sticky` | 지정된 clear 조건까지 오류 이력을 유지 |
 | `wrap` | 최대값 이후 0으로 순환하는 카운터 |
 | `Reserved` | 현재 미사용. 소프트웨어는 0을 써야 함 |
@@ -176,7 +181,9 @@ commit하려 할 때 사용할 수 있는 packed 참고값이다. XGUI에서 gen
 | CTL26..CTL31 | `0x068..0x07C` | `0x00000000` | `0x00000000` | Reserved |
 
 Motor Face별 CTL7 등가값은 다음과 같다. 각 값을 CTL7에 쓴 뒤 CTL6의
-해당 `FACE_WRITE_INDEX`와 새 `FACE_WRITE_EPOCH`으로 개별 commit한다.
+해당 `FACE_WRITE_INDEX`와 새 `FACE_WRITE_EPOCH`으로 **shadow bank에
+적재**한다. 이 단계만으로 active geometry는 바뀌지 않는다. 필요한 Face를
+모두 적재한 뒤 새 CTL1 `CFG_EPOCH`를 발행해야 전체 geometry가 active가 된다.
 
 | Face | Center | Half-width | CTL7 등가값 |
 |---:|---:|---:|---:|
@@ -190,7 +197,9 @@ Motor Face별 CTL7 등가값은 다음과 같다. 각 값을 CTL7에 쓴 뒤 CTL
 
 CTL20/21은 하나의 register만 표현하는 일반 CTL이 아니라 16-word GPX
 설정 image를 선택하고 갱신하는 indexed window다. Adapter reset 시 staging과
-active image는 아래 값으로 초기화된다.
+active image는 아래 값으로 초기화된다. 여기서 reset은 `i_cfg_rst_n=0`인
+hardware/config-domain reset을 뜻한다. CTL0 `RESET_EPOCH`는 현재 staging과
+active image를 기본 image로 덮어쓰지 않는다.
 
 | GPX Reg | 기본값 | 핵심 의미 |
 |---:|---:|---|
@@ -240,7 +249,7 @@ reset이 assert된 동안 또는 해제 직후 몇 clock 동안은 0이나 이�
 | STAT22 `ECHO_DELAY_READBACK` | `0x00200000` | Echo enable 시 channel 0 valid, delay 0 |
 | STAT19..STAT22, Echo disabled build | `0x00000000` | 해당 하위 IP가 합성되지 않음 |
 | STAT23..STAT29 | `0x00000000` | 직접 읽기 결과와 TDC 오류/epoch가 없음 |
-| STAT30 `TDC_IMAGE_SELECTED_DATA` | `0x0FF7FC81` | 기본 선택 index 0의 GPX Reg0 image |
+| STAT30 `TDC_IMAGE_SELECTED_DATA` | `0x0FF7FC81` | 기본 선택 index 0의 GPX Reg0 staging image |
 | STAT31 `SYS_ADAPTER_STATE` | `0x000F807F` | reset/config epoch 0 match, valid, idle, no reject |
 
 | Interrupt register | Reset값 | 의미 |
@@ -251,8 +260,121 @@ reset이 assert된 동안 또는 해제 직후 몇 clock 동안은 0이나 이�
 | `INTR_MODE` | `0x00000000` | 기본 source mode 선택값 |
 
 동적 STAT와 `INTR_STATUS`는 외부 pin, CDC settle 순서, startup event에 따라
-위 idle 기대값과 잠시 다를 수 있다. 정적 식별값인 STAT0~5와 active 설정
-readback인 STAT7/8/30/31을 먼저 확인한 뒤 event counter를 해석하는 것이 안전하다.
+위 idle 기대값과 잠시 다를 수 있다. 정적 식별값인 STAT0~5, Motor active
+설정인 STAT7/8, TDC **staging image** 선택값인 STAT30, transaction 상태인
+STAT31을 구분하여 확인한 뒤 event counter를 해석하는 것이 안전하다.
+
+### 2.8 제어값의 적용 방식
+
+CTL 필드는 모두 같은 방식으로 동작하지 않는다. 특히 데이터 필드와 거래
+트리거를 한 번의 32-bit 값으로 보지 말고 아래 역할로 분리해서 해석해야 한다.
+
+| 방식 | 해당 필드 | 기록 직후 의미 | active가 되는 시점 | 완료 확인 |
+|---|---|---|---|---|
+| Live | CTL0[3:0], CTL6 `FACE_READ_INDEX` | CDC 후 즉시 입력 mux/enable/read selector에 전달 | 별도 commit 없음 | 관련 STAT live 값 또는 readback |
+| 공유 staging | CTL2~5, CTL8~14, CTL17~19, CTL22~24 | 다음 설정 image를 구성 | 새 CTL1 `CFG_EPOCH`가 각 adapter에서 승인될 때 | STAT31[18]=1, [20]=0 |
+| Motor indexed shadow | CTL6 `FACE_WRITE_INDEX/EPOCH` + CTL7 | 선택 Face의 shadow bank 한 항목만 갱신 | 이후 새 CTL1 `CFG_EPOCH`가 모든 Face를 active bank로 옮길 때 | shadow write는 STAT8, active 값은 STAT7 |
+| Echo indexed profile | CTL15 toggle + CTL16 | 선택 channel의 delay staging 또는 전체 profile apply 요청 | apply toggle이 window idle 상태에서 승인될 때 | STAT21 toggle ack/pending/reject |
+| TDC indexed image | CTL20 `IMAGE_INDEX/EPOCH` + CTL21 | 선택 GPX image word의 staging 갱신 | 이후 새 CTL1 `CFG_EPOCH`가 전체 image를 active snapshot으로 승격할 때 | staging은 STAT30, write 소비는 STAT27, 적용은 STAT31 |
+| TDC serialized command | CTL25 `OPCODE/CMD_EPOCH`; 일부 opcode는 CTL17 operand 사용 | command queue에 정확히 한 건 요청 | TDC command interface가 ready일 때 1-cycle pulse 생성 | STAT27 command ack와 STAT31 busy/reject |
+| Header-only metadata | CTL23 일부 필드 | 출력 header의 데이터 계약만 변경 | 새 CTL1 `CFG_EPOCH` 승인 시 | 생성된 48-byte prefix와 STAT31 |
+
+`Staging` readback과 `Active` readback은 서로 다를 수 있다. 예를 들어 STAT30은
+CTL20이 선택한 **staging** GPX image word이고, STAT7은 CTL6이 선택한 Face의
+**active** geometry다. 따라서 STAT30이 바뀌었다고 외부 GPX chip programming이
+완료됐다고 판단하면 안 된다.
+
+### 2.9 8-bit Epoch token의 정확한 의미
+
+`RESET_EPOCH[15:8]`의 8 bit는 reset 시간, reset pulse 폭, 허용 횟수 또는
+누적 reset count가 아니다. 서로 다른 클럭 도메인 사이에서 한 번의 요청을
+잃지 않고 전달하기 위한 **거래 번호**다. 각 adapter는 내부에 마지막으로 본
+`seen_epoch`를 보관하고 다음 규칙으로 동작한다.
+
+CSR/hardware reset 직후 requested와 accepted token이 모두 0이라
+STAT31 `ALL_RESET_ACCEPTED=1`로 보일 수 있지만, 이는 초기값이 서로 같다는
+뜻이지 reset 명령이 한 번 실행됐다는 뜻이 아니다. 실제 운용 reset은 token을
+0이 아닌 새 값으로 바꿔야 시작된다. 또한 `RESET_EPOCH`는 CTL 레지스터 bank를
+0으로 지우지 않는다. CTL reset image를 다시 만드는 것은 AXI CSR reset의
+역할이다.
+
+```text
+if requested_epoch != seen_epoch:
+    seen_epoch = requested_epoch       # 요청은 한 번 소비됨
+    validate/request operation
+    if accepted:
+        accepted_epoch = requested_epoch
+else:
+    do nothing                         # 같은 값을 다시 써도 재실행 안 됨
+```
+
+핵심은 비교 대상이 마지막 **승인값**이 아니라 마지막 **관측/소비값**이라는
+점이다. 잘못된 설정이 거부돼도 해당 요청 token은 이미 소비될 수 있다.
+내용을 고친 뒤 같은 token을 다시 쓰면 재실행되지 않으므로 반드시 또 다른
+token을 사용해야 한다.
+
+소프트웨어는 CTL에 현재 기록된 token을 기준으로 다음 값을 만든다.
+
+```text
+next_epoch = (current_requested_epoch + 1) & 0xFF
+```
+
+`0xFF -> 0x00` wrap은 정상이다. RTL은 직전 관측값과 같은지만 비교하므로
+256번 이후에도 동작한다. 다만 epoch는 누적 명령 횟수가 아니므로 값만 보고
+시스템 부팅 이후 reset/commit 횟수를 계산할 수는 없다.
+
+| Epoch token | 소유 transaction | 소비 IP | 성공/소비 확인 | Reject 시 재시도 |
+|---|---|---|---|---|
+| CTL0 `RESET_EPOCH` | 운용 상태 reset/recovery | Motor, Laser, Echo, TDC | STAT31[19]=1, [20]=0 | 새 token 사용 |
+| CTL1 `CFG_EPOCH` | 공유 staging snapshot 적용 | Motor, Laser, TDC. Echo 제외 | STAT31[18]=1, [20]=0, [21]=0 | 설정 수정 후 새 token 사용 |
+| CTL6 `FACE_WRITE_EPOCH` | 선택 Face shadow 한 항목 기록 | Motor만 | STAT8[15:8]=요청값. STAT8[22]도 확인 | 새 token 사용 |
+| CTL20 `IMAGE_WRITE_EPOCH` | 선택 GPX image staging 한 word 기록 | TDC만 | STAT27[31:24]=요청값과 TDC reject 확인 | 새 token 사용 |
+| CTL25 `CMD_EPOCH` | serialized TDC command 한 건 | TDC만 | STAT27[23:16]=요청값과 TDC reject 확인 | 새 token 사용 |
+
+TDC image adapter는 잘못된 `IMAGE_INDEX`도 token 자체는 소비하고
+`IMAGE_EPOCH_ACCEPTED`를 갱신한 뒤 reject를 세울 수 있다. 따라서 image write는
+epoch 일치만으로 성공 판정하지 말고 STAT31[14]/[21]의 TDC reject가 0인지도
+반드시 확인한다.
+
+`RESET_EPOCH`는 가장 높은 우선순위다. 같은 coherent snapshot에 들어온
+`CFG_EPOCH`, `FACE_WRITE_EPOCH`, TDC `IMAGE_WRITE_EPOCH/CMD_EPOCH`는 reset과
+함께 실행되지 않고 현재값으로 동기화되어 이미 본 token으로 처리된다. Reset
+완료 후 설정이나 command가 필요하면 각각 **새 token**을 다시 발행해야 한다.
+
+공유 reset은 모든 IP의 generic 설정을 똑같이 다시 적재하는 명령도 아니다.
+
+| IP | 새 `RESET_EPOCH`의 실제 효과 |
+|---|---|
+| Motor | 내부 decoder/virtual encoder/Face bank를 reset해 generic 초기 geometry로 복귀하고 config valid를 내린다. 이후 새 `CFG_EPOCH` 적용이 필요하다. |
+| Laser | executor, pulse 상태, 측정/counter 이력을 reset한다. Adapter의 승인된 timing snapshot은 유지된다. |
+| Echo | observation/shot 이력과 simulation delay profile을 reset한다. Simulation delay active/staging 값은 0으로 돌아간다. |
+| TDC | chip/pipeline recovery용 soft reset을 발생시키고 pending config/command 및 reject 상태를 정리한다. Adapter의 active config/image snapshot은 유지된다. |
+
+따라서 일반 reset 절차는 CTL0의 live bit를 보존하면서 새 reset token을 쓰고,
+STAT31[19]=1과 [20]=0을 기다린 뒤, 필요한 staging 값을 다시 준비하여 새
+CTL1 `CFG_EPOCH`를 발행하는 순서다.
+
+### 2.10 Requested, Accepted, Match, Busy, Reject 구분
+
+| 용어 | 의미 | 판단에 사용하면 안 되는 의미 |
+|---|---|---|
+| Requested | CTL에 현재 보이는 소프트웨어 요청 token | 하위 도메인 도착/실행 완료 |
+| Seen | adapter가 마지막으로 관측해 재실행 방지에 사용하는 내부 token. CSR에 직접 노출되지 않음 | 성공한 요청 |
+| Accepted/Ack | adapter가 정의한 단계까지 요청을 소비한 token | 모든 하위 물리 동작 성공 |
+| Match | requested와 accepted가 같고 해당 config가 valid라는 비교 | 외부 GPX chip bus 완료 |
+| Busy | 해당 adapter에 apply/command가 pending 또는 진행 중 | 오류 상태 |
+| Reject | 잘못된 값, 무효 index/opcode 또는 겹친 요청이 있었음 | 모든 Ack가 무효라는 뜻 |
+
+Motor `STAT8[22]`와 Echo `STAT21[12]` reject는 운용 이력을 남기는 sticky라서
+한 번 1이 되면 이후 정상 transaction이 성공해도 `STAT31.ANY_REJECT`가 계속
+1일 수 있다. 둘은 새 `RESET_EPOCH` 또는 hardware reset으로 기준을 다시
+세운다. Laser/TDC adapter reject는 정상 후속 transaction 또는 reset에서
+해당 원인이 정리될 수 있다.
+
+따라서 clean reset 직후에는 `Ack/Match 일치 + Busy=0 + Reject=0`을 성공
+조건으로 사용한다. 이미 sticky reject가 남은 운용 중에는 해당 IP의 accepted
+token, valid, 상세 STAT를 함께 기록하여 이번 transaction의 결과와 과거 이력을
+구분한다. 모든 polling에는 소프트웨어 timeout을 두어야 한다.
 
 ## 3. 제어 레지스터 CTL0~CTL31
 
@@ -262,24 +384,36 @@ readback인 STAT7/8/30/31을 먼저 확인한 뒤 event counter를 해석하는 
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
-| `[0]` | `MOTOR_SIM_EN` | Live | `1`: 내부 가상 엔코더, `0`: 외부 물리 A/B/Z decoder |
-| `[1]` | `LASER_EN` | Live | 전역 레이저 발사 허용. 다른 안전 조건은 계속 적용됨 |
-| `[2]` | `LASER_STREAM_EN` | Live | Laser 결과 AXI stream 활성 |
-| `[3]` | `ECHO_SIM_EN` | Live | 합성된 경우 Echo simulation 경로 활성 |
+| `[0]` | `MOTOR_SIM_EN` | Live | `1`: 내부 가상 엔코더, `0`: 외부 물리 A/B/Z. 두 source 모두 같은 decoder/Face geometry를 사용 |
+| `[1]` | `LASER_EN` | Live | 새 레이저 발사를 허용하는 전역 gate. reset이나 timing commit trigger가 아님 |
+| `[2]` | `LASER_STREAM_EN` | Live | Laser 관측 AXI stream 활성. `fire_pulse` 허용 여부와 별개 |
+| `[3]` | `ECHO_SIM_EN` | Live | `g_ENABLE_ECHO_SIM_PATH=true` build에서만 simulation edge path 선택. 물리 LVDS path를 지연시키지 않음 |
 | `[7:4]` | Reserved | - | 0으로 기록 |
-| `[15:8]` | `RESET_EPOCH` | Epoch | 마지막 승인값과 다른 값으로 바꾸면 각 adapter에 reset 1회 요청 |
+| `[15:8]` | `RESET_EPOCH` | Epoch token | 현재 CTL0 token과 다른 새 거래 번호를 쓰면 Motor/Laser/Echo/TDC에 운용 reset 1건 요청. 시간·pulse 폭·횟수가 아님 |
 | `[31:16]` | Reserved | - | 0으로 기록 |
+
+예를 들어 현재 CTL0 readback의 `RESET_EPOCH=0x2A`이면 live bit `[3:0]`을
+그대로 보존한 채 `0x2B`를 기록한다. 같은 `0x2B`를 여러 번 써도 reset은
+한 번만 발생한다. 완료는 CTL readback이 아니라 STAT31
+`ALL_RESET_ACCEPTED=1`과 `ANY_BUSY=0`으로 확인한다. Reset은 설정 commit이
+아니므로 완료 후 필요한 설정은 새 `CFG_EPOCH`로 다시 적용한다.
+
+`MOTOR_SIM_EN`은 live source mux이므로 운용 중 임의로 바꾸면 물리 위치와
+가상 위치 사이에 불연속이 생길 수 있다. 레이저를 disable하고 처리기가 idle인
+상태에서 전환한 뒤 reset/config 절차로 위치 기준을 다시 세우는 것이 안전하다.
 
 ### CTL1 `SYS_CFG_APPLY` - `0x004`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
-| `[7:0]` | `CFG_EPOCH` | Epoch | staging된 Motor, Laser, TDC 설정을 adapter별 coherent snapshot으로 commit |
+| `[7:0]` | `CFG_EPOCH` | Epoch token | staging된 Motor, Laser, TDC 설정을 adapter별 coherent snapshot으로 적용 요청. Echo profile은 포함하지 않음 |
 | `[31:8]` | Reserved | - | 0으로 기록 |
 
-권장 순서는 관련 CTL을 모두 기록하고 `STAT31.ANY_BUSY=0`을 확인한 뒤
-`CFG_EPOCH`를 증가시키고 `STAT31.ALL_CFG_ACCEPTED=1`을 기다리는 것이다.
-Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한다.
+권장 순서는 관련 CTL과 indexed shadow/image를 모두 기록하고
+`STAT31.ANY_BUSY=0`을 확인한 뒤 현재 CTL1 token과 다른 새 `CFG_EPOCH`를
+기록하는 것이다. 완료는 `STAT31.ALL_CFG_ACCEPTED=1`, `ANY_BUSY=0`,
+`ANY_REJECT=0`을 함께 확인한다. Echo delay profile은 이 거래에 참여하지 않고
+CTL15/16의 별도 toggle/acknowledge 방식을 사용한다.
 
 ## 3.2 Motor Decoder와 Virtual Encoder
 
@@ -324,10 +458,10 @@ Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한�
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
-| `[2:0]` | `FACE_WRITE_INDEX` | index | CTL7 데이터를 기록할 Face 0~4 선택 |
-| `[5:3]` | `FACE_READ_INDEX` | index | STAT7에서 확인할 Face 0~4 선택 |
+| `[2:0]` | `FACE_WRITE_INDEX` | Selector | CTL7을 기록할 Motor Face shadow entry 선택. 유효 범위는 `0 <= index < g_N_FACES`; 5~7은 항상 무효 |
+| `[5:3]` | `FACE_READ_INDEX` | Live Selector | STAT7에서 읽을 **active** Face entry 선택. write index 및 현재 주사 Face와 무관 |
 | `[7:6]` | Reserved | - | 0으로 기록 |
-| `[15:8]` | `FACE_WRITE_EPOCH` | Epoch | CTL7이 안정된 뒤 변경하여 Face 설정 1회 commit |
+| `[15:8]` | `FACE_WRITE_EPOCH` | Epoch token | CTL7이 안정된 뒤 새 token을 써서 선택 Face의 shadow entry를 한 번 갱신. active 적용 trigger가 아님 |
 | `[31:16]` | Reserved | - | 0으로 기록 |
 
 ### CTL7 `MOTOR_FACE_GEOMETRY` - `0x01C`, RW, CSR reset `0x00000000`
@@ -344,6 +478,41 @@ CPR이 0/상한 초과, DEC_MODE가 `11`, `TICKS_LO=0`, 또는
 바꾸면 모든 활성 Face의 center/half-width도 새로운 decoded-state 단위로
 다시 계산하여 기록해야 한다.
 
+`g_N_FACES`는 합성 시 1~5 중 하나로 고정되는 **Face bank의 개수**다.
+`g_FACE_CENTER_n/g_FACE_HALF_n`도 hardware reset 직후 사용할 초기값을
+정한다. 반면 CTL6/7은 광학 정렬, 장착 오차 보정 또는 runtime CPR/decode
+변경에 맞춰 그 고정 개수 안의 좌표를 재조정하는 선택 기능이다. 제품에서
+geometry를 고정 운용한다면 CTL6/7을 쓰지 않아도 generic 초기값이 그대로
+사용된다.
+
+예를 들어 `g_N_FACES=4` build에는 Face 0~3 entry만 존재한다. CTL6 write/read
+index 4는 Face 4를 새로 만드는 설정이 아니며 write는 reject, read는 invalid가
+된다. Face 개수 자체를 4에서 5로 바꾸려면 generic을 변경하고 다시 합성해야
+한다.
+
+Face geometry는 Virtual Encoder 전용이 아니다. 물리 A/B/Z와 내부 Virtual
+Encoder는 먼저 하나의 quadrature decoder 입력으로 선택되고, 그 결과인 공통
+decoded position이 Face window detector로 들어간다. 따라서 CTL6/7로 적용한
+동일 geometry를 두 경로가 공유한다. `MOTOR_SIM_EN`은 입력 source만 바꾸며
+Face bank를 따로 만들지 않는다.
+
+한 개 이상의 Face geometry를 runtime에 바꾸는 정확한 순서는 다음과 같다.
+
+1. `FACE_WRITE_INDEX < g_N_FACES`인지 확인한다.
+2. CTL7에 그 Face의 `CENTER/HALF_WIDTH`를 decoded-state 단위로 쓴다.
+3. CTL6의 write index를 유지하고 `FACE_WRITE_EPOCH`를 새 token으로 바꾼다.
+4. STAT8[15:8]이 요청 token과 같아질 때까지 기다린다. Reject 이력이 새로
+   발생했다면 index/data를 고치고 또 다른 Face token으로 재시도한다.
+5. 필요한 모든 Face에 1~4단계를 반복한다.
+6. CTL2~5도 같은 decoded-state scale로 준비하고 새 CTL1 `CFG_EPOCH`를 쓴다.
+7. STAT31[18]=1, [20]=0, [21]=0을 확인한다.
+8. CTL6 `FACE_READ_INDEX`만 바꿔 각 Face를 선택하고 STAT7[30]=1 및 active
+   center/half-width를 검증한다. Read selector 변경에는 epoch가 필요 없다.
+
+잘못된 write index는 Motor reject를 남기며 해당 Face token은 이미 소비된다.
+잘못된 read index는 쓰기를 발생시키지 않고 STAT7을 0, `GEOMETRY_VALID=0`으로
+보이게 한다.
+
 ## 3.3 Laser Controller
 
 ### CTL8 `LASER_FIRE_CFG` - `0x020`, RW, CSR reset `0x00000000`
@@ -351,7 +520,7 @@ CPR이 0/상한 초과, DEC_MODE가 `11`, `TICKS_LO=0`, 또는
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
 | `[15:0]` | `FIRE_WIDTH` | 5 ns ticks | 실제 `fire_pulse` 폭. 0이면 발사 차단 오류 |
-| `[31:16]` | `FIRE_DONE_TIMEOUT` | 5 ns ticks | 동기화된 `fire_done` 최대 대기시간. 0이 아니고 `TARGET_ROUNDTRIP` 이하여야 함 |
+| `[31:16]` | `FIRE_DONE_TIMEOUT` | 5 ns ticks | shot request를 executor가 승인한 시점부터 동기화된 `fire_done`/simulation T0까지의 최대 대기시간. 0이 아니고 `TARGET_ROUNDTRIP` 이하여야 함 |
 
 16-bit 최대값 65,535는 327,675 ns, 즉 327.675 us다.
 
@@ -359,7 +528,7 @@ CPR이 0/상한 초과, DEC_MODE가 `11`, `TICKS_LO=0`, 또는
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
-| `[31:0]` | `TARGET_ROUNDTRIP` | 5 ns ticks | 발사 후 목표 왕복거리 측정 대기창. 0은 허용하지 않음 |
+| `[31:0]` | `TARGET_ROUNDTRIP` | 5 ns ticks | `fire_done` 또는 simulation T0로 `start_tdc`를 만든 시점부터 `stop_tdc`까지의 측정창. 0은 허용하지 않음 |
 
 ### CTL10 `LASER_TDC_WIDTH` - `0x028`, RW, CSR reset `0x00000000`
 
@@ -379,15 +548,15 @@ CPR이 0/상한 초과, DEC_MODE가 `11`, `TICKS_LO=0`, 또는
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
 | `[15:0]` | `SHOT_INTERVAL_STATES` | decoded states | 다음 발사를 허용하는 최소 각도 간격. 0은 허용하지 않음 |
-| `[20:16]` | `FACE_ENABLE_MASK` | bit/Face | bit n이 1이면 Face n에서 발사 허용 |
+| `[20:16]` | `FACE_ENABLE_MASK` | bit/Face | bit n이 1이고 `n < g_N_FACES`이면 Face n에서 발사 허용. 합성되지 않은 Face bit는 효과 없음 |
 | `[31:21]` | Reserved | - | 0으로 기록 |
 
 ### CTL13 `LASER_SCHED1` - `0x034`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
-| `[15:0]` | `START_SKIP_STEPS` | shot steps | Face 진입 후 건너뛸 발사 grid 수 |
-| `[31:16]` | `ACTIVE_WINDOW_STEPS` | shot steps | 활성 grid 수. 0이면 Face 끝까지 별도 제한 없음 |
+| `[15:0]` | `START_SKIP_STEPS` | decoded position advances | Face 진입 후 건너뛸 decoded position event 수. shot 개수나 grid 개수가 아님 |
+| `[31:16]` | `ACTIVE_WINDOW_STEPS` | decoded position advances | skip 이후 발사를 허용할 position event 폭. 0이면 Face 끝까지 별도 제한 없음 |
 
 ### CTL14 `LASER_SCHED2` - `0x038`, RW, CSR reset `0x00000000`
 
@@ -404,27 +573,57 @@ Laser commit은 다음 조건을 모두 만족해야 한다.
 - `FIRE_DONE_TIMEOUT <= TARGET_ROUNDTRIP`
 - `SHOT_INTERVAL_STATES != 0`
 
+`SHOT_INTERVAL_STATES=N`이면 방향과 무관하게 Motor가 전달한 decoded-position
+advance event를 N개마다 하나의 발사 grid로 본다. CW 증가값과 CCW 감소값에
+unsigned 차감 연산을 적용하는 구조가 아니다. 해당 grid에서 executor가 아직
+roundtrip/guard 처리 중이면 그 grid는 지연 발사하지 않고 건너뛰며
+`SCHEDULE_OVERRUN`을 남긴다. 따라서 각도 위치를 보존하는 대신 설정한 각도
+분해능보다 실제 shot 수가 줄 수 있다.
+
 ## 3.4 Echo Receiver indexed delay profile
 
 ### CTL15 `ECHO_DELAY_CMD` - `0x03C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
-| `[4:0]` | `CHANNEL_INDEX` | 0~31 | 설정/조회할 APD Echo channel 선택 |
+| `[4:0]` | `CHANNEL_INDEX` | Selector | APD Echo channel 선택. 유효 범위는 `0 <= index < synthesized channel count`; 최대 build에서 0~31 |
 | `[7:5]` | Reserved | - | 0으로 기록 |
-| `[8]` | `DELAY_WRITE_TOGGLE` | toggle | CTL16이 안정된 후 반전하여 선택 channel의 staging delay 기록 |
-| `[9]` | `PROFILE_APPLY_TOGGLE` | toggle | 전체 staging profile을 Echo window가 idle일 때 active로 적용 |
+| `[8]` | `DELAY_WRITE_TOGGLE` | Toggle token | CTL16이 안정된 후 현재 bit의 반대값으로 바꿔 선택 channel의 staging delay 기록 요청 |
+| `[9]` | `PROFILE_APPLY_TOGGLE` | Toggle token | 현재 bit의 반대값으로 바꿔 전체 staging profile의 active 적용 요청 |
 | `[31:10]` | Reserved | - | 0으로 기록 |
 
 ### CTL16 `ECHO_DELAY_DATA` - `0x040`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
-| `[15:0]` | `CHANNEL_DELAY` | 5 ns ticks | 선택 channel의 simulation delay |
+| `[15:0]` | `CHANNEL_DELAY` | 5 ns ticks | 선택 channel Echo **simulation** edge에 적용할 지연. 물리 LVDS-to-STOP 초저지연 경로에는 삽입되지 않음 |
 | `[31:16]` | Reserved | - | 0으로 기록 |
 
 Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환을 위해
 남지만 처리 기능은 없고, Echo capability가 0이 되며 STAT19~22도 0이다.
+
+`Toggle token`은 pulse bit가 아니다. 예를 들어 현재
+`DELAY_WRITE_TOGGLE=0`이면 새 write 요청은 1, 그 다음 요청은 다시 0으로
+바꾼다. 항상 1을 쓴 뒤 소프트웨어가 임의로 0으로 복귀시키면 두 번의 요청으로
+인식될 수 있다.
+
+Echo simulation profile 변경 순서는 다음과 같다.
+
+1. CTL15 `CHANNEL_INDEX`와 CTL16 `CHANNEL_DELAY`를 기록한다.
+2. CTL15 `DELAY_WRITE_TOGGLE`만 반전한다.
+3. STAT21 `DELAY_WRITE_ACK`가 새 toggle 값과 같아질 때까지 기다린다.
+4. 필요한 channel마다 1~3단계를 반복한다.
+5. CTL15 `PROFILE_APPLY_TOGGLE`을 반전한다.
+6. STAT21 `PROFILE_APPLY_ACK`가 요청값과 같고 `PROFILE_APPLY_PENDING=0`이 될
+   때까지 기다린다. Echo window가 active이면 window 종료까지 pending 상태다.
+7. `COMMAND_REJECT=0`을 확인하고 STAT22에서 선택 channel의 active delay를
+   읽는다.
+
+`g_ENABLE_ECHO_SIM_PATH=false`이면 물리 Echo 경로만 합성된다. 이 경우 CTL15
+toggle은 deadlock 방지를 위해 그대로 ack되지만 CTL16 delay는 실제 신호에
+영향을 주지 않고 profile sequence도 증가하지 않는다. 따라서 ack만 보고
+simulation delay가 적용됐다고 판단하면 안 되며 build generic/capability를
+먼저 확인해야 한다.
 
 ## 3.5 TDC-GPX bus, 설정 image, pipeline, command
 
@@ -435,31 +634,31 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | `[5:0]` | `BUS_CLK_DIV` | 1~63 | GPX bus tick divider. capture 안전 최소값보다 작으면 RTL이 상향 clamp |
 | `[8:6]` | `BUS_TICKS` | 통상 3~7 | bus phase 길이. divider별 안전 최소값보다 작으면 상향 clamp |
 | `[9]` | Reserved | - | 0으로 기록 |
-| `[13:10]` | `REG_ADDR` | 0~15 | 직접 접근할 GPX register 주소 |
-| `[15:14]` | `REG_CHIP_ID` | 0~3 | `REG_CHIP_MASK=0`일 때 단일 대상 chip |
-| `[19:16]` | `REG_CHIP_MASK` | bit/chip | 0이 아니면 복수 chip 선택. 0이면 `REG_CHIP_ID`를 one-hot 변환 |
+| `[13:10]` | `REG_ADDR` | 0~15 | CTL25 opcode 5/6이 사용할 직접 GPX register operand |
+| `[15:14]` | `REG_CHIP_ID` | 0~3 | CTL25 opcode 5/6에서 `REG_CHIP_MASK=0`일 때 단일 대상 chip |
+| `[19:16]` | `REG_CHIP_MASK` | bit/chip | CTL25 opcode 5/6의 복수 chip operand. 0이면 `REG_CHIP_ID`를 one-hot 변환 |
 | `[31:20]` | Reserved | - | local CSR의 과거 read/write trigger는 통합 모드에서 사용하지 않음 |
 
 ### CTL18 `TDC_START_OFFSET` - `0x048`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 의미 |
 |---:|---|---|
-| `[17:0]` | `START_OFF1` | GPX 설정 image Reg5에 적용되고 Face header에도 기록되는 Start offset |
+| `[17:0]` | `START_OFF1` | GPX raw image Reg5의 StartOff1 bit 구간을 덮어쓰며 Face header에도 기록되는 Start offset |
 | `[31:18]` | Reserved | 0으로 기록 |
 
 ### CTL19 `TDC_CFG_REG7` - `0x04C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 의미 |
 |---:|---|---|
-| `[31:0]` | `CFG_REG7` | GPX Reg7 staging/override word. 실제 28-bit bus에는 `[27:0]`만 전달 |
+| `[31:0]` | `CFG_REG7` | GPX raw image Reg7 전체를 덮어쓰는 override word. 실제 28-bit bus에는 `[27:0]`만 전달 |
 
 ### CTL20 `TDC_IMAGE_CMD` - `0x050`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
-| `[4:0]` | `IMAGE_INDEX` | 0~15 | GPX 설정 image register 선택 |
+| `[4:0]` | `IMAGE_INDEX` | Selector | staging/readback할 GPX 설정 image word. 0~15만 유효; 16~31은 reject |
 | `[7:5]` | Reserved | - | 0으로 기록 |
-| `[15:8]` | `IMAGE_WRITE_EPOCH` | Epoch | CTL21이 안정된 후 변경하여 image word 1개 staging |
+| `[15:8]` | `IMAGE_WRITE_EPOCH` | Epoch token | CTL21이 안정된 후 새 token으로 바꿔 선택 image word 한 개를 staging에 기록 |
 | `[31:16]` | Reserved | - | 0으로 기록 |
 
 ### CTL21 `TDC_IMAGE_DATA` - `0x054`, RW, CSR reset `0x00000000`
@@ -467,6 +666,17 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | Bits | Field | 의미 |
 |---:|---|---|
 | `[31:0]` | `IMAGE_DATA` | 선택된 GPX image word. `[31:28]`은 CSR readback에는 보존되지만 28-bit 물리 bus에는 출력되지 않음 |
+
+CTL20 `IMAGE_INDEX`는 Live selector이므로 epoch를 바꾸지 않아도 STAT30에서
+선택된 **staging** word를 읽을 수 있다. `IMAGE_WRITE_EPOCH`의 승인은 한 word가
+staging window에서 소비됐다는 뜻일 뿐, active image 승격이나 외부 GPX write
+완료를 뜻하지 않는다. 여러 word를 수정한 뒤 새 CTL1 `CFG_EPOCH`를 발행해야
+전체 16-word image가 TDC active snapshot으로 함께 넘어간다.
+
+CTL20/21은 raw image를 편집한다. 실제 chip programming image를 만들 때
+CTL18 `START_OFF1`이 Reg5의 해당 bit와 ALU trigger policy를 다시 덮어쓰고,
+CTL19 `CFG_REG7`이 Reg7 전체를 덮어쓴다. 따라서 STAT30에서 보이는 raw
+staging Reg5/Reg7과 외부 chip에 최종 기록되는 effective word는 다를 수 있다.
 
 초기화 시 GPX Reg14 bit 4는 강제로 0으로 기록된다. 지원하지 않는 GPX
 16-bit mode는 CSN 관련 별도 workaround가 필요하기 때문이다. 각 GPX
@@ -482,37 +692,53 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | `[19]` | `FALLING_ENABLE` | Boolean | 구성된 falling slope lane 활성 |
 | `[31:20]` | Reserved | - | 0으로 기록 |
 
+`FALLING_ENABLE=1`은 합성된 `g_FALL_CHIP_MASK` 경로를 runtime에 허용할 뿐이다.
+falling chip/lane이 합성되지 않은 build에서 이 bit를 1로 써도 새 falling
+하드웨어가 생기지 않는다. 반대로 0이면 합성된 falling lane은 처리 대상에서
+제외된다.
+
 ### CTL23 `TDC_PIPELINE_MAIN` - `0x05C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 의미 |
 |---:|---|---|
 | `[3:0]` | `ACTIVE_CHIP_MASK` | 요청한 논리 chip mask. 합성된 present mask와 AND. 0이면 첫 present chip 선택 |
-| `[4]` | `PACKET_SCOPE` | Header packet-scope metadata |
-| `[6:5]` | `HIT_STORE_MODE` | `00` raw, `01` corrected, `10` distance, `11` reserved. 현재 header/contract metadata |
-| `[9:7]` | `DIST_SCALE` | Header에 전달하는 거리 scale metadata |
-| `[10]` | `DRAIN_MODE` | GPX FIFO drain 정책 선택 |
-| `[11]` | `PIPELINE_EN` | Pipeline enable 제어/metadata |
+| `[4]` | `PACKET_SCOPE` | Header-only metadata. 현재 packet 경계나 VDMA geometry를 바꾸지 않음 |
+| `[6:5]` | `HIT_STORE_MODE` | Header-only metadata. `00` raw, `01` corrected, `10` distance, `11` reserved; 현재 Cell payload 변환기를 선택하지 않음 |
+| `[9:7]` | `DIST_SCALE` | Header-only 거리 scale label. 현재 Hit 값에 곱셈/나눗셈을 수행하지 않음 |
+| `[10]` | `DRAIN_MODE` | `0`: legacy 단일 read 진행, `1`: LF가 추가 data를 알릴 때 최대 2-word burst 허용 |
+| `[11]` | `PIPELINE_EN` | Header-only sequential/pipeline mode label. 현재 처리 병렬도를 켜거나 끄지 않음 |
 | `[14:12]` | Reserved | Face 수는 Motor sideband가 소유 |
 | `[18:15]` | `STOPS_PER_CHIP` | 요청값 2~build 최대. 범위를 벗어나면 clamp |
-| `[22:19]` | `DRAIN_CAP` | drain word 상한 정책. 0이면 이 cap으로 제한하지 않음 |
-| `[27:23]` | `STOPDIS_OVERRIDE` | GPX Stop-disable override |
+| `[22:19]` | `DRAIN_CAP` | IFIFO별 read cap 단위. 0은 무제한, N은 IFIFO마다 최대 `4*N` word 후 잔여 data purge 및 faulted completion |
+| `[27:23]` | `STOPDIS_OVERRIDE` | `[27]`: override enable, `[26:23]`: chip 3..0에 강제할 STOPDIS 값. 정상 운용은 enable=0 |
 | `[31:28]` | Reserved | 통합 command는 CTL25가 소유 |
+
+`STOPDIS_OVERRIDE`는 CTL1 승인 전에는 staging 값이다. 승인 후에는 shot
+snapshot에 묶이지 않고 TDC clock 다음 edge에 pin으로 반영되는 긴급/debug
+override다. Shot 중 바꾸면 현재 acquisition을 중단하거나 오염시킬 수 있고
+내부 FSM recovery를 자동 실행하지 않으므로, 전환과 겹친 Face는 폐기해야 한다.
 
 ### CTL24 `TDC_RANGE_COLS` - `0x060`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
-| `[15:0]` | `MAX_RANGE` | 5 ns ticks | 목표 왕복거리 capture 한계. TDC와 AXIS 도메인 클럭 수로 각각 변환 |
-| `[31:16]` | `COLS_PER_FACE` | shots/Face | VDMA 한 Frame의 line 수. 0은 1로 보정 |
+| `[15:0]` | `MAX_RANGE` | 5 ns ticks | shot당 목표 왕복거리 capture/window 한계. TDC와 AXIS 도메인에서 각각 local clocks로 변환하며 0은 이 programmable range check를 비활성화 |
+| `[31:16]` | `COLS_PER_FACE` | shots/Face | 한 Face에서 기대하는 shot 수이자 Rise/Fall VDMA `VSIZE` line 수. Face 개수나 HSIZE가 아니며 0은 1로 보정 |
 
 ### CTL25 `TDC_AUX_CMD` - `0x064`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 인코딩 | 의미 |
 |---:|---|---|---|
-| `[2:0]` | `OPCODE` | 0~7 | `0` none, `1` start, `2` stop, `3` force reinit, `4` error clear, `5` register read, `6` register write, `7` invalid |
+| `[2:0]` | `OPCODE` | 0~7 | `1` start, `2` stop, `3` force reinit, `4` error clear, `5` register read, `6` register write. `0`은 epoch를 바꾸지 않을 때의 idle 값이고 새 epoch와 함께 쓰면 reject. `7`도 reject |
 | `[7:3]` | Reserved | - | 0으로 기록 |
-| `[15:8]` | `CMD_EPOCH` | Epoch | 값을 바꾸면 serialized command를 정확히 한 번 요청 |
+| `[15:8]` | `CMD_EPOCH` | Epoch token | 유효 opcode와 함께 새 token으로 바꾸면 serialized command를 정확히 한 번 요청 |
 | `[31:16]` | Reserved | - | 0으로 기록 |
+
+Opcode 5/6은 CTL17의 `REG_ADDR/REG_CHIP_ID/REG_CHIP_MASK`를 command와 같은
+snapshot에서 operand로 캡처한다. `CMD_EPOCH`가 바뀐 뒤 CTL17을 수정해도 이미
+pending인 command 대상은 바뀌지 않는다. STAT27 `CMD_EPOCH_ACCEPTED`는
+command interface가 ready여서 해당 pulse가 발행됐음을 뜻한다. GPX bus 작업의
+최종 결과는 STAT23~29와 busy/error 상태까지 확인해야 한다.
 
 ### CTL26~CTL31 예약 영역 - CSR reset `0x00000000`
 
@@ -609,24 +835,33 @@ STAT3~5는 **현재 Face geometry가 아니라 ABI 최대 용량 상수**다. �
 
 | Bits | Field | 의미 |
 |---:|---|---|
-| `[14:0]` | `APPLIED_FACE_CENTER` | 선택 Face의 적용 center, decoded states |
-| `[29:15]` | `APPLIED_FACE_HALF_WIDTH` | 선택 Face의 적용 active half-width |
-| `[30]` | `GEOMETRY_VALID` | 해당 geometry가 정상 적용됨 |
+| `[14:0]` | `APPLIED_FACE_CENTER` | CTL6 `FACE_READ_INDEX`가 선택한 **active bank** Face center, decoded states |
+| `[29:15]` | `APPLIED_FACE_HALF_WIDTH` | 같은 active bank Face의 active half-width |
+| `[30]` | `GEOMETRY_VALID` | read index가 `g_N_FACES` 범위 안이고 active geometry가 존재함 |
 | `[31]` | Reserved | 0 |
+
+STAT7은 방금 CTL7에 쓴 shadow 값을 보여주지 않는다. CTL1 global commit이
+끝난 active 값만 표시한다. 현재 주사 중인 Face도 자동 선택하지 않으므로 현재
+Face는 STAT6[2:0], geometry 조회 대상은 STAT8[18:16]으로 따로 확인한다.
 
 ### STAT8 `MOTOR_CFG_STATUS` - `0x0A0`
 
 | Bits | Field | 의미 |
 |---:|---|---|
 | `[7:0]` | `CFG_EPOCH_ACCEPTED` | 마지막 승인 공유 config epoch |
-| `[15:8]` | `FACE_EPOCH_ACCEPTED` | 마지막 승인 Face-write epoch |
-| `[18:16]` | `FACE_READ_INDEX` | STAT7이 표시하는 Face |
+| `[15:8]` | `FACE_EPOCH_ACCEPTED` | 마지막으로 Motor shadow bank가 승인한 Face-write token. active commit 완료 표시는 아님 |
+| `[18:16]` | `FACE_READ_INDEX` | STAT7 active readback을 선택하는 live index |
 | `[19]` | `GEOMETRY_VALID` | 적용 geometry 유효 |
 | `[20]` | `BUSY` | 설정 처리 중 |
 | `[21]` | `APPLY_TRACK` | apply transaction 추적 중 |
 | `[22]` | `REJECT` | 잘못된 설정 거부 이력 |
 | `[23]` | `CFG_VALID` | 현재 active Motor 설정 유효 |
 | `[31:24]` | `RESET_EPOCH_ACCEPTED` | 마지막 승인 reset epoch |
+
+`FACE_EPOCH_ACCEPTED`가 요청값과 같으면 선택 Face의 shadow write가
+승인됐다는 뜻이다. 실제 Face detector가 새 좌표를 쓰기 시작했는지는 이후
+CTL1 commit을 완료하고 `CFG_EPOCH_ACCEPTED`, `CFG_VALID`, STAT7 값을 통해
+확인한다.
 
 | Index / 주소 | Register | 의미 |
 |---:|---|---|
@@ -718,14 +953,19 @@ channel_index = chip_id * stops_per_chip + stop_id
 | `[6]` | `WINDOW_ACTIVE` | Live | Echo observation window 활성 |
 | `[7]` | `SIM_MODE_ACTIVE` | Live | Echo simulation mode 활성 |
 | `[8]` | `ANY_SIM_ACTIVE` | Live | 하나 이상의 channel simulation 활성 |
-| `[9]` | `DELAY_WRITE_ACK` | toggle | CTL15[8] delay write 승인 |
-| `[10]` | `PROFILE_APPLY_ACK` | toggle | CTL15[9] profile apply 승인 |
+| `[9]` | `DELAY_WRITE_ACK` | Toggle Ack | CTL15[8] 요청 toggle을 소비한 값. reject와 함께 확인 |
+| `[10]` | `PROFILE_APPLY_ACK` | Toggle Ack | 실제 active profile 적용을 완료한 CTL15[9] toggle 값 |
 | `[11]` | `PROFILE_APPLY_PENDING` | Live | window가 끝날 때까지 apply 대기 |
 | `[12]` | `COMMAND_REJECT` | Sticky | 잘못된 index 또는 겹친 profile command 거부 |
 | `[13]` | `LAST_SHOT_VALID` | History | STAT19/20에 완료된 shot 정보가 있음 |
 | `[15:14]` | Reserved | - | 0 |
 | `[23:16]` | `SHOT_SEQUENCE` | wrap | 완료 shot sequence |
 | `[31:24]` | `PROFILE_SEQUENCE` | wrap | 적용 profile sequence |
+
+`DELAY_WRITE_ACK`는 invalid channel 또는 apply pending 중 write도 software가
+무한 대기하지 않도록 요청 toggle까지는 따라갈 수 있다. 성공 여부는
+`COMMAND_REJECT=0`을 함께 확인해야 한다. 반면 `PROFILE_APPLY_ACK`는 window가
+idle이 되어 active profile 복사가 끝난 뒤 요청 toggle과 같아진다.
 
 ### STAT22 `ECHO_DELAY_READBACK` - `0x0D8`
 
@@ -768,8 +1008,8 @@ channel_index = chip_id * stops_per_chip + stop_id
 | `[7:4]` | `CHIP_ERROR_MASK` | Sticky/집계 | chip 내부 오류 또는 GPX Reg12 fault |
 | `[11:8]` | `DRAIN_TIMEOUT_MASK` | Sticky | chip별 IFIFO drain timeout |
 | `[15:12]` | `SEQUENCE_ERROR_MASK` | Sticky | chip별 acquisition sequence/protocol 오류 |
-| `[23:16]` | `CMD_EPOCH_ACCEPTED` | Ack | 마지막 승인 CTL25 command epoch |
-| `[31:24]` | `IMAGE_EPOCH_ACCEPTED` | Ack | 마지막 승인 CTL20 image-write epoch |
+| `[23:16]` | `CMD_EPOCH_ACCEPTED` | Ack | TDC command interface에 발행 완료된 마지막 CTL25 command token |
+| `[31:24]` | `IMAGE_EPOCH_ACCEPTED` | Consume Ack | TDC indexed staging window가 소비한 마지막 CTL20 image-write token. invalid index 성공 보장은 아님 |
 
 ### STAT28 `TDC_STATUS_EXT` - `0x0F0`
 
@@ -812,7 +1052,9 @@ bit를 무조건 새로운 오류로 해석하면 안 된다. 완전히 새로�
 
 ### STAT30 `TDC_IMAGE_SELECTED_DATA` - `0x0F8`
 
-`[31:0]`은 CTL20 `IMAGE_INDEX`가 선택한 GPX 설정 image word다.
+`[31:0]`은 CTL20 `IMAGE_INDEX`가 선택한 GPX **staging image** word다. 이 값은
+software write 검증용이며 현재 active image 또는 외부 chip에서 다시 읽은
+register 값이 아니다. 외부 GPX direct read 결과는 STAT23~26을 사용한다.
 
 ### STAT31 `SYS_ADAPTER_STATE` - `0x0FC`
 
@@ -841,6 +1083,12 @@ bit를 무조건 새로운 오류로 해석하면 안 된다. 완전히 새로�
 | `[20]` | `ANY_BUSY` | 하나 이상의 adapter busy |
 | `[21]` | `ANY_REJECT` | 하나 이상의 adapter reject |
 | `[31:22]` | Reserved | 0 |
+
+`*_MATCH`는 요청 token과 승인 token이 같다는 비교 결과다. 해당 IP의 모든
+물리 동작이 끝났다는 일반적인 `done` 신호는 아니다. 예를 들어
+`TDC_CFG_MATCH=1`은 adapter가 active snapshot을 승격하고 config-write pulse를
+발행했다는 의미이며, 외부 GPX bus 초기화/쓰기의 최종 건전성은 TDC busy와
+STAT27~29 오류 상태를 추가로 확인해야 한다.
 
 ## 5. Interrupt 레지스터와 source bit
 
@@ -1150,21 +1398,43 @@ elastic buffer와 shot-boundary FIFO reset guard가 있다. 그래도 watchdog�
 1. STAT0 signature `0x4C`와 지원 ABI major를 확인한다.
 2. STAT1 capability로 Echo 포함 여부와 active register 수를 확인한다.
 3. `INTR_EN=0`으로 mask하고 기존 manual `INTR_FLAG`를 W1C한다.
-4. Motor, Laser, TDC staging CTL과 Face/image indexed 데이터를 모두 쓴다.
-5. CTL1 `CFG_EPOCH`를 증가시키고 STAT31[18]=1, STAT31[21]=0을 확인한다.
-6. Echo delay profile은 CTL15/16 toggle을 사용하고 STAT21 ack를 확인한다.
-7. STAT3~5가 아니라 runtime `o_vdma_*` 출력으로 VDMA를 설정한다.
-8. 필요한 interrupt source만 enable하고 새 CTL25 command epoch로 TDC
+4. 운용 이력을 새로 시작해야 하면 CTL0 live bit를 보존하면서 현재
+   `RESET_EPOCH+1` token을 쓴다. STAT31[19]=1, [20]=0을 기다린다.
+5. 변경할 각 Face에 대해 CTL7 데이터, CTL6 write index, 새 Face token 순으로
+   shadow bank를 적재하고 STAT8[15:8] ack를 확인한다.
+6. 변경할 GPX image word에 대해 CTL21 데이터, CTL20 index, 새 image token
+   순으로 staging하고 STAT27[31:24] 및 reject를 확인한다.
+7. 나머지 Motor, Laser, TDC 공유 staging CTL을 모두 쓴다.
+8. 현재 CTL1 token과 다른 새 `CFG_EPOCH`를 쓰고 STAT31[18]=1, [20]=0,
+   [21]=0을 확인한다.
+9. CTL6 read index와 STAT7로 모든 active Face geometry를 검증한다. 필요한
+   GPX direct read는 CTL25 opcode 5와 STAT23~26으로 별도 확인한다.
+10. Echo simulation delay가 합성된 build에서만 CTL15/16 toggle을 사용하고
+    STAT21 ack, pending, reject를 함께 확인한다.
+11. STAT3~5가 아니라 runtime `o_vdma_*` 출력으로 VDMA를 설정한다.
+12. 필요한 interrupt source만 enable하고 새 CTL25 command epoch로 TDC
    START를 요청한다.
-9. Frame마다 SOF, 모든 EOL, 48-byte prefix, Cell metadata와 17-bit Return
+13. Frame마다 SOF, 모든 EOL, 48-byte prefix, Cell metadata와 17-bit Return
    복원을 확인한다.
-10. 오류 시 clear 전에 STAT12, STAT21, STAT27~29, STAT31, INTR_FLAG를 먼저
+14. 오류 시 clear 전에 STAT12, STAT21, STAT27~29, STAT31, INTR_FLAG를 먼저
     기록한다.
-11. 운용 오류만 새 epoch로 구분하려면 `ERROR_CLEAR`, 완전한 이력 reset이
+15. 운용 오류만 새 epoch로 구분하려면 `ERROR_CLEAR`, 완전한 이력 reset이
     필요하면 `RESET_EPOCH`를 사용한다.
 
 ## 10. 해석할 때 반드시 구분할 항목
 
+- Epoch는 시간이나 누적 count가 아니라 transaction token이다. Reject 후 같은
+  token 재기록은 재시도가 아니며 새 token이 필요하다.
+- `g_N_FACES`는 합성되는 Face entry 개수이고, CTL6/7은 그 entry의 runtime
+  좌표를 보정한다. `FACE_WRITE_INDEX`는 현재 Face 선택이나 Virtual 전용 설정이
+  아니다.
+- `FACE_WRITE_EPOCH`와 `IMAGE_WRITE_EPOCH`는 shadow/staging write만 수행한다.
+  실제 active 적용은 별도의 CTL1 `CFG_EPOCH`가 소유한다.
+- Selector는 trigger가 아니다. `FACE_READ_INDEX`와 `IMAGE_INDEX`만 바꾸면
+  각각 STAT7 active geometry와 STAT30 staging image의 조회 대상만 바뀐다.
+- Ack 일치는 거래 소비 여부이고 항상 기능 성공을 뜻하지 않는다. Echo delay와
+  TDC image는 Ack와 Reject를 반드시 함께 확인한다.
+- STAT31의 `*_MATCH`는 token 일치이고 외부 GPX bus 작업의 최종 완료가 아니다.
 - `k_dist_fixed`와 `DIST_SCALE`은 전달되는 metadata다. 실제 fixed-point
   Q-format은 calibration 및 소프트웨어 계약이 별도로 소유해야 한다.
 - `START_OFF1`은 GPX 설정 image에 반영되고 header에도 기록된다. FPGA Cell
@@ -1186,6 +1456,11 @@ elastic buffer와 shot-boundary FIFO reset guard가 있다. 그래도 watchdog�
 | CTL/STAT/IRQ 실제 배치 | `system_integration/rtl/lidar_unified_csr_top.vhd` |
 | 통합 IP generic 기본값 | `../../../tdc_gpx_lidar_ctrl/HDL/tdc_gpx_lidar_ctrl_top.vhd` |
 | Vivado Customize IP 기본값 | `../../../tdc_gpx_lidar_ctrl/ip_repo/component.xml` |
+| Motor epoch와 indexed Face adapter | `../../../motor_decoder/HDL/motor_unified_csr_adapter.vhd` |
+| Motor Face shadow/active commit | `../../../motor_decoder/HDL/motor_cfg_commit_ctrl.vhd` |
+| 물리/가상 공통 decoded-position 경로 | `../../../motor_decoder/HDL/motor_decoder_top.vhd` |
+| Echo toggle, ack, active profile | `../../../echo_receiver/HDL/echo_receiver_delay_profile.vhd` |
+| Echo unified reset와 profile 연결 | `../../../echo_receiver/HDL/echo_receiver_csr.vhd` |
 | TDC 통합 config/command/status adapter | `tdc_gpx_unified_csr_adapter.vhd` |
 | GPX 28-bit I-Mode bit 분해 | `tdc_gpx_decoder_i_mode.vhd` |
 | Chip/Stop/Return tag 추가 | `tdc_gpx_raw_event_builder.vhd` |
