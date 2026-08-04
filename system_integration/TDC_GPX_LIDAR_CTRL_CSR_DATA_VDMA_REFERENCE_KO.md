@@ -14,7 +14,8 @@
 3. VDMA의 수평·수직 동기가 물리 신호와 논리 데이터 구조에서 어떻게
    구분되며, HSIZE와 VSIZE는 무엇을 뜻하는가?
 
-RTL 기준점은 커밋 `c4d36a7`의 다음 원본이다.
+CSR와 TDC 데이터 경로의 RTL 기준점은 이 저장소 커밋 `c4d36a7`의 다음
+원본이다.
 
 - `system_integration/rtl/lidar_unified_csr_pkg.vhd`
 - `system_integration/rtl/lidar_unified_csr_top.vhd`
@@ -26,6 +27,12 @@ RTL 기준점은 커밋 `c4d36a7`의 다음 원본이다.
 - `tdc_gpx_line_packer.vhd`
 - `tdc_gpx_header_inserter.vhd`
 - `tdc_gpx_top.vhd`
+
+통합 generic과 Vivado Customize IP 기본값은 현재 형제 IP 패키지의 다음
+두 파일을 함께 대조한 값이다.
+
+- `../../../tdc_gpx_lidar_ctrl/HDL/tdc_gpx_lidar_ctrl_top.vhd`
+- `../../../tdc_gpx_lidar_ctrl/ip_repo/component.xml`
 
 GPX 원시 데이터 해석은 현재 RTL의 SINGLE_SHOT I-Mode와 로컬
 `Doc/TDC-GPX-Datasheet.pdf` 2.4절의 데이터 구조를 기준으로 한다.
@@ -79,11 +86,179 @@ CSR bank가 reset되면 모든 CTL과 interrupt 레지스터 readback은
 클럭 수로 변환한다. 필드명에 `clocks` 또는 `states`가 명시된 값은 이
 5 ns 변환 대상이 아니다.
 
+### 2.3 기본값을 해석하는 세 계층
+
+이 IP에는 서로 다른 의미의 기본값이 세 계층으로 존재한다.
+
+| 계층 | 의미 | 소프트웨어에서 보이는 방식 |
+|---|---|---|
+| CSR reset image | `s_axi_csr_aresetn=0`일 때 `my_axil_csr32`에 적재되는 값 | 모든 CTL과 interrupt register가 `0x00000000`으로 읽힘 |
+| 하위 IP active startup image | Motor, Laser, TDC adapter와 처리기가 generic 또는 package 상수로 시작하는 실제 설정 | CTL readback과 반드시 같지 않음 |
+| STAT idle baseline | 모든 reset을 해제하고 CDC snapshot이 안정된 뒤의 정적·idle 상태 | build option과 실시간 입력에 따라 달라질 수 있음 |
+
+따라서 아래 표의 `시작 설정 등가값`은 **CSR reset readback이 아니다**.
+현재 통합 top의 기본 generic과 같은 설정을 소프트웨어가 다시 staging하고
+commit하려 할 때 사용할 수 있는 packed 참고값이다. XGUI에서 generic을
+바꾸면 등가값도 함께 다시 계산해야 한다.
+
+### 2.4 통합 IP generic 기본 프로파일
+
+| 영역 | Generic | 기본값 | 의미 |
+|---|---|---:|---|
+| Clock | `g_PROC_CLK_MHZ` | `150` | Motor/Laser/Echo/AXIS 처리 클럭, MHz |
+| Clock | `g_TDC_CLK_MHZ` | `200` | TDC-GPX bus/control 클럭, MHz |
+| Clock | `g_STREAM_CLK_MODE` | `"ASYNC"` | TDC 결과를 처리 클럭으로 CDC |
+| Motor | `g_MOTOR_RPM` | `1200` | 가상 엔코더 초기 회전속도 |
+| Motor | `g_CPR` | `3600` | 물리 엔코더 pulse/revolution |
+| Motor | `g_DEC_MODE` | `4` | 물리 quadrature x4 decode |
+| Motor | `g_DIR` | `0` | Forward/CW 극성 |
+| Motor | `g_TICKS_LO`, `g_TICKS_HI` | `520`, `521` | 가상 엔코더 state 간격 후보 |
+| Motor | `g_HI_COUNT` | `12000` | 한 회전에서 521 clocks를 사용하는 state 수 |
+| Motor | `g_Z_OFFSET`, `g_Z_EARLY`, `g_Z_WIDTH` | `0`, `0`, `0` | 초기 index pulse 보정 |
+| Motor | `g_PHYSICAL_ENCODER_TO_AXIS_LATENCY_CLKS` | `9` | 물리 encoder 측정 지연 metadata |
+| Motor | `g_VIRTUAL_ENCODER_TO_AXIS_LATENCY_CLKS` | `5` | 가상 encoder 측정 지연 metadata |
+| Mirror | `g_N_FACES`, `g_TOTAL_STATES` | `5`, `14400` | 5면, 가상 엔코더 CPR x4 state/revolution |
+| Mirror | `g_FACE_CENTER_0..4` | `1440, 4320, 7200, 10080, 12960` | Face별 초기 center, decoded states |
+| Mirror | `g_FACE_HALF_0..4` | 모두 `1200` | Face 공통 초기 half-width, decoded states |
+| Laser | `g_FIRE_DONE_TIMEOUT_5NS_TICKS` | `288` | 1,440 ns fire_done timeout |
+| Laser | `g_TARGET_ROUNDTRIP_5NS_TICKS` | `288` | 1,440 ns target roundtrip |
+| Laser | `g_STEP_INTERVAL_STATES` | `1` | 최소 shot 각도 간격, decoded state |
+| Laser | `g_AXIS_ACCEPT_TO_FIRE_CLKS` | `3` | 검증된 AXIS accept-to-fire 지연 |
+| Laser | `g_START_TDC_TO_FIRE_DONE_SYNC_CLKS` | `3` | 검증된 START-to-FIRE_DONE sync delta |
+| Topology | `g_NUM_CHIPS`, `g_STOPS_PER_CHIP` | `4`, `8` | 4 GPX x 8 STOP |
+| Topology | `g_MAX_HITS_PER_STOP` | `7` | STOP당 최대 Return 수 |
+| Topology | `g_PRESENT_CHIP_MASK` | `1111` | Chip 0~3 실장 |
+| Topology | `g_RISE_CHIP_MASK`, `g_FALL_CHIP_MASK` | `0011`, `1100` | Chip 0/1 rising, Chip 2/3 falling |
+| Echo | `g_ENABLE_ECHO_RECEIVER` | `true` | 내부 LVDS-to-STOP 경로 합성 |
+| Echo | `g_ENABLE_ECHO_SIM_PATH` | `false` | Echo simulation path 비활성 |
+| TDC | `g_TDC_HW_VERSION` | `0x00010000` | TDC hardware version word |
+| TDC | `g_OUTPUT_WIDTH` | `32` | Rise/Fall AXIS `TDATA` 폭 |
+| TDC | `g_OEN_MODE` | `"DYNAMIC_CONNECTED"` | GPX OEN 동적 제어 |
+| TDC | `g_POWERUP_TIME_NS`, `g_RECOVERY_TIME_NS` | `240`, `40` | 전원/복구 보호시간 |
+| TDC | `g_ALU_PULSE_TIME_NS` | `20` | GPX ALU trigger pulse 시간 |
+| TDC | `g_BUS_READ_PERIOD_MIN_TIME_NS` | `25` | GPX read capture 최소시간 |
+| TDC | `g_BUS_IDLE_STABLE_TIME_NS` | `20480` | bus idle 안정 대기시간 |
+| TDC | `g_DRAIN_MARGIN_TIME_NS` | `6000` | IFIFO drain 보호 margin |
+| TDC | `g_ERR_DEBOUNCE_TIME_NS`, `g_ERR_MAX_RETRIES` | `25`, `3` | 오류 debounce와 retry 수 |
+| TDC | `g_CELL_QUARANTINE_MARGIN_TIME_NS` | `3410` | cell quarantine margin |
+| TDC | `g_CELL_IFIFO2_MARGIN_TIME_NS` | `1705` | IFIFO2 처리 margin |
+
+### 2.5 CTL reset값과 시작 설정 등가값
+
+| Register | Offset | CSR reset | 시작 설정 등가값 | 기본값 출처·해석 |
+|---|---:|---:|---:|---|
+| CTL0 `SYS_CTRL` | `0x000` | `0x00000000` | `0x00000000` | 물리 encoder 선택, Laser/stream/Echo simulation 비활성 |
+| CTL1 `SYS_CFG_APPLY` | `0x004` | `0x00000000` | `0x00000000` | config epoch 0, commit 요청 없음 |
+| CTL2 `MOTOR_CFG` | `0x008` | `0x00000000` | `0x00340E10` | CPR 3600, CW, x4, valid hold 3 |
+| CTL3 `MOTOR_TICKS_LO` | `0x00C` | `0x00000000` | `0x00000208` | 520 Motor clocks/state |
+| CTL4 `MOTOR_SCHED_LATENCY` | `0x010` | `0x00000000` | `0x00A4AEE0` | HI_COUNT 12000, physical 9, virtual 5 clocks |
+| CTL5 `MOTOR_Z_PARAM` | `0x014` | `0x00000000` | `0x00000000` | Z offset/width 0 |
+| CTL6 `MOTOR_FACE_INDEX` | `0x018` | `0x00000000` | `0x00000000` | write/read Face 0, epoch 0 |
+| CTL7 `MOTOR_FACE_GEOMETRY` | `0x01C` | `0x00000000` | `0x025805A0` | Face 0 center 1440, half-width 1200 |
+| CTL8 `LASER_FIRE_CFG` | `0x020` | `0x00000000` | `0x0120000D` | fire width 13 ticks, timeout 288 ticks |
+| CTL9 `LASER_ROUNDTRIP` | `0x024` | `0x00000000` | `0x00000120` | target roundtrip 288 ticks |
+| CTL10 `LASER_TDC_WIDTH` | `0x028` | `0x00000000` | `0x00050005` | START/STOP 폭 각각 5 ticks |
+| CTL11 `LASER_SIM_DELAY` | `0x02C` | `0x00000000` | `0x00000085` | simulation T0 delay 133 ticks |
+| CTL12 `LASER_SCHED0` | `0x030` | `0x00000000` | `0x001F0001` | 모든 Face 허용, shot interval 1 state |
+| CTL13 `LASER_SCHED1` | `0x034` | `0x00000000` | `0x00000000` | skip 0, window 0(제한 없음) |
+| CTL14 `LASER_SCHED2` | `0x038` | `0x00000000` | `0x00000000` | max shots와 re-arm guard 제한 없음 |
+| CTL15 `ECHO_DELAY_CMD` | `0x03C` | `0x00000000` | `0x00000000` | channel 0 선택, command toggle 0 |
+| CTL16 `ECHO_DELAY_DATA` | `0x040` | `0x00000000` | `0x00000000` | 32개 channel delay 모두 0 ticks |
+| CTL17 `TDC_BUS_TIMING` | `0x044` | `0x00000000` | `0x00000142` | bus divider 2, ticks 5 |
+| CTL18 `TDC_START_OFFSET` | `0x048` | `0x00000000` | `0x000004DA` | GPX StartOff1 board 기준값 |
+| CTL19 `TDC_CFG_REG7` | `0x04C` | `0x00000000` | `0x00281FB4` | GPX 40 MHz reference 설정 |
+| CTL20 `TDC_IMAGE_CMD` | `0x050` | `0x00000000` | `0x00000000` | image index 0, epoch 0, write 요청 없음 |
+| CTL21 `TDC_IMAGE_DATA` | `0x054` | `0x00000000` | indexed | 실제 staging image는 2.6절 기본 image로 별도 초기화 |
+| CTL22 `TDC_SCAN_CFG` | `0x058` | `0x00000000` | `0x00080000` | falling lane 활성, watchdog 0, max hits=build 최대 7 |
+| CTL23 `TDC_PIPELINE_MAIN` | `0x05C` | `0x00000000` | `0x0004000F` | 4 chip, 8 STOP, face scope, RAW, sequential |
+| CTL24 `TDC_RANGE_COLS` | `0x060` | `0x00000000` | `0x0960010B` | max range 267 ticks, 2400 columns/Face |
+| CTL25 `TDC_AUX_CMD` | `0x064` | `0x00000000` | `0x00000000` | command 없음, epoch 0 |
+| CTL26..CTL31 | `0x068..0x07C` | `0x00000000` | `0x00000000` | Reserved |
+
+Motor Face별 CTL7 등가값은 다음과 같다. 각 값을 CTL7에 쓴 뒤 CTL6의
+해당 `FACE_WRITE_INDEX`와 새 `FACE_WRITE_EPOCH`으로 개별 commit한다.
+
+| Face | Center | Half-width | CTL7 등가값 |
+|---:|---:|---:|---:|
+| 0 | 1440 | 1200 | `0x025805A0` |
+| 1 | 4320 | 1200 | `0x025810E0` |
+| 2 | 7200 | 1200 | `0x02581C20` |
+| 3 | 10080 | 1200 | `0x02582760` |
+| 4 | 12960 | 1200 | `0x025832A0` |
+
+### 2.6 TDC-GPX 설정 image 기본값
+
+CTL20/21은 하나의 register만 표현하는 일반 CTL이 아니라 16-word GPX
+설정 image를 선택하고 갱신하는 indexed window다. Adapter reset 시 staging과
+active image는 아래 값으로 초기화된다.
+
+| GPX Reg | 기본값 | 핵심 의미 |
+|---:|---:|---|
+| Reg0 | `0x0FF7FC81` | common rising START, STOP1..8 rise/fall template, service bits |
+| Reg1 | `0x00000000` | channel adjustment |
+| Reg2 | `0x00000002` | I-Mode |
+| Reg3 | `0x00000000` | service baseline |
+| Reg4 | `0x06000000` | quiet mode, EFlag high impedance |
+| Reg5 | `0x00E004DA` | disable policy, ALU trigger, StartOff1 |
+| Reg6 | `0x00000000` | LF threshold / PowerOnECL baseline |
+| Reg7 | `0x00281FB4` | HSDiv, RefClkDiv, MTimer |
+| Reg8 | `0x00000000` | reserved/default |
+| Reg9 | `0x00000000` | reserved/default |
+| Reg10 | `0x00000000` | reserved/default |
+| Reg11 | `0x07FF0000` | error mask |
+| Reg12 | `0x02000000` | MTimer interrupt to IrFlag |
+| Reg13 | `0x00000000` | reserved/default |
+| Reg14 | `0x00000000` | 28-bit bus mode |
+| Reg15 | `0x00000000` | reserved/default |
+
+Reg0는 topology-neutral template다. 실제 chip programming 직전에
+`g_RISE_CHIP_MASK`, `g_FALL_CHIP_MASK`, `falling_enable`에 따라 해당 chip이
+지원하지 않는 STOP edge bit가 제거된다. 따라서 물리 GPX Reg0에 최종 기록되는
+값은 모든 chip에서 항상 `0x0FF7FC81`인 것은 아니다.
+
+### 2.7 STAT와 interrupt의 reset 후 기대값
+
+STAT는 저장형 reset register가 아니라 하위 도메인의 live snapshot이다.
+아래 값은 기본 generic에서 모든 reset을 해제하고 CDC가 안정된 **idle 기준값**이다.
+reset이 assert된 동안 또는 해제 직후 몇 clock 동안은 0이나 이전 snapshot이
+보일 수 있으므로, `STAT31.ANY_BUSY=0` 확인 후 해석한다.
+
+| Register | 기본 idle 기대값 | 비고 |
+|---|---:|---|
+| STAT0 `SYS_VERSION` | `0x4C010000` | 고정 ABI version |
+| STAT1 `SYS_CAPABILITY` | `0x01041AFF` | Echo Receiver enable 기본 build |
+| STAT1, Echo disabled build | `0x010398EB` | Echo present/indexed 제거, active CTL 24, STAT 28 |
+| STAT2 `SYS_CONFIG` | `0x00000000` | 모든 config/reset epoch 0 |
+| STAT3 `TDC_MAX_ROWS` | `0x00000020` | 32 rows 최대 용량 |
+| STAT4 `TDC_CELL_SIZE` | `0x00000014` | max-hits=7 canonical cell 20 bytes |
+| STAT5 `TDC_MAX_HSIZE` | `0x000002B0` | 688 bytes 최대 line |
+| STAT6 `MOTOR_STATUS` | `0x0000B000` | x4 decode, 5 Faces, idle 기준 |
+| STAT7 `MOTOR_FACE_GEOMETRY` | `0x425805A0` | Face 0 center/half와 valid=1 |
+| STAT8 `MOTOR_CFG_STATUS` | `0x00880000` | geometry/config valid, epochs 0 |
+| STAT9..STAT18 | `0x00000000` | event·latency·counter가 아직 없음 |
+| STAT19..STAT21 | `0x00000000` | 완료 Echo shot과 오류가 없음 |
+| STAT22 `ECHO_DELAY_READBACK` | `0x00200000` | Echo enable 시 channel 0 valid, delay 0 |
+| STAT19..STAT22, Echo disabled build | `0x00000000` | 해당 하위 IP가 합성되지 않음 |
+| STAT23..STAT29 | `0x00000000` | 직접 읽기 결과와 TDC 오류/epoch가 없음 |
+| STAT30 `TDC_IMAGE_SELECTED_DATA` | `0x0FF7FC81` | 기본 선택 index 0의 GPX Reg0 image |
+| STAT31 `SYS_ADAPTER_STATE` | `0x000F807F` | reset/config epoch 0 match, valid, idle, no reject |
+
+| Interrupt register | Reset값 | 의미 |
+|---|---:|---|
+| `INTR_EN` | `0x00000000` | 모든 IRQ source mask |
+| `INTR_STATUS` | `0x00000000` | idle source level |
+| `INTR_FLAG` | `0x00000000` | latched event 없음 |
+| `INTR_MODE` | `0x00000000` | 기본 source mode 선택값 |
+
+동적 STAT와 `INTR_STATUS`는 외부 pin, CDC settle 순서, startup event에 따라
+위 idle 기대값과 잠시 다를 수 있다. 정적 식별값인 STAT0~5와 active 설정
+readback인 STAT7/8/30/31을 먼저 확인한 뒤 event counter를 해석하는 것이 안전하다.
+
 ## 3. 제어 레지스터 CTL0~CTL31
 
 ## 3.1 시스템 설정 transaction
 
-### CTL0 `SYS_CTRL` - `0x000`, RW, reset `0x00000000`
+### CTL0 `SYS_CTRL` - `0x000`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
@@ -95,7 +270,7 @@ CSR bank가 reset되면 모든 CTL과 interrupt 레지스터 readback은
 | `[15:8]` | `RESET_EPOCH` | Epoch | 마지막 승인값과 다른 값으로 바꾸면 각 adapter에 reset 1회 요청 |
 | `[31:16]` | Reserved | - | 0으로 기록 |
 
-### CTL1 `SYS_CFG_APPLY` - `0x004`, RW, reset `0x00000000`
+### CTL1 `SYS_CFG_APPLY` - `0x004`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
@@ -108,7 +283,7 @@ Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한�
 
 ## 3.2 Motor Decoder와 Virtual Encoder
 
-### CTL2 `MOTOR_CFG` - `0x008`, RW
+### CTL2 `MOTOR_CFG` - `0x008`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위/인코딩 | 의미 |
 |---:|---|---|---|
@@ -119,7 +294,7 @@ Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한�
 | `[27:20]` | `AXIS_VALID_HOLD` | Motor clocks | Motor AXIS 위치 event를 valid로 유지할 클럭 수 |
 | `[31:28]` | Reserved | - | 0으로 기록 |
 
-### CTL3 `MOTOR_TICKS_LO` - `0x00C`, RW
+### CTL3 `MOTOR_TICKS_LO` - `0x00C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -128,7 +303,7 @@ Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한�
 가상 엔코더 scheduler는 `TICKS_LO`와 `TICKS_LO+1`을 분배하므로 runtime
 `TICKS_HI` 레지스터는 필요하지 않다.
 
-### CTL4 `MOTOR_SCHED_LATENCY` - `0x010`, RW
+### CTL4 `MOTOR_SCHED_LATENCY` - `0x010`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -137,7 +312,7 @@ Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한�
 | `[26:21]` | `VIRT_AXIS_LATENCY` | Motor clocks | 가상 encoder부터 Motor AXIS까지 측정된 지연 metadata |
 | `[31:27]` | Reserved | - | 0으로 기록 |
 
-### CTL5 `MOTOR_Z_PARAM` - `0x014`, RW
+### CTL5 `MOTOR_Z_PARAM` - `0x014`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -145,7 +320,7 @@ Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한�
 | `[29:15]` | `Z_WIDTH` | decoded states | Index pulse 폭 |
 | `[31:30]` | Reserved | - | 0으로 기록 |
 
-### CTL6 `MOTOR_FACE_INDEX` - `0x018`, RW
+### CTL6 `MOTOR_FACE_INDEX` - `0x018`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
@@ -155,7 +330,7 @@ Echo delay profile은 CTL15/16의 별도 toggle/acknowledge 방식을 사용한�
 | `[15:8]` | `FACE_WRITE_EPOCH` | Epoch | CTL7이 안정된 뒤 변경하여 Face 설정 1회 commit |
 | `[31:16]` | Reserved | - | 0으로 기록 |
 
-### CTL7 `MOTOR_FACE_GEOMETRY` - `0x01C`, RW
+### CTL7 `MOTOR_FACE_GEOMETRY` - `0x01C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -171,7 +346,7 @@ CPR이 0/상한 초과, DEC_MODE가 `11`, `TICKS_LO=0`, 또는
 
 ## 3.3 Laser Controller
 
-### CTL8 `LASER_FIRE_CFG` - `0x020`, RW
+### CTL8 `LASER_FIRE_CFG` - `0x020`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -180,26 +355,26 @@ CPR이 0/상한 초과, DEC_MODE가 `11`, `TICKS_LO=0`, 또는
 
 16-bit 최대값 65,535는 327,675 ns, 즉 327.675 us다.
 
-### CTL9 `LASER_ROUNDTRIP` - `0x024`, RW
+### CTL9 `LASER_ROUNDTRIP` - `0x024`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
 | `[31:0]` | `TARGET_ROUNDTRIP` | 5 ns ticks | 발사 후 목표 왕복거리 측정 대기창. 0은 허용하지 않음 |
 
-### CTL10 `LASER_TDC_WIDTH` - `0x028`, RW
+### CTL10 `LASER_TDC_WIDTH` - `0x028`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
 | `[15:0]` | `START_TDC_WIDTH` | 5 ns ticks | `start_tdc` pulse 폭. 0이면 유효한 shot을 만들 수 없음 |
 | `[31:16]` | `STOP_TDC_WIDTH` | 5 ns ticks | `stop_tdc` pulse 폭. 0이면 stop pulse 비활성 |
 
-### CTL11 `LASER_SIM_DELAY` - `0x02C`, RW
+### CTL11 `LASER_SIM_DELAY` - `0x02C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
 | `[31:0]` | `SIM_T0_DELAY` | 5 ns ticks | simulation shot의 Fire-to-TDC-start 지연. 물리 shot에서는 무시 |
 
-### CTL12 `LASER_SCHED0` - `0x030`, RW
+### CTL12 `LASER_SCHED0` - `0x030`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -207,14 +382,14 @@ CPR이 0/상한 초과, DEC_MODE가 `11`, `TICKS_LO=0`, 또는
 | `[20:16]` | `FACE_ENABLE_MASK` | bit/Face | bit n이 1이면 Face n에서 발사 허용 |
 | `[31:21]` | Reserved | - | 0으로 기록 |
 
-### CTL13 `LASER_SCHED1` - `0x034`, RW
+### CTL13 `LASER_SCHED1` - `0x034`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
 | `[15:0]` | `START_SKIP_STEPS` | shot steps | Face 진입 후 건너뛸 발사 grid 수 |
 | `[31:16]` | `ACTIVE_WINDOW_STEPS` | shot steps | 활성 grid 수. 0이면 Face 끝까지 별도 제한 없음 |
 
-### CTL14 `LASER_SCHED2` - `0x038`, RW
+### CTL14 `LASER_SCHED2` - `0x038`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -231,7 +406,7 @@ Laser commit은 다음 조건을 모두 만족해야 한다.
 
 ## 3.4 Echo Receiver indexed delay profile
 
-### CTL15 `ECHO_DELAY_CMD` - `0x03C`, RW
+### CTL15 `ECHO_DELAY_CMD` - `0x03C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
@@ -241,7 +416,7 @@ Laser commit은 다음 조건을 모두 만족해야 한다.
 | `[9]` | `PROFILE_APPLY_TOGGLE` | toggle | 전체 staging profile을 Echo window가 idle일 때 active로 적용 |
 | `[31:10]` | Reserved | - | 0으로 기록 |
 
-### CTL16 `ECHO_DELAY_DATA` - `0x040`, RW
+### CTL16 `ECHO_DELAY_DATA` - `0x040`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -253,7 +428,7 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 
 ## 3.5 TDC-GPX bus, 설정 image, pipeline, command
 
-### CTL17 `TDC_BUS_TIMING` - `0x044`, RW
+### CTL17 `TDC_BUS_TIMING` - `0x044`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 인코딩 | 의미 |
 |---:|---|---|---|
@@ -265,20 +440,20 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | `[19:16]` | `REG_CHIP_MASK` | bit/chip | 0이 아니면 복수 chip 선택. 0이면 `REG_CHIP_ID`를 one-hot 변환 |
 | `[31:20]` | Reserved | - | local CSR의 과거 read/write trigger는 통합 모드에서 사용하지 않음 |
 
-### CTL18 `TDC_START_OFFSET` - `0x048`, RW
+### CTL18 `TDC_START_OFFSET` - `0x048`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 의미 |
 |---:|---|---|
 | `[17:0]` | `START_OFF1` | GPX 설정 image Reg5에 적용되고 Face header에도 기록되는 Start offset |
 | `[31:18]` | Reserved | 0으로 기록 |
 
-### CTL19 `TDC_CFG_REG7` - `0x04C`, RW
+### CTL19 `TDC_CFG_REG7` - `0x04C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 의미 |
 |---:|---|---|
 | `[31:0]` | `CFG_REG7` | GPX Reg7 staging/override word. 실제 28-bit bus에는 `[27:0]`만 전달 |
 
-### CTL20 `TDC_IMAGE_CMD` - `0x050`, RW
+### CTL20 `TDC_IMAGE_CMD` - `0x050`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 종류 | 의미 |
 |---:|---|---|---|
@@ -287,7 +462,7 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | `[15:8]` | `IMAGE_WRITE_EPOCH` | Epoch | CTL21이 안정된 후 변경하여 image word 1개 staging |
 | `[31:16]` | Reserved | - | 0으로 기록 |
 
-### CTL21 `TDC_IMAGE_DATA` - `0x054`, RW
+### CTL21 `TDC_IMAGE_DATA` - `0x054`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 의미 |
 |---:|---|---|
@@ -298,7 +473,7 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 설정 image bit의 물리 의미는 GPX datasheet를 따른다. CTL20/21은 그 값을
 가공하지 않는 raw indexed window다.
 
-### CTL22 `TDC_SCAN_CFG` - `0x058`, RW
+### CTL22 `TDC_SCAN_CFG` - `0x058`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
@@ -307,7 +482,7 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | `[19]` | `FALLING_ENABLE` | Boolean | 구성된 falling slope lane 활성 |
 | `[31:20]` | Reserved | - | 0으로 기록 |
 
-### CTL23 `TDC_PIPELINE_MAIN` - `0x05C`, RW
+### CTL23 `TDC_PIPELINE_MAIN` - `0x05C`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 의미 |
 |---:|---|---|
@@ -323,14 +498,14 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | `[27:23]` | `STOPDIS_OVERRIDE` | GPX Stop-disable override |
 | `[31:28]` | Reserved | 통합 command는 CTL25가 소유 |
 
-### CTL24 `TDC_RANGE_COLS` - `0x060`, RW
+### CTL24 `TDC_RANGE_COLS` - `0x060`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 단위 | 의미 |
 |---:|---|---|---|
 | `[15:0]` | `MAX_RANGE` | 5 ns ticks | 목표 왕복거리 capture 한계. TDC와 AXIS 도메인 클럭 수로 각각 변환 |
 | `[31:16]` | `COLS_PER_FACE` | shots/Face | VDMA 한 Frame의 line 수. 0은 1로 보정 |
 
-### CTL25 `TDC_AUX_CMD` - `0x064`, RW
+### CTL25 `TDC_AUX_CMD` - `0x064`, RW, CSR reset `0x00000000`
 
 | Bits | Field | 인코딩 | 의미 |
 |---:|---|---|---|
@@ -339,7 +514,7 @@ Echo Receiver를 합성에서 비활성화하면 CTL15/16 주소는 ABI 호환�
 | `[15:8]` | `CMD_EPOCH` | Epoch | 값을 바꾸면 serialized command를 정확히 한 번 요청 |
 | `[31:16]` | Reserved | - | 0으로 기록 |
 
-### CTL26~CTL31 예약 영역
+### CTL26~CTL31 예약 영역 - CSR reset `0x00000000`
 
 | Register | Offset | 기록값 |
 |---|---:|---:|
@@ -1009,6 +1184,8 @@ elastic buffer와 shot-boundary FIFO reset guard가 있다. 그래도 watchdog�
 |---|---|
 | 통합 주소·bit 상수 | `system_integration/rtl/lidar_unified_csr_pkg.vhd` |
 | CTL/STAT/IRQ 실제 배치 | `system_integration/rtl/lidar_unified_csr_top.vhd` |
+| 통합 IP generic 기본값 | `../../../tdc_gpx_lidar_ctrl/HDL/tdc_gpx_lidar_ctrl_top.vhd` |
+| Vivado Customize IP 기본값 | `../../../tdc_gpx_lidar_ctrl/ip_repo/component.xml` |
 | TDC 통합 config/command/status adapter | `tdc_gpx_unified_csr_adapter.vhd` |
 | GPX 28-bit I-Mode bit 분해 | `tdc_gpx_decoder_i_mode.vhd` |
 | Chip/Stop/Return tag 추가 | `tdc_gpx_raw_event_builder.vhd` |
