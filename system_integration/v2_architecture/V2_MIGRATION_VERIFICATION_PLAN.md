@@ -118,7 +118,7 @@ Deliverables:
 
 - production LVDS-to-STOP frontend;
 - optional simulation generator in a separate generate block;
-- delay calibration table using the standard indexed portal;
+- compact simulation delay profile using CTL20 `CH0_DELAY + channel * STEP`;
 - diagnostic snapshot/counters outside the physical path.
 
 Comparison:
@@ -278,18 +278,18 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | D | Complete | `67e0800` | Atomic configuration manager and Processing/TDC gateways |
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
-| 4 | G | Pending | B4 evidence pending | Echo frontend |
+| 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
 | 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
-**Current migration state:** Stage 2 is closed at Checkpoint E and Stage 3 is
-closed at Checkpoint F. F0a/F0b through F5 now cover the source contract,
-B0..B3, production Processing assembly, local drain and observation-only AXIS
-monitor. The only valid next step is **Stage 4 / Checkpoint G Echo frontend**.
-Stage 5 or later work must not be treated as migrated merely because its v1
+**Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
+closed at Checkpoint F and Stage 4 is closed at Checkpoint G. F0a/F0b through
+F5 cover B0..B3 and G covers the B4 physical/synthetic Echo boundary. The only
+valid next step is **Stage 5 / Checkpoint H GPX bus and acquisition**. Stage 6
+or later work must not be treated as migrated merely because its v1
 implementation exists.
 
 Commit only after the focused sub-step passes. Intermediate commits inside a
@@ -343,7 +343,7 @@ Rules for this package:
    gates are now closed; the invariant remains that a scheduler must never
    infer safety permission from configuration validity alone.
 
-## 7. Immediate Next RTL Work Package: Stage 4 / Checkpoint G
+## 7. Completed RTL Work Package: Stage 4 / Checkpoint G
 
 Checkpoint G moves only B4 Echo frontend. It must not pull the GPX bus engine,
 Hit decoder or formatter forward from later Stages.
@@ -359,6 +359,15 @@ Required order:
    simulation generator;
 6. run the two routine 150/200 and 200/150 MHz profiles before closing G.
 
-Checkpoint G may consume F5 `shot_start_event_t`, but it cannot claim that the
-event has crossed into the GPX acquisition domain. That command/result CDC and
-the proven v1 bus wrapper belong to Stage 5 / Checkpoint H.
+All six steps are complete. The compact CTL20 profile replaces the originally
+planned 32-entry indexed table, so one atomic commit supplies all 32 channels
+without an Echo-specific command FSM. Checkpoint G consumes F5
+`shot_start_event_t`, but does not claim that the event has crossed into the
+GPX acquisition domain.
+
+## 8. Immediate Next RTL Work Package: Stage 5 / Checkpoint H
+
+Checkpoint H wraps the proven v1 GPX bus engine behind typed command/result
+records. The first pass preserves its physical bus FSM and verifies B5 before
+any algorithmic cleanup. Echo diagnostics remain observation-only and must not
+be reinterpreted as IFIFO occupancy or GPX completion.

@@ -52,7 +52,7 @@ show an active source value, but it does not become a second owner.
 | Columns per Face | Derived | commit calculator | frame builder and VDMA geometry | Derived from active Face span and shot interval |
 | Shot geometric column index | Event identity | shot scheduler | laser executor, frame builder and VDMA formatter | Advances at every due lattice point; busy skips leave holes and never compact later columns |
 | START/STOP pulse widths | Runtime source | Laser/TDC timing config | laser executor | Fixed 5 ns ticks; one owner |
-| Echo channel delay profile | Runtime source | Echo indexed table | Echo simulation path only | One standardized indexed portal |
+| Echo channel delay profile | Runtime source | CTL20 compact profile | Echo simulation path only | `delay[n] = CH0 + n * STEP`; one atomic commit, no indexed portal |
 | GPX bus divider/ticks | Runtime source | TDC bus profile | GPX bus engine | Applied only while the bus engine is quiescent |
 | GPX register image | Runtime source | GPX image table | GPX initialization engine | One standardized indexed portal |
 | Runtime active-chip mask | Runtime source | TDC scan config | acquisition and lane generator | Must be a subset of the build-present mask |
@@ -256,9 +256,10 @@ The v2 map follows these rules:
 - Face centers use five direct words plus one common-width word. Spending a few
   words is preferred over keeping Face index, write epoch, read index and
   shadow-selection state machines.
-- Echo delay and GPX image tables remain indexed because they contain 32 and 16
-  entries. Both use the same `INDEX/DATA/EXEC/STATUS` behavior.
-- Indexed writes are driven by an AXI write event from the central CSR bank.
+- Echo uses one direct CTL20 word because its 32 channel values follow the
+  deterministic `CH0 + channel * STEP` profile. Only the 16-entry GPX image
+  remains indexed.
+- GPX indexed writes are driven by an AXI write event from the central CSR bank.
   Software does not toggle a bit or invent a new epoch.
 - system commands are W1S events with `BUSY`, `DONE`, `ERROR` and
   `ERROR_CODE` status.

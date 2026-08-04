@@ -9,7 +9,7 @@ use work.lidar_csr_map_pkg.all;
 
 -- One AXI4-Lite owner for the v2 LiDAR configuration ABI.
 --
--- CTL1..19 are shadow storage. CTL0 is write-one-set command space and never
+-- CTL1..20 are shadow storage. CTL0 is write-one-set command space and never
 -- stores a command level. The active readback is sourced only from the atomic
 -- configuration manager, so software can distinguish edited and applied data.
 entity lidar_csr_bank is

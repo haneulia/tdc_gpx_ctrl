@@ -8,7 +8,7 @@ use work.lidar_config_types_pkg.all;
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;
-    constant C_LIDAR_CSR_ABI_MINOR : natural := 2;
+    constant C_LIDAR_CSR_ABI_MINOR : natural := 3;
 
     constant C_LIDAR_CTL_COUNT  : positive := 32;
     constant C_LIDAR_STAT_COUNT : positive := 32;
@@ -37,7 +37,8 @@ package lidar_csr_map_pkg is
     constant C_CTL_TDC_START_OFFSET    : natural := 17;
     constant C_CTL_TDC_SCAN_TIMEOUT    : natural := 18;
     constant C_CTL_TDC_CAPTURE_ADJUST  : natural := 19;
-    constant C_CTL_RESERVED_FIRST      : natural := 20;
+    constant C_CTL_ECHO_DELAY_PROFILE  : natural := 20;
+    constant C_CTL_RESERVED_FIRST      : natural := 21;
     constant C_CTL_RESERVED_LAST       : natural := 31;
 
     constant C_CMD_COMMIT_BIT       : natural := 0;
@@ -210,6 +211,10 @@ package body lidar_csr_map_pkg is
             std_logic_vector(config.tdc.scan_timeout_5ns);
         result(C_CTL_TDC_CAPTURE_ADJUST)(16 downto 0) :=
             std_logic_vector(config.tdc.capture_adjust_5ns);
+        result(C_CTL_ECHO_DELAY_PROFILE)(15 downto 0) :=
+            std_logic_vector(config.echo.channel_0_delay_5ns);
+        result(C_CTL_ECHO_DELAY_PROFILE)(31 downto 16) :=
+            std_logic_vector(config.echo.channel_step_5ns);
 
         return result;
     end function fn_pack_runtime_config;
@@ -282,6 +287,10 @@ package body lidar_csr_map_pkg is
             words(C_CTL_TDC_SCAN_TIMEOUT));
         result.tdc.capture_adjust_5ns := signed(
             words(C_CTL_TDC_CAPTURE_ADJUST)(16 downto 0));
+        result.echo.channel_0_delay_5ns := unsigned(
+            words(C_CTL_ECHO_DELAY_PROFILE)(15 downto 0));
+        result.echo.channel_step_5ns := unsigned(
+            words(C_CTL_ECHO_DELAY_PROFILE)(31 downto 16));
 
         return result;
     end function fn_unpack_runtime_config;
@@ -321,6 +330,8 @@ package body lidar_csr_map_pkg is
                 return value(31 downto 18) = zero_word(31 downto 18);
             when C_CTL_TDC_CAPTURE_ADJUST =>
                 return value(31 downto 17) = zero_word(31 downto 17);
+            when C_CTL_ECHO_DELAY_PROFILE =>
+                return true;
             when others =>
                 return false;
         end case;

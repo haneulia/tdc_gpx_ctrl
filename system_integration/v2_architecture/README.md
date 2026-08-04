@@ -1,12 +1,12 @@
 # TDC-GPX LiDAR Controller v2 Architecture
 
-> Status: Checkpoints A through E are complete. The unified CSR bank,
+> Status: Checkpoints A through G are complete. The unified CSR bank,
 > sequential calculator and atomic Processing/TDC configuration gateways are
 > route-verified at 150/200 and 200/150 MHz. The integrated v2 functional
-> datapath is being migrated. Stage 2 and Stage 3 / Checkpoint F are closed.
-> F0 through F5 now cover source-mode ownership, B0 through B3 and the
-> production Processing subsystem with an observation-only AXIS monitor. Stage
-> 4 / Checkpoint G Echo frontend is the next allowed migration step.
+> datapath is being migrated. Stage 2, Stage 3 / Checkpoint F and Stage 4 /
+> Checkpoint G are closed. F0 through F5 cover B0 through B3; G covers B4,
+> including 16/32-channel physical Echo, optional simulation and compact delay
+> expansion. Stage 5 / Checkpoint H GPX acquisition is the next allowed step.
 
 ## 1. Purpose
 
@@ -59,6 +59,8 @@ The redesign has four goals:
 | [V2_CHECKPOINT_F4_LASER_EXECUTOR.md](V2_CHECKPOINT_F4_LASER_EXECUTOR.md) | B3 physical/simulation lifecycle, low-latency T0 bridge, safety and route result |
 | [V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md](V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md) | Production B0..B3 assembly, monitor ABI, end-to-end latency, safe-point and dual-profile evidence |
 | [V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md](V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md) | Human-review guide for module roles, record flow, assembly/disassembly and integration risks |
+| [V2_STAGE4_G0_ECHO_ORACLE.md](V2_STAGE4_G0_ECHO_ORACLE.md) | Frozen B4 physical path, channel, Return and compact simulation-profile contract |
+| [V2_CHECKPOINT_G_ECHO_FRONTEND.md](V2_CHECKPOINT_G_ECHO_FRONTEND.md) | Echo module roles, CH0/STEP expansion, build-option behavior and sign-off evidence |
 
 ## 4. Target Top-Level Shape
 

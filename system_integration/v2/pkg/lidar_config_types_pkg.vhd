@@ -47,6 +47,15 @@ package lidar_config_types_pkg is
         face_enable_mask            : face_mask_t;
     end record laser_config_source_t;
 
+    -- Synthetic Echo channel N uses:
+    --   channel_0_delay + N * channel_step
+    -- Both source values are fixed 5 ns ticks. Physical Echo never consumes
+    -- this profile.
+    type echo_config_source_t is record
+        channel_0_delay_5ns : u16_t;
+        channel_step_5ns    : u16_t;
+    end record echo_config_source_t;
+
     type tdc_config_source_t is record
         bus_clk_div         : unsigned(5 downto 0);
         bus_ticks           : unsigned(5 downto 0);
@@ -62,6 +71,7 @@ package lidar_config_types_pkg is
         motor  : motor_config_source_t;
         mirror : mirror_config_source_t;
         laser  : laser_config_source_t;
+        echo   : echo_config_source_t;
         tdc    : tdc_config_source_t;
     end record lidar_runtime_config_t;
 
@@ -129,6 +139,10 @@ package lidar_config_types_pkg is
             simulation_start_delay_5ns  => to_unsigned(133, 32),
             optical_shot_interval_udeg  => to_unsigned(50_000, 30),
             face_enable_mask            => (others => '1')
+        ),
+        echo => (
+            channel_0_delay_5ns => (others => '0'),
+            channel_step_5ns    => (others => '0')
         ),
         tdc => (
             bus_clk_div         => to_unsigned(2, 6),

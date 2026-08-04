@@ -114,7 +114,8 @@ event pipeline 연결과 함께 수행한다.
 
 - `SOFT_RESET_REQUEST`는 parent reset supervisor가 아직 소비하지 않는다.
 - `TDC_SCAN_TIMEOUT=0`의 GPX watchdog 의미는 acquisition stage에서 확정한다.
-- Echo delay 32-entry와 GPX image 16-entry indexed portal은 해당 기능 stage에서
-  CTL20..31 일부를 사용해 추가한다.
+- Echo simulation delay는 Checkpoint G에서 CTL20 한 word의
+  `CH0_DELAY + channel * STEP` 구조로 확정되었다. GPX image 16-entry indexed
+  portal만 Stage 5에서 CTL21..31 일부를 사용해 추가한다.
 - 최종 IP-XACT/XGUI packaging과 parent PS7 implementation은 full v2 top 이후
   수행한다.

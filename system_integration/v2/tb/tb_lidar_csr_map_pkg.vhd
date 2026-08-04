@@ -83,6 +83,15 @@ begin
         check(unpacked = runtime_cfg,
             "V2-CSR-MAP default round trip mismatch");
 
+        runtime_cfg.echo.channel_0_delay_5ns := to_unsigned(16#1234#, 16);
+        runtime_cfg.echo.channel_step_5ns := to_unsigned(16#ABCD#, 16);
+        words := fn_pack_runtime_config(runtime_cfg);
+        check(words(C_CTL_ECHO_DELAY_PROFILE) = x"ABCD1234",
+            "V2-CSR-MAP compact Echo CH0/STEP word mismatch");
+        unpacked := fn_unpack_runtime_config(words);
+        check(unpacked.echo = runtime_cfg.echo,
+            "V2-CSR-MAP compact Echo profile round trip mismatch");
+
         runtime_cfg.motor.simulation_mode := '1';
         words := fn_pack_runtime_config(runtime_cfg);
         check(words(C_CTL_MOTOR_PROFILE) = x"00120E10",

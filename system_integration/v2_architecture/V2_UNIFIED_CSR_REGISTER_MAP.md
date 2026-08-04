@@ -3,7 +3,7 @@
 ## 1. 적용 범위
 
 이 문서는 `lidar_csr_bank`의 AXI4-Lite software ABI를 정의한다. 주소는
-9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.2`이다.
+9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.3`이다.
 
 | 영역 | Word 수 | Byte 주소 | 용도 |
 |---|---:|---:|---|
@@ -18,6 +18,9 @@
   바뀐다.
 - CTL1..19와 STAT4..22는 같은 bit layout이다. CTL은 다음 후보값이고,
   STAT는 마지막으로 승인된 active 값이다.
+- CTL20 Echo delay profile도 같은 atomic COMMIT에 포함되지만, 고정 32-STAT
+  공간을 늘리지 않기 위해 별도 active-value mirror는 두지 않는다. Software는
+  성공한 active version과 Echo subsystem의 profile-ready/version을 함께 확인한다.
 - reset 직후에는 합법적인 기본 shadow가 준비되지만 아직 active 값은
   없다. 따라서 `ACTIVE_VALID=0`, `SHADOW_DIRTY=1`이며 최초 `COMMIT`이
   필요하다.
@@ -75,7 +78,8 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 | `0x044` | TDC_START_OFFSET | R/W | `000004D2` | GPX START offset |
 | `0x048` | TDC_SCAN_TIMEOUT | R/W | `00000000` | scan watchdog source time |
 | `0x04C` | TDC_CAPTURE_ADJUST | R/W | `00000000` | signed board capture 보정 |
-| `0x050..0x07C` | RESERVED | RO-zero | `00000000` | 쓰면 access error |
+| `0x050` | ECHO_DELAY_PROFILE | R/W | `00000000` | CH0 지연과 채널 증가분 |
+| `0x054..0x07C` | RESERVED | RO-zero | `00000000` | 쓰면 access error |
 
 ### 3.2 CTL0 COMMAND
 
@@ -205,13 +209,37 @@ reserved bit를 sign-extension하지 않고 `[16:0]`에만 기록한다.
 watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 계약에서
 최종 확정해야 하며 CSR block이 임의로 의미를 바꾸지 않는다.
 
+### 3.7 CTL20 ECHO_DELAY_PROFILE
+
+| Bit | 이름 | 기본 | 단위 | 의미 |
+|---:|---|---:|---|---|
+| 15:0 | CHANNEL_0_DELAY | 0 | 5 ns ticks | Echo simulation 채널 0의 지연 |
+| 31:16 | CHANNEL_STEP | 0 | 5 ns ticks/channel | 다음 채널마다 더할 지연 |
+
+채널 `n`의 지연은 다음 한 식으로 결정된다.
+
+```text
+channel_delay_5ns[n] = CHANNEL_0_DELAY + n * CHANNEL_STEP
+```
+
+최대 채널 수는 build의 `NUM_CHIPS * STOPS_PER_CHIP`이며 32채널이다. 두
+source field는 16 bit지만 내부 전개 누산기는 32 bit이므로
+`CHANNEL_0_DELAY + 31 * CHANNEL_STEP` 계산이 16 bit에서 잘리지 않는다.
+active configuration version을 받은 뒤 한 Processing clock에 한 채널씩
+전개하고, 각 누적 5 ns tick 값을 선택된 Processing 주파수의 clock 수로
+올림 변환한다. 0 clock이 된 채널은 synthetic Echo를 생성하지 않는다.
+
+이 레지스터는 `enable_echo_simulation=true` build에서만 synthetic source가
+소비한다. 물리 LVDS-to-STOP 경로에는 영향을 주지 않는다. 별도 32-entry
+table, INDEX/DATA portal 또는 Echo 전용 APPLY command는 없다.
+
 ## 4. STAT 레지스터
 
 ### 4.1 STAT0 CORE_INFO (`0x080`)
 
 | Bit | 의미 | 기본 profile |
 |---:|---|---:|
-| 7:0 | ABI minor | 2 |
+| 7:0 | ABI minor | 3 |
 | 15:8 | ABI major | 2 |
 | 18:16 | NUM_FACES | 5 |
 | 21:19 | NUM_CHIPS | 4 |
@@ -221,7 +249,7 @@ watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 
 | 30 | ECHO_SIMULATION_INCLUDED | 0 |
 | 31 | STREAM_CLOCK_SYNC | 0 |
 
-기본 profile 값은 `0x3E250202`이다.
+기본 profile 값은 `0x3E250203`이다.
 
 ### 4.2 STAT1 BUILD_INFO (`0x084`)
 
@@ -363,12 +391,13 @@ software가 IRQ_FLAG에 W1C할 때까지 high이고, 새 event와 W1C가 같은 
 ## 7. 권장 software 순서
 
 1. reset 해제 후 STAT0/1로 ABI와 build profile을 확인한다.
-2. CTL1..19의 default shadow를 읽거나 필요한 값만 수정한다.
+2. CTL1..20의 default shadow를 읽거나 필요한 값만 수정한다.
 3. CTL0.COMMIT을 W1S한다.
 4. STAT2.BUSY가 0이 되고 DONE_STICKY가 1이 될 때까지 기다린다.
 5. ERROR/REJECTED/RECOVERY와 error code를 확인한다.
 6. 성공이면 STAT3 version, STAT4..22 active source, STAT23..31 derived 값을
-   같은 snapshot으로 읽는다.
+   같은 snapshot으로 읽는다. Echo simulation build는 Echo
+   profile-ready/version도 같은 active version에 도달했는지 확인한다.
 7. 외부 permit과 STAT3.COMMAND_READY를 확인하고 CTL0.RUN을 W1S한다.
 8. 다시 COMMAND_READY를 확인한 뒤 CTL0.ARM을 W1S하고 RUNNING/ARMED 및
    선택된 mode의 enable 상태를 확인한다.
