@@ -11,12 +11,16 @@ The proposed implementation root is:
 ```text
 system_integration/v2/
     pkg/
-    control/
-    proc/
-    echo/
-    tdc/
-    top/
+    rtl/
+        config/
+        csr/
+        proc/
+        echo/
+        tdc/
+        data/
+        top/
     tb/
+    scripts/
 ```
 
 The final packaged IP uses a new entity and VLNV revision. The v1 packaged IP
@@ -222,16 +226,20 @@ Gate:
 
 ## 3. Regression Policy
 
-| Frequency/profile | Use |
+| Processing / TDC profile | Use |
 |---|---|
-| Processing 150 / TDC 200 MHz | routine integrated regression |
-| Processing 150 / TDC 150 MHz, same physical clock | synchronous release gate |
-| Processing 200 / TDC 50 MHz | 4:1 CDC release gate |
-| Processing 50 / TDC 200 MHz | 1:4 CDC release gate |
-| Processing 150 / TDC 100 MHz | slower-board operating-point budget gate |
+| 150 / 200 MHz | routine migration regression |
+| 200 / 150 MHz | routine reverse-clock-relation regression |
+| 150 / 150 MHz, same physical clock | synchronous release gate |
+| 200 / 50 MHz | 4:1 CDC release gate |
+| 50 / 200 MHz | 1:4 CDC release gate |
+| 150 / 100 MHz | slower-board operating-point budget gate |
 
-Routine work uses the requested 150/200 profile. Extreme ratios run at CDC
-release checkpoints, not on every small edit.
+Every completed functional checkpoint runs the two routine profiles, 150/200
+and 200/150 MHz. Synchronous, extreme-ratio and slower-board profiles run only
+when that checkpoint introduces or changes a CDC boundary, and again at the
+integrated release gate. This keeps ordinary regressions bounded without
+weakening clock-relation coverage.
 
 ## 4. Assertions Required from the First RTL Stage
 
@@ -246,35 +254,69 @@ release checkpoints, not on every small edit.
 - output bytes, HSIZE and VSIZE share one derived geometry record;
 - FIFO overflow, timeout and abort are diagnosed before silent data loss.
 
-## 5. Git Checkpoints
+## 5. Stage-to-Checkpoint Traceability
 
-Commit only after the stage's focused gate passes.
+`Stage` and `Checkpoint` are related but are not synonyms:
 
-| Checkpoint | Commit scope |
-|---|---|
-| A | Architecture and ownership contracts only |
-| B | Common types plus package unit tests |
-| C | CSR/config manager plus atomic-commit tests |
-| D | Processing event pipeline plus B0..B3 comparison |
-| E | Echo frontend plus B4 comparison |
-| F | GPX bus wrapper plus B5 comparison |
-| G | Hit/Cell/Frame pipeline plus B6..B8 comparison |
-| H | Formatter plus B9 comparison |
-| I | Integrated synthesis and HTML alignment |
-| J | Board sign-off and release tag |
+- a **Stage** is a functional migration gate defined in Section 2;
+- a **Checkpoint** is an immutable, reviewable implementation/evidence
+  milestone recorded in Git;
+- one Stage may require several Checkpoints when splitting it reduces risk;
+- a completed Checkpoint is never renamed or renumbered to make a later table
+  look sequential.
+
+The original table assumed one Checkpoint for all of Stage 2. Actual
+implementation deliberately split that work into calculator, atomic manager
+and unified CSR boundaries. The authoritative mapping is therefore:
+
+| Stage | Checkpoint | Status | Commit/evidence | Scope |
+|---:|:---:|---|---|---|
+| 0-1 | A | Complete | `3d58005` | Baseline, architecture and ownership contracts |
+| 1 | B | Complete | `cbcbc45` | Common configuration types, reference arithmetic and package tests |
+| 2 | C | Complete | `1b8b015`, `8789e7b` | Sequential validator/deriver and all runtime timebase conversions |
+| 2 | D | Complete | `67e0800` | Atomic configuration manager and Processing/TDC gateways |
+| 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
+| 3 | F | Next | B0..B3 evidence pending | Processing event pipeline |
+| 4 | G | Pending | B4 evidence pending | Echo frontend |
+| 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
+| 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
+| 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
+| 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
+| 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
+
+**Current migration state:** Stage 2 is closed at Checkpoint E. The only valid
+next functional checkpoint is **Stage 3 / Checkpoint F**. Stage 4 or later work
+must not be treated as migrated merely because its v1 implementation exists.
+
+Commit only after the focused sub-step passes. Intermediate commits inside a
+Checkpoint are allowed, but the Checkpoint result document and status row move
+to Complete only after its complete Stage gate passes.
 
 Never stage unrelated user changes, generated Vivado work directories, wave
 databases or transient logs. Each archived sign-off session contains only the
 scenario, source manifest, compact results, final logs and required waveforms.
 
-## 6. Immediate Next RTL Work Package
+## 6. Immediate Next RTL Work Package: Stage 3 / Checkpoint F
 
-After Checkpoint A, the first implementation package is deliberately small:
+Checkpoint F moves only the Processing-domain event path. Its internal order
+is fixed so that each new block has one already-verified input boundary:
 
-1. create `lidar_config_types_pkg.vhd`;
-2. define Build, Runtime source, Derived and Active records;
-3. implement pure validation/helper functions that require no clock;
-4. add package-level tests for legal/illegal profiles and all derived geometry;
-5. do not instantiate Motor, Laser, Echo or TDC cores yet.
+| Step | Work | Required evidence before continuing |
+|---:|---|---|
+| F0 | Freeze v1 B0..B3 trace fields, stimulus and latency counting edges | Trace schema and expected vectors reviewed; no RTL change |
+| F1 | Implement `motor_position_core` | B0 exact comparison for CW/CCW and physical x1/x2/x4 plus virtual x4 |
+| F2 | Implement `face_tracker` | B1 exact comparison for one to five Faces, wrap and boundary direction |
+| F3 | Implement `shot_scheduler` | B2 exact accepted-shot sequence, angular quantization and busy suppression |
+| F4 | Implement `laser_executor` | B3 exact physical/simulation exclusion, fire/start/stop timing and timeout behavior |
+| F5 | Integrate the direct registered event path and read-only AXIS monitor tap | B0..B3 end-to-end comparison, assertions and both routine clock profiles |
 
-This gives later modules one stable vocabulary before any behavior is moved.
+Rules for this package:
+
+1. `lidar_csr_config_subsystem` remains the only AXI4-Lite owner.
+2. Each core consumes the active Processing-domain configuration record; it
+   does not reinterpret CSR words.
+3. Motor-to-Laser control events use direct registered records. AXIS is a
+   monitor copy and cannot apply backpressure to `fire_pulse` or `start_tdc`.
+4. The next step starts only after the preceding boundary comparison passes.
+5. Checkpoint F closes only after 150/200 and 200/150 MHz regressions pass with
+   zero inferred latches and no new unclassified CDC path.

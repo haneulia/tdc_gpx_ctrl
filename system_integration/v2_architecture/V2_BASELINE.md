@@ -116,8 +116,10 @@ v2 must be compared with v1 at these boundaries, in this order:
 
 ## 6. Preserved Evidence
 
-The normal regression remains AXIS 150 MHz / TDC 200 MHz. Release CDC gates
-also retain the previously verified 4:1, 1:4 and synchronous 150/150 profiles.
+The preserved v1 baseline regression remains AXIS 150 MHz / TDC 200 MHz.
+Current v2 routine and release profiles are controlled by Section 3 of
+`V2_MIGRATION_VERIFICATION_PLAN.md`; release CDC gates retain the previously
+verified 4:1, 1:4 and synchronous 150/150 profiles.
 The following coverage remains mandatory:
 
 - 32/64/128-bit output widths;

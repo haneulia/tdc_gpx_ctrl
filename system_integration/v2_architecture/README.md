@@ -3,7 +3,8 @@
 > Status: Checkpoints A through E are complete. The unified CSR bank,
 > sequential calculator and atomic Processing/TDC configuration gateways are
 > route-verified at 150/200 and 200/150 MHz. The integrated v2 functional
-> datapath is not implemented yet.
+> datapath is not implemented yet. Stage 2 is closed; Stage 3 / Checkpoint F
+> (Processing event pipeline, B0..B3) is the next migration gate.
 
 ## 1. Purpose
 
@@ -73,7 +74,11 @@ GPX 28-bit bus -> gpx_bus_engine -> gpx_hit_decoder -> gpx_cell_builder
                -> gpx_frame_builder -> gpx_axis_formatter -> VDMA/DDR
 ```
 
-## 5. Stage-1 Exit Criteria
+The Stage-to-Checkpoint table in `V2_MIGRATION_VERIFICATION_PLAN.md` is the
+authoritative migration status. Checkpoint letters in completed result files
+must not be renumbered.
+
+## 5. Stage-1 Exit Criteria (Closed)
 
 Stage 1 is complete only when:
 

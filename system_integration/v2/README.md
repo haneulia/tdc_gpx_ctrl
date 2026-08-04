@@ -22,6 +22,8 @@ multiple clocks and is checked against this reference model.
 
 ## Current Status
 
+- The authoritative Stage/Checkpoint mapping is Section 5 of
+  `../v2_architecture/V2_MIGRATION_VERIFICATION_PLAN.md`.
 - Checkpoint A: architecture contracts complete and committed.
 - Checkpoint B: configuration types and reference arithmetic verified.
 - Checkpoint C: sequential commit calculator verified at 150/200 MHz.
@@ -29,7 +31,24 @@ multiple clocks and is checked against this reference model.
   verified for 150/200 and 200/150 MHz asynchronous profiles.
 - Checkpoint E: unified 32 CTL / 32 STAT / 4 IRQ CSR bank integrated with the
   atomic configuration subsystem and route-verified for both clock profiles.
-- The v2 integrated functional datapath is not implemented yet.
+- Stage 2 is closed. The next and only active migration target is Stage 3 /
+  Checkpoint F, the Processing event pipeline and B0..B3 comparison.
+- The v2 integrated functional datapath is not implemented yet; the existence
+  of a v1 core does not mark the corresponding v2 Stage complete.
+
+## Next Implementation Order
+
+Checkpoint F proceeds in this fixed order:
+
+1. freeze the v1 B0..B3 trace oracle;
+2. `motor_position_core` and B0 comparison;
+3. `face_tracker` and B1 comparison;
+4. `shot_scheduler` and B2 comparison;
+5. `laser_executor` and B3 comparison;
+6. direct registered-path integration and read-only AXIS monitoring.
+
+Each boundary must pass before the next block is migrated. The final
+Checkpoint F gate runs Processing/TDC 150/200 and 200/150 MHz profiles.
 
 Run the current package regression with:
 
