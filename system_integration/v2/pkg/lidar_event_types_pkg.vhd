@@ -85,6 +85,38 @@ package lidar_event_types_pkg is
         active_version       => (others => '0')
     );
 
+    subtype shot_index_t is unsigned(15 downto 0);
+
+    -- Registered B2 request. shot_index is the geometric column in the Face
+    -- lattice, not the number of requests accepted by the executor. Therefore
+    -- a skipped busy point remains a visible hole and cannot shift later VDMA
+    -- columns toward the beginning of the line.
+    type shot_request_t is record
+        valid                : std_logic;
+        face_index           : face_index_t;
+        position             : position_t;
+        direction            : direction_t;
+        shot_index           : shot_index_t;
+        last_in_face         : std_logic;
+        source_sim           : std_logic;
+        source_latency_clks  : position_latency_t;
+        source_latency_valid : std_logic;
+        active_version       : unsigned(15 downto 0);
+    end record shot_request_t;
+
+    constant C_SHOT_REQUEST_IDLE : shot_request_t := (
+        valid                => '0',
+        face_index           => (others => '0'),
+        position             => (others => '0'),
+        direction            => DIRECTION_CW,
+        shot_index           => (others => '0'),
+        last_in_face         => '0',
+        source_sim           => '0',
+        source_latency_clks  => (others => '0'),
+        source_latency_valid => '0',
+        active_version       => (others => '0')
+    );
+
     -- Operation commands are one-shot events. They are deliberately separate
     -- from committed configuration so RUN/ARM state has one Processing-domain
     -- owner and can never be inferred from ACTIVE_VALID alone.

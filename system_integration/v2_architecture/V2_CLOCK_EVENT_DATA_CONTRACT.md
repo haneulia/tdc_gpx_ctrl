@@ -44,8 +44,9 @@ instances are `proc_config_gateway` and `tdc_config_gateway`.
 
 ### 4.1 `position_event_t`
 
-Produced by `motor_position_core`, consumed by `face_tracker` and
-`shot_scheduler` in the Processing domain.
+Produced by `motor_position_core` and consumed by `face_tracker` in the
+Processing domain. `shot_scheduler` consumes the aligned `face_event_t`, not
+the unqualified position event directly.
 
 | Field | Meaning |
 |---|---|
@@ -92,15 +93,20 @@ Produced by `shot_scheduler`, consumed by `laser_executor`.
 | `valid` | Registered request at an eligible angular position |
 | `face_index` | Face that owns the shot |
 | `position` | Exact decoded state used for the decision |
-| `shot_index` | Monotonic index within the Face |
+| `shot_index` | Geometric lattice/VDMA column index within the Face; a skipped busy point still consumes its index |
 | `last_in_face` | Last scheduled point in this Face |
 | `source_sim` | Simulation/physical execution selection |
-| `position_latency_clks` | Carried timing metadata |
+| `source_latency_clks` / `source_latency_valid` | B0 timing metadata carried without adding delay |
+| `active_version` | Atomic configuration version that owns the request |
 
-The executor returns `accept` in the same Processing-domain contract. The
-scheduler issues a request only when angular spacing and minimum shot-time
-conditions are satisfied. Executor busy cannot move a physical shot to a later
-unqualified angle; it produces a blocked-shot diagnostic instead.
+The executor returns one mutually exclusive `accept` or `drop` result in the
+same Processing-domain contract. Until that result arrives, the scheduler owns
+one in-flight request and reports `idle=0`. The scheduler issues a request only
+at a qualified lattice point. Executor busy cannot move a physical shot to a
+later unqualified angle: the due point is consumed, the geometric column
+becomes a visible hole, and a blocked-shot diagnostic is recorded. Consequently
+`shot_index` is not an accepted-shot counter and must never be compacted by a
+later formatter.
 
 ### 4.4 Physical and Simulation Laser Contract
 

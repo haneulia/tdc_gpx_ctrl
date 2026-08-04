@@ -4,9 +4,10 @@
 > sequential calculator and atomic Processing/TDC configuration gateways are
 > route-verified at 150/200 and 200/150 MHz. The integrated v2 functional
 > datapath is being migrated. Stage 2 is closed; Stage 3 / Checkpoint F
-> (Processing event pipeline, B0..B3) is active. F0 source-mode ownership and
-> F1 `motor_position_core`/B0 and F2 `face_tracker`/B1 are complete; F3a
-> operation/safety state ownership is the next allowed sub-step.
+> (Processing event pipeline, B0..B3) is active. F0 source-mode ownership,
+> F1 `motor_position_core`/B0, F2 `face_tracker`/B1, F3a operation/safety and
+> F3b `shot_scheduler`/B2 are complete. F4 `laser_executor` is the next allowed
+> sub-step.
 
 ## 1. Purpose
 
@@ -54,6 +55,9 @@ The redesign has four goals:
 | [V2_STAGE3_F0_PROCESSING_ORACLE.md](V2_STAGE3_F0_PROCESSING_ORACLE.md) | Frozen B0..B3 event, safety and latency comparison contract for Checkpoint F |
 | [V2_CHECKPOINT_F1_MOTOR_POSITION.md](V2_CHECKPOINT_F1_MOTOR_POSITION.md) | B0 motor position, virtual source, latency and 150/200 MHz route result |
 | [V2_CHECKPOINT_F2_FACE_TRACKER.md](V2_CHECKPOINT_F2_FACE_TRACKER.md) | B1 Face membership, traversal, 1..5-Face and 150/200 MHz route result |
+| [V2_CHECKPOINT_F3A_OPERATION_SAFETY.md](V2_CHECKPOINT_F3A_OPERATION_SAFETY.md) | RUN/STOP/ARM/DISARM, external permit and operation command CDC result |
+| [V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md](V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md) | B2 angular lattice, busy-hole identity, chain integration and route result |
+| [V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md](V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md) | Human-review guide for module roles, record flow, assembly/disassembly and integration risks |
 
 ## 4. Target Top-Level Shape
 

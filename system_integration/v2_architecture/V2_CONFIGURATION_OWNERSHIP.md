@@ -49,6 +49,7 @@ show an active source value, but it does not become a second owner.
 | Requested optical shot interval | Runtime source | Scan config | commit calculator | Fixed-point angle or equivalent software ABI value |
 | Shot interval in states | Derived | commit calculator | shot scheduler | Rounded up, never rounded down |
 | Columns per Face | Derived | commit calculator | frame builder and VDMA geometry | Derived from active Face span and shot interval |
+| Shot geometric column index | Event identity | shot scheduler | laser executor, frame builder and VDMA formatter | Advances at every due lattice point; busy skips leave holes and never compact later columns |
 | START/STOP pulse widths | Runtime source | Laser/TDC timing config | laser executor | Fixed 5 ns ticks; one owner |
 | Echo channel delay profile | Runtime source | Echo indexed table | Echo simulation path only | One standardized indexed portal |
 | GPX bus divider/ticks | Runtime source | TDC bus profile | GPX bus engine | Applied only while the bus engine is quiescent |
@@ -151,7 +152,9 @@ configuration-validity decision: a geometrically valid commit remains valid,
 but firing is inhibited and diagnosed while the current speed cannot satisfy
 the fire-done, range-window and deterministic re-arm budget. At every due grid
 point, a busy executor blocks the shot, never delays it to an off-grid angle,
-and records an overrun.
+and records an overrun. The due point still consumes its geometric column
+index, so downstream logic can distinguish "no return" from "no shot was
+issued" without shifting all later points toward column zero.
 
 ## 4. Application Safe Points
 

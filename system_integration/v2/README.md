@@ -34,8 +34,9 @@ multiple clocks and is checked against this reference model.
 - Checkpoint E: unified 32 CTL / 32 STAT / 4 IRQ CSR bank integrated with the
   atomic configuration subsystem and route-verified for both clock profiles.
 - Stage 2 is closed. Stage 3 / Checkpoint F is active; F0 oracle/source-mode,
-  F1 `motor_position_core`/B0, F2 `face_tracker`/B1 and F3a operation/safety
-  ownership are complete. The next allowed sub-step is F3b `shot_scheduler`.
+  F1 `motor_position_core`/B0, F2 `face_tracker`/B1, F3a operation/safety and
+  F3b `shot_scheduler`/B2 are complete. The next allowed sub-step is F4
+  `laser_executor`.
 - The v2 integrated functional datapath is not implemented yet; the existence
   of a v1 core does not mark the corresponding v2 Stage complete.
 
@@ -139,3 +140,17 @@ at 50, 150 and 200 MHz. The 150/200
 MHz implementation gate requires non-negative WNS, zero latches and zero
 Critical CDC findings. See
 `system_integration/v2_architecture/V2_CHECKPOINT_F3A_OPERATION_SAFETY.md`.
+
+Run the Shot-scheduler functional, integration and implementation regression
+with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_shot_scheduler.ps1
+```
+
+The pass marker is `LIDAR_V2_SHOT_SCHEDULER_PASS`. It runs P20..P24 and the
+F3a/B1/B2 P25 chain at 150 and 200 MHz, then requires non-negative post-route
+WNS, zero latches and zero Critical CDC paths. See
+`system_integration/v2_architecture/V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md` and
+`system_integration/v2_architecture/V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md`.

@@ -277,7 +277,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | C | Complete | `1b8b015`, `8789e7b` | Sequential validator/deriver and all runtime timebase conversions |
 | 2 | D | Complete | `67e0800` | Atomic configuration manager and Processing/TDC gateways |
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
-| 3 | F | In progress | F0/F1/F2/F3a complete; B2..B3 pending | Processing event pipeline |
+| 3 | F | In progress | F0/F1/F2/F3a/F3b complete; B3/F5 pending | Processing event pipeline |
 | 4 | G | Pending | B4 evidence pending | Echo frontend |
 | 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
@@ -286,8 +286,8 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E. Stage 3 /
-Checkpoint F is in progress; F0a/F0b, F1/B0, F2/B1 and F3a operation/safety
-ownership are complete. The only valid next sub-step is **F3b shot_scheduler**.
+Checkpoint F is in progress; F0a/F0b, F1/B0, F2/B1, F3a operation/safety and
+F3b/B2 are complete. The only valid next sub-step is **F4 laser_executor**.
 Stage 4 or
 later work must not be treated as migrated merely because its v1
 implementation exists.
@@ -312,7 +312,7 @@ is fixed so that each new block has one already-verified input boundary:
 | F1 | Implement `motor_position_core` | B0 exact comparison for CW/CCW and physical x1/x2/x4 plus virtual x4 |
 | F2 | Implement `face_tracker` | B1 exact comparison for one to five Faces, wrap and boundary direction |
 | F3a | Implement operation/safety state owner | RUN/STOP/ARM/DISARM and external permit semantics are self-checked; reset is fail-safe |
-| F3b | Implement `shot_scheduler` | B2 exact accepted-shot sequence, angular quantization and busy suppression |
+| F3b | Implement `shot_scheduler` | B2 exact geometric request sequence, angular quantization and busy suppression |
 | F4 | Implement `laser_executor` | B3 exact physical/simulation exclusion, fire/start/stop timing and timeout behavior |
 | F5 | Integrate the direct registered event path and read-only AXIS monitor tap | B0..B3 end-to-end comparison, assertions and both routine clock profiles |
 
@@ -324,8 +324,9 @@ Current sub-step status:
 | F1 | Complete | `V2_CHECKPOINT_F1_MOTOR_POSITION.md`; session `260804170100_v2_motor_position` |
 | F2 | Complete | `V2_CHECKPOINT_F2_FACE_TRACKER.md`; session `260804184000_v2_face_tracker` |
 | F3a | Complete | `V2_CHECKPOINT_F3A_OPERATION_SAFETY.md`; sessions `260804203000_v2_operation`, `260804204000_v2_unified_csr` |
-| F3b | Next | B2 exact scheduler evidence not yet generated |
-| F4..F5 | Blocked by order | Preceding boundary has not passed |
+| F3b | Complete | `V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md`; session `260804211500_v2_shot_scheduler` |
+| F4 | Next | B3 physical/simulation lifecycle evidence not yet generated |
+| F5 | Blocked by order | F4 boundary has not passed |
 
 Rules for this package:
 
@@ -337,7 +338,7 @@ Rules for this package:
 4. The next step starts only after the preceding boundary comparison passes.
 5. Checkpoint F closes only after 150/200 and 200/150 MHz regressions pass with
    zero inferred latches and no new unclassified CDC path.
-6. F1 cannot start until F0b reruns the package, calculator, atomic-manager and
-   unified-CSR regressions. F3b cannot start until F3a owns every operation and
-   laser-permit state; a scheduler must never infer safety permission from
-   configuration validity alone.
+6. F1 was gated by the F0b package/calculator/manager/CSR regressions, and F3b
+   was gated by F3a ownership of every operation and laser-permit state. Those
+   gates are now closed; the invariant remains that a scheduler must never
+   infer safety permission from configuration validity alone.

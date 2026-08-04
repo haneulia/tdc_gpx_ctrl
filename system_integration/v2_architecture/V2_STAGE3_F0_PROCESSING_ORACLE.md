@@ -162,13 +162,18 @@ columns_per_face       = ceil(face_angular_intervals / interval)
 ### 6.2 요청과 차단
 
 - `shot_request.valid`는 한 클럭 registered event이다.
-- Face mask, Processing enable, 유효 interval, executor ready가 모두 참인
+- Face mask, F3a `scheduler_enable`, 유효 interval, executor ready가 모두 참인
   due grid point에서만 요청한다.
 - due point에서 executor가 busy이면 해당 위치는 skip하고 overrun을
   기록한다. ready가 늦게 돌아와도 off-grid 위치에서 지연 발사하지 않는다.
 - 이전 Face 요청의 accept/drop이 새 Face shot index를 오염시키지 않는다.
 - 방향 반전 또는 Face 변경은 새 lattice의 `shot_index=0`으로 시작한다.
 - monitoring AXIS의 `tready`는 요청 생성 조건에 포함되지 않는다.
+- `shot_index`는 executor가 승인한 발사 횟수가 아니라 Face lattice의 기하학적
+  열 번호이다. due point가 busy로 skip되어도 해당 열 번호는 소비하며, 다음
+  요청은 건너뛴 수만큼 증가한 index를 전달한다.
+- v1의 accepted-shot count 기반 index 압축은 의도적으로 보존하지 않는다.
+  v2에서는 이 차이가 VDMA 열의 좌우 이동을 방지하는 데이터 무결성 계약이다.
 
 ## 7. B3 Laser Oracle
 
@@ -242,6 +247,8 @@ columns_per_face       = ceil(face_angular_intervals / interval)
 | P21 | B2 | exit endpoint | 중복 endpoint shot 0 |
 | P22 | B2 | busy due point | late fire 0, overrun 1 |
 | P23 | B2 | zero-gap Face/reversal | old accept 오염과 ghost request 0 |
+| P24 | B2 | enable/context 방어 | stale pre-ARM event, mid-Face ARM, overlap/mask fail-close |
+| P25 | F3a+B1+B2 | 직접 record 연동 | RUN-only, ARM, permit loss/re-ARM과 next-entry request |
 | P30 | B3 | physical success | fire, raw START, sync shot_start, STOP 순서 정확 |
 | P31 | B3 | stale-high/missing fire_done | 물리 발사 차단 또는 timeout, false START 0 |
 | P32 | B3 | timeout boundary T0 | T0 우선, shot 1회 |
