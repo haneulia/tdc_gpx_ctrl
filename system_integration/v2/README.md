@@ -31,8 +31,9 @@ multiple clocks and is checked against this reference model.
   verified for 150/200 and 200/150 MHz asynchronous profiles.
 - Checkpoint E: unified 32 CTL / 32 STAT / 4 IRQ CSR bank integrated with the
   atomic configuration subsystem and route-verified for both clock profiles.
-- Stage 2 is closed. The next and only active migration target is Stage 3 /
-  Checkpoint F, the Processing event pipeline and B0..B3 comparison.
+- Stage 2 is closed. Stage 3 / Checkpoint F is active; F0 oracle/source-mode
+  closure passed all Stage 2 regressions, so the next allowed sub-step is F1
+  `motor_position_core` and B0 comparison.
 - The v2 integrated functional datapath is not implemented yet; the existence
   of a v1 core does not mark the corresponding v2 Stage complete.
 
@@ -41,11 +42,13 @@ multiple clocks and is checked against this reference model.
 Checkpoint F proceeds in this fixed order:
 
 1. freeze the v1 B0..B3 trace oracle;
-2. `motor_position_core` and B0 comparison;
-3. `face_tracker` and B1 comparison;
-4. `shot_scheduler` and B2 comparison;
-5. `laser_executor` and B3 comparison;
-6. direct registered-path integration and read-only AXIS monitoring.
+2. replace writable v1 latency fields with committed `SIMULATION_MODE`, then
+   rerun every Stage 2 configuration regression;
+3. `motor_position_core` and B0 comparison;
+4. `face_tracker` and B1 comparison;
+5. operation/safety state owner, then `shot_scheduler` and B2 comparison;
+6. `laser_executor` and B3 comparison;
+7. direct registered-path integration and read-only AXIS monitoring.
 
 Each boundary must pass before the next block is migrated. The final
 Checkpoint F gate runs Processing/TDC 150/200 and 200/150 MHz profiles.

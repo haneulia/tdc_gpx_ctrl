@@ -287,9 +287,9 @@ begin
         wait_cycles(3);
 
         axi_read(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000000");
-        axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"14920E10");
+        axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00020E10");
         axi_read(fn_ctl_byte_offset(C_CTL_FACE_CENTER_0), x"000005A0");
-        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250200");
+        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250201");
         axi_read(fn_stat_byte_offset(C_STAT_BUILD_INFO), x"0C30C896");
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000100", 2);
         axi_read(fn_ctl_byte_offset(C_CTL_RESERVED_FIRST), x"00000000");
@@ -314,13 +314,23 @@ begin
             report "V2-CSR-BANK shadow field decode mismatch"
             severity failure;
 
-        -- Reserved decode encoding is rejected atomically; the old word stays.
-        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"14930E10");
-        axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"14920E10");
+        -- Source mode is writable, while reserved bits and decode 11 are
+        -- rejected atomically without changing the previous legal word.
+        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120E10");
+        axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120E10");
+        assert shadow_cfg.motor.simulation_mode = '1'
+            report "V2-CSR-BANK simulation mode decode mismatch"
+            severity failure;
+        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00320E10");
+        axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120E10");
+        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00130E10");
+        axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120E10");
         axi_read_value(fn_stat_byte_offset(C_STAT_TRANSACTION), v_word);
         assert v_word(C_TXN_ACCESS_ERROR_BIT) = '1'
             report "V2-CSR-BANK invalid encoding did not set access error"
             severity failure;
+
+        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00020E10");
 
         axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000002");
         wait_cycles(2);

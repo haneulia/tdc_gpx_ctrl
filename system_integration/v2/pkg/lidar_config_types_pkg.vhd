@@ -28,8 +28,7 @@ package lidar_config_types_pkg is
         z_offset               : position_t;
         z_width                : position_t;
         z_early                : std_logic;
-        physical_latency_clks  : unsigned(5 downto 0);
-        virtual_latency_clks   : unsigned(5 downto 0);
+        simulation_mode        : std_logic;
     end record motor_config_source_t;
 
     type mirror_config_source_t is record
@@ -115,8 +114,7 @@ package lidar_config_types_pkg is
             z_offset              => (others => '0'),
             z_width               => (others => '0'),
             z_early               => '0',
-            physical_latency_clks => to_unsigned(9, 6),
-            virtual_latency_clks  => to_unsigned(5, 6)
+            simulation_mode       => '0'
         ),
         mirror => (
             face_centers      => C_DEFAULT_FACE_CENTERS,

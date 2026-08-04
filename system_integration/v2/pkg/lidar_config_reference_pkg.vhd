@@ -217,6 +217,9 @@ package body lidar_config_reference_pkg is
         elsif to_integer(runtime_cfg.motor.z_offset) >= total_states
               or to_integer(runtime_cfg.motor.z_width) >= total_states then
             return CFG_RUNTIME_Z_PARAM;
+        elsif runtime_cfg.motor.simulation_mode /= '0'
+              and runtime_cfg.motor.simulation_mode /= '1' then
+            return CFG_RUNTIME_SOURCE_MODE;
         end if;
 
         half_width := to_integer(runtime_cfg.mirror.common_half_width);

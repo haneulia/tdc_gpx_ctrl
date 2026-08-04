@@ -335,12 +335,15 @@ begin
             report "V2-CSR-INT startup was not inhibited"
             severity failure;
 
+        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120E10");
         command(C_CMD_COMMIT_BIT);
         wait_done("V2-CSR-INT first commit", CFG_OK);
         v_expected := fn_default_runtime_config(C_BUILD_CONFIG);
+        v_expected.motor.simulation_mode := '1';
         check_active(v_expected, 1);
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000046");
         axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), x"00000001");
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE), x"00120E10");
 
         command(C_CMD_CLEAR_STATUS_BIT);
         axi_write(fn_ctl_byte_offset(C_CTL_SHOT_INTERVAL), x"000186A0");
@@ -371,7 +374,7 @@ begin
         -- Invalid source data completes with an error and cannot alter either
         -- destination's active version.
         command(C_CMD_CLEAR_STATUS_BIT);
-        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"14920000");
+        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120000");
         v_preserved := active_cfg;
         command(C_CMD_COMMIT_BIT);
         wait_done("V2-CSR-INT invalid commit", CFG_RUNTIME_CPR);
@@ -384,7 +387,7 @@ begin
         -- Restoring the source while PROC is unsafe holds PREPARE without
         -- exposing a partial active configuration.
         command(C_CMD_CLEAR_STATUS_BIT);
-        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"14920E10");
+        axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120E10");
         proc_safe <= '0';
         command(C_CMD_COMMIT_BIT);
         v_cycles := 0;

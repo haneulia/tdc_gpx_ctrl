@@ -54,6 +54,7 @@ Produced by `motor_position_core`, consumed by `face_tracker` and
 | `direction` | Actual decoded traversal direction |
 | `source_sim` | Physical/virtual source identity |
 | `source_latency_clks` | Measured or configured input-to-event latency metadata |
+| `source_latency_valid` | The latency metadata has a measured and approved meaning |
 | `z_event` | Qualified revolution/index event |
 
 There is no AXIS backpressure on this path. A monitoring AXIS stream may tap
@@ -66,6 +67,7 @@ Produced by `face_tracker`.
 
 | Field | Meaning |
 |---|---|
+| `valid` | One-cycle registered result aligned with a position event |
 | `inside` | Current position is inside one active Face window |
 | `enter` / `exit` | One-cycle boundary events |
 | `face_index` | Selected active Face |
@@ -98,7 +100,7 @@ unqualified angle; it produces a blocked-shot diagnostic instead.
 
 | Mode | `fire_pulse` | start source | `start_tdc` |
 |---|---|---|---|
-| Physical | Generated from an accepted physical request | synchronized `fire_done` | generated only after the matching physical `fire_done` |
+| Physical | Generated from an accepted physical request | qualified raw `fire_done` | generated only after the matching physical `fire_done` |
 | Simulation | Forced inactive | simulation executor | generated only from the simulation event |
 
 The two start sources are mutually exclusive and asserted as an invariant.
@@ -107,6 +109,14 @@ recorded as a diagnostic.
 
 `start_tdc`, `shot_start`, Face context and the TDC acquisition command must be
 derived from one accepted-shot record so they cannot refer to different shots.
+
+The v1 physical/virtual 9/5-clock values describe Encoder input to the old
+Motor AXIS boundary. They are evidence, not latency padding requirements for
+the v2 direct event path. v2 measures its own input-to-event and event-to-fire
+latencies, reports them with an explicit valid bit, and updates software/HTML
+defaults only from that measured result. The physical `start_tdc` assertion
+remains a qualified low-latency response to raw `fire_done`; its synchronized
+copy owns `shot_start` and state-machine bookkeeping.
 
 ## 5. Echo STOP Exception
 

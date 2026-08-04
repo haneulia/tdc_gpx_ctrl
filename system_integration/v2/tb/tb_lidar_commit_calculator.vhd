@@ -185,6 +185,11 @@ begin
         run_case("V2-CALC-104 bad Z parameter", v_cfg, CFG_RUNTIME_Z_PARAM);
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
+        v_cfg.motor.simulation_mode := 'X';
+        run_case("V2-CALC-104A bad source mode", v_cfg,
+            CFG_RUNTIME_SOURCE_MODE);
+
+        v_cfg := C_DEFAULT_RUNTIME_CONFIG;
         v_cfg.mirror.common_half_width := (others => '0');
         run_case("V2-CALC-105 bad half width", v_cfg,
             CFG_RUNTIME_FACE_HALF_WIDTH);

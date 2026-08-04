@@ -71,7 +71,7 @@ begin
 
         runtime_cfg := fn_default_runtime_config(build_cfg);
         words := fn_pack_runtime_config(runtime_cfg);
-        check(words(C_CTL_MOTOR_PROFILE) = x"14920E10",
+        check(words(C_CTL_MOTOR_PROFILE) = x"00020E10",
             "V2-CSR-MAP default motor word mismatch");
         check(words(C_CTL_FACE_PROFILE) = x"001F04B0",
             "V2-CSR-MAP default Face word mismatch");
@@ -82,6 +82,14 @@ begin
         unpacked := fn_unpack_runtime_config(words);
         check(unpacked = runtime_cfg,
             "V2-CSR-MAP default round trip mismatch");
+
+        runtime_cfg.motor.simulation_mode := '1';
+        words := fn_pack_runtime_config(runtime_cfg);
+        check(words(C_CTL_MOTOR_PROFILE) = x"00120E10",
+            "V2-CSR-MAP simulation-mode motor word mismatch");
+        unpacked := fn_unpack_runtime_config(words);
+        check(unpacked = runtime_cfg,
+            "V2-CSR-MAP simulation-mode round trip mismatch");
 
         build_cfg := C_DEFAULT_BUILD_CONFIG;
         build_cfg.num_faces := 4;

@@ -3,7 +3,7 @@
 ## 1. 적용 범위
 
 이 문서는 `lidar_csr_bank`의 AXI4-Lite software ABI를 정의한다. 주소는
-9-bit byte address이고 data width는 32 bit이다.
+9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.1`이다.
 
 | 영역 | Word 수 | Byte 주소 | 용도 |
 |---|---:|---:|---|
@@ -56,7 +56,7 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 | 주소 | 이름 | 접근 | 기본값 | 의미 |
 |---:|---|---|---:|---|
 | `0x000` | COMMAND | W1S/RO-zero | `00000000` | 일회성 system command |
-| `0x004` | MOTOR_PROFILE | R/W | `14920E10` | CPR, decode, direction, latency |
+| `0x004` | MOTOR_PROFILE | R/W | `00020E10` | CPR, decode, direction, source mode |
 | `0x008` | VIRTUAL_TICKS_LO | R/W | `00000208` | virtual state 기본 520 clocks |
 | `0x00C` | VIRTUAL_HI_COUNT | R/W | `00002EE0` | revolution당 `TICKS_LO+1` state 수 |
 | `0x010` | Z_PROFILE | R/W | `00000000` | Z offset/width |
@@ -103,11 +103,14 @@ IRQ_FLAG에 W1C해야 한다. `SOFT_RESET_REQUEST`도 이 block 자체를 reset�
 | 17:16 | DECODE_MODE | `10` | `00=x1`, `01=x2`, `10=x4`, `11=invalid` |
 | 18 | DIRECTION | 0 | `0=CW`, `1=CCW` |
 | 19 | Z_EARLY | 0 | Z event의 early 정책 |
-| 25:20 | PHYSICAL_LATENCY_CLKS | 9 | physical encoder 경로 실측 latency |
-| 31:26 | VIRTUAL_LATENCY_CLKS | 5 | virtual encoder 경로 실측 latency |
+| 20 | SIMULATION_MODE | 0 | `0=physical encoder/fire-done`, `1=virtual encoder/simulated T0` |
+| 31:21 | RESERVED | 0 | 반드시 0; 1을 쓰면 해당 word를 거부 |
 
 `decoded_states_per_rev = CPR * decode_multiplier`이다. physical decode는
 runtime 변경 가능하지만 virtual encoder 내부 발생은 x4 계약을 유지한다.
+`SIMULATION_MODE`는 지속 설정이며 COMMIT 후에만 active source가 바뀐다.
+물리/가상 경로의 실측 latency는 동작을 지연시키는 설정이 아니며, F1/F5에서
+측정한 뒤 read-only 상태로만 추가한다.
 
 ### 3.4 CTL2..CTL10 Motor/Mirror
 
@@ -174,7 +177,7 @@ watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 
 
 | Bit | 의미 | 기본 profile |
 |---:|---|---:|
-| 7:0 | ABI minor | 0 |
+| 7:0 | ABI minor | 1 |
 | 15:8 | ABI major | 2 |
 | 18:16 | NUM_FACES | 5 |
 | 21:19 | NUM_CHIPS | 4 |
@@ -184,7 +187,7 @@ watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 
 | 30 | ECHO_SIMULATION_INCLUDED | 0 |
 | 31 | STREAM_CLOCK_SYNC | 0 |
 
-기본 profile 값은 `0x3E250200`이다.
+기본 profile 값은 `0x3E250201`이다.
 
 ### 4.2 STAT1 BUILD_INFO (`0x084`)
 
@@ -229,6 +232,9 @@ reset 값은 `0x00000100`이다. commit 중 다음 shadow를 써도 revision을 
 
 `ACTIVE_VALID=0`일 때 STAT3..STAT30의 active/derived 값은 0이다. inactive
 상태에서 uninitialized internal record를 외부로 노출하지 않는다.
+STAT3 상위 16 bit는 현재 예약이다. Encoder 입력-to-B0 실측 latency는 F1/F5
+검증에서 값과 유효 조건이 확정된 뒤 이 read-only 영역 또는 별도 monitoring
+status에 배치하며, CTL source field로 되돌리지 않는다.
 
 ### 4.5 STAT23..STAT31 Derived readback
 
@@ -296,8 +302,8 @@ software가 IRQ_FLAG에 W1C할 때까지 high이고, 새 event와 W1C가 같은 
 | `2F` | active chip mask | `71` | transaction busy |
 | `30` | maximum Hits | `72` | PREPARE timeout |
 | `31` | GPX bus timing | `73` | gateway protocol |
-| `74` | ACTIVATE timeout | `75` | RELEASE timeout |
-| `76` | request-clear timeout |  |  |
+| `32` | physical/simulation source mode | `74` | ACTIVATE timeout |
+| `75` | RELEASE timeout | `76` | request-clear timeout |
 
 ## 7. 권장 software 순서
 

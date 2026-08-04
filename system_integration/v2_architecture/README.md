@@ -4,7 +4,9 @@
 > sequential calculator and atomic Processing/TDC configuration gateways are
 > route-verified at 150/200 and 200/150 MHz. The integrated v2 functional
 > datapath is not implemented yet. Stage 2 is closed; Stage 3 / Checkpoint F
-> (Processing event pipeline, B0..B3) is the next migration gate.
+> (Processing event pipeline, B0..B3) is active. F0 source-mode ownership and
+> Stage 2 revalidation are complete; F1 `motor_position_core` is the next
+> allowed sub-step.
 
 ## 1. Purpose
 
@@ -49,6 +51,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_D_CONFIG_MANAGER.md](V2_CHECKPOINT_D_CONFIG_MANAGER.md) | Atomic commit manager, domain gateway, timeout, reset and CDC verification |
 | [V2_CHECKPOINT_E_UNIFIED_CSR.md](V2_CHECKPOINT_E_UNIFIED_CSR.md) | Unified CSR, active readback, IRQ and dual-clock implementation result |
 | [V2_UNIFIED_CSR_REGISTER_MAP.md](V2_UNIFIED_CSR_REGISTER_MAP.md) | Korean bit-level CTL/STAT/IRQ software ABI and defaults |
+| [V2_STAGE3_F0_PROCESSING_ORACLE.md](V2_STAGE3_F0_PROCESSING_ORACLE.md) | Frozen B0..B3 event, safety and latency comparison contract for Checkpoint F |
 
 ## 4. Target Top-Level Shape
 

@@ -8,7 +8,7 @@ use work.lidar_config_types_pkg.all;
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;
-    constant C_LIDAR_CSR_ABI_MINOR : natural := 0;
+    constant C_LIDAR_CSR_ABI_MINOR : natural := 1;
 
     constant C_LIDAR_CTL_COUNT  : positive := 32;
     constant C_LIDAR_STAT_COUNT : positive := 32;
@@ -143,10 +143,7 @@ package body lidar_csr_map_pkg is
         result(C_CTL_MOTOR_PROFILE)(18) :=
             fn_direction_bit(config.motor.direction);
         result(C_CTL_MOTOR_PROFILE)(19) := config.motor.z_early;
-        result(C_CTL_MOTOR_PROFILE)(25 downto 20) :=
-            std_logic_vector(config.motor.physical_latency_clks);
-        result(C_CTL_MOTOR_PROFILE)(31 downto 26) :=
-            std_logic_vector(config.motor.virtual_latency_clks);
+        result(C_CTL_MOTOR_PROFILE)(20) := config.motor.simulation_mode;
 
         result(C_CTL_VIRTUAL_TICKS_LO) :=
             std_logic_vector(config.motor.virtual_ticks_lo);
@@ -218,10 +215,7 @@ package body lidar_csr_map_pkg is
             result.motor.direction := DIRECTION_CW;
         end if;
         result.motor.z_early := words(C_CTL_MOTOR_PROFILE)(19);
-        result.motor.physical_latency_clks := unsigned(
-            words(C_CTL_MOTOR_PROFILE)(25 downto 20));
-        result.motor.virtual_latency_clks := unsigned(
-            words(C_CTL_MOTOR_PROFILE)(31 downto 26));
+        result.motor.simulation_mode := words(C_CTL_MOTOR_PROFILE)(20);
         result.motor.virtual_ticks_lo := unsigned(
             words(C_CTL_VIRTUAL_TICKS_LO));
         result.motor.virtual_hi_count := unsigned(
@@ -283,7 +277,9 @@ package body lidar_csr_map_pkg is
     begin
         case index is
             when C_CTL_MOTOR_PROFILE =>
-                return value(17 downto 16) /= "11";
+                return value(17 downto 16) /= "11"
+                    and (value(20) = '0' or value(20) = '1')
+                    and value(31 downto 21) = zero_word(31 downto 21);
             when C_CTL_VIRTUAL_TICKS_LO |
                  C_CTL_LASER_FIRE_PROFILE |
                  C_CTL_TARGET_RANGE |

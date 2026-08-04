@@ -172,6 +172,10 @@ begin
                               or resize(i_source.motor.z_width, 16) >= r_total_states then
                             r_error <= CFG_RUNTIME_Z_PARAM;
                             r_state <= S_FINISH_ERROR;
+                        elsif i_source.motor.simulation_mode /= '0'
+                              and i_source.motor.simulation_mode /= '1' then
+                            r_error <= CFG_RUNTIME_SOURCE_MODE;
+                            r_state <= S_FINISH_ERROR;
                         else
                             r_state <= S_CHECK_FACE_HALF;
                         end if;

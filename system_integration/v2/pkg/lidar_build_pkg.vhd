@@ -79,6 +79,7 @@ package lidar_build_pkg is
         CFG_RUNTIME_ACTIVE_CHIP_MASK,
         CFG_RUNTIME_MAX_HITS,
         CFG_RUNTIME_BUS_TIMING,
+        CFG_RUNTIME_SOURCE_MODE,
         CFG_INTERNAL_ARITHMETIC,
         CFG_TRANSACTION_BUSY,
         CFG_TRANSACTION_PREPARE_TIMEOUT,
@@ -269,6 +270,7 @@ package body lidar_build_pkg is
             when CFG_RUNTIME_ACTIVE_CHIP_MASK       => result := x"2F";
             when CFG_RUNTIME_MAX_HITS               => result := x"30";
             when CFG_RUNTIME_BUS_TIMING             => result := x"31";
+            when CFG_RUNTIME_SOURCE_MODE            => result := x"32";
             when CFG_INTERNAL_ARITHMETIC             => result := x"70";
             when CFG_TRANSACTION_BUSY                => result := x"71";
             when CFG_TRANSACTION_PREPARE_TIMEOUT     => result := x"72";

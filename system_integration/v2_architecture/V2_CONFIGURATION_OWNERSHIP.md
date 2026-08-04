@@ -34,6 +34,10 @@ show an active source value, but it does not become a second owner.
 | Encoder CPR | Runtime source | Motor config | decoder, geometry calculator | One active value for physical and virtual modes |
 | Physical decode multiplier | Runtime source | Motor config | decoder, geometry calculator | x1/x2/x4; virtual source remains x4 internally |
 | Direction/polarity | Runtime source | Motor config | decoder, face traversal, scheduler | Applied direction and observed decoded direction remain distinct status |
+| Physical/simulation source mode | Runtime source | Motor config | source selector, scheduler, laser executor | Atomic mode switch; physical and simulation fire/start paths are mutually exclusive |
+| Encoder path latency | Status | Processing monitor | event metadata, software and HTML | Measured read-only value with validity; never inserts padding and is not writable configuration |
+| Run/stop and arm/disarm | Command | Processing operation manager | scheduler and laser executor | W1S operation events; not persistent geometry and not inferred from config validity |
+| External laser permit | Live safety input | top safety boundary | operation manager and final fire gate | Reset/unconnected/unknown means inhibit; software cannot override it |
 | Virtual speed profile | Runtime source | Motor config | virtual encoder | `ticks_lo` plus fractional high-count; `ticks_hi=ticks_lo+1` derived |
 | Face centers 0..4 | Runtime source | Mirror config | Face tracker | Direct shadow words; inactive faces ignored |
 | Common Face half-width | Runtime source | Mirror config | Face tracker | One value shared by all active faces |
@@ -103,16 +107,25 @@ minimum_shot_time = fire_done_allowance
 
 `target_range_window` is the only operator-owned flight-time value. Any TDC
 board offset is a named calibration and must be visible in active readback.
+The deterministic re-arm margin is an implementation-owned, read-only number;
+it is not another runtime timing knob.
 
-Commit validation includes at least:
+Commit validation includes:
 
 - requested optical interval is not smaller than one optical state;
 - `fire_done_timeout <= target_range_window` for the current operating policy;
-- the angular interval time covers fire-done allowance, range window and the
-  deterministic re-arm margin;
 - Face windows are valid and do not overlap;
 - derived columns and VDMA geometry fit their build capacities;
 - active masks and runtime Hit capacity fit the build topology.
+
+The Processing pipeline evaluates the angular-time margin from measured
+revolution timing in physical mode and the configured virtual timing in
+simulation mode. This is a live feasibility/status decision rather than a
+configuration-validity decision: a geometrically valid commit remains valid,
+but firing is inhibited and diagnosed while the current speed cannot satisfy
+the fire-done, range-window and deterministic re-arm budget. At every due grid
+point, a busy executor blocks the shot, never delays it to an off-grid angle,
+and records an overrun.
 
 ## 4. Application Safe Points
 

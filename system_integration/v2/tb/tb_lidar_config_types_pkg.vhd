@@ -199,6 +199,11 @@ begin
             CFG_RUNTIME_Z_PARAM, "V2-CFG-007 Z offset outside revolution");
 
         runtime_cfg := C_DEFAULT_RUNTIME_CONFIG;
+        runtime_cfg.motor.simulation_mode := 'X';
+        check_error(fn_validate_runtime_config(build_cfg, runtime_cfg),
+            CFG_RUNTIME_SOURCE_MODE, "V2-CFG-007A unknown source mode");
+
+        runtime_cfg := C_DEFAULT_RUNTIME_CONFIG;
         runtime_cfg.mirror.common_half_width := (others => '0');
         check_error(fn_validate_runtime_config(build_cfg, runtime_cfg),
             CFG_RUNTIME_FACE_HALF_WIDTH, "V2-CFG-008 zero Face half-width");
@@ -320,6 +325,7 @@ begin
         check(fn_cfg_error_code(CFG_OK) = x"00"
               and fn_cfg_error_code(CFG_RUNTIME_SHOT_BELOW_ONE_STATE) = x"2A"
               and fn_cfg_error_code(CFG_RUNTIME_BUS_TIMING) = x"31"
+              and fn_cfg_error_code(CFG_RUNTIME_SOURCE_MODE) = x"32"
               and fn_cfg_error_code(CFG_INTERNAL_ARITHMETIC) = x"70"
               and fn_cfg_error_code(CFG_TRANSACTION_BUSY) = x"71"
               and fn_cfg_error_code(

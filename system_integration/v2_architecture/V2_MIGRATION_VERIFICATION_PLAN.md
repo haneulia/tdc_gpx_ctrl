@@ -91,9 +91,10 @@ Implementation order:
 
 1. `motor_position_core`;
 2. `face_tracker`;
-3. `shot_scheduler`;
-4. `laser_executor`;
-5. read-only monitoring AXIS tap.
+3. operation/safety state owner;
+4. `shot_scheduler`;
+5. `laser_executor`;
+6. read-only monitoring AXIS tap.
 
 Comparison:
 
@@ -104,7 +105,7 @@ Comparison:
   shot-lattice behavior;
 - physical/simulation mutual exclusion;
 - no late-angle fire after executor busy;
-- exact latency metrics.
+- cycle-accurate latency accounting with no artificial v1 AXIS-delay padding.
 
 Gate:
 
@@ -284,9 +285,10 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
-**Current migration state:** Stage 2 is closed at Checkpoint E. The only valid
-next functional checkpoint is **Stage 3 / Checkpoint F**. Stage 4 or later work
-must not be treated as migrated merely because its v1 implementation exists.
+**Current migration state:** Stage 2 is closed at Checkpoint E. Stage 3 /
+Checkpoint F is in progress; F0a/F0b are complete and the only valid next
+sub-step is **F1 `motor_position_core`**. Stage 4 or later work must not be
+treated as migrated merely because its v1 implementation exists.
 
 Commit only after the focused sub-step passes. Intermediate commits inside a
 Checkpoint are allowed, but the Checkpoint result document and status row move
@@ -303,10 +305,12 @@ is fixed so that each new block has one already-verified input boundary:
 
 | Step | Work | Required evidence before continuing |
 |---:|---|---|
-| F0 | Freeze v1 B0..B3 trace fields, stimulus and latency counting edges | Trace schema and expected vectors reviewed; no RTL change |
+| F0a | Freeze v1 B0..B3 trace fields, stimulus and latency counting edges | Trace schema, source hashes and expected vectors reviewed |
+| F0b | Close Processing source-mode ownership and CSR ABI | `SIMULATION_MODE` is active configuration, measured latency is read-only; all Stage 2 regressions pass |
 | F1 | Implement `motor_position_core` | B0 exact comparison for CW/CCW and physical x1/x2/x4 plus virtual x4 |
 | F2 | Implement `face_tracker` | B1 exact comparison for one to five Faces, wrap and boundary direction |
-| F3 | Implement `shot_scheduler` | B2 exact accepted-shot sequence, angular quantization and busy suppression |
+| F3a | Implement operation/safety state owner | RUN/STOP/ARM/DISARM and external permit semantics are self-checked; reset is fail-safe |
+| F3b | Implement `shot_scheduler` | B2 exact accepted-shot sequence, angular quantization and busy suppression |
 | F4 | Implement `laser_executor` | B3 exact physical/simulation exclusion, fire/start/stop timing and timeout behavior |
 | F5 | Integrate the direct registered event path and read-only AXIS monitor tap | B0..B3 end-to-end comparison, assertions and both routine clock profiles |
 
@@ -320,3 +324,7 @@ Rules for this package:
 4. The next step starts only after the preceding boundary comparison passes.
 5. Checkpoint F closes only after 150/200 and 200/150 MHz regressions pass with
    zero inferred latches and no new unclassified CDC path.
+6. F1 cannot start until F0b reruns the package, calculator, atomic-manager and
+   unified-CSR regressions. F3b cannot start until F3a owns every operation and
+   laser-permit state; a scheduler must never infer safety permission from
+   configuration validity alone.
