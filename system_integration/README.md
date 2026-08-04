@@ -39,6 +39,8 @@ observability only.
 
 The bit-accurate software and data-format reference is
 [`TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE.md`](TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE.md).
+The complete Korean edition is
+[`TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE_KO.md`](TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE_KO.md).
 It defines every unified CTL/STAT/IRQ field, traces the external GPX 28-bit
 I-Mode word through the 17-bit Cell format, and gives the authoritative VDMA
 SOF/EOL, HSIZE, VSIZE, and DDR layout contract.

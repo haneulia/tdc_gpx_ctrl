@@ -1,5 +1,7 @@
 # TDC-GPX LiDAR Integrated Controller CSR, Data Path, and VDMA Reference
 
+> Korean edition: [TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE_KO.md](TDC_GPX_LIDAR_CTRL_CSR_DATA_VDMA_REFERENCE_KO.md)
+
 ## 한국어 핵심 읽기 안내
 
 이 문서는 RTL과 소프트웨어가 같은 비트 의미를 사용하도록 만든 통합
