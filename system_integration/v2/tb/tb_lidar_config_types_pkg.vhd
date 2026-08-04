@@ -320,7 +320,18 @@ begin
         check(fn_cfg_error_code(CFG_OK) = x"00"
               and fn_cfg_error_code(CFG_RUNTIME_SHOT_BELOW_ONE_STATE) = x"2A"
               and fn_cfg_error_code(CFG_RUNTIME_BUS_TIMING) = x"31"
-              and fn_cfg_error_code(CFG_INTERNAL_ARITHMETIC) = x"70",
+              and fn_cfg_error_code(CFG_INTERNAL_ARITHMETIC) = x"70"
+              and fn_cfg_error_code(CFG_TRANSACTION_BUSY) = x"71"
+              and fn_cfg_error_code(
+                  CFG_TRANSACTION_PREPARE_TIMEOUT) = x"72"
+              and fn_cfg_error_code(
+                  CFG_TRANSACTION_GATEWAY_PROTOCOL) = x"73"
+              and fn_cfg_error_code(
+                  CFG_TRANSACTION_ACTIVATE_TIMEOUT) = x"74"
+              and fn_cfg_error_code(
+                  CFG_TRANSACTION_RELEASE_TIMEOUT) = x"75"
+              and fn_cfg_error_code(
+                  CFG_TRANSACTION_CLEAR_TIMEOUT) = x"76",
             "V2-CFG-024 stable error codes");
 
         report "LIDAR_V2_CONFIG_TYPES_PASS" severity note;

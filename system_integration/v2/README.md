@@ -23,8 +23,10 @@ multiple clocks and is checked against this reference model.
 - Checkpoint A: architecture contracts complete and committed.
 - Checkpoint B: configuration types and reference arithmetic verified.
 - Checkpoint C: sequential commit calculator verified at 150/200 MHz.
-- Unified CSR/configuration manager, domain gateways and the v2 integrated top
-  are not implemented yet.
+- Checkpoint D: atomic configuration manager and Processing/TDC domain gateways
+  verified for 150/200 and 200/150 MHz asynchronous profiles.
+- Unified CSR bank and the v2 integrated functional datapath are not implemented
+  yet.
 
 Run the current package regression with:
 
@@ -44,3 +46,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 The pass marker is `LIDAR_V2_COMMIT_CALCULATOR_PASS`. The detailed Checkpoint C
 result is in `system_integration/v2_architecture/V2_CHECKPOINT_C_COMMIT_CALCULATOR.md`.
+
+Run the configuration-manager regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_config_manager.ps1
+```
+
+The pass marker is `LIDAR_V2_CONFIG_MANAGER_PASS`. The regression requires
+non-negative post-route WNS, zero inferred latches, 28 recognized ASYNC_REG
+flops and zero Critical CDC paths. See
+`system_integration/v2_architecture/V2_CHECKPOINT_D_CONFIG_MANAGER.md`.

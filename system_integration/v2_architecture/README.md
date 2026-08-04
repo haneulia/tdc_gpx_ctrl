@@ -1,8 +1,9 @@
 # TDC-GPX LiDAR Controller v2 Architecture
 
-> Status: Checkpoints A and B are complete. Checkpoint C sequential configuration
-> calculator is verified at 150/200 MHz. The unified CSR/configuration manager,
-> domain gateways and integrated v2 datapath are not implemented yet.
+> Status: Checkpoints A through D are complete. The sequential configuration
+> calculator and atomic Processing/TDC configuration gateways are verified at
+> 150/200 and 200/150 MHz. The unified CSR bank and integrated v2 functional
+> datapath are not implemented yet.
 
 ## 1. Purpose
 
@@ -44,6 +45,7 @@ The redesign has four goals:
 | [V2_MIGRATION_VERIFICATION_PLAN.md](V2_MIGRATION_VERIFICATION_PLAN.md) | Incremental implementation, regression and Git stage gates |
 | [V2_CHECKPOINT_B_CONFIG_CONTRACT.md](V2_CHECKPOINT_B_CONFIG_CONTRACT.md) | Verified build/runtime/derived configuration contract and package-test result |
 | [V2_CHECKPOINT_C_COMMIT_CALCULATOR.md](V2_CHECKPOINT_C_COMMIT_CALCULATOR.md) | Sequential validator/deriver implementation and 150/200 MHz timing result |
+| [V2_CHECKPOINT_D_CONFIG_MANAGER.md](V2_CHECKPOINT_D_CONFIG_MANAGER.md) | Atomic commit manager, domain gateway, timeout, reset and CDC verification |
 
 ## 4. Target Top-Level Shape
 

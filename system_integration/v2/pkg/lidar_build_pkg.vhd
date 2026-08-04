@@ -79,7 +79,13 @@ package lidar_build_pkg is
         CFG_RUNTIME_ACTIVE_CHIP_MASK,
         CFG_RUNTIME_MAX_HITS,
         CFG_RUNTIME_BUS_TIMING,
-        CFG_INTERNAL_ARITHMETIC
+        CFG_INTERNAL_ARITHMETIC,
+        CFG_TRANSACTION_BUSY,
+        CFG_TRANSACTION_PREPARE_TIMEOUT,
+        CFG_TRANSACTION_GATEWAY_PROTOCOL,
+        CFG_TRANSACTION_ACTIVATE_TIMEOUT,
+        CFG_TRANSACTION_RELEASE_TIMEOUT,
+        CFG_TRANSACTION_CLEAR_TIMEOUT
     );
 
     constant C_DEFAULT_BUILD_CONFIG : lidar_build_config_t := (
@@ -264,6 +270,12 @@ package body lidar_build_pkg is
             when CFG_RUNTIME_MAX_HITS               => result := x"30";
             when CFG_RUNTIME_BUS_TIMING             => result := x"31";
             when CFG_INTERNAL_ARITHMETIC             => result := x"70";
+            when CFG_TRANSACTION_BUSY                => result := x"71";
+            when CFG_TRANSACTION_PREPARE_TIMEOUT     => result := x"72";
+            when CFG_TRANSACTION_GATEWAY_PROTOCOL   => result := x"73";
+            when CFG_TRANSACTION_ACTIVATE_TIMEOUT    => result := x"74";
+            when CFG_TRANSACTION_RELEASE_TIMEOUT     => result := x"75";
+            when CFG_TRANSACTION_CLEAR_TIMEOUT       => result := x"76";
         end case;
         return std_logic_vector(result);
     end function fn_cfg_error_code;
