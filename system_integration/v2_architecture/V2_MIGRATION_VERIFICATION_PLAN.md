@@ -277,7 +277,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | C | Complete | `1b8b015`, `8789e7b` | Sequential validator/deriver and all runtime timebase conversions |
 | 2 | D | Complete | `67e0800` | Atomic configuration manager and Processing/TDC gateways |
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
-| 3 | F | Next | B0..B3 evidence pending | Processing event pipeline |
+| 3 | F | In progress | F0/F1 complete; B1..B3 pending | Processing event pipeline |
 | 4 | G | Pending | B4 evidence pending | Echo frontend |
 | 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
@@ -286,8 +286,8 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E. Stage 3 /
-Checkpoint F is in progress; F0a/F0b are complete and the only valid next
-sub-step is **F1 `motor_position_core`**. Stage 4 or later work must not be
+Checkpoint F is in progress; F0a/F0b and F1/B0 are complete and the only valid
+next sub-step is **F2 `face_tracker`**. Stage 4 or later work must not be
 treated as migrated merely because its v1 implementation exists.
 
 Commit only after the focused sub-step passes. Intermediate commits inside a
@@ -313,6 +313,15 @@ is fixed so that each new block has one already-verified input boundary:
 | F3b | Implement `shot_scheduler` | B2 exact accepted-shot sequence, angular quantization and busy suppression |
 | F4 | Implement `laser_executor` | B3 exact physical/simulation exclusion, fire/start/stop timing and timeout behavior |
 | F5 | Integrate the direct registered event path and read-only AXIS monitor tap | B0..B3 end-to-end comparison, assertions and both routine clock profiles |
+
+Current sub-step status:
+
+| Step | Status | Evidence |
+|---:|---|---|
+| F0a/F0b | Complete | `V2_STAGE3_F0_PROCESSING_ORACLE.md` |
+| F1 | Complete | `V2_CHECKPOINT_F1_MOTOR_POSITION.md`; session `260804170100_v2_motor_position` |
+| F2 | Next | B1 evidence not yet generated |
+| F3a..F5 | Blocked by order | Preceding boundary has not passed |
 
 Rules for this package:
 

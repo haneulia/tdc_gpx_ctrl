@@ -53,9 +53,10 @@ Produced by `motor_position_core`, consumed by `face_tracker` and
 | `position` | Modular decoded state in the active `states_per_rev` range |
 | `direction` | Actual decoded traversal direction |
 | `source_sim` | Physical/virtual source identity |
-| `source_latency_clks` | Measured or configured input-to-event latency metadata |
-| `source_latency_valid` | The latency metadata has a measured and approved meaning |
+| `source_latency_clks` | Approved input-to-B0 latency metadata; F1 measures physical 4 and virtual 1 Processing clocks |
+| `source_latency_valid` | The latency metadata has a measured and approved meaning; it is not a writable delay setting |
 | `z_event` | Qualified revolution/index event |
+| `active_version` | Atomic configuration version used to produce the event |
 
 There is no AXIS backpressure on this path. A monitoring AXIS stream may tap
 the event after the scheduler and may drop monitor samples without affecting
