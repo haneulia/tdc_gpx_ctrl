@@ -1,8 +1,8 @@
 # TDC-GPX LiDAR Controller v2 Architecture
 
-> Status: Checkpoint A architecture contract. No v2 functional RTL exists yet.
-> The next accepted work package is common configuration types and package
-> tests, as defined in `V2_MIGRATION_VERIFICATION_PLAN.md`.
+> Status: Checkpoint A architecture contract is complete. Checkpoint B common
+> configuration types and the simulation-only reference arithmetic model are
+> under verification. No v2 functional datapath RTL exists yet.
 
 ## 1. Purpose
 
@@ -42,6 +42,7 @@ The redesign has four goals:
 | [V2_CLOCK_EVENT_DATA_CONTRACT.md](V2_CLOCK_EVENT_DATA_CONTRACT.md) | Clock domains, CDC, real-time events and GPX data contracts |
 | [V2_RTL_STYLE_RULES.md](V2_RTL_STYLE_RULES.md) | Module boundaries, sequential logic, timing and naming rules |
 | [V2_MIGRATION_VERIFICATION_PLAN.md](V2_MIGRATION_VERIFICATION_PLAN.md) | Incremental implementation, regression and Git stage gates |
+| [V2_CHECKPOINT_B_CONFIG_CONTRACT.md](V2_CHECKPOINT_B_CONFIG_CONTRACT.md) | Verified build/runtime/derived configuration contract and package-test result |
 
 ## 4. Target Top-Level Shape
 
