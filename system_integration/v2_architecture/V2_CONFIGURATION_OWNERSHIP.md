@@ -35,7 +35,8 @@ show an active source value, but it does not become a second owner.
 | Physical decode multiplier | Runtime source | Motor config | decoder, geometry calculator | x1/x2/x4; virtual source remains x4 internally |
 | Direction/polarity | Runtime source | Motor config | decoder, face traversal, scheduler | Applied direction and observed decoded direction remain distinct status |
 | Physical/simulation source mode | Runtime source | Motor config | source selector, scheduler, laser executor | Atomic mode switch; physical and simulation fire/start paths are mutually exclusive |
-| Encoder path latency | Status | Processing monitor | event metadata, software and HTML | Measured read-only value with validity; never inserts padding and is not writable configuration |
+| Encoder/path latency | Status | Processing subsystem | event metadata, software and HTML | F1/F5 measured read-only values with validity; never insert padding and are not writable configuration |
+| Processing monitor retention/drop | Status | Processing AXIS monitor | software diagnostics only | One retained beat; newer stalled samples drop/count and never own control or safe-point state |
 | Run/stop and arm/disarm | Command | Processing operation manager | scheduler and laser executor | W1S operation events; not persistent geometry and not inferred from config validity |
 | External laser permit | Live safety input | top safety boundary | operation manager and final fire gate | Reset/unconnected/unknown means inhibit; software cannot override it |
 | Virtual speed profile | Runtime source | Motor config | virtual encoder | `ticks_lo` plus fractional high-count; `ticks_hi=ticks_lo+1` derived |
@@ -60,19 +61,23 @@ show an active source value, but it does not become a second owner.
 | Distance calibration | Runtime source | calibration config | distance formatter | Coherent scale/offset snapshot |
 | Cell bytes and VDMA geometry | Derived | commit calculator | frame builder, status and software | Never independently writable |
 
-### 2.1 Fixed B3 implementation timing
+### 2.1 Fixed Processing implementation timing
 
 The following values are implementation contracts, not CSR settings and not
 build generics:
 
 | Value | Fixed value | Meaning |
 |---|---:|---|
+| B0-to-executor accept | 4 Processing clocks | Registered `position_event` through B1/B2 to matching B3 accept |
+| Physical sample-to-fire | 8 Processing clocks | First stable-pin synchronizer sample to physical fire; excludes pre-sample asynchronous phase |
+| Virtual transition-to-accept | 5 Processing clocks | Registered virtual A/B transition to B3 accept; excludes configured simulation START delay |
 | Fire-done observation budget | 3 Processing clocks | Two synchronizer stages plus the consuming FSM edge; used to resolve a T0 captured at timeout/abort boundary |
 | Re-arm margin | 2 Processing clocks | Required quiet interval after every generated pulse is inactive |
 
-Both are exposed as read-only B3 outputs so software/HTML can report the actual
-implementation. They must change only with RTL and verification evidence; an
-operator cannot use them to repair an invalid shot-rate configuration.
+The path values are exposed by the F5 Processing subsystem and the final two
+values by B3 so software/HTML can report the actual implementation. They must
+change only with RTL and verification evidence; an operator cannot use them to
+repair an invalid shot-rate configuration.
 
 ### 2.2 Operation and safety transition contract
 
@@ -192,6 +197,11 @@ strictest safe point in the table. The manager closes the new-shot gate, drains
 the current acquisition/output work, activates every prepared domain, then
 reopens operation. Finer-grained live updates may be added only with separate
 proof; they are not part of the initial design.
+
+The F5 `processing_pipeline_idle` owner includes only B2 unresolved ownership
+and B3 activity. A pending or stalled monitor beat is deliberately excluded.
+The central manager must add TDC acquisition and output-drain idle after Stage
+H/J; no monitor or diagnostic stream may become a safe-point owner.
 
 ## 5. Commit Transaction
 

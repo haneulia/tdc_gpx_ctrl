@@ -77,7 +77,11 @@ begin
     o_fire_done_ready <= prearm_ready_r and not i_physical_arm and
         not start_capture_r and not pulse_complete_r and i_rst_n;
     o_start_tdc             <= start_active_c;
-    o_start_busy            <= start_active_c;
+    -- The executor consumes busy only in its later re-arm state. By then the
+    -- first Processing edge has captured hold_active, so the registered owner
+    -- is sufficient and avoids feeding the asynchronous START value back into
+    -- the lifecycle FSM timing cone.
+    o_start_busy            <= hold_active_r;
     o_t0_event              <= t0_event_c;
     o_unexpected_done_pulse <= unexpected_r;
 

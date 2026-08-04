@@ -11,6 +11,9 @@ enter/exit, overlap 진단, source latency 문맥과 atomic configuration versio
 단계는 F3a operation/safety state owner뿐이다. F3b `shot_scheduler`는 F3a가
 RUN/STOP/ARM/DISARM과 laser permit을 소유하기 전에는 시작하지 않는다.
 
+위 순서는 F2 완료 당시 gate 기록이다. 현재 Checkpoint F는 F5까지 완료됐으며
+최종 상태는 `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`를 따른다.
+
 ## 2. v1 비교 기준
 
 고정 소스는

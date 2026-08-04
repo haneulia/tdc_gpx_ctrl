@@ -138,8 +138,13 @@ operation 상태로 재개한다.
 `decoded_states_per_rev = CPR * decode_multiplier`이다. physical decode는
 runtime 변경 가능하지만 virtual encoder 내부 발생은 x4 계약을 유지한다.
 `SIMULATION_MODE`는 지속 설정이며 COMMIT 후에만 active source가 바뀐다.
-물리/가상 경로의 실측 latency는 동작을 지연시키는 설정이 아니며, F1/F5에서
-측정한 뒤 read-only 상태로만 추가한다.
+물리/가상 경로의 실측 latency는 동작을 지연시키는 설정이 아니다. F1/F5에서
+확정된 값은 B0-to-accept 4 clocks, physical first-sample-to-fire 8 clocks,
+virtual transition-to-accept 5 clocks이다. 현재 Checkpoint E의 고정 32-STAT ABI에는
+새 주소를 임의로 끼워 넣지 않았고 F5 subsystem의 read-only output으로 먼저
+노출한다. Stage K 통합 status ABI 검토에서 기존 예약 bit 또는 표준 indexed
+status portal 중 하나를 확정한 뒤 CSR readback을 추가한다. 어떤 경우에도 CTL로
+쓰거나 timing padding으로 사용하지 않는다.
 
 ### 3.4 CTL2..CTL10 Motor/Mirror
 

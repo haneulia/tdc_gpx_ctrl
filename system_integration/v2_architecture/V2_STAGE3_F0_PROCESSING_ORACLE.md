@@ -325,3 +325,11 @@ CDC-15 mailbox warning은 두 profile 모두 기존 atomic mailbox payload에 �
 
 **판정:** F0a/F0b 완료. Checkpoint F 자체는 아직 진행 중이며 다음 허용 단계는
 F1 `motor_position_core`뿐이다.
+
+## 13. 후속 추적
+
+위 판정은 F0가 끝난 시점의 단계 gate를 기록한 역사적 문장이다. 이후 F1부터
+F5까지 순서대로 통과했으며 Stage 3 / Checkpoint F의 현재 완료 증거는
+`V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`와 세션
+`260804_f5_busy_opt_v2_processing_subsystem`이다. F0 oracle의 필드 의미와
+latency counting edge는 변경하지 않았다.

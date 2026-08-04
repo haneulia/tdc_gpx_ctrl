@@ -16,6 +16,10 @@ Checkpoint F4/B3의 독립 경계는 **완료**다.
 TDC acquisition, VDMA와 HTML을 포함한 통합 IP sign-off는 아니다. 다음 단계는
 F5 Processing production assembly다.
 
+위 문장은 F4 완료 당시 gate 기록이다. F5 Processing assembly는 이후 완료됐고
+현재 상태와 후속 무회귀는 Section 17 및
+`V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`를 따른다.
+
 ## 2. 구현 범위
 
 ### 2.1 추가한 RTL
@@ -296,14 +300,13 @@ signoff_results/sessions/260804220300_v2_laser_executor
 | LUTRAM/SRL | 0 |
 | BRAM/DSP | 0 |
 
-200 MHz worst path는 range-end 판정에서 STOP pulse-bank enable까지의 5-LUT
-경로다. route 지연 비중이 약 73%이며 현재 timing은 통과한다. F5 production
-placement에서 다시 확인하고, 여유가 줄 때만 STOP trigger 경계 register 또는
-counter ownership 결합을 별도 최적화한다. 지금 latency contract를 바꾸는
-선제 최적화는 하지 않는다.
+초기 F4의 200 MHz worst path는 range-end 판정에서 STOP pulse-bank enable까지의
+5-LUT 경로였다. route 지연 비중이 약 73%였고 timing은 통과했다. 이후 F5
+production placement에서 다시 확인한 결과와 필요한 무회귀 수정은 Section 17에
+기록한다. latency contract를 바꾸는 padding은 추가하지 않았다.
 
 OOC DRC의 `ZPS7-1`은 Zynq part를 PS7 없이 단독 합성한 경계 시험 경고다.
-`HD.CLK_SRC`와 PARTPIN 위치도 parent가 없는 OOC 한계이므로 F5 parent
+`HD.CLK_SRC`와 PARTPIN 위치도 parent가 없는 OOC 한계이므로 Stage L parent
 implementation에서 최종 판정한다.
 
 ## 14. 선행 경계 무회귀
@@ -334,12 +337,34 @@ F5는 다음 항목을 닫아야 한다.
 
 1. B0 -> B1 -> B2 -> B3를 production subsystem으로 한 번만 조립;
 2. F3a state와 active config version을 모든 블록에 같은 source로 배포;
-3. B2/B3 idle을 atomic config safe point에 포함;
-4. `shot_start.request`를 TDC acquisition identity에 직접 연결;
+3. B2/B3 idle을 Processing-local safe point에 포함;
+4. `shot_start.request`를 Stage H가 소비할 typed TDC acquisition 경계로 노출;
 5. AXIS monitor는 copy/drop 전용으로 두고 control backpressure 금지;
 6. 150/200 및 200/150 Processing/TDC profile에서 full-chain 검증;
-7. parent XDC에서 raw `fire_done` async exception과 synchronizer 배치 확인;
+7. Stage L parent XDC에서 raw `fire_done` async exception과 synchronizer 배치 확인;
 8. Encoder pin부터 physical fire/START까지 measured latency status 확정.
 
 F4의 결론은 "B3가 독립적으로 sign-off 가능한 경계"다. 전체 LiDAR IP의
 sign-off는 F5와 이후 TDC/frame/formatter/HTML 단계가 끝난 뒤에만 가능하다.
+
+## 17. F5 후속 무회귀와 인계 종료
+
+F5 통합 timing 감사에서 immediate physical START 값을 executor busy에 다시
+조합 입력하던 불필요한 경로를 찾았다. executor는 busy를 이후 re-arm 상태에서만
+소비하므로 `o_start_busy`를 등록 owner인 `hold_active_r`로 구동했다. raw
+`fire_done -> FDPE PRE -> start_tdc` 저지연 출력은 바꾸지 않았다.
+
+후속 세션:
+
+```text
+signoff_results/sessions/260804_f4_busy_opt_v2_laser_executor
+```
+
+| Processing clock | P30..P36/chain | WNS | Latch | Raw endpoint audit |
+|---:|---|---:|---:|---|
+| 150 MHz | PASS | `+1.477 ns` | 0 | PASS, exactly 2 |
+| 200 MHz | PASS | `+0.422 ns` | 0 | PASS, exactly 2 |
+
+F5 항목 1..6과 8은 `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`에서 닫혔다.
+항목 4의 실제 TDC-domain 소비/CDC는 Stage H, 항목 7의 board constraint와 배치는
+Stage L의 책임이다. 이 둘을 F5가 이미 완료한 것으로 확대 해석하지 않는다.

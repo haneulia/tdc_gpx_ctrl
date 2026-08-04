@@ -10,6 +10,7 @@ unchanged and is used as the observable-behavior reference during migration.
 | `pkg/lidar_build_pkg.vhd` | Build topology, legal generic values and stable error codes | Yes |
 | `pkg/lidar_config_types_pkg.vhd` | Runtime source and derived record types | Yes |
 | `pkg/lidar_event_types_pkg.vhd` | Registered Processing event records and latency metadata | Yes |
+| `pkg/lidar_processing_pkg.vhd` | Integrated Processing diagnostics, monitor ABI and measured path-latency contracts | Yes |
 | `pkg/lidar_csr_map_pkg.vhd` | Unified CSR address/field and pack/unpack ABI | Yes |
 | `pkg/lidar_config_reference_pkg.vhd` | Exact arithmetic oracle for tests and equivalence checks | No |
 | `rtl/config/` | Sequential validator, derivation controller and shared arithmetic | Yes |
@@ -33,16 +34,16 @@ multiple clocks and is checked against this reference model.
   verified for 150/200 and 200/150 MHz asynchronous profiles.
 - Checkpoint E: unified 32 CTL / 32 STAT / 4 IRQ CSR bank integrated with the
   atomic configuration subsystem and route-verified for both clock profiles.
-- Stage 2 is closed. Stage 3 / Checkpoint F is active; F0 oracle/source-mode,
-  F1 `motor_position_core`/B0, F2 `face_tracker`/B1, F3a operation/safety and
-  F3b `shot_scheduler`/B2 are complete. The next allowed sub-step is F4
-  `laser_executor`.
-- The v2 integrated functional datapath is not implemented yet; the existence
-  of a v1 core does not mark the corresponding v2 Stage complete.
+- Stage 2 and Stage 3 / Checkpoint F are closed. F0 through F5 cover the
+  Processing source contract, B0 through B3, production assembly, local drain
+  and the observation-only AXIS monitor.
+- The next allowed step is Stage 4 / Checkpoint G Echo frontend. The v2 TDC
+  acquisition, frame/formatter and full parent datapath remain unmigrated; the
+  existence of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
 
-Checkpoint F proceeds in this fixed order:
+Checkpoint F was completed in this fixed order:
 
 1. freeze the v1 B0..B3 trace oracle;
 2. replace writable v1 latency fields with committed `SIMULATION_MODE`, then
@@ -53,8 +54,9 @@ Checkpoint F proceeds in this fixed order:
 6. `laser_executor` and B3 comparison;
 7. direct registered-path integration and read-only AXIS monitoring.
 
-Each boundary must pass before the next block is migrated. The final
-Checkpoint F gate runs Processing/TDC 150/200 and 200/150 MHz profiles.
+Each boundary passed before the next block was migrated. The final Checkpoint
+F gate ran Processing/TDC 150/200 and 200/150 MHz profiles. Stage 4 now starts
+with the Echo frontend and must preserve the direct low-latency STOP path.
 
 Run the current package regression with:
 
@@ -154,3 +156,29 @@ F3a/B1/B2 P25 chain at 150 and 200 MHz, then requires non-negative post-route
 WNS, zero latches and zero Critical CDC paths. See
 `system_integration/v2_architecture/V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md` and
 `system_integration/v2_architecture/V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md`.
+
+Run the Laser-executor boundary regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_laser_executor.ps1
+```
+
+The pass marker is `LIDAR_V2_LASER_EXECUTOR_PASS`. It runs P30..P36 and the
+F3a/B1/B2/B3 control chain at 150 and 200 MHz, then audits the direct physical
+START preset path. See
+`system_integration/v2_architecture/V2_CHECKPOINT_F4_LASER_EXECUTOR.md`.
+
+Run the production Processing-subsystem regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_processing_subsystem.ps1
+```
+
+The pass marker is `LIDAR_V2_PROCESSING_SUBSYSTEM_PASS`. It runs P50..P53 for
+150/200 and 200/150 MHz, checks B0..B3 identity and measured latency, stalls the
+monitor without stalling control, and requires non-negative WNS, zero latches,
+the expected 16 ASYNC_REG cells, exactly two raw `fire_done` endpoints and zero
+Critical CDC findings. See
+`system_integration/v2_architecture/V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`.

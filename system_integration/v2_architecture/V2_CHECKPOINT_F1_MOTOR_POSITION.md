@@ -9,6 +9,9 @@ F0a에서 고정한 B0 oracle과 F0b의 active source-mode 계약을 그대로
 **결론:** B0는 통과했다. Checkpoint F 전체는 아직 진행 중이며 다음에
 허용되는 단계는 F2 `face_tracker`뿐이다.
 
+위 순서는 F1 완료 당시 gate 기록이다. 현재 Checkpoint F는 F5까지 완료됐으며
+최종 상태는 `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`를 따른다.
+
 ## 2. 구현 경계
 
 | 파일 | 소유 책임 |
@@ -20,7 +23,7 @@ F0a에서 고정한 B0 oracle과 F0b의 active source-mode 계약을 그대로
 
 코어는 CSR word를 해석하지 않는다. `lidar_active_config_t`만 소비하며,
 event payload와 `valid`를 같은 Processing clock에서 함께 등록한다. AXIS는
-제어 경로에 없고 F5에서 관측용 tap으로만 추가한다.
+제어 경로에 없고 F5에서 관측용 tap으로 추가됐다.
 
 ## 3. B0 계약
 

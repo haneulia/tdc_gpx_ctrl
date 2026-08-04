@@ -3,11 +3,10 @@
 > Status: Checkpoints A through E are complete. The unified CSR bank,
 > sequential calculator and atomic Processing/TDC configuration gateways are
 > route-verified at 150/200 and 200/150 MHz. The integrated v2 functional
-> datapath is being migrated. Stage 2 is closed; Stage 3 / Checkpoint F
-> (Processing event pipeline, B0..B3) is active. F0 source-mode ownership,
-> F1 `motor_position_core`/B0, F2 `face_tracker`/B1, F3a operation/safety,
-> F3b `shot_scheduler`/B2 and F4 `laser_executor`/B3 are complete. F5 production
-> Processing-path assembly is the next allowed sub-step.
+> datapath is being migrated. Stage 2 and Stage 3 / Checkpoint F are closed.
+> F0 through F5 now cover source-mode ownership, B0 through B3 and the
+> production Processing subsystem with an observation-only AXIS monitor. Stage
+> 4 / Checkpoint G Echo frontend is the next allowed migration step.
 
 ## 1. Purpose
 
@@ -58,6 +57,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_F3A_OPERATION_SAFETY.md](V2_CHECKPOINT_F3A_OPERATION_SAFETY.md) | RUN/STOP/ARM/DISARM, external permit and operation command CDC result |
 | [V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md](V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md) | B2 angular lattice, busy-hole identity, chain integration and route result |
 | [V2_CHECKPOINT_F4_LASER_EXECUTOR.md](V2_CHECKPOINT_F4_LASER_EXECUTOR.md) | B3 physical/simulation lifecycle, low-latency T0 bridge, safety and route result |
+| [V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md](V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md) | Production B0..B3 assembly, monitor ABI, end-to-end latency, safe-point and dual-profile evidence |
 | [V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md](V2_PROCESSING_PIPELINE_INTEGRATION_GUIDE.md) | Human-review guide for module roles, record flow, assembly/disassembly and integration risks |
 
 ## 4. Target Top-Level Shape

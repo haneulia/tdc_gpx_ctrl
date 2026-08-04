@@ -59,9 +59,9 @@ the unqualified position event directly.
 | `z_event` | Qualified revolution/index event |
 | `active_version` | Atomic configuration version used to produce the event |
 
-There is no AXIS backpressure on this path. A monitoring AXIS stream may tap
-the event after the scheduler and may drop monitor samples without affecting
-control.
+There is no AXIS backpressure on this path. The F5 monitoring AXIS taps the
+registered B1 `face_event_t` in parallel with the scheduler and may drop monitor
+samples without affecting control.
 
 ### 4.2 `face_event_t`
 
@@ -149,6 +149,41 @@ Post-synthesis structural evidence is mandatory for this exception:
 - the only other raw endpoint is the first LOW-qualification synchronizer D;
 - four `ASYNC_REG` cells preserve the raw and START observation chains.
 
+### 4.5 F5 Integrated Processing Boundary
+
+`lidar_processing_subsystem` consumes one Processing-domain active
+configuration record and one operation-state record, then directly connects
+B0 -> B1 -> B2 -> B3. It does not own CSR decode, operation-state generation or
+TDC-domain acquisition CDC.
+
+The fixed measured path contracts are:
+
+| Metric | Start edge | End edge | Processing clocks |
+|---|---|---|---:|
+| B0-to-executor accept | `position_event.valid` | matching request accept | 4 |
+| Physical sample-to-fire | first FF sample of a stable asynchronous pin | physical `fire_pulse` rising | 8 |
+| Virtual transition-to-accept | registered virtual A/B transition | matching request accept | 5 |
+
+The physical asynchronous phase before the first sample is not included. The
+virtual value ends at accept and therefore excludes the configured simulation
+START delay. All three are read-only implementation facts and insert no
+padding.
+
+The Processing-local drain contract is:
+
+```text
+processing_pipeline_idle = scheduler_idle AND NOT executor_busy
+```
+
+Monitor pending is excluded. The eventual system safe point additionally ANDs
+TDC acquisition idle and output-drain idle after those Stages are migrated.
+
+The F5 monitor is one 64-bit beat per valid B1 event. It holds an accepted AXIS
+payload stable while stalled and drops/counts newer observation candidates;
+`m_mon_axis_tready` has no fanin path to fire, START or STOP. `TLAST` marks a B1
+exit event and is not yet a frame/VDMA packet contract. The exact TDATA/TUSER
+layout is frozen in `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`.
+
 ## 5. Echo STOP Exception
 
 The physical LVDS-to-GPX STOP path is latency critical and is deliberately not
@@ -211,7 +246,8 @@ boundary.
 | GPX bus -> async result FIFO | Yes, bounded by acquisition policy | FIFO-full becomes a fault before data corruption |
 | Hit -> Cell -> Frame | Yes | Ready/valid or local FIFO with stable payload |
 | Frame -> VDMA AXIS | Yes | Full AXI stability and Face abort policy required |
-| Diagnostic AXIS | Yes or drop | Must never throttle a physical control path |
+| Processing monitor AXIS | Yes, retained beat; newer samples may drop | Must never throttle B0..B3 or participate in local idle |
+| Other diagnostic AXIS | Yes or drop | Must never throttle a physical control path |
 
 ## 8. Latency Accounting
 
@@ -221,8 +257,10 @@ and the observed latency.
 
 | Metric | Start | End |
 |---|---|---|
-| Encoder-to-position | synchronized A/B transition | `position_event.valid` |
-| Position-to-fire | `position_event.valid` | physical `fire_pulse` rising edge |
+| Encoder-to-position | first FF sample of a stable physical A/B value | `position_event.valid`; F1 = 4 clocks |
+| Position-to-fire | `position_event.valid` | physical `fire_pulse` rising edge; F5 = 4 clocks |
+| Physical sample-to-fire | first FF sample of a stable physical A/B value | physical `fire_pulse` rising edge; F5 = 8 clocks |
+| Virtual transition-to-accept | registered virtual A/B transition | matching request accept; F5 = 5 clocks |
 | Fire-to-done | physical `fire_pulse` | synchronized matching `fire_done` |
 | Fire-to-TDC | physical `fire_pulse` | `start_tdc` rising edge |
 | START-to-first-word | `start_tdc` | first accepted 28-bit GPX word |

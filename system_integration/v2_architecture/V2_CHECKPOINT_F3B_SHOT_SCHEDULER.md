@@ -9,6 +9,10 @@ point는 늦게 재발사하지 않고 해당 열을 비운 채 overrun으로 �
 **결론:** B2는 통과했다. 다음 허용 단계는 F4 `laser_executor`이다.
 Checkpoint F 전체, 통합 IP, VDMA 및 HTML 정합은 아직 완료 판정이 아니다.
 
+위 순서는 F3b 완료 당시 gate 기록이다. 현재 Checkpoint F는 F5까지 완료됐으며
+최종 상태는 `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`를 따른다. VDMA/HTML
+정합이 아직 완료되지 않았다는 제한은 그대로 유효하다.
+
 ## 2. 시스템 역할
 
 `shot_scheduler`는 다음 한 가지 결정을 소유한다.

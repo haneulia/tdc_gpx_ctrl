@@ -277,7 +277,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | C | Complete | `1b8b015`, `8789e7b` | Sequential validator/deriver and all runtime timebase conversions |
 | 2 | D | Complete | `67e0800` | Atomic configuration manager and Processing/TDC gateways |
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
-| 3 | F | In progress | F0..F4 complete; F5 production assembly pending | Processing event pipeline |
+| 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Pending | B4 evidence pending | Echo frontend |
 | 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
@@ -285,12 +285,11 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
-**Current migration state:** Stage 2 is closed at Checkpoint E. Stage 3 /
-Checkpoint F is in progress; F0a/F0b, F1/B0, F2/B1, F3a operation/safety,
-F3b/B2 and F4/B3 are complete. The only valid next sub-step is **F5 direct
-Processing event-path integration**.
-Stage 4 or
-later work must not be treated as migrated merely because its v1
+**Current migration state:** Stage 2 is closed at Checkpoint E and Stage 3 is
+closed at Checkpoint F. F0a/F0b through F5 now cover the source contract,
+B0..B3, production Processing assembly, local drain and observation-only AXIS
+monitor. The only valid next step is **Stage 4 / Checkpoint G Echo frontend**.
+Stage 5 or later work must not be treated as migrated merely because its v1
 implementation exists.
 
 Commit only after the focused sub-step passes. Intermediate commits inside a
@@ -301,7 +300,7 @@ Never stage unrelated user changes, generated Vivado work directories, wave
 databases or transient logs. Each archived sign-off session contains only the
 scenario, source manifest, compact results, final logs and required waveforms.
 
-## 6. Immediate Next RTL Work Package: Stage 3 / Checkpoint F
+## 6. Completed RTL Work Package: Stage 3 / Checkpoint F
 
 Checkpoint F moves only the Processing-domain event path. Its internal order
 is fixed so that each new block has one already-verified input boundary:
@@ -317,7 +316,7 @@ is fixed so that each new block has one already-verified input boundary:
 | F4 | Implement `laser_executor` | B3 exact physical/simulation exclusion, fire/start/stop timing and timeout behavior |
 | F5 | Integrate the direct registered event path and read-only AXIS monitor tap | B0..B3 end-to-end comparison, assertions and both routine clock profiles |
 
-Current sub-step status:
+Final sub-step status:
 
 | Step | Status | Evidence |
 |---:|---|---|
@@ -326,8 +325,8 @@ Current sub-step status:
 | F2 | Complete | `V2_CHECKPOINT_F2_FACE_TRACKER.md`; session `260804184000_v2_face_tracker` |
 | F3a | Complete | `V2_CHECKPOINT_F3A_OPERATION_SAFETY.md`; sessions `260804203000_v2_operation`, `260804204000_v2_unified_csr` |
 | F3b | Complete | `V2_CHECKPOINT_F3B_SHOT_SCHEDULER.md`; session `260804211500_v2_shot_scheduler` |
-| F4 | Complete | `V2_CHECKPOINT_F4_LASER_EXECUTOR.md`; session `260804220300_v2_laser_executor` |
-| F5 | Next | Production B0..B3 assembly, monitor tap and dual-domain profile evidence pending |
+| F4 | Complete | `V2_CHECKPOINT_F4_LASER_EXECUTOR.md`; follow-up session `260804_f4_busy_opt_v2_laser_executor` |
+| F5 | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` |
 
 Rules for this package:
 
@@ -336,10 +335,30 @@ Rules for this package:
    does not reinterpret CSR words.
 3. Motor-to-Laser control events use direct registered records. AXIS is a
    monitor copy and cannot apply backpressure to `fire_pulse` or `start_tdc`.
-4. The next step starts only after the preceding boundary comparison passes.
-5. Checkpoint F closes only after 150/200 and 200/150 MHz regressions pass with
+4. Each step started only after the preceding boundary comparison passed.
+5. Checkpoint F closed only after 150/200 and 200/150 MHz regressions passed with
    zero inferred latches and no new unclassified CDC path.
 6. F1 was gated by the F0b package/calculator/manager/CSR regressions, and F3b
    was gated by F3a ownership of every operation and laser-permit state. Those
    gates are now closed; the invariant remains that a scheduler must never
    infer safety permission from configuration validity alone.
+
+## 7. Immediate Next RTL Work Package: Stage 4 / Checkpoint G
+
+Checkpoint G moves only B4 Echo frontend. It must not pull the GPX bus engine,
+Hit decoder or formatter forward from later Stages.
+
+Required order:
+
+1. freeze the v1 LVDS-to-STOP edge, channel and latency oracle;
+2. define the physical direct path and a separately generated simulation path;
+3. implement all 16 APD channels without CSR or AXIS backpressure in the STOP
+   path;
+4. attach F5 shot identity as observation/context without delaying STOP;
+5. verify Return 1 through 7, channel ordering and production removal of the
+   simulation generator;
+6. run the two routine 150/200 and 200/150 MHz profiles before closing G.
+
+Checkpoint G may consume F5 `shot_start_event_t`, but it cannot claim that the
+event has crossed into the GPX acquisition domain. That command/result CDC and
+the proven v1 bus wrapper belong to Stage 5 / Checkpoint H.

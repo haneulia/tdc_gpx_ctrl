@@ -11,6 +11,9 @@ software가 우회할 수 없는 live safety 입력으로 분리했다.
 Scheduler는 `ACTIVE_VALID`나 source mode를 보고 허가를 재구성하지 않고,
 F3a의 `scheduler_enable`만 소비해야 한다.
 
+위 순서는 F3a 완료 당시 gate 기록이다. 현재 Checkpoint F는 F5까지 완료됐으며
+최종 상태는 `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`를 따른다.
+
 ## 2. v1 비교와 변경 이유
 
 v1 `laser_ctrl`은 `CTL0[0].laser_en` persistent level을 executor admission에

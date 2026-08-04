@@ -11,8 +11,9 @@
 4. 블록을 분리해 시험한 결과가 연결 후에도 같은 의미인가?
 5. 아직 구현되지 않은 블록을 이미 검증된 것으로 오해하고 있지 않은가?
 
-문서는 Stage 3가 진행될 때마다 갱신한다. 현재 F1/B0, F2/B1, F3a,
-F3b/B2와 F4/B3가 구현 및 검증되었고 F5 production 조립은 남아 있다.
+문서는 기능 Stage가 진행될 때마다 갱신한다. F1/B0, F2/B1, F3a,
+F3b/B2, F4/B3와 F5 production 조립이 모두 구현 및 검증되어 Stage 3는
+완료됐다. 다음 migration 경계는 Stage 4 / Checkpoint G Echo frontend다.
 
 ## 2. 현재 검증 범위
 
@@ -24,7 +25,7 @@ F3b/B2와 F4/B3가 구현 및 검증되었고 F5 production 조립은 남아 있
 | B1 Face tracker | 완료 | inclusive geometry와 traversal event |
 | B2 Shot scheduler | 완료 | angular lattice와 busy-hole identity |
 | B3 Laser executor | 완료 | 물리/가상 fire/start/stop, timeout과 진단 |
-| B0..B3 production integration | 미구현 | F5 전에는 전체 latency/sign-off 아님 |
+| B0..B3 production integration | 완료 | F5 P50..P53, local drain과 monitor 격리 포함 |
 | TDC acquisition와 formatter | 기존 v1만 존재 | v2 migration 전 |
 | VDMA/HTML end-to-end | 미완료 | column hole 정합을 추후 확인해야 함 |
 
@@ -41,7 +42,7 @@ flowchart LR
     C -->|"face_event_t"| D["B2 shot_scheduler"]
     D -->|"shot_request_t"| E["B3 laser_executor"]
     E --> F["fire_pulse / start_tdc / stop_tdc"]
-    E -->|"shot_start_event_t / shot_result_t"| G["TDC and frame pipeline - F5 이후"]
+    E -->|"shot_start_event_t / shot_result_t"| G["TDC acquisition and frame pipeline - Stage H 이후"]
 ```
 
 이 흐름의 핵심은 payload와 `valid`가 같은 레코드에서 함께 등록된다는 점이다.
@@ -147,6 +148,21 @@ B2는 Face 중간 ARM을 새로운 Face entry로 해석하지 않는다. ARM 직
 Processing clock 주기**를 보장한다. 하강은 clock-aligned이며 raw 입력이 HIGH로
 고착돼도 설정 폭 뒤 출력은 닫힌다. 다만 raw LOW가 다시 검증되기 전에는 다음
 물리 shot을 허용하지 않는다.
+
+### 4.6 `lidar_processing_subsystem`과 AXIS monitor - F5
+
+| 구분 | 내용 |
+|---|---|
+| 입력 | 한 source의 `active_config`, 한 source의 `operation_state`, Encoder, raw `fire_done` |
+| 출력 | B0..B3 records, fire/start/stop, Processing-local idle, 64-bit monitor AXIS |
+| 소유 | B0..B3 조립, aggregate diagnostics, local idle 의미 |
+| 비소유 | CSR decode, operation state 생성, TDC acquisition, frame/output drain |
+| monitor 정책 | B1 event 관찰만 수행; stalled beat는 안정 유지하고 새 event는 drop/count |
+| 검증 | P50..P53, Processing/TDC 150/200과 200/150 MHz |
+
+monitor는 `face_event_t`의 copy이므로 TREADY가 없어도 B0..B3는 계속 동작한다.
+`pipeline_idle`에도 monitor pending은 포함하지 않는다. 정확한 monitor bit layout과
+최종 구현 수치는 `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`를 따른다.
 
 ## 5. 레코드 필드 계보
 
@@ -289,27 +305,29 @@ sequenceDiagram
 - `accept`와 `drop`은 동시에 1일 수 없다.
 - unresolved 요청은 Face 전환으로 지우지 않는다.
 - config loss/reset은 fail-safe로 ownership을 폐기한다.
-- 최종 `pipeline_idle`은 B2와 B3뿐 아니라 TDC acquisition과 output drain도
-  포함해야 한다. P35는 F3a/B1/B2/B3까지의 test-only chain이며 production
-  safe-point 조립은 F5에서 완료한다.
+- F5 `pipeline_idle = scheduler_idle AND NOT executor_busy`는 Processing-local
+  drain이다. monitor pending/stall은 기능 drain이 아니므로 제외한다.
+- 전체 시스템 safe point는 Stage H/J에서 이 local idle과 TDC acquisition idle,
+  output drain idle을 AND해 완성한다. P52는 monitor가 stalled여도 Processing-local
+  safe point가 정상적으로 올라오는 것을 검증했다.
 
 ## 9. 융합 지점별 위험 표
 
 | 융합 지점 | 위험 | 현재 방어 | 남은 검증 |
 |---|---|---|---|
-| Active config -> B0/B1/B2 | 서로 다른 version 사용 | event version assertion | F5 full chain |
+| Active config -> B0/B1/B2/B3 | 서로 다른 version 사용 | 한 record source와 event identity assertion | 완료 P50/P53 |
 | F3a -> B2/B3 | config valid를 laser permit로 오인 | B2는 scheduler gate, B3는 final physical gate만 소비 | 완료 P34/P35 |
-| B0 -> B1 | source/latency 문맥 분리 | typed record 그대로 전달 | F5 pin-to-shot latency |
+| B0 -> B1 | source/latency 문맥 분리 | typed record 그대로 전달 | 완료 P50/P53, 8/5-clock contract |
 | B1 -> B2 | mid-Face 또는 stale pre-ARM entry의 ghost shot | 2-clock quarantine 뒤 genuine enter만 session 시작 | 완료 P24/P25 |
 | B2 -> B3 | request unresolved/중복 | one-entry inflight와 accept/drop | 완료 P34/P35 |
-| raw `fire_done` -> B3 | metastability, stale/stuck HIGH, 무한 START | direct FDPE preset + 2-stage 관찰 + bounded close | 완료 P30/P31/P32/P36; parent XDC는 F5 |
+| raw `fire_done` -> B3 | metastability, stale/stuck HIGH, 무한 START | direct FDPE preset + 2-stage 관찰 + bounded close | 완료 P30/P31/P32/P36, F5 endpoint audit; parent XDC는 Stage L |
 | B2 -> formatter | busy hole 압축 | geometric `shot_index` | frame/VDMA migration |
-| Control -> AXIS monitor | tready가 발사를 막음 | AXIS를 B0..B3 제어 경로에서 제외 | F5 monitor tap |
+| Control -> AXIS monitor | tready가 발사를 막음 | AXIS를 B0..B3 제어 경로에서 제외 | 완료 P51와 routed fanin audit |
 | Physical/simulation | 두 START source 동시 활성 | source metadata, F3a mutual exclusion, B3 assertion | 완료 P33/P35 |
 
 ## 10. 조립 체크리스트
 
-F5 또는 parent에서 블록을 연결할 때 아래 순서를 따른다.
+F5 production subsystem을 검토하거나 이후 parent에 연결할 때 아래 순서를 따른다.
 
 1. 모든 B0..B3 블록을 같은 `proc_aclk/proc_aresetn`에 둔다.
 2. Processing gateway의 동일 `active_config/version`을 배포한다.
@@ -318,10 +336,10 @@ F5 또는 parent에서 블록을 연결할 때 아래 순서를 따른다.
 5. F3a `physical_fire_enable`을 B3 최종 물리 gate에 연결한다.
 6. `position_event_t -> face_event_t -> shot_request_t`를 직접 연결한다.
 7. B3 ready/accept/drop을 B2에 연결하고 상호 배타 assertion을 유지한다.
-8. B2/B3/TDC/output idle을 합쳐 atomic manager safe point를 만든다.
+8. F5에서는 B2/B3 local idle을 만들고, Stage H/J에서 TDC/output idle을 합친다.
 9. AXIS monitor는 event를 복사만 하고 ready를 upstream 제어에 되먹이지 않는다.
-10. Face/index/version/source metadata가 acquisition과 formatter까지 유지되는지
-    self-checking TB로 확인한다.
+10. F5에서는 Face/index/version/source metadata가 B3 result까지 유지됨을
+    확인하고, acquisition과 formatter 연속성은 Stage H/J TB에서 확장한다.
 11. raw `fire_done`은 B3 캡처 PRE와 첫 synchronizer D 이외의 기능 cone으로
     분기하지 않도록 합성 구조 감사를 유지한다.
 
@@ -353,6 +371,9 @@ shot_start.valid/request/fire_to_t0_clks
 shot_result.valid/timeout/aborted/request
 laser_diagnostics pulse/sticky/count
 scheduler_idle, schedule_overrun_pulse/sticky/count
+pipeline_idle
+mon_axis_tvalid/tready/tdata/tuser/tlast
+monitor_drop_pulse/sticky/count
 ```
 
 ## 12. 검증 추적표
@@ -369,21 +390,25 @@ scheduler_idle, schedule_overrun_pulse/sticky/count
 | 실제 fire/start/stop이 맞는가? | F4 P30..P36 |
 | F3a/B1/B2/B3가 같은 shot identity인가? | F4 P35 |
 | raw T0 경로가 합성 후에도 직접 preset인가? | F4 structural audit |
-| Encoder pin부터 TDC까지 전체 지연은? | F5 예정 |
+| Encoder 첫 sample부터 physical fire까지 지연은? | F5 P50, 8 Processing clocks |
+| Virtual transition부터 request accept까지 지연은? | F5 P53, 5 Processing clocks |
+| Monitor stall이 제어를 막는가? | F5 P51 및 routed fanin audit |
+| STOP 뒤 Processing-local safe point가 정확한가? | F5 P52 |
+| START부터 실제 GPX acquisition까지 지연은? | Stage H 예정 |
 | VDMA가 빈 열을 보존하는가? | Stage I/J 예정 |
 | HTML과 RTL 결과가 같은가? | Stage K 예정 |
 
 ## 13. 현재 인간 검토 판정
 
 현재 구조는 B0 위치, B1 Face, F3a 안전 허가, B2 Shot 격자, B3 Laser 수명주기를
-각각 한 owner로 분리했고 typed record로 identity를 전달한다. P35에서 물리와
-가상 모드 모두 F3a/B1/B2/B3 연결을 확인했다. 따라서 F5 production assembly를
-시작할 수 있다.
+각각 한 owner로 분리했고 typed record로 identity를 전달한다. F5 P50..P53에서
+물리와 가상 모드, monitor stall, STOP/drain과 B0..B3 production 조립을 확인했다.
+따라서 Processing pipeline은 Stage 3 범위에서 완료됐다.
 
 다만 다음 문장을 아직 사용할 수는 없다.
 
 > "통합 IP가 실제 레이저와 TDC를 완전하게 제어하고 VDMA/HTML까지 정합된다."
 
-그 판정은 F5, TDC/frame/formatter migration과 HTML 비교를 모두 통과한 뒤에
+그 판정은 TDC/frame/formatter migration과 HTML 비교를 모두 통과한 뒤에
 가능하다. 각 다음 체크포인트는 이 문서의 필드 계보, 위험 표와 조립 체크리스트를
 갱신해야 완료로 인정한다.
