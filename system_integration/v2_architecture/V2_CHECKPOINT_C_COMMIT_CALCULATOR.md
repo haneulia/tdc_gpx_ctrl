@@ -15,7 +15,7 @@ Checkpoint C의 합성 가능한 순차형 설정 계산기는 **PASS**이다.
 |---|---|
 | `lidar_commit_calculator` | 요청 캡처, validate/derive 순서 제어, 결과 원자적 게시 |
 | `lidar_config_validator_seq` | build/runtime 범위, face geometry, mask 및 시간 관계 검사 |
-| `lidar_config_deriver_seq` | face 경계, 각도/state, shot 간격, column 수, domain clock 수 계산 |
+| `lidar_config_deriver_seq` | face 경계, 각도/state, shot 간격, column 수, 모든 5 ns 시간의 domain clock 수 계산 |
 | `lidar_u32_u16_multiplier_seq` | 16-cycle shift/add 곱셈기 |
 | `lidar_u64_u32_divider_seq` | 64-cycle restoring 나눗셈기 |
 | `lidar_config_reference_pkg` | TB에서만 사용하는 cycle-independent 정답 모델 |
@@ -38,12 +38,12 @@ Checkpoint C의 합성 가능한 순차형 설정 계산기는 **PASS**이다.
 
 ## 4. 순차 계산 결과
 
-기본 build/runtime 설정의 정상 commit은 TB 관측 기준 **559 clocks**이다.
+기본 build/runtime 설정의 정상 commit은 TB 관측 기준 **1,091 clocks**이다.
 
 | 설정 clock | 관측 commit 시간 |
 |---:|---:|
-| 150 MHz | 약 3.727 us |
-| 200 MHz | 약 2.795 us |
+| 150 MHz | 약 7.273 us |
+| 200 MHz | 약 5.455 us |
 
 이 시간은 software가 설정을 commit할 때만 사용된다. motor position, laser
 `fire_pulse`, `fire_done -> start_tdc`, Echo LVDS-to-STOP 및 GPX readout의
@@ -55,7 +55,9 @@ Checkpoint C의 합성 가능한 순차형 설정 계산기는 **PASS**이다.
 `lidar_config_reference_pkg`의 결과와 record 전체를 비교한다.
 
 - 기본 설정과 ceil shot quantization
-- signed capture calibration 및 5 ns tick의 domain-clock ceil 변환
+- signed capture calibration 및 모든 5 ns tick의 domain-clock ceil 변환
+- fire/start/stop width, fire-done timeout과 simulation start delay
+- target/capture/scan timeout의 Processing/TDC clock 변환
 - 최대에 가까운 32-bit 시간값의 곱셈 범위
 - falling 비활성 시 모든 active chip의 rising 승격
 - CW/CCW와 무관한 물리 face geometry
@@ -74,10 +76,10 @@ Pass marker는 두 profile 모두 `LIDAR_V2_COMMIT_CALCULATOR_PASS`이다.
 
 | 항목 | 150 MHz | 200 MHz |
 |---|---:|---:|
-| Post-route WNS | +1.555 ns | +0.261 ns |
+| Post-route WNS | +0.993 ns | +0.199 ns |
 | Inferred latch | 0 | 0 |
-| LUT | 1,006 | 1,006 |
-| FF | 2,071 | 2,071 |
+| LUT | 1,108 | 1,108 |
+| FF | 2,553 | 2,553 |
 | BRAM | 0 | 0 |
 | DSP | 0 | 0 |
 
@@ -93,10 +95,10 @@ I/O delay 및 배치 혼잡도를 포함하여 다시 timing closure해야 한�
 ## 7. 재현 정보
 
 - Tool: Vivado 2025.2.1
-- Package regression: `260804125059_v2_config_pkg`
-- Calculator regression: `260804125422_v2_commit_calculator`
+- Package regression: `260804132031_v2_config_pkg`
+- Calculator regression: `260804132119_v2_commit_calculator`
 - Calculator archive:
-  `signoff_results/sessions/260804125422_v2_commit_calculator`
+  `signoff_results/sessions/260804132119_v2_commit_calculator`
 - 실행 스크립트:
   `system_integration/v2/scripts/run_v2_commit_calculator.ps1`
 - WDB와 Vivado journal은 보관하지 않는다.

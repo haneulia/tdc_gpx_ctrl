@@ -141,7 +141,15 @@ begin
             i_virtual_ticks_lo   => r_source.motor.virtual_ticks_lo,
             i_face_centers       => r_source.mirror.face_centers,
             i_common_half_width  => r_source.mirror.common_half_width,
+            i_fire_width_5ns     => r_source.laser.fire_width_5ns_ticks,
+            i_fire_timeout_5ns   =>
+                r_source.laser.fire_done_timeout_5ns_ticks,
             i_target_range_5ns   => r_source.laser.target_range_window_5ns,
+            i_start_width_5ns    => r_source.laser.start_width_5ns_ticks,
+            i_stop_width_5ns     => r_source.laser.stop_width_5ns_ticks,
+            i_sim_start_delay_5ns =>
+                r_source.laser.simulation_start_delay_5ns,
+            i_scan_timeout_5ns   => r_source.tdc.scan_timeout_5ns,
             i_active_chip_mask   => r_source.tdc.active_chip_mask,
             i_falling_enable     => r_source.tdc.falling_enable,
             i_total_states       => w_total_states,

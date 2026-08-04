@@ -16,7 +16,13 @@ entity lidar_config_deriver_seq is
         i_virtual_ticks_lo   : in  u32_t;
         i_face_centers       : in  face_position_array_t;
         i_common_half_width  : in  position_t;
+        i_fire_width_5ns     : in  u16_t;
+        i_fire_timeout_5ns   : in  u16_t;
         i_target_range_5ns   : in  u32_t;
+        i_start_width_5ns    : in  u16_t;
+        i_stop_width_5ns     : in  u16_t;
+        i_sim_start_delay_5ns : in u32_t;
+        i_scan_timeout_5ns   : in  u32_t;
         i_active_chip_mask   : in  chip_mask_t;
         i_falling_enable     : in  std_logic;
         i_total_states       : in  u16_t;
@@ -57,16 +63,25 @@ architecture rtl of lidar_config_deriver_seq is
         S_START_SHOT_DIV,
         S_WAIT_SHOT_DIV,
         S_WAIT_COLUMN_DIV,
-        S_START_PROC_MULTIPLY,
-        S_WAIT_PROC_MULTIPLY,
-        S_START_PROC_DIV,
-        S_WAIT_PROC_DIV,
-        S_START_TDC_MULTIPLY,
-        S_WAIT_TDC_MULTIPLY,
-        S_START_TDC_DIV,
-        S_WAIT_TDC_DIV,
+        S_LOAD_TIME_FIELD,
+        S_START_TIME_MULTIPLY,
+        S_WAIT_TIME_MULTIPLY,
+        S_START_TIME_DIVIDE,
+        S_WAIT_TIME_DIVIDE,
+        S_STORE_TIME_FIELD,
         S_FINISH,
         S_FINISH_FAULT
+    );
+
+    type time_field_t is (
+        TIME_FIRE_WIDTH_PROC,
+        TIME_FIRE_TIMEOUT_PROC,
+        TIME_TARGET_RANGE_PROC,
+        TIME_START_WIDTH_PROC,
+        TIME_STOP_WIDTH_PROC,
+        TIME_SIM_START_DELAY_PROC,
+        TIME_CAPTURE_WINDOW_TDC,
+        TIME_SCAN_TIMEOUT_TDC
     );
 
     signal r_state           : state_t := S_IDLE;
@@ -86,6 +101,8 @@ architecture rtl of lidar_config_deriver_seq is
     signal r_div_numerator   : unsigned(63 downto 0);
     signal r_div_denominator : u32_t;
     signal r_tick_product    : unsigned(63 downto 0);
+    signal r_time_field      : time_field_t := TIME_FIRE_WIDTH_PROC;
+    signal r_time_clocks     : u32_t;
 
 begin
 
@@ -307,31 +324,66 @@ begin
                                 end if;
                                 r_derived.columns_per_face <=
                                     v_quotient(15 downto 0);
-                                r_state <= S_START_PROC_MULTIPLY;
+                                r_time_field <= TIME_FIRE_WIDTH_PROC;
+                                r_state <= S_LOAD_TIME_FIELD;
                             end if;
                         end if;
 
-                    when S_START_PROC_MULTIPLY =>
-                        r_mul_left <= i_target_range_5ns;
-                        r_mul_right <= to_unsigned(
-                            G_BUILD_CONFIG.proc_clk_mhz, 16);
-                        r_mul_start <= '1';
-                        r_state <= S_WAIT_PROC_MULTIPLY;
+                    when S_LOAD_TIME_FIELD =>
+                        case r_time_field is
+                            when TIME_FIRE_WIDTH_PROC =>
+                                r_mul_left <= resize(i_fire_width_5ns, 32);
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.proc_clk_mhz, 16);
+                            when TIME_FIRE_TIMEOUT_PROC =>
+                                r_mul_left <= resize(i_fire_timeout_5ns, 32);
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.proc_clk_mhz, 16);
+                            when TIME_TARGET_RANGE_PROC =>
+                                r_mul_left <= i_target_range_5ns;
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.proc_clk_mhz, 16);
+                            when TIME_START_WIDTH_PROC =>
+                                r_mul_left <= resize(i_start_width_5ns, 32);
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.proc_clk_mhz, 16);
+                            when TIME_STOP_WIDTH_PROC =>
+                                r_mul_left <= resize(i_stop_width_5ns, 32);
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.proc_clk_mhz, 16);
+                            when TIME_SIM_START_DELAY_PROC =>
+                                r_mul_left <= i_sim_start_delay_5ns;
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.proc_clk_mhz, 16);
+                            when TIME_CAPTURE_WINDOW_TDC =>
+                                r_mul_left <= i_capture_window_5ns;
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.tdc_clk_mhz, 16);
+                            when TIME_SCAN_TIMEOUT_TDC =>
+                                r_mul_left <= i_scan_timeout_5ns;
+                                r_mul_right <= to_unsigned(
+                                    G_BUILD_CONFIG.tdc_clk_mhz, 16);
+                        end case;
+                        r_state <= S_START_TIME_MULTIPLY;
 
-                    when S_WAIT_PROC_MULTIPLY =>
+                    when S_START_TIME_MULTIPLY =>
+                        r_mul_start <= '1';
+                        r_state <= S_WAIT_TIME_MULTIPLY;
+
+                    when S_WAIT_TIME_MULTIPLY =>
                         if i_mul_done = '1' then
                             r_tick_product <= i_mul_product;
-                            r_state <= S_START_PROC_DIV;
+                            r_state <= S_START_TIME_DIVIDE;
                         end if;
 
-                    when S_START_PROC_DIV =>
+                    when S_START_TIME_DIVIDE =>
                         r_div_numerator <= r_tick_product;
                         r_div_denominator <= to_unsigned(
                             C_5NS_TICK_RATE_MHZ, 32);
                         r_div_start <= '1';
-                        r_state <= S_WAIT_PROC_DIV;
+                        r_state <= S_WAIT_TIME_DIVIDE;
 
-                    when S_WAIT_PROC_DIV =>
+                    when S_WAIT_TIME_DIVIDE =>
                         if i_div_done = '1' then
                             if i_div_zero = '1' then
                                 r_state <= S_FINISH_FAULT;
@@ -340,46 +392,47 @@ begin
                                 if i_div_remainder /= 0 then
                                     v_quotient := v_quotient + 1;
                                 end if;
-                                r_derived.target_range_proc_clks <=
-                                    v_quotient(31 downto 0);
-                                r_state <= S_START_TDC_MULTIPLY;
+                                r_time_clocks <= v_quotient(31 downto 0);
+                                r_state <= S_STORE_TIME_FIELD;
                             end if;
                         end if;
 
-                    when S_START_TDC_MULTIPLY =>
-                        r_mul_left <= i_capture_window_5ns;
-                        r_mul_right <= to_unsigned(
-                            G_BUILD_CONFIG.tdc_clk_mhz, 16);
-                        r_mul_start <= '1';
-                        r_state <= S_WAIT_TDC_MULTIPLY;
-
-                    when S_WAIT_TDC_MULTIPLY =>
-                        if i_mul_done = '1' then
-                            r_tick_product <= i_mul_product;
-                            r_state <= S_START_TDC_DIV;
-                        end if;
-
-                    when S_START_TDC_DIV =>
-                        r_div_numerator <= r_tick_product;
-                        r_div_denominator <= to_unsigned(
-                            C_5NS_TICK_RATE_MHZ, 32);
-                        r_div_start <= '1';
-                        r_state <= S_WAIT_TDC_DIV;
-
-                    when S_WAIT_TDC_DIV =>
-                        if i_div_done = '1' then
-                            if i_div_zero = '1' then
-                                r_state <= S_FINISH_FAULT;
-                            else
-                                v_quotient := i_div_quotient;
-                                if i_div_remainder /= 0 then
-                                    v_quotient := v_quotient + 1;
-                                end if;
-                                r_derived.capture_window_tdc_clks <=
-                                    v_quotient(31 downto 0);
+                    when S_STORE_TIME_FIELD =>
+                        case r_time_field is
+                            when TIME_FIRE_WIDTH_PROC =>
+                                r_derived.fire_width_proc_clks <= r_time_clocks;
+                                r_time_field <= TIME_FIRE_TIMEOUT_PROC;
+                                r_state <= S_LOAD_TIME_FIELD;
+                            when TIME_FIRE_TIMEOUT_PROC =>
+                                r_derived.fire_done_timeout_proc_clks <=
+                                    r_time_clocks;
+                                r_time_field <= TIME_TARGET_RANGE_PROC;
+                                r_state <= S_LOAD_TIME_FIELD;
+                            when TIME_TARGET_RANGE_PROC =>
+                                r_derived.target_range_proc_clks <= r_time_clocks;
+                                r_time_field <= TIME_START_WIDTH_PROC;
+                                r_state <= S_LOAD_TIME_FIELD;
+                            when TIME_START_WIDTH_PROC =>
+                                r_derived.start_width_proc_clks <= r_time_clocks;
+                                r_time_field <= TIME_STOP_WIDTH_PROC;
+                                r_state <= S_LOAD_TIME_FIELD;
+                            when TIME_STOP_WIDTH_PROC =>
+                                r_derived.stop_width_proc_clks <= r_time_clocks;
+                                r_time_field <= TIME_SIM_START_DELAY_PROC;
+                                r_state <= S_LOAD_TIME_FIELD;
+                            when TIME_SIM_START_DELAY_PROC =>
+                                r_derived.simulation_start_delay_proc_clks <=
+                                    r_time_clocks;
+                                r_time_field <= TIME_CAPTURE_WINDOW_TDC;
+                                r_state <= S_LOAD_TIME_FIELD;
+                            when TIME_CAPTURE_WINDOW_TDC =>
+                                r_derived.capture_window_tdc_clks <= r_time_clocks;
+                                r_time_field <= TIME_SCAN_TIMEOUT_TDC;
+                                r_state <= S_LOAD_TIME_FIELD;
+                            when TIME_SCAN_TIMEOUT_TDC =>
+                                r_derived.scan_timeout_tdc_clks <= r_time_clocks;
                                 r_state <= S_FINISH;
-                            end if;
-                        end if;
+                        end case;
 
                     when S_FINISH =>
                         r_busy  <= '0';

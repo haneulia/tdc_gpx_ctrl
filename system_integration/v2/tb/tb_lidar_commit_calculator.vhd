@@ -18,6 +18,7 @@ end entity tb_lidar_commit_calculator;
 architecture sim of tb_lidar_commit_calculator is
 
     constant C_HALF_PERIOD : time := G_HALF_PERIOD_PS * 1 ps;
+    constant C_MAX_COMMIT_CLKS : positive := 2000;
 
     signal s_clk            : std_logic := '0';
     signal s_rst_n          : std_logic := '0';
@@ -87,7 +88,7 @@ begin
                 wait until rising_edge(s_clk);
                 v_cycles := v_cycles + 1;
                 exit when s_done = '1';
-                check(v_cycles < 1000,
+                check(v_cycles < C_MAX_COMMIT_CLKS,
                     case_name & ": calculator timeout");
             end loop;
 
@@ -119,6 +120,16 @@ begin
         wait until rising_edge(s_clk);
 
         run_case("V2-CALC-001 default", C_DEFAULT_RUNTIME_CONFIG, CFG_OK);
+        check(to_integer(s_derived.fire_width_proc_clks) = 10
+              and to_integer(s_derived.fire_done_timeout_proc_clks) = 216
+              and to_integer(s_derived.target_range_proc_clks) = 216
+              and to_integer(s_derived.start_width_proc_clks) = 4
+              and to_integer(s_derived.stop_width_proc_clks) = 4
+              and to_integer(
+                  s_derived.simulation_start_delay_proc_clks) = 100
+              and to_integer(s_derived.capture_window_tdc_clks) = 288
+              and s_derived.scan_timeout_tdc_clks = 0,
+            "V2-CALC-001 complete 5 ns time conversion");
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
         v_cfg.laser.optical_shot_interval_udeg := to_unsigned(50_001, 30);
@@ -131,9 +142,11 @@ begin
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
         v_cfg.laser.target_range_window_5ns := to_unsigned(289, 32);
+        v_cfg.tdc.scan_timeout_5ns := to_unsigned(289, 32);
         run_case("V2-CALC-003 fractional clock ceil", v_cfg, CFG_OK);
         check(to_integer(s_derived.target_range_proc_clks) = 217
-              and to_integer(s_derived.capture_window_tdc_clks) = 289,
+              and to_integer(s_derived.capture_window_tdc_clks) = 289
+              and to_integer(s_derived.scan_timeout_tdc_clks) = 289,
             "V2-CALC-003 150/200 MHz conversion");
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
@@ -265,7 +278,8 @@ begin
         while s_done /= '1' loop
             wait until rising_edge(s_clk);
             v_cycles := v_cycles + 1;
-            check(v_cycles < 1000, "V2-CALC-201 completion timeout");
+            check(v_cycles < C_MAX_COMMIT_CLKS,
+                "V2-CALC-201 completion timeout");
         end loop;
         check(s_error = CFG_OK and s_derived = v_expected,
             "V2-CALC-201 source snapshot was not atomic");

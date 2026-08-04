@@ -80,9 +80,15 @@ package lidar_config_types_pkg is
         present_chip_mask               : chip_mask_t;
         active_rise_mask                : chip_mask_t;
         active_fall_mask                : chip_mask_t;
+        fire_width_proc_clks             : u32_t;
+        fire_done_timeout_proc_clks      : u32_t;
         target_range_proc_clks          : u32_t;
+        start_width_proc_clks            : u32_t;
+        stop_width_proc_clks             : u32_t;
+        simulation_start_delay_proc_clks : u32_t;
         capture_window_5ns              : u32_t;
         capture_window_tdc_clks         : u32_t;
+        scan_timeout_tdc_clks            : u32_t;
     end record lidar_derived_config_t;
 
     type lidar_active_config_t is record

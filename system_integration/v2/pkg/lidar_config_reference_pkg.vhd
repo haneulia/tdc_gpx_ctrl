@@ -381,12 +381,29 @@ package body lidar_config_reference_pkg is
             result.active_fall_mask := (others => '0');
         end if;
 
+        result.fire_width_proc_clks := fn_ticks_to_clocks(resize(
+            runtime_cfg.laser.fire_width_5ns_ticks, 32),
+            build_cfg.proc_clk_mhz);
+        result.fire_done_timeout_proc_clks := fn_ticks_to_clocks(resize(
+            runtime_cfg.laser.fire_done_timeout_5ns_ticks, 32),
+            build_cfg.proc_clk_mhz);
         result.target_range_proc_clks := fn_ticks_to_clocks(
             runtime_cfg.laser.target_range_window_5ns,
+            build_cfg.proc_clk_mhz);
+        result.start_width_proc_clks := fn_ticks_to_clocks(resize(
+            runtime_cfg.laser.start_width_5ns_ticks, 32),
+            build_cfg.proc_clk_mhz);
+        result.stop_width_proc_clks := fn_ticks_to_clocks(resize(
+            runtime_cfg.laser.stop_width_5ns_ticks, 32),
+            build_cfg.proc_clk_mhz);
+        result.simulation_start_delay_proc_clks := fn_ticks_to_clocks(
+            runtime_cfg.laser.simulation_start_delay_5ns,
             build_cfg.proc_clk_mhz);
         result.capture_window_5ns := unsigned(capture_window(31 downto 0));
         result.capture_window_tdc_clks := fn_ticks_to_clocks(
             unsigned(capture_window(31 downto 0)), build_cfg.tdc_clk_mhz);
+        result.scan_timeout_tdc_clks := fn_ticks_to_clocks(
+            runtime_cfg.tdc.scan_timeout_5ns, build_cfg.tdc_clk_mhz);
 
         return result;
     end function fn_derive_runtime_config;
