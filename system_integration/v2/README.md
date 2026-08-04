@@ -34,8 +34,8 @@ multiple clocks and is checked against this reference model.
 - Checkpoint E: unified 32 CTL / 32 STAT / 4 IRQ CSR bank integrated with the
   atomic configuration subsystem and route-verified for both clock profiles.
 - Stage 2 is closed. Stage 3 / Checkpoint F is active; F0 oracle/source-mode,
-  F1 `motor_position_core`/B0 and F2 `face_tracker`/B1 are complete. The next
-  allowed sub-step is F3a operation/safety state ownership.
+  F1 `motor_position_core`/B0, F2 `face_tracker`/B1 and F3a operation/safety
+  ownership are complete. The next allowed sub-step is F3b `shot_scheduler`.
 - The v2 integrated functional datapath is not implemented yet; the existence
   of a v1 core does not mark the corresponding v2 Stage complete.
 
@@ -124,3 +124,18 @@ wrap, reversal, zero-gap Face changes, overlap diagnostics and II=1 input.
 The worst-case 5-Face build must have non-negative post-route WNS, zero
 latches and zero Critical CDC paths. See
 `system_integration/v2_architecture/V2_CHECKPOINT_F2_FACE_TRACKER.md`.
+
+Run the operation/safety functional, CDC and implementation regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_operation.ps1
+```
+
+The pass marker is `LIDAR_V2_OPERATION_PASS`. It runs reset, RUN/STOP,
+ARM/DISARM, physical permit loss/re-arm, simulation exclusion, mailbox busy
+rejection, destination-reset flushing and CSR-reset command-authority revocation
+at 50, 150 and 200 MHz. The 150/200
+MHz implementation gate requires non-negative WNS, zero latches and zero
+Critical CDC findings. See
+`system_integration/v2_architecture/V2_CHECKPOINT_F3A_OPERATION_SAFETY.md`.

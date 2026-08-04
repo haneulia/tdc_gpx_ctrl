@@ -277,7 +277,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | C | Complete | `1b8b015`, `8789e7b` | Sequential validator/deriver and all runtime timebase conversions |
 | 2 | D | Complete | `67e0800` | Atomic configuration manager and Processing/TDC gateways |
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
-| 3 | F | In progress | F0/F1/F2 complete; B2..B3 pending | Processing event pipeline |
+| 3 | F | In progress | F0/F1/F2/F3a complete; B2..B3 pending | Processing event pipeline |
 | 4 | G | Pending | B4 evidence pending | Echo frontend |
 | 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
@@ -286,8 +286,9 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E. Stage 3 /
-Checkpoint F is in progress; F0a/F0b, F1/B0 and F2/B1 are complete and the
-only valid next sub-step is **F3a operation/safety state owner**. Stage 4 or
+Checkpoint F is in progress; F0a/F0b, F1/B0, F2/B1 and F3a operation/safety
+ownership are complete. The only valid next sub-step is **F3b shot_scheduler**.
+Stage 4 or
 later work must not be treated as migrated merely because its v1
 implementation exists.
 
@@ -322,8 +323,9 @@ Current sub-step status:
 | F0a/F0b | Complete | `V2_STAGE3_F0_PROCESSING_ORACLE.md` |
 | F1 | Complete | `V2_CHECKPOINT_F1_MOTOR_POSITION.md`; session `260804170100_v2_motor_position` |
 | F2 | Complete | `V2_CHECKPOINT_F2_FACE_TRACKER.md`; session `260804184000_v2_face_tracker` |
-| F3a | Next | Operation and laser-permit owner evidence not yet generated |
-| F3b..F5 | Blocked by order | Preceding boundary has not passed |
+| F3a | Complete | `V2_CHECKPOINT_F3A_OPERATION_SAFETY.md`; sessions `260804203000_v2_operation`, `260804204000_v2_unified_csr` |
+| F3b | Next | B2 exact scheduler evidence not yet generated |
+| F4..F5 | Blocked by order | Preceding boundary has not passed |
 
 Rules for this package:
 

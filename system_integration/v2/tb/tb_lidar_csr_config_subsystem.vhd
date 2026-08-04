@@ -8,6 +8,7 @@ use std.env.all;
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_config_reference_pkg.all;
+use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
 
 entity tb_lidar_csr_config_subsystem is
@@ -86,6 +87,12 @@ architecture sim of tb_lidar_csr_config_subsystem is
     signal prepare_req  : std_logic;
     signal activate_req : std_logic;
     signal release_req  : std_logic;
+    signal external_laser_permit : std_logic := '0';
+    signal operation_state : operation_state_t;
+    signal operation_command_accepted : std_logic;
+    signal operation_command_rejected : std_logic;
+    signal operation_permit_trip : std_logic;
+    signal operation_safe : std_logic;
 
 begin
 
@@ -156,6 +163,7 @@ begin
             s_axi_rready  => rready,
             i_proc_safe => proc_safe,
             i_tdc_safe  => tdc_safe,
+            i_external_laser_permit => external_laser_permit,
             o_irq                => irq,
             o_clear_status       => clear_status,
             o_soft_reset_request => soft_reset,
@@ -175,7 +183,12 @@ begin
             o_tdc_active         => tdc_active,
             o_prepare_req        => prepare_req,
             o_activate_req       => activate_req,
-            o_release_req        => release_req
+            o_release_req        => release_req,
+            o_operation_state    => operation_state,
+            o_operation_command_accepted => operation_command_accepted,
+            o_operation_command_rejected => operation_command_rejected,
+            o_operation_permit_trip => operation_permit_trip,
+            o_operation_safe_to_prepare => operation_safe
         );
 
     p_request_invariants : process (csr_clk)
@@ -342,7 +355,7 @@ begin
         v_expected.motor.simulation_mode := '1';
         check_active(v_expected, 1);
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000046");
-        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), x"00000001");
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), x"01080001");
         axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE), x"00120E10");
 
         command(C_CMD_CLEAR_STATUS_BIT);

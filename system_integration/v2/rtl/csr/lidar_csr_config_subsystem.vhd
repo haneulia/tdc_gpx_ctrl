@@ -3,6 +3,7 @@ use ieee.std_logic_1164.all;
 
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
+use work.lidar_event_types_pkg.all;
 
 -- Checkpoint-E configuration boundary: AXI4-Lite CSR, atomic manager and both
 -- destination-domain gateways. Functional cores consume only the typed active
@@ -43,6 +44,7 @@ entity lidar_csr_config_subsystem is
 
         i_proc_safe : in  std_logic;
         i_tdc_safe  : in  std_logic;
+        i_external_laser_permit : in std_logic;
 
         o_irq                : out std_logic;
         o_clear_status       : out std_logic;
@@ -63,7 +65,12 @@ entity lidar_csr_config_subsystem is
         o_tdc_active         : out lidar_active_config_t;
         o_prepare_req        : out std_logic;
         o_activate_req       : out std_logic;
-        o_release_req        : out std_logic
+        o_release_req        : out std_logic;
+        o_operation_state    : out operation_state_t;
+        o_operation_command_accepted : out std_logic;
+        o_operation_command_rejected : out std_logic;
+        o_operation_permit_trip : out std_logic;
+        o_operation_safe_to_prepare : out std_logic
     );
 end entity lidar_csr_config_subsystem;
 
@@ -79,6 +86,21 @@ architecture rtl of lidar_csr_config_subsystem is
     signal w_recovery       : std_logic;
     signal w_active_valid   : std_logic;
     signal w_active         : lidar_active_config_t;
+    signal w_proc_enable       : std_logic;
+    signal w_proc_active_valid : std_logic;
+    signal w_proc_active       : lidar_active_config_t;
+    signal w_tdc_enable        : std_logic;
+    signal w_tdc_active_valid  : std_logic;
+    signal w_tdc_active        : lidar_active_config_t;
+
+    signal w_operation_command_valid : std_logic;
+    signal w_operation_command       : operation_command_t;
+    signal w_operation_command_ready : std_logic;
+    signal w_operation_command_busy  : std_logic;
+    signal w_operation_cdc_rejected  : std_logic;
+    signal w_operation_state_proc    : operation_state_t;
+    signal w_operation_state_csr     : operation_state_t;
+    signal w_operation_safe          : std_logic;
 
 begin
 
@@ -90,6 +112,14 @@ begin
     o_recovery_required <= w_recovery;
     o_active_valid      <= w_active_valid;
     o_active            <= w_active;
+    o_proc_enable       <= w_proc_enable;
+    o_proc_active_valid <= w_proc_active_valid;
+    o_proc_active       <= w_proc_active;
+    o_tdc_enable        <= w_tdc_enable;
+    o_tdc_active_valid  <= w_tdc_active_valid;
+    o_tdc_active        <= w_tdc_active;
+    o_operation_state   <= w_operation_state_proc;
+    o_operation_safe_to_prepare <= w_operation_safe;
 
     u_csr : entity work.lidar_csr_bank
         generic map (
@@ -125,11 +155,44 @@ begin
             i_cfg_recovery_required => w_recovery,
             i_cfg_active_valid      => w_active_valid,
             i_cfg_active            => w_active,
+            i_operation_status      => w_operation_state_csr,
+            i_operation_command_ready => w_operation_command_ready,
+            i_operation_command_busy  => w_operation_command_busy,
+            i_operation_command_rejected => w_operation_cdc_rejected,
             o_shadow             => w_shadow,
             o_commit             => w_commit,
             o_clear_status       => o_clear_status,
             o_soft_reset_request => o_soft_reset_request,
+            o_operation_command_valid => w_operation_command_valid,
+            o_operation_command       => w_operation_command,
             o_irq                => o_irq
+        );
+
+    u_operation : entity work.lidar_operation_subsystem
+        generic map (
+            G_BUILD_CONFIG => G_BUILD_CONFIG
+        )
+        port map (
+            i_csr_clk               => i_csr_clk,
+            i_csr_rst_n             => i_csr_rst_n,
+            i_csr_command_valid     => w_operation_command_valid,
+            i_csr_command           => w_operation_command,
+            o_csr_command_ready     => w_operation_command_ready,
+            o_csr_command_busy      => w_operation_command_busy,
+            o_csr_command_rejected  => w_operation_cdc_rejected,
+            i_proc_clk              => i_proc_clk,
+            i_proc_rst_n            => i_proc_rst_n,
+            i_external_laser_permit => i_external_laser_permit,
+            i_config_enable         => w_proc_enable,
+            i_active_valid          => w_proc_active_valid,
+            i_active_config         => w_proc_active,
+            i_pipeline_idle         => i_proc_safe,
+            o_state_proc            => w_operation_state_proc,
+            o_state_csr             => w_operation_state_csr,
+            o_command_accepted_proc => o_operation_command_accepted,
+            o_command_rejected_proc => o_operation_command_rejected,
+            o_permit_trip_proc      => o_operation_permit_trip,
+            o_safe_to_prepare       => w_operation_safe
         );
 
     u_config : entity work.lidar_config_subsystem
@@ -147,7 +210,7 @@ begin
             i_tdc_rst_n        => i_tdc_rst_n,
             i_commit           => w_commit,
             i_shadow           => w_shadow,
-            i_proc_safe        => i_proc_safe,
+            i_proc_safe        => w_operation_safe,
             i_tdc_safe         => i_tdc_safe,
             o_busy             => w_busy,
             o_done             => w_done,
@@ -157,12 +220,12 @@ begin
             o_recovery_required => w_recovery,
             o_active_valid     => w_active_valid,
             o_active           => w_active,
-            o_proc_enable      => o_proc_enable,
-            o_proc_active_valid => o_proc_active_valid,
-            o_proc_active      => o_proc_active,
-            o_tdc_enable       => o_tdc_enable,
-            o_tdc_active_valid => o_tdc_active_valid,
-            o_tdc_active       => o_tdc_active,
+            o_proc_enable      => w_proc_enable,
+            o_proc_active_valid => w_proc_active_valid,
+            o_proc_active      => w_proc_active,
+            o_tdc_enable       => w_tdc_enable,
+            o_tdc_active_valid => w_tdc_active_valid,
+            o_tdc_active       => w_tdc_active,
             o_prepare_req      => o_prepare_req,
             o_activate_req     => o_activate_req,
             o_release_req      => o_release_req

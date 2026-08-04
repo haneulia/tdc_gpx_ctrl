@@ -59,6 +59,32 @@ show an active source value, but it does not become a second owner.
 | Distance calibration | Runtime source | calibration config | distance formatter | Coherent scale/offset snapshot |
 | Cell bytes and VDMA geometry | Derived | commit calculator | frame builder, status and software | Never independently writable |
 
+### 2.1 Operation and safety transition contract
+
+`lidar_operation_manager` is the only owner of persistent RUN and ARM state.
+The CSR bank emits W1S events, and an acknowledged one-entry mailbox transfers
+them to the Processing clock without converting them into writable levels.
+
+- reset and loss of `ACTIVE_VALID` produce STOPPED/DISARMED;
+- RUN is accepted only while the Processing active configuration is released;
+- ARM additionally requires RUN; physical mode also requires a synchronized
+  external permit, while simulation mode does not;
+- STOP clears RUN and ARM together, so RUN cannot revive a latent ARM;
+- DISARM clears only ARM;
+- raw external-permit LOW/unknown closes the physical fire gate immediately;
+  an observed physical-mode permit loss clears ARM and requires a new ARM;
+- external permit can never be overridden by software;
+- atomic PREPARE temporarily closes operation enable but preserves RUN/ARM
+  memory while the pipeline drains, then RELEASE reopens the same state;
+- a command presented while the CDC mailbox is busy is rejected and diagnosed,
+  never overwritten or reordered.
+- CSR reset revokes command authority in the Processing domain and forces
+  STOPPED/DISARMED regardless of the request-toggle parity.
+
+The scheduler consumes `scheduler_enable`; the physical executor/final pin gate
+consumes `physical_fire_enable`. Neither block may reconstruct permission from
+`ACTIVE_VALID`, source mode or Face membership.
+
 ## 3. Derived Equations
 
 The commit calculator uses integer/fixed-point arithmetic and runs only during

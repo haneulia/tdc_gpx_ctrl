@@ -3,7 +3,7 @@
 ## 1. 적용 범위
 
 이 문서는 `lidar_csr_bank`의 AXI4-Lite software ABI를 정의한다. 주소는
-9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.1`이다.
+9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.2`이다.
 
 | 영역 | Word 수 | Byte 주소 | 용도 |
 |---|---:|---:|---|
@@ -84,7 +84,11 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 | 0 | COMMIT | 현재 shadow를 snapshot하여 검증/계산/atomic activation 시작 |
 | 1 | CLEAR_STATUS | STAT2 sticky와 last error/reject code clear |
 | 2 | SOFT_RESET_REQUEST | 외부 reset supervisor로 1 CSR clock request 출력 |
-| 31:3 | RESERVED | 1을 쓰면 command 전체를 실행하지 않고 access error |
+| 3 | RUN | Processing operation을 RUN 상태로 전환 |
+| 4 | STOP | RUN과 ARM을 함께 해제하여 안전 정지 |
+| 5 | ARM | shot/laser 실행을 허가하도록 ARM 요청 |
+| 6 | DISARM | RUN은 유지하고 shot/laser 실행만 차단 |
+| 31:7 | RESERVED | 1을 쓰면 command 전체를 실행하지 않고 access error |
 
 `0` write는 no-op이다. 한 write에서 command bit를 둘 이상 세우면 어느
 command도 실행되지 않는다. `COMMIT`을 BUSY 중 다시 쓰면 manager가
@@ -94,6 +98,31 @@ command도 실행되지 않는다. `COMMIT`을 BUSY 중 다시 쓰면 manager가
 `RECOVERY_REQUIRED` 및 IRQ pending flag를 지우지 않는다. IRQ pending은
 IRQ_FLAG에 W1C해야 한다. `SOFT_RESET_REQUEST`도 이 block 자체를 reset하지
 않으며 parent reset supervisor가 실제 coordinated reset을 수행해야 한다.
+
+RUN/STOP/ARM/DISARM은 저장되는 설정 bit가 아니라 Processing domain으로
+전달되는 일회성 event이다. CSR-to-Processing mailbox가 이전 명령의 ACK를
+기다리는 동안 `COMMAND_READY=0`이며, 이때 새 operation command를 쓰면 실행하지
+않고 `ACCESS_ERROR_STICKY`를 세운다. Software는 명령 사이에 STAT3의
+`COMMAND_READY=1`을 확인한다.
+
+CSR reset은 operation command authority 상실로 취급한다. 이 상태는 Processing
+domain으로 동기화되어 기존 RUN/ARM을 모두 해제하며, reset 해제 후 software는
+`COMMAND_READY=1`과 안정된 STAT3을 확인한 뒤 RUN과 ARM을 다시 발행한다.
+
+operation 상태 전이 규칙은 다음과 같다.
+
+- reset 또는 `ACTIVE_VALID=0`: STOPPED/DISARMED;
+- RUN: 유효하고 release된 Processing active 설정이 있을 때만 승인;
+- ARM: RUN 상태이며, physical mode에서는 동기화된 외부 permit까지 있어야 승인;
+- STOP: RUN과 ARM을 모두 해제하므로 다음 시작에는 RUN과 ARM이 다시 필요;
+- DISARM: RUN은 유지하지만 scheduler와 physical fire를 차단;
+- physical mode의 permit 상실: 물리 fire gate는 raw 입력으로 즉시 닫히고,
+  Processing clock에서 상실을 관측하면 DISARM되어 명시적 ARM이 다시 필요;
+- simulation mode: 외부 permit 없이 ARM할 수 있지만 physical fire enable은 항상 0.
+
+Atomic COMMIT의 prepare 구간에서는 RUN/ARM 기억값을 유지하되 operation enable을
+닫는다. pipeline이 idle이 된 뒤에만 prepare ACK가 가능하고, release 후 같은
+operation 상태로 재개한다.
 
 ### 3.3 CTL1 MOTOR_PROFILE
 
@@ -177,7 +206,7 @@ watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 
 
 | Bit | 의미 | 기본 profile |
 |---:|---|---:|
-| 7:0 | ABI minor | 1 |
+| 7:0 | ABI minor | 2 |
 | 15:8 | ABI major | 2 |
 | 18:16 | NUM_FACES | 5 |
 | 21:19 | NUM_CHIPS | 4 |
@@ -187,7 +216,7 @@ watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 
 | 30 | ECHO_SIMULATION_INCLUDED | 0 |
 | 31 | STREAM_CLOCK_SYNC | 0 |
 
-기본 profile 값은 `0x3E250201`이다.
+기본 profile 값은 `0x3E250202`이다.
 
 ### 4.2 STAT1 BUILD_INFO (`0x084`)
 
@@ -223,18 +252,39 @@ watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 
 reset 값은 `0x00000100`이다. commit 중 다음 shadow를 써도 revision을 별도
 추적하므로 현재 commit 성공 후 DIRTY가 잘못 clear되지 않는다.
 
-### 4.4 STAT3..STAT22 Active readback
+### 4.4 STAT3 Operation/Active version과 STAT4..STAT22 Active readback
 
-| STAT | 주소 | 의미 |
-|---:|---:|---|
-| 3 | `0x08C` | `[15:0] ACTIVE_VERSION`, `[31:16] reserved` |
-| 4..22 | `0x090..0x0D8` | CTL1..CTL19와 동일 bit layout의 active source |
+STAT3 (`0x08C`)은 active configuration version과 read-only operation 상태를
+한 word에 담는다.
 
-`ACTIVE_VALID=0`일 때 STAT3..STAT30의 active/derived 값은 0이다. inactive
-상태에서 uninitialized internal record를 외부로 노출하지 않는다.
-STAT3 상위 16 bit는 현재 예약이다. Encoder 입력-to-B0 실측 latency는 F1/F5
-검증에서 값과 유효 조건이 확정된 뒤 이 read-only 영역 또는 별도 monitoring
-status에 배치하며, CTL source field로 되돌리지 않는다.
+| Bit | 이름 | 의미 |
+|---:|---|---|
+| 15:0 | ACTIVE_VERSION | 마지막 atomic activation version; `ACTIVE_VALID=0`이면 0 |
+| 16 | RUNNING | RUN이 승인되어 유지 중 |
+| 17 | ARMED | ARM이 승인되어 유지 중 |
+| 18 | EXTERNAL_PERMIT | 두 단계 동기화까지 통과한 외부 laser permit |
+| 19 | CONFIG_READY | Processing active 설정이 valid이고 release됨 |
+| 20 | PROCESSING_ENABLE | RUNNING과 CONFIG_READY가 모두 1 |
+| 21 | SCHEDULER_ENABLE | physical 또는 simulation shot 발행 허가 |
+| 22 | PHYSICAL_FIRE_ENABLE | RUN+ARM+physical mode+permit 최종 허가 |
+| 23 | SIMULATION_ENABLE | RUN+ARM+simulation mode 허가 |
+| 24 | COMMAND_READY | operation command mailbox가 다음 W1S를 받을 수 있음 |
+| 25 | COMMAND_BUSY | 이전 operation command ACK 대기 중 |
+| 31:26 | RESERVED | 0 |
+
+STAT4..22 (`0x090..0x0D8`)는 CTL1..CTL19와 동일 bit layout의 active
+source이다.
+
+`ACTIVE_VALID=0`일 때 STAT3의 ACTIVE_VERSION과 STAT4..STAT30의
+active/derived 값은 0이다. STAT3 상위 operation 상태는 live readback이므로
+COMMAND_READY 같은 CDC 상태는 계속 표시될 수 있다. reset 직후 CDC가 안정되기
+전 STAT3은 `0x00000000`, 안정 후 command mailbox가 준비되면
+`0x01000000`이다. 기본 설정을 최초 commit하고 아직 RUN하지 않은 정상 상태는
+`0x01080001`이다.
+
+STAT3의 operation bit는 제어 입력이 아닌 비동기 진단 readback이다. 상태 전환
+직후에는 bit별 동기화 지연 차이가 보일 수 있으므로 software는 두 번 연속 같은
+STAT3을 읽은 뒤 상태 전이를 확정한다.
 
 ### 4.5 STAT23..STAT31 Derived readback
 
@@ -314,8 +364,11 @@ software가 IRQ_FLAG에 W1C할 때까지 high이고, 새 event와 W1C가 같은 
 5. ERROR/REJECTED/RECOVERY와 error code를 확인한다.
 6. 성공이면 STAT3 version, STAT4..22 active source, STAT23..31 derived 값을
    같은 snapshot으로 읽는다.
-7. CTL0.CLEAR_STATUS로 transaction sticky를 clear한다.
-8. IRQ를 사용하면 별도로 IRQ_FLAG를 W1C한다.
+7. 외부 permit과 STAT3.COMMAND_READY를 확인하고 CTL0.RUN을 W1S한다.
+8. 다시 COMMAND_READY를 확인한 뒤 CTL0.ARM을 W1S하고 RUNNING/ARMED 및
+   선택된 mode의 enable 상태를 확인한다.
+9. CTL0.CLEAR_STATUS로 transaction sticky를 clear한다.
+10. IRQ를 사용하면 별도로 IRQ_FLAG를 W1C한다.
 
 운용 중 shadow write는 허용된다. 진행 중 transaction은 COMMIT 순간 snapshot을
 사용하고, 그 뒤의 write는 다음 transaction 후보로 남아 DIRTY가 유지된다.

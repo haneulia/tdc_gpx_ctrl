@@ -5,6 +5,7 @@ use ieee.numeric_std.all;
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_config_reference_pkg.all;
+use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
 
 entity tb_lidar_csr_bank is
@@ -60,16 +61,24 @@ architecture sim of tb_lidar_csr_bank is
     signal active_valid : std_logic := '0';
     signal active_cfg   : lidar_active_config_t := fn_active_config(
         C_DEFAULT_RUNTIME_CONFIG, 1);
+    signal operation_status : operation_state_t := C_OPERATION_STATE_SAFE;
+    signal operation_command_ready : std_logic := '1';
+    signal operation_command_busy  : std_logic := '0';
+    signal operation_command_rejected : std_logic := '0';
 
     signal shadow_cfg : lidar_runtime_config_t;
     signal commit_pulse : std_logic;
     signal clear_pulse  : std_logic;
     signal reset_pulse  : std_logic;
+    signal operation_command_valid : std_logic;
+    signal operation_command       : operation_command_t;
     signal irq          : std_logic;
 
     signal commit_count : natural := 0;
     signal clear_count  : natural := 0;
     signal reset_count  : natural := 0;
+    signal operation_command_count : natural := 0;
+    signal last_operation_command  : operation_command_t := OP_COMMAND_NONE;
 
 begin
 
@@ -95,6 +104,10 @@ begin
             end if;
             if reset_pulse = '1' then
                 reset_count <= reset_count + 1;
+            end if;
+            if operation_command_valid = '1' then
+                operation_command_count <= operation_command_count + 1;
+                last_operation_command <= operation_command;
             end if;
         end if;
     end process p_command_monitor;
@@ -133,10 +146,16 @@ begin
             i_cfg_recovery_required => cfg_recovery,
             i_cfg_active_valid      => active_valid,
             i_cfg_active            => active_cfg,
+            i_operation_status      => operation_status,
+            i_operation_command_ready => operation_command_ready,
+            i_operation_command_busy  => operation_command_busy,
+            i_operation_command_rejected => operation_command_rejected,
             o_shadow             => shadow_cfg,
             o_commit             => commit_pulse,
             o_clear_status       => clear_pulse,
             o_soft_reset_request => reset_pulse,
+            o_operation_command_valid => operation_command_valid,
+            o_operation_command       => operation_command,
             o_irq                => irq
         );
 
@@ -289,7 +308,7 @@ begin
         axi_read(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000000");
         axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00020E10");
         axi_read(fn_ctl_byte_offset(C_CTL_FACE_CENTER_0), x"000005A0");
-        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250201");
+        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250202");
         axi_read(fn_stat_byte_offset(C_STAT_BUILD_INFO), x"0C30C896");
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000100", 2);
         axi_read(fn_ctl_byte_offset(C_CTL_RESERVED_FIRST), x"00000000");
@@ -339,6 +358,50 @@ begin
             severity failure;
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000100");
 
+        -- RUN/STOP/ARM/DISARM are independent W1S events in CTL0. They are
+        -- never stored as command levels.
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000008");
+        wait_cycles(2);
+        assert operation_command_count = 1 and
+            last_operation_command = OP_COMMAND_RUN and
+            operation_command_valid = '0'
+            report "V2-CSR-BANK RUN command event mismatch"
+            severity failure;
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000010");
+        wait_cycles(2);
+        assert operation_command_count = 2 and
+            last_operation_command = OP_COMMAND_STOP
+            report "V2-CSR-BANK STOP command event mismatch"
+            severity failure;
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000020");
+        wait_cycles(2);
+        assert operation_command_count = 3 and
+            last_operation_command = OP_COMMAND_ARM
+            report "V2-CSR-BANK ARM command event mismatch"
+            severity failure;
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000040");
+        wait_cycles(2);
+        assert operation_command_count = 4 and
+            last_operation_command = OP_COMMAND_DISARM
+            report "V2-CSR-BANK DISARM command event mismatch"
+            severity failure;
+
+        operation_command_ready <= '0';
+        operation_command_busy  <= '1';
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000008");
+        wait_cycles(2);
+        assert operation_command_count = 4
+            report "V2-CSR-BANK busy operation command escaped"
+            severity failure;
+        axi_read_value(fn_stat_byte_offset(C_STAT_TRANSACTION), v_word);
+        assert v_word(C_TXN_ACCESS_ERROR_BIT) = '1'
+            report "V2-CSR-BANK busy operation command was not diagnosed"
+            severity failure;
+        operation_command_ready <= '1';
+        operation_command_busy  <= '0';
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000002");
+        wait_cycles(2);
+
         -- Multi-command writes are rejected; a zero W1S write is a no-op.
         axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000000");
         axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000005");
@@ -381,7 +444,18 @@ begin
         pulse_done(CFG_OK);
         wait_cycles(1);
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000046");
-        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), x"00000001");
+        operation_status <= (
+            running              => '1',
+            armed                => '1',
+            external_permit      => '1',
+            config_ready         => '1',
+            processing_enable    => '1',
+            scheduler_enable     => '1',
+            physical_fire_enable => '1',
+            simulation_enable    => '0'
+        );
+        wait_cycles(1);
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), x"017F0001");
         axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE +
             C_CTL_LASER_FIRE_PROFILE - 1), x"01200014");
         axi_read(fn_stat_byte_offset(C_STAT_DERIVED_GEOMETRY), x"00013840");

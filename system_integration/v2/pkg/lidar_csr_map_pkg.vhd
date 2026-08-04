@@ -8,7 +8,7 @@ use work.lidar_config_types_pkg.all;
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;
-    constant C_LIDAR_CSR_ABI_MINOR : natural := 1;
+    constant C_LIDAR_CSR_ABI_MINOR : natural := 2;
 
     constant C_LIDAR_CTL_COUNT  : positive := 32;
     constant C_LIDAR_STAT_COUNT : positive := 32;
@@ -43,7 +43,11 @@ package lidar_csr_map_pkg is
     constant C_CMD_COMMIT_BIT       : natural := 0;
     constant C_CMD_CLEAR_STATUS_BIT : natural := 1;
     constant C_CMD_SOFT_RESET_BIT   : natural := 2;
-    constant C_COMMAND_VALID_MASK   : csr_word_t := x"00000007";
+    constant C_CMD_RUN_BIT          : natural := 3;
+    constant C_CMD_STOP_BIT         : natural := 4;
+    constant C_CMD_ARM_BIT          : natural := 5;
+    constant C_CMD_DISARM_BIT       : natural := 6;
+    constant C_COMMAND_VALID_MASK   : csr_word_t := x"0000007F";
 
     constant C_STAT_CORE_INFO         : natural := 0;
     constant C_STAT_BUILD_INFO        : natural := 1;
@@ -69,6 +73,19 @@ package lidar_csr_map_pkg is
     constant C_TXN_ACTIVE_VALID_BIT      : natural := 6;
     constant C_TXN_ACCESS_ERROR_BIT      : natural := 7;
     constant C_TXN_SHADOW_DIRTY_BIT      : natural := 8;
+
+    -- STAT3 keeps ACTIVE_VERSION in [15:0]. The upper bits are synchronized
+    -- read-only operation state; they are not a second state owner.
+    constant C_OP_RUNNING_BIT              : natural := 16;
+    constant C_OP_ARMED_BIT                : natural := 17;
+    constant C_OP_EXTERNAL_PERMIT_BIT      : natural := 18;
+    constant C_OP_CONFIG_READY_BIT         : natural := 19;
+    constant C_OP_PROCESSING_ENABLE_BIT    : natural := 20;
+    constant C_OP_SCHEDULER_ENABLE_BIT     : natural := 21;
+    constant C_OP_PHYSICAL_FIRE_ENABLE_BIT : natural := 22;
+    constant C_OP_SIMULATION_ENABLE_BIT    : natural := 23;
+    constant C_OP_COMMAND_READY_BIT        : natural := 24;
+    constant C_OP_COMMAND_BUSY_BIT         : natural := 25;
 
     constant C_IRQ_COMMIT_SUCCESS   : natural := 0;
     constant C_IRQ_COMMIT_ERROR     : natural := 1;

@@ -6,10 +6,10 @@ $ErrorActionPreference = "Stop"
 
 $Hdl = (Resolve-Path (Join-Path $PSScriptRoot "../../..")).Path
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin"
-$WorkRoot = Join-Path $Hdl "tmp/v2_unified_csr"
+$WorkRoot = Join-Path $Hdl "tmp/v2_operation"
 $Work = Join-Path $WorkRoot $Stamp
 $Archive = Join-Path $Hdl `
-    "signoff_results/sessions/${Stamp}_v2_unified_csr"
+    "signoff_results/sessions/${Stamp}_v2_operation"
 
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 
@@ -29,39 +29,23 @@ $SynthFiles = @(
     "$Hdl/system_integration/v2/pkg/lidar_build_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_config_types_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_event_types_pkg.vhd",
-    "$Hdl/system_integration/v2/pkg/lidar_csr_map_pkg.vhd",
-    "$Hdl/../ip_repo/src/csr/axil_fsm_32.vhd",
-    "$Hdl/../ip_repo/src/csr/axil_intr_32.vhd",
-    "$Hdl/system_integration/v2/rtl/csr/lidar_csr_bank.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_u32_u16_multiplier_seq.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_u64_u32_divider_seq.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_config_validator_seq.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_config_deriver_seq.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_commit_calculator.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_config_gateway.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_config_manager.vhd",
-    "$Hdl/system_integration/v2/rtl/config/lidar_config_subsystem.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_operation_command_cdc.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_operation_manager.vhd",
-    "$Hdl/system_integration/v2/rtl/proc/lidar_operation_subsystem.vhd",
-    "$Hdl/system_integration/v2/rtl/csr/lidar_csr_config_subsystem.vhd"
+    "$Hdl/system_integration/v2/rtl/proc/lidar_operation_subsystem.vhd"
 )
 $SimFiles = @(
     $SynthFiles[0],
     $SynthFiles[1],
     "$Hdl/system_integration/v2/pkg/lidar_config_reference_pkg.vhd",
     $SynthFiles[2],
-    $SynthFiles[3]
-)
-$SimFiles += $SynthFiles[4..($SynthFiles.Count - 1)]
-$SimFiles += @(
-    "$Hdl/system_integration/v2/tb/tb_lidar_csr_map_pkg.vhd",
-    "$Hdl/system_integration/v2/tb/tb_lidar_csr_bank.vhd",
-    "$Hdl/system_integration/v2/tb/tb_lidar_csr_config_subsystem.vhd",
-    "$Hdl/system_integration/v2/tb/tb_lidar_csr_config_profiles.vhd"
+    $SynthFiles[3],
+    $SynthFiles[4],
+    $SynthFiles[5],
+    "$Hdl/system_integration/v2/tb/tb_lidar_operation_subsystem.vhd",
+    "$Hdl/system_integration/v2/tb/tb_lidar_operation_profiles.vhd"
 )
 
-$Project = Join-Path $Work "v2_unified_csr.prj"
+$Project = Join-Path $Work "v2_operation.prj"
 $ProjectLines = foreach ($File in $SimFiles) {
     "vhdl2008 xil_defaultlib `"$($File.Replace('\', '/'))`""
 }
@@ -73,26 +57,9 @@ $RunTcl = Join-Path $Work "run.tcl"
 $CompileLog = Join-Path $Work "xvhdl.log"
 
 $SimProfiles = @(
-    [ordered]@{
-        name = "map_pkg"
-        top = "tb_lidar_csr_map_pkg"
-        marker = "LIDAR_V2_CSR_MAP_PKG_PASS"
-    },
-    [ordered]@{
-        name = "bank"
-        top = "tb_lidar_csr_bank"
-        marker = "LIDAR_V2_CSR_BANK_PASS"
-    },
-    [ordered]@{
-        name = "proc150_tdc200"
-        top = "tb_lidar_csr_config_150_200"
-        marker = "LIDAR_V2_CSR_CONFIG_SUBSYSTEM_PASS proc_mhz=150 tdc_mhz=200"
-    },
-    [ordered]@{
-        name = "proc200_tdc150"
-        top = "tb_lidar_csr_config_200_150"
-        marker = "LIDAR_V2_CSR_CONFIG_SUBSYSTEM_PASS proc_mhz=200 tdc_mhz=150"
-    }
+    [ordered]@{ name = "50mhz"; top = "tb_lidar_operation_50"; mhz = 50 },
+    [ordered]@{ name = "150mhz"; top = "tb_lidar_operation_150"; mhz = 150 },
+    [ordered]@{ name = "200mhz"; top = "tb_lidar_operation_200"; mhz = 200 }
 )
 
 Push-Location $Work
@@ -102,7 +69,7 @@ try {
     )
 
     foreach ($Profile in $SimProfiles) {
-        $Snapshot = "v2_csr_$($Profile.name)_${Stamp}_snap"
+        $Snapshot = "v2_operation_$($Profile.name)_${Stamp}_snap"
         $ElabLog = Join-Path $Work "xelab_$($Profile.name).log"
         $SimLog = Join-Path $Work "xsim_$($Profile.name).log"
 
@@ -119,8 +86,14 @@ try {
         )
 
         $Text = Get-Content -Raw -LiteralPath $SimLog
-        if ($Text -notmatch [regex]::Escape($Profile.marker)) {
+        $Marker = "LIDAR_V2_OPERATION_PASS proc_mhz=$($Profile.mhz)"
+        if ($Text -notmatch [regex]::Escape($Marker)) {
             throw "$($Profile.name) did not report PASS"
+        }
+        foreach ($Scenario in "P40", "P41", "P42", "P43", "P44", "P45", "P46") {
+            if ($Text -notmatch "V2-OP-$Scenario.*PASS") {
+                throw "$($Profile.name) did not pass $Scenario"
+            }
         }
     }
 }
@@ -129,16 +102,8 @@ finally {
 }
 
 $ImplProfiles = @(
-    [ordered]@{
-        name = "proc150_tdc200"
-        proc_period_ns = "6.667"
-        tdc_period_ns = "5.000"
-    },
-    [ordered]@{
-        name = "proc200_tdc150"
-        proc_period_ns = "5.000"
-        tdc_period_ns = "6.667"
-    }
+    [ordered]@{ name = "150mhz"; period_ns = "6.667" },
+    [ordered]@{ name = "200mhz"; period_ns = "5.000" }
 )
 
 foreach ($Profile in $ImplProfiles) {
@@ -176,11 +141,10 @@ foreach ($Profile in $ImplProfiles) {
         "lappend ::auto_path {C:/AMDDesignTools/2025.2.1/Vivado/data/XilinxTclStore/tclapp/aldec/activehdl}",
         "package require ::tclapp::aldec::activehdl 1.42",
         "read_vhdl -vhdl2008 [list $ReadFiles]",
-        "synth_design -top lidar_csr_config_subsystem -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy rebuilt",
+        "synth_design -top lidar_operation_subsystem -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy rebuilt",
         "create_clock -name csr_clk -period 10.000 [get_ports i_csr_clk]",
-        "create_clock -name proc_clk -period $($Profile.proc_period_ns) [get_ports i_proc_clk]",
-        "create_clock -name tdc_clk -period $($Profile.tdc_period_ns) [get_ports i_tdc_clk]",
-        "set_clock_groups -asynchronous -group [get_clocks csr_clk] -group [get_clocks proc_clk] -group [get_clocks tdc_clk]",
+        "create_clock -name proc_clk -period $($Profile.period_ns) [get_ports i_proc_clk]",
+        "set_clock_groups -asynchronous -group [get_clocks csr_clk] -group [get_clocks proc_clk]",
         "opt_design",
         "place_design",
         "phys_opt_design",
@@ -201,7 +165,6 @@ foreach ($Profile in $ImplProfiles) {
         "close `$fp",
         "if {`$wns < 0.0} { error [format {Negative WNS: %.3f ns} `$wns] }",
         "if {[llength `$latches] != 0} { error {Inferred latch detected} }",
-        "if {[llength `$async_regs] < 28} { error {CDC synchronizer attributes missing} }",
         "exit"
     ) | Set-Content -Encoding ASCII -LiteralPath $Tcl
 
@@ -218,29 +181,10 @@ foreach ($Profile in $ImplProfiles) {
             '(?m)^CDC-\d+\s+Critical\s+(\d+)')) {
         $CriticalCount += [int]$Match.Groups[1].Value
     }
-    $SyncMatch = [regex]::Match($CdcText, '(?m)^CDC-3\s+Info\s+(\d+)')
-    $SyncCount = if ($SyncMatch.Success) {
-        [int]$SyncMatch.Groups[1].Value
-    } else {
-        0
-    }
-    $MailboxMatch = [regex]::Match($CdcText,
-        '(?m)^CDC-15\s+Warning\s+(\d+)')
-    $MailboxCount = if ($MailboxMatch.Success) {
-        [int]$MailboxMatch.Groups[1].Value
-    } else {
-        0
-    }
-    Add-Content -Encoding ASCII -LiteralPath $Metrics -Value @(
-        "CDC_CRITICAL_COUNT=$CriticalCount",
-        "CDC_SYNC_PATH_COUNT=$SyncCount",
-        "CDC_MAILBOX_WARNING_COUNT=$MailboxCount"
-    )
+    Add-Content -Encoding ASCII -LiteralPath $Metrics -Value `
+        "CDC_CRITICAL_COUNT=$CriticalCount"
     if ($CriticalCount -ne 0) {
         throw "$Name has $CriticalCount critical CDC paths"
-    }
-    if ($SyncCount -lt 14) {
-        throw "$Name recognizes only $SyncCount synchronized CDC paths"
     }
 }
 
@@ -271,5 +215,5 @@ if (-not $ResolvedWork.StartsWith($ResolvedRoot,
 }
 Remove-Item -LiteralPath $ResolvedWork -Recurse -Force
 
-Write-Output "LIDAR_V2_UNIFIED_CSR_PASS"
+Write-Output "LIDAR_V2_OPERATION_PASS"
 Write-Output "Result: $Archive"

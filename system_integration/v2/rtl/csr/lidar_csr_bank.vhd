@@ -4,6 +4,7 @@ use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
+use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
 
 -- One AXI4-Lite owner for the v2 LiDAR configuration ABI.
@@ -47,11 +48,17 @@ entity lidar_csr_bank is
         i_cfg_recovery_required : in  std_logic;
         i_cfg_active_valid      : in  std_logic;
         i_cfg_active            : in  lidar_active_config_t;
+        i_operation_status      : in  operation_state_t;
+        i_operation_command_ready : in std_logic;
+        i_operation_command_busy  : in std_logic;
+        i_operation_command_rejected : in std_logic;
 
         o_shadow            : out lidar_runtime_config_t;
         o_commit            : out std_logic;
         o_clear_status      : out std_logic;
         o_soft_reset_request : out std_logic;
+        o_operation_command_valid : out std_logic;
+        o_operation_command       : out operation_command_t;
         o_irq               : out std_logic
     );
 end entity lidar_csr_bank;
@@ -79,6 +86,8 @@ architecture rtl of lidar_csr_bank is
     signal r_commit_pulse      : std_logic := '0';
     signal r_clear_pulse       : std_logic := '0';
     signal r_soft_reset_pulse  : std_logic := '0';
+    signal r_operation_command_valid : std_logic := '0';
+    signal r_operation_command : operation_command_t := OP_COMMAND_NONE;
     signal r_access_error_event : std_logic := '0';
 
     signal r_done_sticky      : std_logic := '0';
@@ -117,6 +126,8 @@ begin
     o_commit             <= r_commit_pulse;
     o_clear_status       <= r_clear_pulse;
     o_soft_reset_request <= r_soft_reset_pulse;
+    o_operation_command_valid <= r_operation_command_valid;
+    o_operation_command       <= r_operation_command;
 
     w_word_addr <= to_integer(unsigned(w_addr(8 downto 2)));
     r_word_addr <= to_integer(unsigned(r_addr(8 downto 2)));
@@ -201,6 +212,8 @@ begin
             r_commit_pulse       <= '0';
             r_clear_pulse        <= '0';
             r_soft_reset_pulse   <= '0';
+            r_operation_command_valid <= '0';
+            r_operation_command <= OP_COMMAND_NONE;
             r_access_error_event <= '0';
             r_done_sticky        <= '0';
             r_success_sticky     <= '0';
@@ -218,6 +231,8 @@ begin
             r_commit_pulse       <= '0';
             r_clear_pulse        <= '0';
             r_soft_reset_pulse   <= '0';
+            r_operation_command_valid <= '0';
+            r_operation_command <= OP_COMMAND_NONE;
             r_access_error_event <= '0';
 
             -- r_commit_pulse is observed here one clock after the AXI write,
@@ -262,8 +277,22 @@ begin
                         r_access_error_sticky <= '0';
                         r_last_error_code     <= x"00";
                         r_last_reject_code    <= x"00";
-                    else
+                    elsif v_effective_command(C_CMD_SOFT_RESET_BIT) = '1' then
                         r_soft_reset_pulse <= '1';
+                    elsif i_operation_command_ready /= '1' then
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
+                    else
+                        r_operation_command_valid <= '1';
+                        if v_effective_command(C_CMD_RUN_BIT) = '1' then
+                            r_operation_command <= OP_COMMAND_RUN;
+                        elsif v_effective_command(C_CMD_STOP_BIT) = '1' then
+                            r_operation_command <= OP_COMMAND_STOP;
+                        elsif v_effective_command(C_CMD_ARM_BIT) = '1' then
+                            r_operation_command <= OP_COMMAND_ARM;
+                        else
+                            r_operation_command <= OP_COMMAND_DISARM;
+                        end if;
                     end if;
                 elsif w_word_addr >= 1
                       and w_word_addr < C_CTL_RESERVED_FIRST then
@@ -301,6 +330,14 @@ begin
                 end if;
             end if;
 
+            -- A race in which READY closes after the CSR accepted the W1S
+            -- write is still diagnosed; the mailbox never silently overwrites
+            -- the earlier command.
+            if i_operation_command_rejected = '1' then
+                r_access_error_sticky <= '1';
+                r_access_error_event  <= '1';
+            end if;
+
             if i_cfg_done = '1' then
                 r_done_sticky      <= '1';
                 r_completion_count <= r_completion_count + 1;
@@ -336,6 +373,9 @@ begin
         i_cfg_recovery_required,
         i_cfg_active_valid,
         i_cfg_active,
+        i_operation_status,
+        i_operation_command_ready,
+        i_operation_command_busy,
         r_done_sticky,
         r_success_sticky,
         r_error_sticky,
@@ -443,6 +483,27 @@ begin
             v_status(C_STAT_DERIVED_MASKS)(31 downto 16) :=
                 std_logic_vector(r_completion_count);
         end if;
+
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_RUNNING_BIT) :=
+            i_operation_status.running;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_ARMED_BIT) :=
+            i_operation_status.armed;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_EXTERNAL_PERMIT_BIT) :=
+            i_operation_status.external_permit;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_CONFIG_READY_BIT) :=
+            i_operation_status.config_ready;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_PROCESSING_ENABLE_BIT) :=
+            i_operation_status.processing_enable;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_SCHEDULER_ENABLE_BIT) :=
+            i_operation_status.scheduler_enable;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_PHYSICAL_FIRE_ENABLE_BIT) :=
+            i_operation_status.physical_fire_enable;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_SIMULATION_ENABLE_BIT) :=
+            i_operation_status.simulation_enable;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_COMMAND_READY_BIT) :=
+            i_operation_command_ready;
+        v_status(C_STAT_ACTIVE_VERSION)(C_OP_COMMAND_BUSY_BIT) :=
+            i_operation_command_busy;
 
         w_status_words <= v_status;
     end process p_status;
