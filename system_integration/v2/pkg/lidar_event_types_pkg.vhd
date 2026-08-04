@@ -48,4 +48,41 @@ package lidar_event_types_pkg is
         active_version       => (others => '0')
     );
 
+    subtype face_index_t is unsigned(2 downto 0);
+
+    -- Registered B1 result.  enter_event and exit_event may both be asserted
+    -- when a position event changes Face without an intervening outside state,
+    -- or when direction reverses while the position remains inside a Face.
+    type face_event_t is record
+        valid                : std_logic;
+        inside               : std_logic;
+        enter_event          : std_logic;
+        exit_event           : std_logic;
+        overlap              : std_logic;
+        face_index           : face_index_t;
+        position             : position_t;
+        direction            : direction_t;
+        source_sim           : std_logic;
+        source_latency_clks  : position_latency_t;
+        source_latency_valid : std_logic;
+        z_event              : std_logic;
+        active_version       : unsigned(15 downto 0);
+    end record face_event_t;
+
+    constant C_FACE_EVENT_IDLE : face_event_t := (
+        valid                => '0',
+        inside               => '0',
+        enter_event          => '0',
+        exit_event           => '0',
+        overlap              => '0',
+        face_index           => (others => '0'),
+        position             => (others => '0'),
+        direction            => DIRECTION_CW,
+        source_sim           => '0',
+        source_latency_clks  => (others => '0'),
+        source_latency_valid => '0',
+        z_event              => '0',
+        active_version       => (others => '0')
+    );
+
 end package lidar_event_types_pkg;

@@ -70,13 +70,18 @@ Produced by `face_tracker`.
 |---|---|
 | `valid` | One-cycle registered result aligned with a position event |
 | `inside` | Current position is inside one active Face window |
-| `enter` / `exit` | One-cycle boundary events |
-| `face_index` | Selected active Face |
+| `enter_event` / `exit_event` | One-cycle traversal boundary events; both are high for an in-Face reversal or direct Face change |
+| `face_index` | Current Face, or the just-exited Face when the current position is outside |
 | `overlap` | More than one Face window matches |
 | `position` / `direction` | Aligned position context |
+| `source_sim`, latency fields, `z_event` | B0 source and timing context carried without reinterpretation |
+| `active_version` | Atomic configuration version copied from the B0 event |
 
 Overlapping windows are a configuration error unless an explicit future
 policy defines priority. v2 validation rejects overlap by default.
+The defensive runtime behavior selects the lowest matching Face and reports
+`overlap=1`. `face_tracker` has one Processing-clock latency and initiation
+interval one; AXIS readiness is not part of this path.
 
 ### 4.3 `shot_request_t`
 

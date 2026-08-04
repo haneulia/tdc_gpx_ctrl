@@ -117,8 +117,8 @@ default, 상태 readback, HTML 계약을 같은 값으로 갱신한다.
 |---|---|
 | `valid` | B0 위치 이벤트와 정렬된 Face 판정 |
 | `inside` | 현재 위치가 활성 Face의 inclusive 범위에 있음 |
-| `enter` | 직전 이벤트는 밖, 현재 이벤트는 안 |
-| `exit` | 직전 이벤트는 안, 현재 이벤트는 밖 |
+| `enter_event` | 직전 traversal은 밖, 현재 이벤트는 안 |
+| `exit_event` | 직전 traversal은 안, 현재 이벤트는 밖 |
 | `face_index` | 현재 또는 방금 빠져나온 Face |
 | `overlap` | 둘 이상의 Face가 동시에 일치한 진단 |
 | `position`, `direction`, `source_sim` | B0와 정렬된 context |
@@ -130,10 +130,16 @@ default, 상태 readback, HTML 계약을 같은 값으로 갱신한다.
 - wrap은 `position >= lower OR position <= upper`이다.
 - CW 증가는 lower에서 진입하고 upper 다음 상태에서 이탈한다.
 - CCW 감소는 upper에서 진입하고 lower 이전 상태에서 이탈한다.
-- 방향 전환은 geometry를 바꾸지 않고 새 traversal을 시작한다.
+- 방향 전환은 geometry를 바꾸지 않는다. Face 안에서 방향이 바뀌면 이전
+  traversal의 `exit_event`와 새 traversal의 `enter_event`를 같은 B1
+  이벤트에서 모두 1로 만든다.
+- gap 없이 Face A에서 Face B로 직접 이동해도 `exit_event=1`,
+  `enter_event=1`이며 `face_index`는 현재 Face B를 가리킨다.
 - overlap은 commit validator가 차단한다. 방어용 runtime 진단에서는 v1과
   같이 가장 낮은 Face index를 선택하고 `overlap=1`을 보고한다.
 - 비활성 Face와 build의 `num_faces` 밖 Face는 비교 대상에서 제외한다.
+- B1은 B0 입력에서 1 Processing clock 뒤에 등록되며 매 클럭 연속 B0
+  이벤트를 손실 없이 처리한다.
 
 ## 6. B2 Shot Scheduler Oracle
 

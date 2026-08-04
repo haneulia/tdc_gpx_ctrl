@@ -33,9 +33,9 @@ multiple clocks and is checked against this reference model.
   verified for 150/200 and 200/150 MHz asynchronous profiles.
 - Checkpoint E: unified 32 CTL / 32 STAT / 4 IRQ CSR bank integrated with the
   atomic configuration subsystem and route-verified for both clock profiles.
-- Stage 2 is closed. Stage 3 / Checkpoint F is active; F0 oracle/source-mode
-  closure and F1 `motor_position_core`/B0 comparison are complete, so the next
-  allowed sub-step is F2 `face_tracker` and B1 comparison.
+- Stage 2 is closed. Stage 3 / Checkpoint F is active; F0 oracle/source-mode,
+  F1 `motor_position_core`/B0 and F2 `face_tracker`/B1 are complete. The next
+  allowed sub-step is F3a operation/safety state ownership.
 - The v2 integrated functional datapath is not implemented yet; the existence
   of a v1 core does not mark the corresponding v2 Stage complete.
 
@@ -110,3 +110,17 @@ The pass marker is `LIDAR_V2_MOTOR_POSITION_PASS`. It runs P00..P04 at 150
 and 200 MHz, then requires non-negative post-route WNS, zero latches, 12
 physical synchronizer ASYNC_REG flops and zero Critical CDC findings. See
 `system_integration/v2_architecture/V2_CHECKPOINT_F1_MOTOR_POSITION.md`.
+
+Run the Face-tracker functional and implementation regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_face_tracker.ps1
+```
+
+The pass marker is `LIDAR_V2_FACE_TRACKER_PASS`. It runs P10..P13 for build
+Face counts 1 through 5 at 150 and 200 MHz, including runtime masks, modular
+wrap, reversal, zero-gap Face changes, overlap diagnostics and II=1 input.
+The worst-case 5-Face build must have non-negative post-route WNS, zero
+latches and zero Critical CDC paths. See
+`system_integration/v2_architecture/V2_CHECKPOINT_F2_FACE_TRACKER.md`.
