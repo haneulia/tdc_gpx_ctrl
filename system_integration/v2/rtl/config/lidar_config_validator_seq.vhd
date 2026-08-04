@@ -385,7 +385,8 @@ begin
                             r_error <= CFG_RUNTIME_MAX_HITS;
                             r_state <= S_FINISH_ERROR;
                         elsif i_source.tdc.bus_clk_div = 0
-                              or i_source.tdc.bus_ticks = 0 then
+                              or i_source.tdc.bus_ticks = 0
+                              or i_source.tdc.bus_ticks > 7 then
                             r_error <= CFG_RUNTIME_BUS_TIMING;
                             r_state <= S_FINISH_ERROR;
                         else

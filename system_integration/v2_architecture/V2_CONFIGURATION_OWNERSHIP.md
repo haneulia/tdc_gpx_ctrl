@@ -53,7 +53,7 @@ show an active source value, but it does not become a second owner.
 | Shot geometric column index | Event identity | shot scheduler | laser executor, frame builder and VDMA formatter | Advances at every due lattice point; busy skips leave holes and never compact later columns |
 | START/STOP pulse widths | Runtime source | Laser/TDC timing config | laser executor | Fixed 5 ns ticks; one owner |
 | Echo channel delay profile | Runtime source | CTL20 compact profile | Echo simulation path only | `delay[n] = CH0 + n * STEP`; one atomic commit, no indexed portal |
-| GPX bus divider/ticks | Runtime source | TDC bus profile | GPX bus engine | Applied only while the bus engine is quiescent |
+| GPX bus divider/ticks | Runtime source | TDC bus profile | GPX bus engine | Commit accepts divider 1..63 and ticks 1..7; applied only while quiescent |
 | GPX register image | Runtime source | GPX image table | GPX initialization engine | One standardized indexed portal |
 | Runtime active-chip mask | Runtime source | TDC scan config | acquisition and lane generator | Must be a subset of the build-present mask |
 | Runtime maximum Hits | Runtime source | TDC scan config | Cell builder and formatter | 1..build maximum; zero alias is removed in v2 |

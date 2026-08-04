@@ -277,6 +277,16 @@ begin
             "V2-MGR-004 invalid commit changed active payload");
 
         cfg := C_DEFAULT_RUNTIME_CONFIG;
+        cfg.tdc.bus_ticks := to_unsigned(8, cfg.tdc.bus_ticks'length);
+        shadow <= cfg;
+        pulse_commit;
+        wait_done("V2-MGR-004B bus tick physical-width guard",
+            CFG_RUNTIME_BUS_TIMING);
+        check(active_cfg = preserved and proc_active = preserved
+              and tdc_active = preserved,
+            "V2-MGR-004B invalid bus timing changed active payload");
+
+        cfg := C_DEFAULT_RUNTIME_CONFIG;
         cfg.laser.optical_shot_interval_udeg := to_unsigned(200_000, 30);
         proc_safe <= '0';
         shadow <= cfg;

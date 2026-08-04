@@ -190,8 +190,8 @@ inactive Face center word는 보존되지만 동작에는 사용되지 않는다
 
 | 레지스터 | Bit | 단위 | 의미 |
 |---|---:|---|---|
-| TDC_BUS_PROFILE | 5:0 | TDC clocks | GPX bus divider |
-| TDC_BUS_PROFILE | 11:6 | divided-bus ticks | bus timing ticks |
+| TDC_BUS_PROFILE | 5:0 | TDC clocks | GPX bus divider, valid 1..63 |
+| TDC_BUS_PROFILE | 11:6 | divided-bus ticks | bus timing ticks, valid 1..7 |
 | TDC_BUS_PROFILE | 15:12 | mask | runtime active chip mask |
 | TDC_BUS_PROFILE | 16 | boolean | falling path enable |
 | TDC_BUS_PROFILE | 19:17 | Hits | maximum Returns/STOP, 1..build max |
@@ -201,6 +201,11 @@ inactive Face center word는 보존되지만 동작에는 사용되지 않는다
 | TDC_SCAN_TIMEOUT | 31:0 | 5 ns ticks | scan watchdog source |
 | TDC_CAPTURE_ADJUST | 16:0 | signed 5 ns ticks | target range에 더하는 board 보정 |
 | TDC_CAPTURE_ADJUST | 31:17 | - | Reserved, 반드시 0 |
+
+`TDC_BUS_PROFILE.BUS_TICKS`는 CSR 호환성을 위해 6 bit를 유지하지만 물리
+GPX bus FSM의 입력은 3 bit다. 따라서 `[11:9]`는 항상 0이어야 하며 8 이상은
+commit 시 `CFG_RUNTIME_BUS_TIMING`으로 거부된다. 짧지만 1..7 범위에 있는
+값은 board-safe read capture 시간을 지키도록 물리 FSM에서 위로 clamp된다.
 
 `TDC_CAPTURE_ADJUST`는 17-bit two's-complement field이다. 음수도 상위
 reserved bit를 sign-extension하지 않고 `[16:0]`에만 기록한다.

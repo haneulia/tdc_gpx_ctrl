@@ -257,6 +257,11 @@ begin
         run_case("V2-CALC-117 zero bus ticks", v_cfg,
             CFG_RUNTIME_BUS_TIMING);
 
+        v_cfg := C_DEFAULT_RUNTIME_CONFIG;
+        v_cfg.tdc.bus_ticks := to_unsigned(8, 6);
+        run_case("V2-CALC-118 bus ticks exceed physical width", v_cfg,
+            CFG_RUNTIME_BUS_TIMING);
+
         -- A command while BUSY is rejected, and changing i_source cannot alter
         -- the snapshot already being calculated.
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;

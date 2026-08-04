@@ -279,7 +279,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
-| 5 | H | Pending | B5 evidence pending | Proven GPX bus/acquisition wrapper |
+| 5 | H | In progress | H0 oracle + H1 bus wrapper PASS; H2/H3 pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
@@ -287,10 +287,11 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
 closed at Checkpoint F and Stage 4 is closed at Checkpoint G. F0a/F0b through
-F5 cover B0..B3 and G covers the B4 physical/synthetic Echo boundary. The only
-valid next step is **Stage 5 / Checkpoint H GPX bus and acquisition**. Stage 6
-or later work must not be treated as migrated merely because its v1
-implementation exists.
+F5 cover B0..B3 and G covers the B4 physical/synthetic Echo boundary. Stage 5
+is now active: H0 froze the oracle and H1 proved the typed physical-bus wrapper.
+The only valid next step is **H2 acquisition coordination and CDC**, followed
+by H3 B5 end-to-end closure. Stage 6 or later work must not be treated as
+migrated merely because its v1 implementation exists.
 
 Commit only after the focused sub-step passes. Intermediate commits inside a
 Checkpoint are allowed, but the Checkpoint result document and status row move
@@ -371,3 +372,23 @@ Checkpoint H wraps the proven v1 GPX bus engine behind typed command/result
 records. The first pass preserves its physical bus FSM and verifies B5 before
 any algorithmic cleanup. Echo diagnostics remain observation-only and must not
 be reinterpreted as IFIFO occupancy or GPX completion.
+
+Required order and current status:
+
+1. **H0 complete:** freeze v1 bus/acquisition sources, pin semantics, IFIFO
+   order and the 28-bit B5 word contract;
+2. **H1 complete:** add `gpx_bus_request_t`, `gpx_bus_response_t` and
+   `gpx_pin_status_t`, then prove cycle/pin equivalence against a direct v1 PHY;
+3. **H2 next:** add named Processing-to-TDC command and TDC-to-Processing
+   result gateways, with direct registered SYNC and handshake/FIFO ASYNC paths;
+4. **H2 pending:** preserve `tdc_gpx_chip_run` IFIFO1/IFIFO2 drain ordering
+   behind a typed acquisition coordinator;
+5. **H3 pending:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
+   status changes, timeout, cap and output backpressure;
+6. **H3 pending:** run routine 150/200 and 200/150 MHz integration profiles and
+   close Checkpoint H only when all B5 evidence is archived.
+
+H1 evidence is recorded in `V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md`. The central
+CSR keeps a 6-bit `BUS_TICKS` field for ABI stability, but commit validation now
+accepts only 1..7 because the proven physical PHY owns a 3-bit input. Values
+above 7 are rejected before PREPARE and cannot be silently truncated.

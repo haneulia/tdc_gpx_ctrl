@@ -312,7 +312,8 @@ package body lidar_config_reference_pkg is
               > build_cfg.max_returns_per_stop then
             return CFG_RUNTIME_MAX_HITS;
         elsif runtime_cfg.tdc.bus_clk_div = 0
-              or runtime_cfg.tdc.bus_ticks = 0 then
+              or runtime_cfg.tdc.bus_ticks = 0
+              or runtime_cfg.tdc.bus_ticks > 7 then
             return CFG_RUNTIME_BUS_TIMING;
         end if;
 
