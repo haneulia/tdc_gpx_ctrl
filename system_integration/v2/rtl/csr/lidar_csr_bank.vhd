@@ -1,0 +1,474 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+use work.lidar_build_pkg.all;
+use work.lidar_config_types_pkg.all;
+use work.lidar_csr_map_pkg.all;
+
+-- One AXI4-Lite owner for the v2 LiDAR configuration ABI.
+--
+-- CTL1..19 are shadow storage. CTL0 is write-one-set command space and never
+-- stores a command level. The active readback is sourced only from the atomic
+-- configuration manager, so software can distinguish edited and applied data.
+entity lidar_csr_bank is
+    generic (
+        G_BUILD_CONFIG : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG
+    );
+    port (
+        i_clk    : in  std_logic;
+        i_rst_n  : in  std_logic;
+
+        s_axi_awaddr  : in  std_logic_vector(8 downto 0);
+        s_axi_awprot  : in  std_logic_vector(2 downto 0);
+        s_axi_awvalid : in  std_logic;
+        s_axi_awready : out std_logic;
+        s_axi_wdata   : in  std_logic_vector(31 downto 0);
+        s_axi_wstrb   : in  std_logic_vector(3 downto 0);
+        s_axi_wvalid  : in  std_logic;
+        s_axi_wready  : out std_logic;
+        s_axi_bresp   : out std_logic_vector(1 downto 0);
+        s_axi_bvalid  : out std_logic;
+        s_axi_bready  : in  std_logic;
+        s_axi_araddr  : in  std_logic_vector(8 downto 0);
+        s_axi_arprot  : in  std_logic_vector(2 downto 0);
+        s_axi_arvalid : in  std_logic;
+        s_axi_arready : out std_logic;
+        s_axi_rdata   : out std_logic_vector(31 downto 0);
+        s_axi_rresp   : out std_logic_vector(1 downto 0);
+        s_axi_rvalid  : out std_logic;
+        s_axi_rready  : in  std_logic;
+
+        i_cfg_busy              : in  std_logic;
+        i_cfg_done              : in  std_logic;
+        i_cfg_commit_rejected   : in  std_logic;
+        i_cfg_reject_error      : in  lidar_cfg_error_t;
+        i_cfg_error             : in  lidar_cfg_error_t;
+        i_cfg_recovery_required : in  std_logic;
+        i_cfg_active_valid      : in  std_logic;
+        i_cfg_active            : in  lidar_active_config_t;
+
+        o_shadow            : out lidar_runtime_config_t;
+        o_commit            : out std_logic;
+        o_clear_status      : out std_logic;
+        o_soft_reset_request : out std_logic;
+        o_irq               : out std_logic
+    );
+end entity lidar_csr_bank;
+
+architecture rtl of lidar_csr_bank is
+
+    constant C_DEFAULT_SHADOW : lidar_runtime_config_t :=
+        fn_default_runtime_config(G_BUILD_CONFIG);
+    constant C_DEFAULT_WORDS : csr_word_array_t :=
+        fn_pack_runtime_config(C_DEFAULT_SHADOW);
+
+    signal r_shadow_words : csr_word_array_t := C_DEFAULT_WORDS;
+    signal w_status_words : csr_word_array_t;
+
+    signal w_addr : std_logic_vector(8 downto 0);
+    signal w_data : csr_word_t;
+    signal w_strb : std_logic_vector(3 downto 0);
+    signal w_we   : std_logic;
+    signal r_addr : std_logic_vector(8 downto 0);
+    signal w_read_data : csr_word_t;
+
+    signal w_word_addr : integer range 0 to 127;
+    signal r_word_addr : integer range 0 to 127;
+
+    signal r_commit_pulse      : std_logic := '0';
+    signal r_clear_pulse       : std_logic := '0';
+    signal r_soft_reset_pulse  : std_logic := '0';
+    signal r_access_error_event : std_logic := '0';
+
+    signal r_done_sticky      : std_logic := '0';
+    signal r_success_sticky   : std_logic := '0';
+    signal r_error_sticky     : std_logic := '0';
+    signal r_rejected_sticky  : std_logic := '0';
+    signal r_access_error_sticky : std_logic := '0';
+    signal r_shadow_dirty     : std_logic := '1';
+    signal r_last_error_code  : std_logic_vector(7 downto 0) := x"00";
+    signal r_last_reject_code : std_logic_vector(7 downto 0) := x"00";
+    signal r_completion_count : unsigned(15 downto 0) := (others => '0');
+    signal r_shadow_revision  : unsigned(31 downto 0) := (others => '0');
+    signal r_commit_revision  : unsigned(31 downto 0) := (others => '0');
+
+    signal w_intr_sources : std_logic_vector(C_LIDAR_IRQ_SOURCES - 1 downto 0);
+    signal w_intr_read_data : csr_word_t;
+    signal w_intr_read_hit  : std_logic;
+
+    function fn_output_width_code(width_value : natural)
+        return std_logic_vector is
+    begin
+        case width_value is
+            when 32     => return "00";
+            when 64     => return "01";
+            when others => return "10";
+        end case;
+    end function fn_output_width_code;
+
+begin
+
+    assert fn_validate_build_config(G_BUILD_CONFIG) = CFG_OK
+        report "V2-CSR-001 illegal build configuration"
+        severity failure;
+
+    o_shadow             <= fn_unpack_runtime_config(r_shadow_words);
+    o_commit             <= r_commit_pulse;
+    o_clear_status       <= r_clear_pulse;
+    o_soft_reset_request <= r_soft_reset_pulse;
+
+    w_word_addr <= to_integer(unsigned(w_addr(8 downto 2)));
+    r_word_addr <= to_integer(unsigned(r_addr(8 downto 2)));
+
+    u_axil_fsm : entity work.axil_fsm_32
+        generic map (
+            num_ctl_regs  => C_LIDAR_CTL_COUNT,
+            num_stat_regs => C_LIDAR_STAT_COUNT,
+            num_data_bits => 32,
+            en_secure_chk => '0',
+            en_priv_chk   => '0'
+        )
+        port map (
+            aclk    => i_clk,
+            aresetn => i_rst_n,
+            awaddr  => s_axi_awaddr,
+            awprot  => s_axi_awprot,
+            awvalid => s_axi_awvalid,
+            awready => s_axi_awready,
+            wdata   => s_axi_wdata,
+            wstrb   => s_axi_wstrb,
+            wvalid  => s_axi_wvalid,
+            wready  => s_axi_wready,
+            bresp   => s_axi_bresp,
+            bvalid  => s_axi_bvalid,
+            bready  => s_axi_bready,
+            araddr  => s_axi_araddr,
+            arprot  => s_axi_arprot,
+            arvalid => s_axi_arvalid,
+            arready => s_axi_arready,
+            rdata   => s_axi_rdata,
+            rresp   => s_axi_rresp,
+            rvalid  => s_axi_rvalid,
+            rready  => s_axi_rready,
+            w_addr  => w_addr,
+            w_data  => w_data,
+            w_strb  => w_strb,
+            w_we    => w_we,
+            r_addr  => r_addr,
+            rd_data => w_read_data
+        );
+
+    w_intr_sources(C_IRQ_COMMIT_SUCCESS) <= '1' when
+        i_cfg_done = '1' and i_cfg_error = CFG_OK else '0';
+    w_intr_sources(C_IRQ_COMMIT_ERROR) <= '1' when
+        i_cfg_done = '1' and i_cfg_error /= CFG_OK else '0';
+    w_intr_sources(C_IRQ_COMMIT_REJECTED) <= i_cfg_commit_rejected;
+    w_intr_sources(C_IRQ_RECOVERY_REQUIRED) <= i_cfg_recovery_required;
+    w_intr_sources(C_IRQ_ACCESS_ERROR) <= r_access_error_event;
+
+    u_interrupts : entity work.axil_intr_32
+        generic map (
+            num_ctl_regs      => C_LIDAR_CTL_COUNT,
+            num_stat_regs     => C_LIDAR_STAT_COUNT,
+            num_intr_regs     => C_LIDAR_IRQ_COUNT,
+            num_interrupt_src => C_LIDAR_IRQ_SOURCES,
+            num_data_bits     => 32
+        )
+        port map (
+            aclk          => i_clk,
+            aresetn       => i_rst_n,
+            w_addr_num    => w_word_addr,
+            w_data        => w_data,
+            w_strb        => w_strb,
+            w_we          => w_we,
+            intrpt_src_in => w_intr_sources,
+            r_addr_num    => r_word_addr,
+            rd_data       => w_intr_read_data,
+            rd_hit        => w_intr_read_hit,
+            irq           => o_irq
+        );
+
+    p_registers : process (i_clk, i_rst_n)
+        variable v_effective_command : csr_word_t;
+        variable v_merged_word       : csr_word_t;
+        variable v_command_count     : natural;
+        variable v_write_valid       : boolean;
+        variable v_shadow_changed    : boolean;
+    begin
+        if i_rst_n = '0' then
+            r_shadow_words       <= C_DEFAULT_WORDS;
+            r_commit_pulse       <= '0';
+            r_clear_pulse        <= '0';
+            r_soft_reset_pulse   <= '0';
+            r_access_error_event <= '0';
+            r_done_sticky        <= '0';
+            r_success_sticky     <= '0';
+            r_error_sticky       <= '0';
+            r_rejected_sticky    <= '0';
+            r_access_error_sticky <= '0';
+            r_shadow_dirty       <= '1';
+            r_last_error_code    <= x"00";
+            r_last_reject_code   <= x"00";
+            r_completion_count   <= (others => '0');
+            r_shadow_revision    <= (others => '0');
+            r_commit_revision    <= (others => '0');
+        elsif rising_edge(i_clk) then
+            v_shadow_changed := false;
+            r_commit_pulse       <= '0';
+            r_clear_pulse        <= '0';
+            r_soft_reset_pulse   <= '0';
+            r_access_error_event <= '0';
+
+            -- r_commit_pulse is observed here one clock after the AXI write,
+            -- on the same edge where the manager accepts or rejects it.  This
+            -- also covers a new COMMIT coincident with prior completion.
+            if r_commit_pulse = '1' and i_cfg_busy = '0' then
+                r_commit_revision <= r_shadow_revision;
+            end if;
+
+            if w_we = '1' then
+                if w_addr(1 downto 0) /= "00" then
+                    r_access_error_sticky <= '1';
+                    r_access_error_event  <= '1';
+                elsif w_word_addr = C_CTL_COMMAND then
+                    v_effective_command := (others => '0');
+                    for byte_index in 0 to 3 loop
+                        if w_strb(byte_index) = '1' then
+                            v_effective_command(
+                                8 * byte_index + 7 downto 8 * byte_index) :=
+                                w_data(8 * byte_index + 7 downto
+                                    8 * byte_index);
+                        end if;
+                    end loop;
+                    v_command_count := fn_popcount(
+                        v_effective_command and C_COMMAND_VALID_MASK);
+
+                    if (v_effective_command and not C_COMMAND_VALID_MASK) /=
+                            x"00000000"
+                       or v_command_count > 1 then
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
+                    elsif v_command_count = 0 then
+                        null;
+                    elsif v_effective_command(C_CMD_COMMIT_BIT) = '1' then
+                        r_commit_pulse <= '1';
+                    elsif v_effective_command(C_CMD_CLEAR_STATUS_BIT) = '1' then
+                        r_clear_pulse         <= '1';
+                        r_done_sticky         <= '0';
+                        r_success_sticky      <= '0';
+                        r_error_sticky        <= '0';
+                        r_rejected_sticky     <= '0';
+                        r_access_error_sticky <= '0';
+                        r_last_error_code     <= x"00";
+                        r_last_reject_code    <= x"00";
+                    else
+                        r_soft_reset_pulse <= '1';
+                    end if;
+                elsif w_word_addr >= 1
+                      and w_word_addr < C_CTL_RESERVED_FIRST then
+                    v_merged_word := r_shadow_words(w_word_addr);
+                    for byte_index in 0 to 3 loop
+                        if w_strb(byte_index) = '1' then
+                            v_merged_word(
+                                8 * byte_index + 7 downto 8 * byte_index) :=
+                                w_data(8 * byte_index + 7 downto
+                                    8 * byte_index);
+                        end if;
+                    end loop;
+                    v_write_valid := fn_ctl_word_encoding_valid(
+                        w_word_addr, v_merged_word);
+                    if v_write_valid then
+                        if v_merged_word /= r_shadow_words(w_word_addr) then
+                            r_shadow_words(w_word_addr) <= v_merged_word;
+                            r_shadow_revision <= r_shadow_revision + 1;
+                            v_shadow_changed := true;
+                        end if;
+                    else
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
+                    end if;
+                elsif w_word_addr = C_LIDAR_CTL_COUNT +
+                        C_LIDAR_STAT_COUNT
+                      or w_word_addr = C_LIDAR_CTL_COUNT +
+                        C_LIDAR_STAT_COUNT + 2
+                      or w_word_addr = C_LIDAR_CTL_COUNT +
+                        C_LIDAR_STAT_COUNT + 3 then
+                    null;
+                else
+                    r_access_error_sticky <= '1';
+                    r_access_error_event  <= '1';
+                end if;
+            end if;
+
+            if i_cfg_done = '1' then
+                r_done_sticky      <= '1';
+                r_completion_count <= r_completion_count + 1;
+                if i_cfg_error = CFG_OK then
+                    r_success_sticky <= '1';
+                    if r_shadow_revision = r_commit_revision then
+                        r_shadow_dirty <= '0';
+                    else
+                        r_shadow_dirty <= '1';
+                    end if;
+                else
+                    r_error_sticky    <= '1';
+                    r_last_error_code <= fn_cfg_error_code(i_cfg_error);
+                end if;
+            end if;
+
+            if i_cfg_commit_rejected = '1' then
+                r_rejected_sticky    <= '1';
+                r_last_reject_code   <= fn_cfg_error_code(i_cfg_reject_error);
+            end if;
+
+            -- A write concurrent with successful activation belongs to the
+            -- next transaction and therefore keeps the shadow dirty.
+            if v_shadow_changed then
+                r_shadow_dirty <= '1';
+            end if;
+        end if;
+    end process p_registers;
+
+    p_status : process (
+        i_cfg_busy,
+        i_cfg_error,
+        i_cfg_recovery_required,
+        i_cfg_active_valid,
+        i_cfg_active,
+        r_done_sticky,
+        r_success_sticky,
+        r_error_sticky,
+        r_rejected_sticky,
+        r_access_error_sticky,
+        r_shadow_dirty,
+        r_last_error_code,
+        r_last_reject_code,
+        r_completion_count
+    )
+        variable v_status : csr_word_array_t;
+        variable v_active : csr_word_array_t;
+    begin
+        v_status := (others => (others => '0'));
+
+        v_status(C_STAT_CORE_INFO)(7 downto 0) := std_logic_vector(
+            to_unsigned(C_LIDAR_CSR_ABI_MINOR, 8));
+        v_status(C_STAT_CORE_INFO)(15 downto 8) := std_logic_vector(
+            to_unsigned(C_LIDAR_CSR_ABI_MAJOR, 8));
+        v_status(C_STAT_CORE_INFO)(18 downto 16) := std_logic_vector(
+            to_unsigned(G_BUILD_CONFIG.num_faces, 3));
+        v_status(C_STAT_CORE_INFO)(21 downto 19) := std_logic_vector(
+            to_unsigned(G_BUILD_CONFIG.num_chips, 3));
+        v_status(C_STAT_CORE_INFO)(25 downto 22) := std_logic_vector(
+            to_unsigned(G_BUILD_CONFIG.stops_per_chip, 4));
+        v_status(C_STAT_CORE_INFO)(28 downto 26) := std_logic_vector(
+            to_unsigned(G_BUILD_CONFIG.max_returns_per_stop, 3));
+        if G_BUILD_CONFIG.enable_echo_receiver then
+            v_status(C_STAT_CORE_INFO)(29) := '1';
+        end if;
+        if G_BUILD_CONFIG.enable_echo_simulation then
+            v_status(C_STAT_CORE_INFO)(30) := '1';
+        end if;
+        if G_BUILD_CONFIG.stream_clock_mode = STREAM_CLOCK_SYNC then
+            v_status(C_STAT_CORE_INFO)(31) := '1';
+        end if;
+
+        v_status(C_STAT_BUILD_INFO)(7 downto 0) := std_logic_vector(
+            to_unsigned(G_BUILD_CONFIG.proc_clk_mhz, 8));
+        v_status(C_STAT_BUILD_INFO)(15 downto 8) := std_logic_vector(
+            to_unsigned(G_BUILD_CONFIG.tdc_clk_mhz, 8));
+        v_status(C_STAT_BUILD_INFO)(17 downto 16) :=
+            fn_output_width_code(G_BUILD_CONFIG.output_width);
+        v_status(C_STAT_BUILD_INFO)(23 downto 20) :=
+            G_BUILD_CONFIG.rise_capability_mask;
+        v_status(C_STAT_BUILD_INFO)(27 downto 24) :=
+            G_BUILD_CONFIG.fall_capability_mask;
+
+        v_status(C_STAT_TRANSACTION)(C_TXN_BUSY_BIT) := i_cfg_busy;
+        v_status(C_STAT_TRANSACTION)(C_TXN_DONE_STICKY_BIT) :=
+            r_done_sticky;
+        v_status(C_STAT_TRANSACTION)(C_TXN_SUCCESS_STICKY_BIT) :=
+            r_success_sticky;
+        v_status(C_STAT_TRANSACTION)(C_TXN_ERROR_STICKY_BIT) :=
+            r_error_sticky;
+        v_status(C_STAT_TRANSACTION)(C_TXN_REJECTED_STICKY_BIT) :=
+            r_rejected_sticky;
+        v_status(C_STAT_TRANSACTION)(C_TXN_RECOVERY_REQUIRED_BIT) :=
+            i_cfg_recovery_required;
+        v_status(C_STAT_TRANSACTION)(C_TXN_ACTIVE_VALID_BIT) :=
+            i_cfg_active_valid;
+        v_status(C_STAT_TRANSACTION)(C_TXN_ACCESS_ERROR_BIT) :=
+            r_access_error_sticky;
+        v_status(C_STAT_TRANSACTION)(C_TXN_SHADOW_DIRTY_BIT) :=
+            r_shadow_dirty;
+        v_status(C_STAT_TRANSACTION)(23 downto 16) := r_last_error_code;
+        v_status(C_STAT_TRANSACTION)(31 downto 24) := r_last_reject_code;
+
+        if i_cfg_active_valid = '1' then
+            v_status(C_STAT_ACTIVE_VERSION)(15 downto 0) :=
+                std_logic_vector(i_cfg_active.version);
+            v_active := fn_pack_runtime_config(i_cfg_active.source);
+            for source_index in 1 to C_CTL_TDC_CAPTURE_ADJUST loop
+                v_status(C_STAT_ACTIVE_SOURCE_BASE + source_index - 1) :=
+                    v_active(source_index);
+            end loop;
+
+            v_status(C_STAT_DERIVED_GEOMETRY)(15 downto 0) :=
+                std_logic_vector(i_cfg_active.derived.total_states);
+            v_status(C_STAT_DERIVED_GEOMETRY)(31 downto 16) :=
+                std_logic_vector(i_cfg_active.derived.shot_interval_states);
+            v_status(C_STAT_DERIVED_FACE)(15 downto 0) :=
+                std_logic_vector(i_cfg_active.derived.face_active_positions);
+            v_status(C_STAT_DERIVED_FACE)(31 downto 16) :=
+                std_logic_vector(i_cfg_active.derived.columns_per_face);
+            for face_index in 0 to C_MAX_FACES - 1 loop
+                v_status(C_STAT_FACE_BOUNDS_0 + face_index)(14 downto 0) :=
+                    std_logic_vector(i_cfg_active.derived.face_lower(face_index));
+                v_status(C_STAT_FACE_BOUNDS_0 + face_index)(30 downto 16) :=
+                    std_logic_vector(i_cfg_active.derived.face_upper(face_index));
+            end loop;
+            v_status(C_STAT_CAPTURE_TDC_CLKS) := std_logic_vector(
+                i_cfg_active.derived.capture_window_tdc_clks);
+            v_status(C_STAT_DERIVED_MASKS)(3 downto 0) :=
+                i_cfg_active.derived.present_chip_mask;
+            v_status(C_STAT_DERIVED_MASKS)(7 downto 4) :=
+                i_cfg_active.derived.active_rise_mask;
+            v_status(C_STAT_DERIVED_MASKS)(11 downto 8) :=
+                i_cfg_active.derived.active_fall_mask;
+            v_status(C_STAT_DERIVED_MASKS)(31 downto 16) :=
+                std_logic_vector(r_completion_count);
+        end if;
+
+        if i_cfg_active_valid = '0' then
+            v_status(C_STAT_DERIVED_MASKS)(31 downto 16) :=
+                std_logic_vector(r_completion_count);
+        end if;
+
+        w_status_words <= v_status;
+    end process p_status;
+
+    p_read_mux : process (
+        r_addr,
+        r_word_addr,
+        r_shadow_words,
+        w_status_words,
+        w_intr_read_data,
+        w_intr_read_hit
+    )
+    begin
+        w_read_data <= (others => '0');
+        if r_addr(1 downto 0) = "00" then
+            if r_word_addr < C_LIDAR_CTL_COUNT then
+                if r_word_addr /= C_CTL_COMMAND then
+                    w_read_data <= r_shadow_words(r_word_addr);
+                end if;
+            elsif r_word_addr < C_LIDAR_CTL_COUNT + C_LIDAR_STAT_COUNT then
+                w_read_data <= w_status_words(
+                    r_word_addr - C_LIDAR_CTL_COUNT);
+            elsif w_intr_read_hit = '1' then
+                w_read_data <= w_intr_read_data;
+            end if;
+        end if;
+    end process p_read_mux;
+
+end architecture rtl;

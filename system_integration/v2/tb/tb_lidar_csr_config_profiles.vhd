@@ -1,0 +1,27 @@
+entity tb_lidar_csr_config_150_200 is
+end entity tb_lidar_csr_config_150_200;
+
+architecture sim of tb_lidar_csr_config_150_200 is
+begin
+    u_profile : entity work.tb_lidar_csr_config_subsystem
+        generic map (
+            G_PROC_CLK_MHZ        => 150,
+            G_TDC_CLK_MHZ         => 200,
+            G_PROC_HALF_PERIOD_PS => 3333,
+            G_TDC_HALF_PERIOD_PS  => 2500
+        );
+end architecture sim;
+
+entity tb_lidar_csr_config_200_150 is
+end entity tb_lidar_csr_config_200_150;
+
+architecture sim of tb_lidar_csr_config_200_150 is
+begin
+    u_profile : entity work.tb_lidar_csr_config_subsystem
+        generic map (
+            G_PROC_CLK_MHZ        => 200,
+            G_TDC_CLK_MHZ         => 150,
+            G_PROC_HALF_PERIOD_PS => 2500,
+            G_TDC_HALF_PERIOD_PS  => 3333
+        );
+end architecture sim;

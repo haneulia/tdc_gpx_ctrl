@@ -144,4 +144,49 @@ package lidar_config_types_pkg is
         )
     );
 
+    -- Produces a legal reset shadow for the selected build topology.  Runtime
+    -- timing defaults remain common, while Face centers/masks and the active
+    -- chip/slope defaults are derived from synthesis-time capabilities.
+    function fn_default_runtime_config(
+        build_cfg : lidar_build_config_t
+    ) return lidar_runtime_config_t;
+
 end package lidar_config_types_pkg;
+
+package body lidar_config_types_pkg is
+
+    function fn_default_runtime_config(
+        build_cfg : lidar_build_config_t
+    ) return lidar_runtime_config_t is
+        constant C_DEFAULT_TOTAL_STATES : positive :=
+            3600 * fn_decode_multiplier(DECODE_X4);
+        variable result       : lidar_runtime_config_t :=
+            C_DEFAULT_RUNTIME_CONFIG;
+        variable center_value : natural;
+        variable zero_mask    : chip_mask_t := (others => '0');
+    begin
+        result.laser.face_enable_mask := fn_active_face_mask(
+            build_cfg.num_faces);
+        result.tdc.active_chip_mask := fn_present_chip_mask(
+            build_cfg.num_chips);
+
+        if build_cfg.fall_capability_mask = zero_mask then
+            result.tdc.falling_enable := '0';
+        else
+            result.tdc.falling_enable := '1';
+        end if;
+
+        result.mirror.face_centers := (others => (others => '0'));
+        if build_cfg.num_faces >= 1 and build_cfg.num_faces <= C_MAX_FACES then
+            for face_index in 0 to build_cfg.num_faces - 1 loop
+                center_value := ((2 * face_index + 1)
+                    * C_DEFAULT_TOTAL_STATES) / (2 * build_cfg.num_faces);
+                result.mirror.face_centers(face_index) := to_unsigned(
+                    center_value, C_POSITION_WIDTH);
+            end loop;
+        end if;
+
+        return result;
+    end function fn_default_runtime_config;
+
+end package body lidar_config_types_pkg;
