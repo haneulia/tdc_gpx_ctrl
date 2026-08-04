@@ -38,3 +38,15 @@ tmp/
 # Reproducible parent-reference Vivado projects and generated reports.
 /parent_ref/build/
 /parent_ref/results/
+.codex_ip_package_guides/
+.codex_my_axil_csr_signoff/
+.codex_my_axil_csr32_hardening/
+.codex_tmp/
+.work/
+sim_results/
+.package_work/
+.gen/
+.srcs/
+.board_signoff_project4_rev20/
+.package_work_unified_csr/
+NA/
