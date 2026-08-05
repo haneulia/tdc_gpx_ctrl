@@ -8,7 +8,8 @@ entity lidar_config_subsystem is
     generic (
         G_BUILD_CONFIG       : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG;
         G_CSR_CLK_MHZ        : positive := 100;
-        G_PHASE_TIMEOUT_US   : positive := 1000
+        G_PHASE_TIMEOUT_US   : positive := 1000;
+        G_TDC_DEFER_ACTIVATE_ACK : boolean := false
     );
     port (
         i_csr_clk          : in  std_logic;
@@ -21,6 +22,8 @@ entity lidar_config_subsystem is
         i_shadow           : in  lidar_runtime_config_t;
         i_proc_safe        : in  std_logic;
         i_tdc_safe         : in  std_logic;
+        i_tdc_activate_complete : in std_logic := '0';
+        i_tdc_activate_fault    : in std_logic := '0';
         o_busy             : out std_logic;
         o_done             : out std_logic;
         o_commit_rejected  : out std_logic;
@@ -35,6 +38,7 @@ entity lidar_config_subsystem is
         o_tdc_enable       : out std_logic;
         o_tdc_active_valid : out std_logic;
         o_tdc_active       : out lidar_active_config_t;
+        o_tdc_activate_start : out std_logic;
         o_prepare_req      : out std_logic;
         o_activate_req     : out std_logic;
         o_release_req      : out std_logic
@@ -96,6 +100,9 @@ begin
         );
 
     u_proc_gateway : entity work.lidar_config_gateway
+        generic map (
+            G_DEFER_ACTIVATE_ACK => false
+        )
         port map (
             i_csr_clk         => i_csr_clk,
             i_csr_rst_n       => i_csr_rst_n,
@@ -106,9 +113,12 @@ begin
             i_release_req     => release_req,
             i_candidate       => candidate,
             i_safe_to_prepare => i_proc_safe,
+            i_activate_complete => '1',
+            i_activate_fault    => '0',
             o_prepare_ack     => proc_prepare_ack,
             o_activate_ack    => proc_activate_ack,
             o_release_ack     => proc_release_ack,
+            o_activate_start  => open,
             o_fault_csr       => proc_fault,
             o_domain_enable   => o_proc_enable,
             o_active_valid    => o_proc_active_valid,
@@ -116,6 +126,9 @@ begin
         );
 
     u_tdc_gateway : entity work.lidar_config_gateway
+        generic map (
+            G_DEFER_ACTIVATE_ACK => G_TDC_DEFER_ACTIVATE_ACK
+        )
         port map (
             i_csr_clk         => i_csr_clk,
             i_csr_rst_n       => i_csr_rst_n,
@@ -126,9 +139,12 @@ begin
             i_release_req     => release_req,
             i_candidate       => candidate,
             i_safe_to_prepare => i_tdc_safe,
+            i_activate_complete => i_tdc_activate_complete,
+            i_activate_fault    => i_tdc_activate_fault,
             o_prepare_ack     => tdc_prepare_ack,
             o_activate_ack    => tdc_activate_ack,
             o_release_ack     => tdc_release_ack,
+            o_activate_start  => o_tdc_activate_start,
             o_fault_csr       => tdc_fault,
             o_domain_enable   => o_tdc_enable,
             o_active_valid    => o_tdc_active_valid,

@@ -2,7 +2,9 @@
 
 ## 1. 판정
 
-Checkpoint E 범위는 **PASS**이다.
+Checkpoint E의 최초 ABI 2.3 범위는 **PASS**이다. Stage 5 H2B-2B에서 GPX
+image portal과 물리 적용 ACK를 추가해 현재 ABI는 2.4이며, 아래 8절에
+비회귀 결과를 덧붙인다.
 
 - 32 CTL / 32 STAT / 4 IRQ ABI 구현
 - W1S command와 persistent shadow 분리
@@ -115,7 +117,35 @@ event pipeline 연결과 함께 수행한다.
 - `SOFT_RESET_REQUEST`는 parent reset supervisor가 아직 소비하지 않는다.
 - `TDC_SCAN_TIMEOUT=0`의 GPX watchdog 의미는 acquisition stage에서 확정한다.
 - Echo simulation delay는 Checkpoint G에서 CTL20 한 word의
-  `CH0_DELAY + channel * STEP` 구조로 확정되었다. GPX image 16-entry indexed
-  portal만 Stage 5에서 CTL21..31 일부를 사용해 추가한다.
+  `CH0_DELAY + channel * STEP` 구조로 확정되었다. 채널별 32-word table은
+  추가하지 않는다.
+- GPX image 16-entry indexed portal은 Stage 5 H2B-2B에서 CTL21/22 두 word로
+  완료되었다. CTL23..31은 계속 reserved이다.
 - 최종 IP-XACT/XGUI packaging과 parent PS7 implementation은 full v2 top 이후
   수행한다.
+
+## 8. Stage 5 H2B-2B ABI 2.4 addendum
+
+- CTL20 Echo profile과 `enable_echo_receiver`/`enable_echo_simulation` build
+  option은 변경하지 않았다.
+- CTL21 `GPX_IMAGE_INDEX`와 CTL22 `GPX_IMAGE_DATA`만 사용해 16-entry GPX
+  staging/active image를 접근한다.
+- 같은 global COMMIT에서 runtime config와 GPX image를 각각 snapshot한다.
+- TDC ACTIVATE ACK는 모든 활성 GPX chip의 configuration 완료까지 지연된다.
+- 진행 중 image edit는 현재 transaction에 섞이지 않고 다음 COMMIT 후보가 된다.
+
+최종 회귀 archive:
+
+```text
+signoff_results/sessions/260805_stage5_h2b2b_csr_r6_external_apply_v2_unified_csr
+```
+
+| Profile | WNS | Latch | CDC Critical | CDC-3 | ASYNC_REG |
+|---|---:|---:|---:|---:|---:|
+| PROC 150 / TDC 200 MHz | +0.667 ns | 0 | 0 | 18 | 124 |
+| PROC 200 / TDC 150 MHz | +0.614 ns | 0 | 0 | 18 | 124 |
+
+CDC-15 2,682건은 기존 typed configuration mailbox와 새 512-bit GPX image
+mailbox를 합친 수치이다. 두 payload 모두 COMMIT snapshot 후 request/ACK가
+끝날 때까지 source가 고정되며, 동기화된 control event에서만 destination이
+capture한다. 치명적 CDC는 두 profile 모두 0이다.

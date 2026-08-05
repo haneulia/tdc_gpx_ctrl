@@ -62,12 +62,16 @@ H2B-2A는 완료되었다. 상세 결과는
 ### H2B-2B: GPX image portal과 activation 완료
 
 1. 16-entry GPX register image는 16개 CSR word를 직접 점유하지 않고 indexed
-   command/data 두 word로 접근한다.
+   selector/data 두 word로 접근한다.
 2. 준비된 image snapshot은 한 configuration transaction의 일부로 고정한다.
 3. 같은 image를 build-time present Chip 전체에 적용한다.
 4. TDC-domain ACTIVATE ACK는 모든 물리 Chip의 programming 완료 후에만
    configuration manager로 반환한다.
 5. programming timeout과 lane fault를 configuration 실패 진단으로 전달한다.
+
+H2B-2B는 완료되었다. CTL21/22 두 word로 portal을 구성했고, 32 CTL / 32 STAT /
+4 IRQ 주소 경계는 유지했다. 상세 결과는
+`V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md`에 기록한다.
 
 ### H3: B5 비교와 종료 조건
 
@@ -115,7 +119,7 @@ channel_delay[n] = CHANNEL_0_DELAY + n * CHANNEL_STEP, n = 1..31
 ```
 
 현재 unified CSR의 CTL20 한 word가 두 값을 소유한다. H2B/H3에서 채널별
-delay register를 추가하지 않는다.
+delay register를 추가하지 않는다. 이 계약은 H2B-2B 완료 후에도 그대로다.
 
 H2B-2B의 GPX image portal은 CTL20을 변경하거나 Echo delay word를 재사용하지
 않는다.

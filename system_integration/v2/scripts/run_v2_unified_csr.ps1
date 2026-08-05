@@ -29,6 +29,10 @@ $SynthFiles = @(
     "$Hdl/system_integration/v2/pkg/lidar_build_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_config_types_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_event_types_pkg.vhd",
+    "$Hdl/tdc_gpx_pkg.vhd",
+    "$Hdl/tdc_gpx_cfg_pkg.vhd",
+    "$Hdl/system_integration/v2/pkg/lidar_gpx_pkg.vhd",
+    "$Hdl/system_integration/v2/pkg/lidar_gpx_image_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_csr_map_pkg.vhd",
     "$Hdl/../ip_repo/src/csr/axil_fsm_32.vhd",
     "$Hdl/../ip_repo/src/csr/axil_intr_32.vhd",
@@ -41,6 +45,8 @@ $SynthFiles = @(
     "$Hdl/system_integration/v2/rtl/config/lidar_config_gateway.vhd",
     "$Hdl/system_integration/v2/rtl/config/lidar_config_manager.vhd",
     "$Hdl/system_integration/v2/rtl/config/lidar_config_subsystem.vhd",
+    "$Hdl/system_integration/v2/rtl/config/lidar_gpx_image_transaction.vhd",
+    "$Hdl/system_integration/v2/rtl/tdc/lidar_gpx_config_activation.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_operation_command_cdc.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_operation_manager.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_operation_subsystem.vhd",
@@ -49,14 +55,13 @@ $SynthFiles = @(
 $SimFiles = @(
     $SynthFiles[0],
     $SynthFiles[1],
-    "$Hdl/system_integration/v2/pkg/lidar_config_reference_pkg.vhd",
-    $SynthFiles[2],
-    $SynthFiles[3]
+    "$Hdl/system_integration/v2/pkg/lidar_config_reference_pkg.vhd"
 )
-$SimFiles += $SynthFiles[4..($SynthFiles.Count - 1)]
+$SimFiles += $SynthFiles[2..($SynthFiles.Count - 1)]
 $SimFiles += @(
     "$Hdl/system_integration/v2/tb/tb_lidar_csr_map_pkg.vhd",
     "$Hdl/system_integration/v2/tb/tb_lidar_csr_bank.vhd",
+    "$Hdl/system_integration/v2/tb/tb_lidar_gpx_config_activation.vhd",
     "$Hdl/system_integration/v2/tb/tb_lidar_csr_config_subsystem.vhd",
     "$Hdl/system_integration/v2/tb/tb_lidar_csr_config_profiles.vhd"
 )
@@ -82,6 +87,11 @@ $SimProfiles = @(
         name = "bank"
         top = "tb_lidar_csr_bank"
         marker = "LIDAR_V2_CSR_BANK_PASS"
+    },
+    [ordered]@{
+        name = "gpx_activation"
+        top = "tb_lidar_gpx_config_activation"
+        marker = "LIDAR_V2_GPX_CONFIG_ACTIVATION_PASS"
     },
     [ordered]@{
         name = "proc150_tdc200"
@@ -176,7 +186,7 @@ foreach ($Profile in $ImplProfiles) {
         "lappend ::auto_path {C:/AMDDesignTools/2025.2.1/Vivado/data/XilinxTclStore/tclapp/aldec/activehdl}",
         "package require ::tclapp::aldec::activehdl 1.42",
         "read_vhdl -vhdl2008 [list $ReadFiles]",
-        "synth_design -top lidar_csr_config_subsystem -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy rebuilt",
+        "synth_design -top lidar_csr_config_subsystem -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy rebuilt -generic G_TDC_DEFER_ACTIVATE_ACK=true",
         "create_clock -name csr_clk -period 10.000 [get_ports i_csr_clk]",
         "create_clock -name proc_clk -period $($Profile.proc_period_ns) [get_ports i_proc_clk]",
         "create_clock -name tdc_clk -period $($Profile.tdc_period_ns) [get_ports i_tdc_clk]",

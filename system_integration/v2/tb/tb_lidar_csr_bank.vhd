@@ -7,6 +7,8 @@ use work.lidar_config_types_pkg.all;
 use work.lidar_config_reference_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
+use work.lidar_gpx_pkg.all;
+use work.lidar_gpx_image_pkg.all;
 
 entity tb_lidar_csr_bank is
 end entity tb_lidar_csr_bank;
@@ -61,12 +63,15 @@ architecture sim of tb_lidar_csr_bank is
     signal active_valid : std_logic := '0';
     signal active_cfg   : lidar_active_config_t := fn_active_config(
         C_DEFAULT_RUNTIME_CONFIG, 1);
+    signal active_gpx_image : gpx_register_image_t :=
+        C_GPX_REGISTER_IMAGE_DEFAULT;
     signal operation_status : operation_state_t := C_OPERATION_STATE_SAFE;
     signal operation_command_ready : std_logic := '1';
     signal operation_command_busy  : std_logic := '0';
     signal operation_command_rejected : std_logic := '0';
 
     signal shadow_cfg : lidar_runtime_config_t;
+    signal shadow_gpx_image : gpx_register_image_t;
     signal commit_pulse : std_logic;
     signal clear_pulse  : std_logic;
     signal reset_pulse  : std_logic;
@@ -146,11 +151,13 @@ begin
             i_cfg_recovery_required => cfg_recovery,
             i_cfg_active_valid      => active_valid,
             i_cfg_active            => active_cfg,
+            i_cfg_active_gpx_image  => active_gpx_image,
             i_operation_status      => operation_status,
             i_operation_command_ready => operation_command_ready,
             i_operation_command_busy  => operation_command_busy,
             i_operation_command_rejected => operation_command_rejected,
             o_shadow             => shadow_cfg,
+            o_gpx_image_shadow   => shadow_gpx_image,
             o_commit             => commit_pulse,
             o_clear_status       => clear_pulse,
             o_soft_reset_request => reset_pulse,
@@ -308,12 +315,49 @@ begin
         axi_read(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000000");
         axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00020E10");
         axi_read(fn_ctl_byte_offset(C_CTL_FACE_CENTER_0), x"000005A0");
-        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250203");
+        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250204");
         axi_read(fn_stat_byte_offset(C_STAT_BUILD_INFO), x"0C30C896");
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000100", 2);
         axi_read(fn_ctl_byte_offset(C_CTL_RESERVED_FIRST), x"00000000");
         assert shadow_cfg = fn_default_runtime_config(C_DEFAULT_BUILD_CONFIG)
             report "V2-CSR-BANK reset shadow mismatch"
+            severity failure;
+
+        -- CTL21/22 form one indexed GPX image portal. Selection never changes
+        -- the image; DATA writes edit only the staging view.
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000000");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA),
+            C_GPX_REGISTER_IMAGE_DEFAULT(0));
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000005");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA),
+            C_GPX_REGISTER_IMAGE_DEFAULT(5));
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"00123456");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"00123456");
+        assert shadow_gpx_image(5) = x"00123456" and
+            shadow_gpx_image(0) = C_GPX_REGISTER_IMAGE_DEFAULT(0)
+            report "V2-CSR-BANK indexed staging image mismatch"
+            severity failure;
+
+        -- Active view is read-only and returns zero until the central
+        -- transaction reports a valid active configuration.
+        active_gpx_image(5) <= x"000ABCDE";
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000105");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"00000000");
+        active_valid <= '1';
+        wait_cycles(1);
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"000ABCDE");
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"00011111");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"000ABCDE");
+        active_valid <= '0';
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000005");
+
+        -- GPX is a 28-bit bus. An upper-nibble write is rejected without
+        -- silently changing the selected staging entry.
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"F0123456");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"00123456");
+        axi_read_value(fn_stat_byte_offset(C_STAT_TRANSACTION), v_word);
+        assert v_word(C_TXN_ACCESS_ERROR_BIT) = '1'
+            report "V2-CSR-BANK invalid GPX image word was not rejected"
             severity failure;
 
         -- Simultaneous, AW-first and W-first writes all preserve byte strobes.

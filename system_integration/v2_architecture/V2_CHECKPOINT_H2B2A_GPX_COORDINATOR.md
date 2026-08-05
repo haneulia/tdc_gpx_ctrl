@@ -4,7 +4,7 @@
 
 H2B-2A는 **PASS**다. 이 판정은 다중 Chip Shot 분배, lane 결과 병합과
 Shot 완료 조건까지의 범위이며, GPX register image의 CSR portal과 실제 Chip
-programming 완료 연동은 H2B-2B에 남아 있다.
+programming 완료 연동은 후속 H2B-2B에서 완료되었다.
 
 ## 2. 구현 경계
 
@@ -86,7 +86,7 @@ H2B-2A는 Echo Receiver 구조나 CSR map을 변경하지 않는다.
 - `delay[n] = delay[0] + n * step`, `n = 0..31`
 - 32채널별 개별 delay register table은 추가하지 않는다.
 
-## 6. 다음 단계 H2B-2B
+## 6. 후속 단계 H2B-2B
 
 1. reserved CTL 두 word로 16-entry GPX register image를 접근하는 indexed
    portal을 정의한다.
@@ -94,4 +94,6 @@ H2B-2A는 Echo Receiver 구조나 CSR map을 변경하지 않는다.
 3. TDC-domain ACTIVATE ACK를 모든 물리 Chip의 programming 완료까지 보류한다.
 4. programming timeout/fault를 configuration 실패와 통합 진단으로 전달한다.
 
-H2B-2B와 H3가 끝나기 전에는 Stage 5 / Checkpoint H 전체를 sign-off하지 않는다.
+위 네 항목은 `V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md`에서 PASS로
+종결되었다. H3가 끝나기 전에는 Stage 5 / Checkpoint H 전체를 sign-off하지
+않는다.

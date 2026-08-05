@@ -9,7 +9,8 @@
 > expansion. Stage 5 is in progress: H0 froze the B5 oracle, H1 proved the
 > typed GPX physical-bus wrapper, H2A proved the atomic Shot/result CDC
 > gateways, and H2B-2A proved multi-Chip Shot coordination and registered
-> result merge. H2B-2B configuration-image activation is next.
+> result merge. H2B-2B proved the two-word indexed GPX image portal and
+> physical all-chip activation ACK. H3 v1-oracle integration comparison is next.
 
 ## 1. Purpose
 
@@ -70,6 +71,7 @@ The redesign has four goals:
 | [V2_STAGE5_H2B_ACQUISITION_PLAN.md](V2_STAGE5_H2B_ACQUISITION_PLAN.md) | H2B lane/coordinator decomposition, capture-width guard and Echo non-regression contract |
 | [V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md](V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md) | Single-Chip lifecycle, image normalization, typed event ordering and 150/200 MHz evidence |
 | [V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md](V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md) | Multi-Chip Shot broadcast, registered fair merge, terminal completion and 150/200 MHz evidence |
+| [V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md](V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md) | Indexed GPX image portal, atomic snapshot, physical programming ACK and Echo non-regression evidence |
 
 ## 4. Target Top-Level Shape
 

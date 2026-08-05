@@ -10,6 +10,7 @@ use work.lidar_config_types_pkg.all;
 use work.lidar_config_reference_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
+use work.lidar_gpx_pkg.all;
 
 entity tb_lidar_csr_config_subsystem is
     generic (
@@ -93,6 +94,16 @@ architecture sim of tb_lidar_csr_config_subsystem is
     signal operation_command_rejected : std_logic;
     signal operation_permit_trip : std_logic;
     signal operation_safe : std_logic;
+    signal tdc_config_ready : std_logic := '1';
+    signal tdc_config_done  : std_logic := '0';
+    signal tdc_config_fault : std_logic := '0';
+    signal tdc_register_image : gpx_register_image_t;
+    signal tdc_config_apply : std_logic;
+    signal tdc_apply_pending : std_logic := '0';
+    signal tdc_apply_delay : natural range 0 to 7 := 0;
+    signal tdc_apply_count : natural := 0;
+    signal last_applied_reg5 : std_logic_vector(31 downto 0) :=
+        (others => '0');
 
 begin
 
@@ -129,11 +140,53 @@ begin
         wait;
     end process p_tdc_clock;
 
+    -- Deterministic stand-in for the H2B-2A coordinator. The coordinator's
+    -- own test proves that o_config_done waits for every physically present
+    -- Chip; this model proves that the central transaction waits for that
+    -- aggregated completion handshake.
+    p_tdc_programming_model : process (tdc_clk)
+    begin
+        if rising_edge(tdc_clk) then
+            if tdc_rst_n = '0' then
+                tdc_config_done <= '0';
+                tdc_apply_pending <= '0';
+                tdc_apply_delay <= 0;
+                tdc_apply_count <= 0;
+                last_applied_reg5 <= (others => '0');
+            else
+                tdc_config_done <= '0';
+                if tdc_config_apply = '1' then
+                    assert tdc_apply_pending = '0'
+                        report "V2-CSR-INT overlapping GPX image apply"
+                        severity failure;
+                    assert tdc_enable = '0' and release_req = '0'
+                        report "V2-CSR-INT TDC enabled before GPX programming"
+                        severity failure;
+                    tdc_apply_pending <= '1';
+                    tdc_apply_delay <= 7;
+                    tdc_apply_count <= tdc_apply_count + 1;
+                    last_applied_reg5 <= tdc_register_image(5);
+                elsif tdc_apply_pending = '1' then
+                    assert tdc_enable = '0'
+                        report "V2-CSR-INT TDC enabled while GPX apply pending"
+                        severity failure;
+                    if tdc_apply_delay = 0 then
+                        tdc_config_done <= '1';
+                        tdc_apply_pending <= '0';
+                    else
+                        tdc_apply_delay <= tdc_apply_delay - 1;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_tdc_programming_model;
+
     u_dut : entity work.lidar_csr_config_subsystem
         generic map (
             G_BUILD_CONFIG     => C_BUILD_CONFIG,
             G_CSR_CLK_MHZ      => 100,
-            G_PHASE_TIMEOUT_US => 1
+            G_PHASE_TIMEOUT_US => 1,
+            G_TDC_DEFER_ACTIVATE_ACK => true
         )
         port map (
             i_csr_clk   => csr_clk,
@@ -164,6 +217,9 @@ begin
             i_proc_safe => proc_safe,
             i_tdc_safe  => tdc_safe,
             i_external_laser_permit => external_laser_permit,
+            i_tdc_config_ready => tdc_config_ready,
+            i_tdc_config_done  => tdc_config_done,
+            i_tdc_config_fault => tdc_config_fault,
             o_irq                => irq,
             o_clear_status       => clear_status,
             o_soft_reset_request => soft_reset,
@@ -181,6 +237,8 @@ begin
             o_tdc_enable         => tdc_enable,
             o_tdc_active_valid   => tdc_active_valid,
             o_tdc_active         => tdc_active,
+            o_tdc_register_image => tdc_register_image,
+            o_tdc_config_apply   => tdc_config_apply,
             o_prepare_req        => prepare_req,
             o_activate_req       => activate_req,
             o_release_req        => release_req,
@@ -348,6 +406,8 @@ begin
             report "V2-CSR-INT startup was not inhibited"
             severity failure;
 
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000005");
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"001ABCDE");
         axi_write(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00120E10");
         command(C_CMD_COMMIT_BIT);
         wait_done("V2-CSR-INT first commit", CFG_OK);
@@ -357,6 +417,12 @@ begin
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000046");
         axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), x"01080001");
         axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE), x"00120E10");
+        assert tdc_apply_count = 1 and last_applied_reg5 = x"001ABCDE"
+            report "V2-CSR-INT first GPX image apply mismatch"
+            severity failure;
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000105");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"001ABCDE");
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000005");
 
         command(C_CMD_CLEAR_STATUS_BIT);
         axi_write(fn_ctl_byte_offset(C_CTL_SHOT_INTERVAL), x"000186A0");
@@ -368,6 +434,7 @@ begin
         -- This edit is for the next transaction; the running transaction must
         -- keep its original snapshot and DIRTY must remain asserted afterward.
         axi_write(fn_ctl_byte_offset(C_CTL_SHOT_INTERVAL), x"000249F0");
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"00222222");
         command(C_CMD_COMMIT_BIT);
         wait_done("V2-CSR-INT snapshot commit", CFG_OK);
         v_expected.laser.optical_shot_interval_udeg := to_unsigned(100_000, 30);
@@ -376,6 +443,13 @@ begin
         axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE +
             C_CTL_SHOT_INTERVAL - 1), x"000186A0");
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"71000156");
+        assert tdc_apply_count = 2 and last_applied_reg5 = x"001ABCDE"
+            report "V2-CSR-INT in-flight GPX image snapshot changed"
+            severity failure;
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000105");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"001ABCDE");
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000005");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"00222222");
 
         command(C_CMD_CLEAR_STATUS_BIT);
         command(C_CMD_COMMIT_BIT);
@@ -383,6 +457,9 @@ begin
         v_expected.laser.optical_shot_interval_udeg := to_unsigned(150_000, 30);
         check_active(v_expected, 3);
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000046");
+        assert tdc_apply_count = 3 and last_applied_reg5 = x"00222222"
+            report "V2-CSR-INT next GPX image snapshot was not applied"
+            severity failure;
 
         -- Invalid source data completes with an error and cannot alter either
         -- destination's active version.
@@ -394,6 +471,9 @@ begin
         assert active_cfg = v_preserved and proc_active = v_preserved
             and tdc_active = v_preserved
             report "V2-CSR-INT invalid commit changed active data"
+            severity failure;
+        assert tdc_apply_count = 3
+            report "V2-CSR-INT invalid commit programmed GPX image"
             severity failure;
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"0020014A");
 
@@ -421,6 +501,9 @@ begin
         wait_done("V2-CSR-INT safe-point commit", CFG_OK);
         check_active(v_expected, 4);
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000046");
+        assert tdc_apply_count = 4 and last_applied_reg5 = x"00222222"
+            report "V2-CSR-INT safe-point GPX apply mismatch"
+            severity failure;
 
         axi_read_value(fn_stat_byte_offset(C_STAT_CAPTURE_TDC_CLKS), v_word);
         assert unsigned(v_word) = active_cfg.derived.capture_window_tdc_clks

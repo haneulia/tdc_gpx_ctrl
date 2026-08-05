@@ -6,12 +6,15 @@ use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
+use work.lidar_gpx_pkg.all;
+use work.lidar_gpx_image_pkg.all;
 
 -- One AXI4-Lite owner for the v2 LiDAR configuration ABI.
 --
--- CTL1..20 are shadow storage. CTL0 is write-one-set command space and never
--- stores a command level. The active readback is sourced only from the atomic
--- configuration manager, so software can distinguish edited and applied data.
+-- CTL1..20 are shadow storage. CTL21/22 are an indexed 16-entry GPX image
+-- portal. CTL0 is write-one-set command space and never stores a command
+-- level. Active readback is sourced only from the atomic transaction owner,
+-- so software can distinguish edited and applied data.
 entity lidar_csr_bank is
     generic (
         G_BUILD_CONFIG : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG
@@ -48,12 +51,14 @@ entity lidar_csr_bank is
         i_cfg_recovery_required : in  std_logic;
         i_cfg_active_valid      : in  std_logic;
         i_cfg_active            : in  lidar_active_config_t;
+        i_cfg_active_gpx_image  : in  gpx_register_image_t;
         i_operation_status      : in  operation_state_t;
         i_operation_command_ready : in std_logic;
         i_operation_command_busy  : in std_logic;
         i_operation_command_rejected : in std_logic;
 
         o_shadow            : out lidar_runtime_config_t;
+        o_gpx_image_shadow  : out gpx_register_image_t;
         o_commit            : out std_logic;
         o_clear_status      : out std_logic;
         o_soft_reset_request : out std_logic;
@@ -71,6 +76,11 @@ architecture rtl of lidar_csr_bank is
         fn_pack_runtime_config(C_DEFAULT_SHADOW);
 
     signal r_shadow_words : csr_word_array_t := C_DEFAULT_WORDS;
+    signal r_gpx_image_staging : gpx_register_image_t :=
+        C_GPX_REGISTER_IMAGE_DEFAULT;
+    signal r_gpx_image_index : natural range 0 to
+        C_GPX_REGISTER_COUNT - 1 := 0;
+    signal r_gpx_image_view_active : std_logic := '0';
     signal w_status_words : csr_word_array_t;
 
     signal w_addr : std_logic_vector(8 downto 0);
@@ -123,6 +133,7 @@ begin
         severity failure;
 
     o_shadow             <= fn_unpack_runtime_config(r_shadow_words);
+    o_gpx_image_shadow   <= r_gpx_image_staging;
     o_commit             <= r_commit_pulse;
     o_clear_status       <= r_clear_pulse;
     o_soft_reset_request <= r_soft_reset_pulse;
@@ -206,9 +217,14 @@ begin
         variable v_command_count     : natural;
         variable v_write_valid       : boolean;
         variable v_shadow_changed    : boolean;
+        variable v_portal_control    : csr_word_t;
+        variable v_image_word        : csr_word_t;
     begin
         if i_rst_n = '0' then
             r_shadow_words       <= C_DEFAULT_WORDS;
+            r_gpx_image_staging  <= C_GPX_REGISTER_IMAGE_DEFAULT;
+            r_gpx_image_index    <= 0;
+            r_gpx_image_view_active <= '0';
             r_commit_pulse       <= '0';
             r_clear_pulse        <= '0';
             r_soft_reset_pulse   <= '0';
@@ -292,6 +308,66 @@ begin
                             r_operation_command <= OP_COMMAND_ARM;
                         else
                             r_operation_command <= OP_COMMAND_DISARM;
+                        end if;
+                    end if;
+                elsif w_word_addr = C_CTL_GPX_IMAGE_INDEX then
+                    v_portal_control := (others => '0');
+                    v_portal_control(
+                        C_GPX_IMAGE_INDEX_MSB downto
+                        C_GPX_IMAGE_INDEX_LSB) := std_logic_vector(
+                            to_unsigned(r_gpx_image_index, 4));
+                    v_portal_control(C_GPX_IMAGE_VIEW_ACTIVE_BIT) :=
+                        r_gpx_image_view_active;
+                    for byte_index in 0 to 3 loop
+                        if w_strb(byte_index) = '1' then
+                            v_portal_control(
+                                8 * byte_index + 7 downto 8 * byte_index) :=
+                                w_data(8 * byte_index + 7 downto
+                                    8 * byte_index);
+                        end if;
+                    end loop;
+                    if fn_ctl_word_encoding_valid(
+                            C_CTL_GPX_IMAGE_INDEX, v_portal_control) then
+                        r_gpx_image_index <= to_integer(unsigned(
+                            v_portal_control(
+                                C_GPX_IMAGE_INDEX_MSB downto
+                                C_GPX_IMAGE_INDEX_LSB)));
+                        r_gpx_image_view_active <= v_portal_control(
+                            C_GPX_IMAGE_VIEW_ACTIVE_BIT);
+                    else
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
+                    end if;
+                elsif w_word_addr = C_CTL_GPX_IMAGE_DATA then
+                    if r_gpx_image_view_active = '1' then
+                        -- Active image is observation-only. Software must
+                        -- select staging view before editing an entry.
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
+                    else
+                        v_image_word := r_gpx_image_staging(
+                            r_gpx_image_index);
+                        for byte_index in 0 to 3 loop
+                            if w_strb(byte_index) = '1' then
+                                v_image_word(
+                                    8 * byte_index + 7 downto
+                                    8 * byte_index) := w_data(
+                                        8 * byte_index + 7 downto
+                                        8 * byte_index);
+                            end if;
+                        end loop;
+                        if fn_ctl_word_encoding_valid(
+                                C_CTL_GPX_IMAGE_DATA, v_image_word) then
+                            if v_image_word /= r_gpx_image_staging(
+                                    r_gpx_image_index) then
+                                r_gpx_image_staging(r_gpx_image_index) <=
+                                    v_image_word;
+                                r_shadow_revision <= r_shadow_revision + 1;
+                                v_shadow_changed := true;
+                            end if;
+                        else
+                            r_access_error_sticky <= '1';
+                            r_access_error_event  <= '1';
                         end if;
                     end if;
                 elsif w_word_addr >= 1
@@ -512,6 +588,11 @@ begin
         r_addr,
         r_word_addr,
         r_shadow_words,
+        r_gpx_image_staging,
+        r_gpx_image_index,
+        r_gpx_image_view_active,
+        i_cfg_active_valid,
+        i_cfg_active_gpx_image,
         w_status_words,
         w_intr_read_data,
         w_intr_read_hit
@@ -520,7 +601,24 @@ begin
         w_read_data <= (others => '0');
         if r_addr(1 downto 0) = "00" then
             if r_word_addr < C_LIDAR_CTL_COUNT then
-                if r_word_addr /= C_CTL_COMMAND then
+                if r_word_addr = C_CTL_GPX_IMAGE_INDEX then
+                    w_read_data(
+                        C_GPX_IMAGE_INDEX_MSB downto
+                        C_GPX_IMAGE_INDEX_LSB) <= std_logic_vector(
+                            to_unsigned(r_gpx_image_index, 4));
+                    w_read_data(C_GPX_IMAGE_VIEW_ACTIVE_BIT) <=
+                        r_gpx_image_view_active;
+                elsif r_word_addr = C_CTL_GPX_IMAGE_DATA then
+                    if r_gpx_image_view_active = '1' then
+                        if i_cfg_active_valid = '1' then
+                            w_read_data <= i_cfg_active_gpx_image(
+                                r_gpx_image_index);
+                        end if;
+                    else
+                        w_read_data <= r_gpx_image_staging(
+                            r_gpx_image_index);
+                    end if;
+                elsif r_word_addr /= C_CTL_COMMAND then
                     w_read_data <= r_shadow_words(r_word_addr);
                 end if;
             elsif r_word_addr < C_LIDAR_CTL_COUNT + C_LIDAR_STAT_COUNT then

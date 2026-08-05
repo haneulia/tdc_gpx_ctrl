@@ -59,6 +59,7 @@ begin
             o_prepare_ack     => prepare_ack,
             o_activate_ack    => activate_ack,
             o_release_ack     => release_ack,
+            o_activate_start  => open,
             o_fault_csr       => fault_csr,
             o_domain_enable   => domain_enable,
             o_active_valid    => active_valid,

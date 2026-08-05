@@ -8,7 +8,7 @@ use work.lidar_config_types_pkg.all;
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;
-    constant C_LIDAR_CSR_ABI_MINOR : natural := 3;
+    constant C_LIDAR_CSR_ABI_MINOR : natural := 4;
 
     constant C_LIDAR_CTL_COUNT  : positive := 32;
     constant C_LIDAR_STAT_COUNT : positive := 32;
@@ -38,8 +38,15 @@ package lidar_csr_map_pkg is
     constant C_CTL_TDC_SCAN_TIMEOUT    : natural := 18;
     constant C_CTL_TDC_CAPTURE_ADJUST  : natural := 19;
     constant C_CTL_ECHO_DELAY_PROFILE  : natural := 20;
-    constant C_CTL_RESERVED_FIRST      : natural := 21;
+    constant C_CTL_GPX_IMAGE_INDEX     : natural := 21;
+    constant C_CTL_GPX_IMAGE_DATA      : natural := 22;
+    constant C_CTL_RESERVED_FIRST      : natural := 23;
     constant C_CTL_RESERVED_LAST       : natural := 31;
+
+    constant C_GPX_IMAGE_INDEX_MSB       : natural := 3;
+    constant C_GPX_IMAGE_INDEX_LSB       : natural := 0;
+    constant C_GPX_IMAGE_VIEW_ACTIVE_BIT : natural := 8;
+    constant C_GPX_IMAGE_INDEX_VALID_MASK : csr_word_t := x"0000010F";
 
     constant C_CMD_COMMIT_BIT       : natural := 0;
     constant C_CMD_CLEAR_STATUS_BIT : natural := 1;
@@ -332,6 +339,13 @@ package body lidar_csr_map_pkg is
                 return value(31 downto 17) = zero_word(31 downto 17);
             when C_CTL_ECHO_DELAY_PROFILE =>
                 return true;
+            when C_CTL_GPX_IMAGE_INDEX =>
+                return (value and not C_GPX_IMAGE_INDEX_VALID_MASK) =
+                    zero_word;
+            when C_CTL_GPX_IMAGE_DATA =>
+                -- The external GPX bus is 28 bits. Reject rather than
+                -- silently truncating image data above bit 27.
+                return value(31 downto 28) = "0000";
             when others =>
                 return false;
         end case;

@@ -128,7 +128,11 @@ architecture sim of tb_lidar_gpx_acquisition_coordinator is
 
     signal active_config : lidar_active_config_t := fn_active_config;
     signal register_image : gpx_register_image_t := fn_register_image;
-    signal config_apply : std_logic := '0';
+    signal applied_register_image : gpx_register_image_t;
+    signal config_activate_start : std_logic := '0';
+    signal config_activate_complete : std_logic;
+    signal config_activate_fault : std_logic;
+    signal config_apply : std_logic;
     signal config_ready : std_logic;
     signal config_done : std_logic;
     signal run_enable : std_logic := '0';
@@ -194,6 +198,22 @@ begin
             when chip_d_oe(index) = '1' else (others => 'Z');
     end generate gen_pin_models;
 
+    u_config_activation : entity work.lidar_gpx_config_activation
+        port map (
+            i_clk               => clk,
+            i_rst_n             => rst_n,
+            i_activate_start    => config_activate_start,
+            i_candidate_image   => register_image,
+            i_apply_ready       => config_ready,
+            i_apply_done        => config_done,
+            i_apply_fault       => '0',
+            o_register_image    => applied_register_image,
+            o_apply             => config_apply,
+            o_activate_complete => config_activate_complete,
+            o_activate_fault    => config_activate_fault,
+            o_busy              => open
+        );
+
     u_dut : entity work.lidar_gpx_acquisition_coordinator
         generic map (
             G_BUILD_CONFIG => C_BUILD_CONFIG,
@@ -204,7 +224,7 @@ begin
             i_rst_n => rst_n,
             i_active_valid => '1',
             i_active_config => active_config,
-            i_register_image => register_image,
+            i_register_image => applied_register_image,
             i_config_apply => config_apply,
             o_config_ready => config_ready,
             o_config_done => config_done,
@@ -533,11 +553,14 @@ begin
             C_BUILD_CONFIG, updated_config.source);
         active_config <= updated_config;
         wait_clocks(2);
-        config_apply <= '1';
+        config_activate_start <= '1';
         wait_clocks(1);
-        config_apply <= '0';
-        wait_until_high(config_done,
-            "V2-GPX-COORD-TB all-Chip config completion timeout");
+        config_activate_start <= '0';
+        wait_until_high(config_activate_complete,
+            "V2-GPX-COORD-TB all-Chip activation completion timeout");
+        assert config_activate_fault = '0'
+            report "V2-GPX-COORD-TB unexpected activation fault"
+            severity failure;
         for index in 0 to C_CHIPS - 1 loop
             assert write_capture(index, 5)(c_REG5_STARTOFF1_HI downto
                        c_REG5_STARTOFF1_LO) =

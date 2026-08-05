@@ -8,6 +8,9 @@ use work.lidar_config_types_pkg.all;
 -- functional domain. The source must hold i_candidate from PREPARE assertion
 -- until every request and acknowledgement returns low.
 entity lidar_config_gateway is
+    generic (
+        G_DEFER_ACTIVATE_ACK : boolean := false
+    );
     port (
         i_csr_clk         : in  std_logic;
         i_csr_rst_n       : in  std_logic;
@@ -18,9 +21,12 @@ entity lidar_config_gateway is
         i_release_req     : in  std_logic;
         i_candidate       : in  lidar_active_config_t;
         i_safe_to_prepare : in  std_logic;
+        i_activate_complete : in std_logic := '0';
+        i_activate_fault    : in std_logic := '0';
         o_prepare_ack     : out std_logic;
         o_activate_ack    : out std_logic;
         o_release_ack     : out std_logic;
+        o_activate_start  : out std_logic;
         o_fault_csr       : out std_logic;
         o_domain_enable   : out std_logic;
         o_active_valid    : out std_logic;
@@ -42,6 +48,7 @@ architecture rtl of lidar_config_gateway is
     signal fault_r       : std_logic := '0';
     signal domain_enable_r : std_logic := '0';
     signal active_valid_r  : std_logic := '0';
+    signal activate_start_r : std_logic := '0';
     signal prepared_cfg_r  : lidar_active_config_t;
     signal active_cfg_r    : lidar_active_config_t;
 
@@ -59,6 +66,7 @@ begin
     o_prepare_ack   <= ack_sync_r(0);
     o_activate_ack  <= ack_sync_r(1);
     o_release_ack   <= ack_sync_r(2);
+    o_activate_start <= activate_start_r;
     o_fault_csr     <= ack_sync_r(3);
     o_domain_enable <= domain_enable_r;
     o_active_valid  <= active_valid_r;
@@ -87,7 +95,9 @@ begin
             fault_r         <= '0';
             domain_enable_r <= '0';
             active_valid_r  <= '0';
+            activate_start_r <= '0';
         elsif rising_edge(i_domain_clk) then
+            activate_start_r <= '0';
             if req_sync_r(0) = '0' then
                 prepare_ack_r <= '0';
             end if;
@@ -123,7 +133,17 @@ begin
                     active_cfg_r   <= prepared_cfg_r;
                     active_valid_r <= '1';
                     activated_r    <= '1';
-                    activate_ack_r <= '1';
+                    activate_start_r <= '1';
+                    if not G_DEFER_ACTIVATE_ACK then
+                        activate_ack_r <= '1';
+                    end if;
+                elsif req_sync_r(1) = '1' and activated_r = '1'
+                      and activate_ack_r = '0' then
+                    if i_activate_fault = '1' then
+                        fault_r <= '1';
+                    elsif i_activate_complete = '1' then
+                        activate_ack_r <= '1';
+                    end if;
                 elsif req_sync_r(2) = '1' and released_r = '0' then
                     if activated_r = '1' then
                         domain_enable_r <= '1';

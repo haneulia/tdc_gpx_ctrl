@@ -42,11 +42,13 @@ $CommonFiles = @(
     "$Hdl/system_integration/v2/pkg/lidar_config_reference_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_event_types_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_pkg.vhd",
+    "$Hdl/system_integration/v2/pkg/lidar_gpx_image_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_event_pkg.vhd",
     "$Hdl/system_integration/v2/rtl/tdc/lidar_gpx_bus_engine.vhd",
     "$Hdl/system_integration/v2/rtl/tdc/lidar_gpx_acquisition_lane.vhd",
     "$Hdl/system_integration/v2/rtl/tdc/lidar_gpx_event_merge.vhd",
-    "$Hdl/system_integration/v2/rtl/tdc/lidar_gpx_acquisition_coordinator.vhd"
+    "$Hdl/system_integration/v2/rtl/tdc/lidar_gpx_acquisition_coordinator.vhd",
+    "$Hdl/system_integration/v2/rtl/tdc/lidar_gpx_config_activation.vhd"
 )
 $SimFiles = $CommonFiles + @(
     "$Hdl/system_integration/v2/tb/tb_lidar_gpx_event_merge.vhd",

@@ -79,6 +79,20 @@ begin
             "V2-CSR-MAP default Laser word mismatch");
         check(words(C_CTL_TDC_BUS_PROFILE) = x"000FF142",
             "V2-CSR-MAP default TDC bus word mismatch");
+        check(words(C_CTL_GPX_IMAGE_INDEX) = x"00000000" and
+                words(C_CTL_GPX_IMAGE_DATA) = x"00000000",
+            "V2-CSR-MAP GPX portal leaked into runtime config words");
+        check(fn_ctl_word_encoding_valid(
+                C_CTL_GPX_IMAGE_INDEX, x"0000010F"),
+            "V2-CSR-MAP legal GPX image selector rejected");
+        check(not fn_ctl_word_encoding_valid(
+                C_CTL_GPX_IMAGE_INDEX, x"00000200"),
+            "V2-CSR-MAP reserved GPX selector bit accepted");
+        check(fn_ctl_word_encoding_valid(
+                C_CTL_GPX_IMAGE_DATA, x"0FFFFFFF") and
+              not fn_ctl_word_encoding_valid(
+                C_CTL_GPX_IMAGE_DATA, x"10000000"),
+            "V2-CSR-MAP GPX 28-bit image guard mismatch");
         unpacked := fn_unpack_runtime_config(words);
         check(unpacked = runtime_cfg,
             "V2-CSR-MAP default round trip mismatch");

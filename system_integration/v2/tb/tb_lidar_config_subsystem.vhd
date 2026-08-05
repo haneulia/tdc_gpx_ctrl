@@ -83,6 +83,8 @@ begin
             i_shadow            => shadow,
             i_proc_safe         => proc_safe,
             i_tdc_safe          => tdc_safe,
+            i_tdc_activate_complete => '1',
+            i_tdc_activate_fault    => '0',
             o_busy              => busy,
             o_done              => done,
             o_commit_rejected   => rejected,
@@ -97,6 +99,7 @@ begin
             o_tdc_enable        => tdc_enable,
             o_tdc_active_valid  => tdc_active_valid,
             o_tdc_active        => tdc_active,
+            o_tdc_activate_start => open,
             o_prepare_req       => prepare_req,
             o_activate_req      => activate_req,
             o_release_req       => release_req

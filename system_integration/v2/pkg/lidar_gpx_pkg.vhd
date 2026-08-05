@@ -8,6 +8,7 @@ package lidar_gpx_pkg is
 
     constant C_GPX_BUS_DATA_WIDTH : positive := 28;
     constant C_GPX_BUS_ADDR_WIDTH : positive := 4;
+    constant C_GPX_REGISTER_COUNT : positive := 16;
 
     subtype gpx_bus_data_t is
         std_logic_vector(C_GPX_BUS_DATA_WIDTH - 1 downto 0);
@@ -47,7 +48,7 @@ package lidar_gpx_pkg is
     -- Typed v2 boundary for the 16 GPX registers. No default image is copied
     -- here: the acquisition integration layer converts the single board-
     -- proven c_GPX_DEFAULT_IMAGE source when it builds its reset image.
-    type gpx_register_image_t is array (0 to 15) of
+    type gpx_register_image_t is array (0 to C_GPX_REGISTER_COUNT - 1) of
         std_logic_vector(31 downto 0);
 
     -- Live lane observations. Control-ready signals remain explicit ports so

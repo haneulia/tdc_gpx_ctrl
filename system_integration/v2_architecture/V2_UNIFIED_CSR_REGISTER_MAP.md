@@ -3,7 +3,7 @@
 ## 1. 적용 범위
 
 이 문서는 `lidar_csr_bank`의 AXI4-Lite software ABI를 정의한다. 주소는
-9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.3`이다.
+9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.4`이다.
 
 | 영역 | Word 수 | Byte 주소 | 용도 |
 |---|---:|---:|---|
@@ -21,6 +21,9 @@
 - CTL20 Echo delay profile도 같은 atomic COMMIT에 포함되지만, 고정 32-STAT
   공간을 늘리지 않기 위해 별도 active-value mirror는 두지 않는다. Software는
   성공한 active version과 Echo subsystem의 profile-ready/version을 함께 확인한다.
+- CTL21/22는 16개 GPX register image를 위한 indexed portal이다. 16개 word를
+  CSR 주소에 펼치지 않으므로 CTL/STAT/IRQ 주소 경계와 전체 CTL 수 32를
+  유지한다. GPX staging image도 같은 COMMIT snapshot에 포함된다.
 - reset 직후에는 합법적인 기본 shadow가 준비되지만 아직 active 값은
   없다. 따라서 `ACTIVE_VALID=0`, `SHADOW_DIRTY=1`이며 최초 `COMMIT`이
   필요하다.
@@ -79,7 +82,9 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 | `0x048` | TDC_SCAN_TIMEOUT | R/W | `00000000` | scan watchdog source time |
 | `0x04C` | TDC_CAPTURE_ADJUST | R/W | `00000000` | signed board capture 보정 |
 | `0x050` | ECHO_DELAY_PROFILE | R/W | `00000000` | CH0 지연과 채널 증가분 |
-| `0x054..0x07C` | RESERVED | RO-zero | `00000000` | 쓰면 access error |
+| `0x054` | GPX_IMAGE_INDEX | R/W | `00000000` | GPX register index와 staging/active view 선택 |
+| `0x058` | GPX_IMAGE_DATA | R/W 또는 RO | `00000000` | 선택한 GPX image word; active view는 read-only |
+| `0x05C..0x07C` | RESERVED | RO-zero | `00000000` | 쓰면 access error |
 
 ### 3.2 CTL0 COMMAND
 
@@ -243,13 +248,51 @@ active configuration version을 받은 뒤 한 Processing clock에 한 채널씩
 소비한다. 물리 LVDS-to-STOP 경로에는 영향을 주지 않는다. 별도 32-entry
 table, INDEX/DATA portal 또는 Echo 전용 APPLY command는 없다.
 
+`enable_echo_receiver`와 `enable_echo_simulation`은 합성 전 build option이다.
+
+| Build option | 합성되는 Echo 경로 |
+|---|---|
+| `enable_echo_receiver=false` | physical receiver와 synthetic STOP 경로를 모두 제거 |
+| `enable_echo_receiver=true`, `enable_echo_simulation=false` | physical LVDS-to-STOP만 합성 |
+| `enable_echo_receiver=true`, `enable_echo_simulation=true` | physical 경로와 synthetic test source를 함께 합성 |
+
+따라서 최대 32채널 지원을 위해 CSR를 채널별로 늘리지 않는다. CTL20의 두
+16-bit 값만 저장하고 내부에서 채널 번호에 따라 확장한다.
+
+### 3.8 CTL21/CTL22 GPX_REGISTER_IMAGE_PORTAL
+
+CTL21은 포털 선택자이며 CTL22는 선택된 28-bit GPX register word이다.
+
+| Register | Bit | 이름 | Reset | 의미 |
+|---|---:|---|---:|---|
+| CTL21 | 3:0 | GPX_IMAGE_INDEX | 0 | GPX register 0..15 선택 |
+| CTL21 | 8 | VIEW_ACTIVE | 0 | `0=staging`, `1=마지막 성공 active image` |
+| CTL21 | 31:9, 7:4 | RESERVED | 0 | 1을 쓰면 access error |
+| CTL22 | 27:0 | GPX_IMAGE_DATA | register별 기본 image | 선택된 GPX register data |
+| CTL22 | 31:28 | RESERVED | 0 | GPX 외부 bus가 28 bit이므로 1을 쓰면 전체 write 거부 |
+
+`VIEW_ACTIVE=0`에서는 CTL22를 읽고 쓸 수 있다. staging image의 reset 값은
+별도 복사본이 아니라 검증된 v1 `c_GPX_DEFAULT_IMAGE`를 단일 source로
+변환한 값이다. `VIEW_ACTIVE=1`에서는 CTL22가 read-only이며, active image가
+아직 없으면 0을 반환한다. active view write는 값을 바꾸지 않고
+`ACCESS_ERROR_STICKY`를 세운다.
+
+CTL21의 index/view 변경은 설정값 변경이 아니므로 `SHADOW_DIRTY` 또는 shadow
+revision을 바꾸지 않는다. CTL22 staging data가 실제로 달라질 때만 revision이
+증가한다. COMMIT이 승인되는 순간 16-entry staging image 전체를 한 번에
+snapshot하며, 진행 중 software edit는 다음 COMMIT 후보로 남는다. TDC domain
+ACTIVATE ACK는 모든 build-time present GPX chip의 register programming 완료
+후에만 반환된다.
+따라서 software의 DONE은 단순 CDC 전달 완료가 아니라 물리 GPX image 적용
+완료를 뜻한다.
+
 ## 4. STAT 레지스터
 
 ### 4.1 STAT0 CORE_INFO (`0x080`)
 
 | Bit | 의미 | 기본 profile |
 |---:|---|---:|
-| 7:0 | ABI minor | 3 |
+| 7:0 | ABI minor | 4 |
 | 15:8 | ABI major | 2 |
 | 18:16 | NUM_FACES | 5 |
 | 21:19 | NUM_CHIPS | 4 |
@@ -259,7 +302,7 @@ table, INDEX/DATA portal 또는 Echo 전용 APPLY command는 없다.
 | 30 | ECHO_SIMULATION_INCLUDED | 0 |
 | 31 | STREAM_CLOCK_SYNC | 0 |
 
-기본 profile 값은 `0x3E250203`이다.
+기본 profile 값은 `0x3E250204`이다.
 
 ### 4.2 STAT1 BUILD_INFO (`0x084`)
 
@@ -402,17 +445,21 @@ software가 IRQ_FLAG에 W1C할 때까지 high이고, 새 event와 W1C가 같은 
 
 1. reset 해제 후 STAT0/1로 ABI와 build profile을 확인한다.
 2. CTL1..20의 default shadow를 읽거나 필요한 값만 수정한다.
-3. CTL0.COMMIT을 W1S한다.
-4. STAT2.BUSY가 0이 되고 DONE_STICKY가 1이 될 때까지 기다린다.
-5. ERROR/REJECTED/RECOVERY와 error code를 확인한다.
-6. 성공이면 STAT3 version, STAT4..22 active source, STAT23..31 derived 값을
+3. GPX image를 바꿀 때는 CTL21에서 `VIEW_ACTIVE=0`과 index를 선택하고
+   CTL22에 28-bit data를 쓴다. 필요한 0..15 entry에 반복한다.
+4. CTL0.COMMIT을 W1S한다.
+5. STAT2.BUSY가 0이 되고 DONE_STICKY가 1이 될 때까지 기다린다.
+6. ERROR/REJECTED/RECOVERY와 error code를 확인한다.
+7. 성공이면 STAT3 version, STAT4..22 active source, STAT23..31 derived 값을
    같은 snapshot으로 읽는다. Echo simulation build는 Echo
    profile-ready/version도 같은 active version에 도달했는지 확인한다.
-7. 외부 permit과 STAT3.COMMAND_READY를 확인하고 CTL0.RUN을 W1S한다.
-8. 다시 COMMAND_READY를 확인한 뒤 CTL0.ARM을 W1S하고 RUNNING/ARMED 및
+8. GPX image를 확인할 때는 CTL21의 `VIEW_ACTIVE=1`과 index를 선택한 뒤
+   CTL22를 읽는다. 이 값은 성공한 COMMIT의 image이다.
+9. 외부 permit과 STAT3.COMMAND_READY를 확인하고 CTL0.RUN을 W1S한다.
+10. 다시 COMMAND_READY를 확인한 뒤 CTL0.ARM을 W1S하고 RUNNING/ARMED 및
    선택된 mode의 enable 상태를 확인한다.
-9. CTL0.CLEAR_STATUS로 transaction sticky를 clear한다.
-10. IRQ를 사용하면 별도로 IRQ_FLAG를 W1C한다.
+11. CTL0.CLEAR_STATUS로 transaction sticky를 clear한다.
+12. IRQ를 사용하면 별도로 IRQ_FLAG를 W1C한다.
 
 운용 중 shadow write는 허용된다. 진행 중 transaction은 COMMIT 순간 snapshot을
 사용하고, 그 뒤의 write는 다음 transaction 후보로 남아 DIRTY가 유지된다.
