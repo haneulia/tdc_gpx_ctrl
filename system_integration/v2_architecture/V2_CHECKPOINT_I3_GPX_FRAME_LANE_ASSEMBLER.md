@@ -155,12 +155,13 @@ payload RAM은 reset하지 않는다. Shot 시작 시 presence bit만 0으로 �
 presence=0인 주소는 RAM의 이전 값 대신 명시적인 blank Cell로 출력한다. 이 방식은
 큰 RAM reset fanout을 피하면서 stale payload 노출을 차단한다.
 
-각 Rise/Fall lane에는 1-entry packed-word prefetch register가 있다. LUTRAM read와
-typed event 조립을 서로 다른 clock 단계로 분리하고, output holding register가
-막힌 동안에는 prefetch가 다음 Cell 하나를 보존한다. 초기 1-clock warm-up 뒤에는
-lane당 1 Cell/clock 처리율을 유지한다. Chip/STOP read cursor에는 `max_fanout=16`을
-적용하여 147-bit LUTRAM을 구성하는 RAM32 그룹 가까이에 순차 주소 복제본을
-배치할 수 있게 했다.
+각 Rise/Fall lane은 `read request -> packed prefetch -> typed output` 3단 elastic
+pipeline을 가진다. 첫 단계가 LUTRAM 주소와 presence를 등록하고, 둘째 단계가
+LUTRAM payload를 읽거나 명시적인 blank word를 등록하며, 셋째 단계가 typed event를
+조립해 ready/valid holding register에 보존한다. 초기 2-clock warm-up 뒤에는 lane당
+1 Cell/clock 처리율을 유지한다. Chip/STOP cursor, 등록된 read address, blank-fill
+presence에는 `max_fanout=16`을 적용해 147-bit RAM32/register 그룹 가까이에 순차
+복제본을 배치할 수 있게 했다.
 
 ## 8. 순차 처리 단계
 
@@ -182,8 +183,8 @@ stateDiagram-v2
 
 geometry/gap 산술, last-column 판정, event 검증, LUTRAM write, LUTRAM read와 typed
 event 조립을 서로 다른 clock 단계에 배치했다. FSM은 one-hot 순차 상태를 사용한다.
-출력은 등록된 holding register이며, ready가 계속 1이면 prefetch warm-up 이후 각
-활성 lane에서 매 clock Cell 하나를 전달한다. 이 추가 latency는 B8 내부에만 있으며
+출력은 등록된 holding register이며, ready가 계속 1이면 2단 warm-up 이후 각 활성
+lane에서 매 clock Cell 하나를 전달한다. 이 추가 latency는 B8 내부에만 있으며
 물리적 `fire_done` 저지연 경로에는 포함되지 않는다.
 
 ## 9. column gap과 Face 종료 계약

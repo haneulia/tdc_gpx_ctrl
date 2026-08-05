@@ -178,9 +178,34 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     attribute max_fanout of pending_rise_address_r : signal is 16;
     attribute max_fanout of pending_fall_address_r : signal is 16;
 
-    -- Each lane reads distributed RAM into a packed local register before
-    -- constructing the typed output event. This keeps the RAM-to-register
-    -- route local while preserving one Cell/clock after pipeline warm-up.
+    -- Each lane registers the read request before reading distributed RAM into
+    -- a packed local register and constructing the typed output event. The
+    -- request stage isolates the Chip/STOP cursor and presence lookup from the
+    -- wide blank-fill register while preserving one Cell/clock after warm-up.
+    signal rise_read_valid_r : std_logic := '0';
+    signal fall_read_valid_r : std_logic := '0';
+    signal rise_read_address_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
+    signal fall_read_address_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
+    signal rise_read_present_r : std_logic := '0';
+    signal fall_read_present_r : std_logic := '0';
+    signal rise_read_chip_r : natural range 0 to C_MAX_CHIPS - 1 := 0;
+    signal fall_read_chip_r : natural range 0 to C_MAX_CHIPS - 1 := 0;
+    signal rise_read_stop_r : natural range 0 to
+        C_MAX_STOPS_PER_CHIP - 1 := 0;
+    signal fall_read_stop_r : natural range 0 to
+        C_MAX_STOPS_PER_CHIP - 1 := 0;
+    signal rise_read_slot_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
+    signal fall_read_slot_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
+
+    attribute max_fanout of rise_read_address_r : signal is 16;
+    attribute max_fanout of fall_read_address_r : signal is 16;
+    attribute max_fanout of rise_read_present_r : signal is 16;
+    attribute max_fanout of fall_read_present_r : signal is 16;
+
     signal rise_prefetch_valid_r : std_logic := '0';
     signal fall_prefetch_valid_r : std_logic := '0';
     signal rise_prefetch_word_r : cell_word_t := (others => '0');
@@ -270,24 +295,28 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
             result.ififo_id := '1';
         end if;
 
-        if present_value = '1' then
-            for hit_index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
-                bit_lo := hit_index * C_GPX_HIT_WIDTH;
-                result.hits(hit_index) := unsigned(word_value(
-                    bit_lo + C_GPX_HIT_WIDTH - 1 downto bit_lo));
-            end loop;
-            result.hit_count := unsigned(word_value(
-                C_HIT_COUNT_HI downto C_HIT_COUNT_LO));
-            result.max_hits := unsigned(word_value(
-                C_MAX_HITS_HI downto C_MAX_HITS_LO));
-            result.hit_dropped := word_value(C_HIT_DROPPED);
-            result.error_fill  := word_value(C_ERROR_FILL);
-            result.faulted     := word_value(C_FAULTED);
-            result.timeout_cause := word_value(
-                C_TIMEOUT_HI downto C_TIMEOUT_LO);
-            result.chip_shot_seq := unsigned(word_value(
-                C_CHIP_SEQ_HI downto C_CHIP_SEQ_LO));
-        else
+        -- The prefetch stage has already replaced an absent LUTRAM entry with
+        -- an all-zero word. Unpack every payload bit unconditionally here so
+        -- present/state control cannot become a high-fanout synchronous reset
+        -- on the wide output register.
+        for hit_index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
+            bit_lo := hit_index * C_GPX_HIT_WIDTH;
+            result.hits(hit_index) := unsigned(word_value(
+                bit_lo + C_GPX_HIT_WIDTH - 1 downto bit_lo));
+        end loop;
+        result.hit_count := unsigned(word_value(
+            C_HIT_COUNT_HI downto C_HIT_COUNT_LO));
+        result.max_hits := unsigned(word_value(
+            C_MAX_HITS_HI downto C_MAX_HITS_LO));
+        result.hit_dropped := word_value(C_HIT_DROPPED);
+        result.error_fill  := word_value(C_ERROR_FILL);
+        result.faulted     := word_value(C_FAULTED);
+        result.timeout_cause := word_value(
+            C_TIMEOUT_HI downto C_TIMEOUT_LO);
+        result.chip_shot_seq := unsigned(word_value(
+            C_CHIP_SEQ_HI downto C_CHIP_SEQ_LO));
+
+        if present_value /= '1' then
             result.max_hits   := max_hits_value;
             result.error_fill := '1';
             result.faulted    := '1';
@@ -433,6 +462,12 @@ begin
         variable close_v : gpx_frame_close_event_t;
         variable trailing_gap_v : shot_index_t;
         variable close_fault_v : boolean;
+        variable rise_output_ready_v : boolean;
+        variable fall_output_ready_v : boolean;
+        variable rise_prefetch_ready_v : boolean;
+        variable fall_prefetch_ready_v : boolean;
+        variable rise_read_ready_v : boolean;
+        variable fall_read_ready_v : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -475,6 +510,8 @@ begin
                 fall_emit_slot_r <= 0;
                 rise_slot_count_r <= 0;
                 fall_slot_count_r <= 0;
+                rise_read_valid_r <= '0';
+                fall_read_valid_r <= '0';
                 rise_prefetch_valid_r <= '0';
                 fall_prefetch_valid_r <= '0';
                 rise_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
@@ -519,6 +556,8 @@ begin
                     history_valid_r <= '0';
                     rise_emit_active_r <= '0';
                     fall_emit_active_r <= '0';
+                    rise_read_valid_r <= '0';
+                    fall_read_valid_r <= '0';
                     rise_prefetch_valid_r <= '0';
                     fall_prefetch_valid_r <= '0';
                     rise_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
@@ -888,10 +927,25 @@ begin
                     end if;
                     rise_event_r.valid <= '0';
                     fall_event_r.valid <= '0';
+                    rise_read_valid_r <= '0';
+                    fall_read_valid_r <= '0';
                     rise_prefetch_valid_r <= '0';
                     fall_prefetch_valid_r <= '0';
                     state_r <= S_EMIT;
                 else
+                    rise_output_ready_v := rise_event_r.valid = '0' or
+                        i_rise_ready = '1';
+                    fall_output_ready_v := fall_event_r.valid = '0' or
+                        i_fall_ready = '1';
+                    rise_prefetch_ready_v := rise_prefetch_valid_r = '0' or
+                        rise_output_ready_v;
+                    fall_prefetch_ready_v := fall_prefetch_valid_r = '0' or
+                        fall_output_ready_v;
+                    rise_read_ready_v := rise_read_valid_r = '0' or
+                        rise_prefetch_ready_v;
+                    fall_read_ready_v := fall_read_valid_r = '0' or
+                        fall_prefetch_ready_v;
+
                     if rise_event_r.valid = '1' and i_rise_ready = '1' and
                        rise_event_r.line_end = '1' then
                         rise_line_done_r <= '1';
@@ -901,7 +955,7 @@ begin
                         fall_line_done_r <= '1';
                     end if;
 
-                    if rise_event_r.valid = '0' or i_rise_ready = '1' then
+                    if rise_output_ready_v then
                         if rise_prefetch_valid_r = '1' then
                             rise_event_r <= fn_make_frame_event(
                                 rise_prefetch_word_r,
@@ -916,46 +970,61 @@ begin
                                 chip_sequence_r(rise_prefetch_chip_r),
                                 shot_gap_before_r,
                                 shot_faulted_r);
-                            rise_prefetch_valid_r <= '0';
                         else
                             rise_event_r.valid <= '0';
                         end if;
                     end if;
 
-                    if rise_emit_active_r = '1' and
-                       (rise_prefetch_valid_r = '0' or
-                        ((rise_event_r.valid = '0' or i_rise_ready = '1') and
-                         rise_prefetch_valid_r = '1')) then
-                        address_value := fn_cell_address(
-                            rise_emit_chip_r, rise_emit_stop_r);
-                        rise_prefetch_word_r <= rise_memory_r(address_value);
-                        rise_prefetch_present_r <= rise_present_r(address_value);
-                        rise_prefetch_chip_r <= rise_emit_chip_r;
-                        rise_prefetch_stop_r <= rise_emit_stop_r;
-                        rise_prefetch_slot_r <= rise_emit_slot_r;
-                        rise_prefetch_valid_r <= '1';
-
-                        if rise_emit_slot_r + 1 = rise_slot_count_r then
-                            rise_emit_active_r <= '0';
+                    if rise_prefetch_ready_v then
+                        if rise_read_valid_r = '1' then
+                            rise_prefetch_present_r <= rise_read_present_r;
+                            if rise_read_present_r = '1' then
+                                rise_prefetch_word_r <=
+                                    rise_memory_r(rise_read_address_r);
+                            else
+                                rise_prefetch_word_r <= (others => '0');
+                            end if;
+                            rise_prefetch_chip_r <= rise_read_chip_r;
+                            rise_prefetch_stop_r <= rise_read_stop_r;
+                            rise_prefetch_slot_r <= rise_read_slot_r;
+                            rise_prefetch_valid_r <= '1';
                         else
-                            rise_emit_slot_r <= rise_emit_slot_r + 1;
-                        end if;
-
-                        -- Cursor position is independent of the emitted-slot
-                        -- terminal test. Keeping these feedback cones separate
-                        -- removes the former slot->Chip route without adding
-                        -- latency or changing one-Cell/clock throughput.
-                        if rise_emit_stop_r + 1 <
-                           G_BUILD_CONFIG.stops_per_chip then
-                            rise_emit_stop_r <= rise_emit_stop_r + 1;
-                        else
-                            rise_emit_stop_r <= 0;
-                            rise_emit_chip_r <= fn_next_chip(
-                                shot_rise_mask_r, rise_emit_chip_r);
+                            rise_prefetch_valid_r <= '0';
                         end if;
                     end if;
 
-                    if fall_event_r.valid = '0' or i_fall_ready = '1' then
+                    if rise_read_ready_v then
+                        if rise_emit_active_r = '1' then
+                            address_value := fn_cell_address(
+                                rise_emit_chip_r, rise_emit_stop_r);
+                            rise_read_address_r <= address_value;
+                            rise_read_present_r <=
+                                rise_present_r(address_value);
+                            rise_read_chip_r <= rise_emit_chip_r;
+                            rise_read_stop_r <= rise_emit_stop_r;
+                            rise_read_slot_r <= rise_emit_slot_r;
+                            rise_read_valid_r <= '1';
+
+                            if rise_emit_slot_r + 1 = rise_slot_count_r then
+                                rise_emit_active_r <= '0';
+                            else
+                                rise_emit_slot_r <= rise_emit_slot_r + 1;
+                            end if;
+
+                            if rise_emit_stop_r + 1 <
+                               G_BUILD_CONFIG.stops_per_chip then
+                                rise_emit_stop_r <= rise_emit_stop_r + 1;
+                            else
+                                rise_emit_stop_r <= 0;
+                                rise_emit_chip_r <= fn_next_chip(
+                                    shot_rise_mask_r, rise_emit_chip_r);
+                            end if;
+                        else
+                            rise_read_valid_r <= '0';
+                        end if;
+                    end if;
+
+                    if fall_output_ready_v then
                         if fall_prefetch_valid_r = '1' then
                             fall_event_r <= fn_make_frame_event(
                                 fall_prefetch_word_r,
@@ -970,45 +1039,66 @@ begin
                                 chip_sequence_r(fall_prefetch_chip_r),
                                 shot_gap_before_r,
                                 shot_faulted_r);
-                            fall_prefetch_valid_r <= '0';
                         else
                             fall_event_r.valid <= '0';
                         end if;
                     end if;
 
-                    if fall_emit_active_r = '1' and
-                       (fall_prefetch_valid_r = '0' or
-                        ((fall_event_r.valid = '0' or i_fall_ready = '1') and
-                         fall_prefetch_valid_r = '1')) then
-                        address_value := fn_cell_address(
-                            fall_emit_chip_r, fall_emit_stop_r);
-                        fall_prefetch_word_r <= fall_memory_r(address_value);
-                        fall_prefetch_present_r <= fall_present_r(address_value);
-                        fall_prefetch_chip_r <= fall_emit_chip_r;
-                        fall_prefetch_stop_r <= fall_emit_stop_r;
-                        fall_prefetch_slot_r <= fall_emit_slot_r;
-                        fall_prefetch_valid_r <= '1';
-
-                        if fall_emit_slot_r + 1 = fall_slot_count_r then
-                            fall_emit_active_r <= '0';
+                    if fall_prefetch_ready_v then
+                        if fall_read_valid_r = '1' then
+                            fall_prefetch_present_r <= fall_read_present_r;
+                            if fall_read_present_r = '1' then
+                                fall_prefetch_word_r <=
+                                    fall_memory_r(fall_read_address_r);
+                            else
+                                fall_prefetch_word_r <= (others => '0');
+                            end if;
+                            fall_prefetch_chip_r <= fall_read_chip_r;
+                            fall_prefetch_stop_r <= fall_read_stop_r;
+                            fall_prefetch_slot_r <= fall_read_slot_r;
+                            fall_prefetch_valid_r <= '1';
                         else
-                            fall_emit_slot_r <= fall_emit_slot_r + 1;
+                            fall_prefetch_valid_r <= '0';
                         end if;
+                    end if;
 
-                        if fall_emit_stop_r + 1 <
-                           G_BUILD_CONFIG.stops_per_chip then
-                            fall_emit_stop_r <= fall_emit_stop_r + 1;
+                    if fall_read_ready_v then
+                        if fall_emit_active_r = '1' then
+                            address_value := fn_cell_address(
+                                fall_emit_chip_r, fall_emit_stop_r);
+                            fall_read_address_r <= address_value;
+                            fall_read_present_r <=
+                                fall_present_r(address_value);
+                            fall_read_chip_r <= fall_emit_chip_r;
+                            fall_read_stop_r <= fall_emit_stop_r;
+                            fall_read_slot_r <= fall_emit_slot_r;
+                            fall_read_valid_r <= '1';
+
+                            if fall_emit_slot_r + 1 = fall_slot_count_r then
+                                fall_emit_active_r <= '0';
+                            else
+                                fall_emit_slot_r <= fall_emit_slot_r + 1;
+                            end if;
+
+                            if fall_emit_stop_r + 1 <
+                               G_BUILD_CONFIG.stops_per_chip then
+                                fall_emit_stop_r <= fall_emit_stop_r + 1;
+                            else
+                                fall_emit_stop_r <= 0;
+                                fall_emit_chip_r <= fn_next_chip(
+                                    shot_fall_mask_r, fall_emit_chip_r);
+                            end if;
                         else
-                            fall_emit_stop_r <= 0;
-                            fall_emit_chip_r <= fn_next_chip(
-                                shot_fall_mask_r, fall_emit_chip_r);
+                            fall_read_valid_r <= '0';
                         end if;
                     end if;
 
                     if rise_emit_active_r = '0' and
+                       rise_read_valid_r = '0' and
                        rise_prefetch_valid_r = '0' and
                        rise_event_r.valid = '0' and
                        fall_emit_active_r = '0' and
+                       fall_read_valid_r = '0' and
                        fall_prefetch_valid_r = '0' and
                        fall_event_r.valid = '0' then
                         state_r <= S_COLLECT;
