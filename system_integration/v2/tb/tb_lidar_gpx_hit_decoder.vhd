@@ -146,7 +146,6 @@ architecture sim of tb_lidar_gpx_hit_decoder is
         channel_code : natural;
         start_number : natural;
         slope        : gpx_slope_t;
-        return_index : natural;
         hit_value    : natural;
         chip_seq     : natural
     ) return gpx_hit_event_t is
@@ -164,7 +163,6 @@ architecture sim of tb_lidar_gpx_hit_decoder is
         result.channel_code := to_unsigned(channel_code, 2);
         result.start_number := to_unsigned(start_number, 8);
         result.slope := slope;
-        result.return_index := to_unsigned(return_index, 3);
         result.hit := to_unsigned(hit_value, C_GPX_HIT_WIDTH);
         result.shot_context := fn_shot_context;
         result.chip_shot_seq := to_unsigned(chip_seq, 16);
@@ -242,6 +240,10 @@ begin
         ) is
         begin
             offer_raw(raw_value);
+            loop
+                wait until falling_edge(clk);
+                exit when hit_event.valid = '1';
+            end loop;
             assert hit_event = expected_value
                 report message_text
                 severity failure;
@@ -261,6 +263,8 @@ begin
         ) is
         begin
             offer_raw(raw_value);
+            wait until rising_edge(clk);
+            wait for 1 ps;
             assert hit_event.valid = '0'
                 report message_text & " unexpectedly emitted a Hit"
                 severity failure;
@@ -281,6 +285,10 @@ begin
         begin
             hit_ready <= '0';
             offer_raw(raw_value);
+            loop
+                wait until falling_edge(clk);
+                exit when hit_event.valid = '1';
+            end loop;
             assert hit_event = expected_value
                 report "V2-B6-TB backpressure initial payload mismatch"
                 severity failure;
@@ -288,7 +296,7 @@ begin
             for index in 1 to 5 loop
                 wait until rising_edge(clk);
                 wait for 1 ps;
-                assert hit_event = held_value and raw_ready = '0'
+                assert hit_event = held_value
                     report "V2-B6-TB payload changed under backpressure"
                     severity failure;
             end loop;
@@ -319,7 +327,7 @@ begin
                 raw_value := fn_raw_data(
                     0, 0, 0, 16#40#, GPX_SLOPE_RISE, 16#10000#, 1);
                 expected_value := fn_expected_data(
-                    0, 0, 0, 16#40#, GPX_SLOPE_RISE, 0, 16#10000#, 1);
+                    0, 0, 0, 16#40#, GPX_SLOPE_RISE, 16#10000#, 1);
                 check_backpressure(raw_value, expected_value);
 
                 for chip in 0 to 3 loop
@@ -348,8 +356,7 @@ begin
                                     fn_raw_data(chip, ififo, channel,
                                         start_value, slope_value, hit_value, 1),
                                     fn_expected_data(chip, ififo, channel,
-                                        start_value, slope_value, return_id,
-                                        hit_value, 1),
+                                        start_value, slope_value, hit_value, 1),
                                     "V2-B6-TB dedicated data mismatch");
                             end loop;
                         end loop;
@@ -376,8 +383,8 @@ begin
                     fn_raw_data(0, 0, 0, 16#55#, GPX_SLOPE_RISE,
                         16#1ABCD#, 2),
                     fn_expected_data(0, 0, 0, 16#55#, GPX_SLOPE_RISE,
-                        0, 16#1ABCD#, 2),
-                    "V2-B6-TB terminal did not reset Return index");
+                        16#1ABCD#, 2),
+                    "V2-B6-TB post-terminal decode mismatch");
 
             when 1 =>
                 for return_id in 0 to 6 loop
@@ -385,31 +392,26 @@ begin
                         fn_raw_data(0, 0, 2, 16#31#,
                             GPX_SLOPE_RISE, 16#10020# + return_id, 4),
                         fn_expected_data(0, 0, 2, 16#31#,
-                            GPX_SLOPE_RISE, return_id,
-                            16#10020# + return_id, 4),
-                        "V2-B6-TB dual-edge Rise Return mismatch");
+                            GPX_SLOPE_RISE, 16#10020# + return_id, 4),
+                        "V2-B6-TB dual-edge Rise decode mismatch");
                     send_and_expect(
                         fn_raw_data(0, 0, 2, 16#32#,
                             GPX_SLOPE_FALL, 16#0020# + return_id, 4),
                         fn_expected_data(0, 0, 2, 16#32#,
-                            GPX_SLOPE_FALL, return_id,
-                            16#0020# + return_id, 4),
-                        "V2-B6-TB dual-edge Fall Return mismatch");
+                            GPX_SLOPE_FALL, 16#0020# + return_id, 4),
+                        "V2-B6-TB dual-edge Fall decode mismatch");
                 end loop;
 
-                expected_fault := C_GPX_HIT_DECODER_FAULTS_CLEAR;
-                expected_fault.return_overflow := '1';
-                send_and_expect_fault(
+                send_and_expect(
                     fn_raw_data(0, 0, 2, 0, GPX_SLOPE_RISE, 1, 4),
-                    expected_fault,
-                    "V2-B6-TB eighth Rise Return");
-                send_and_expect_fault(
+                    fn_expected_data(0, 0, 2, 0,
+                        GPX_SLOPE_RISE, 1, 4),
+                    "V2-B6-TB eighth Rise pass-through");
+                send_and_expect(
                     fn_raw_data(0, 0, 2, 0, GPX_SLOPE_FALL, 2, 4),
-                    expected_fault,
-                    "V2-B6-TB eighth Fall Return");
-                assert fault_sticky.return_overflow = '1'
-                    report "V2-B6-TB Return overflow sticky missing"
-                    severity failure;
+                    fn_expected_data(0, 0, 2, 0,
+                        GPX_SLOPE_FALL, 2, 4),
+                    "V2-B6-TB eighth Fall pass-through");
 
                 send_and_expect(
                     fn_raw_control(GPX_RAW_DRAIN_DONE, 0, 1, 4),
@@ -417,12 +419,12 @@ begin
                     "V2-B6-TB dual-edge terminal mismatch");
                 send_and_expect(
                     fn_raw_data(0, 0, 2, 7, GPX_SLOPE_RISE, 3, 5),
-                    fn_expected_data(0, 0, 2, 7, GPX_SLOPE_RISE, 0, 3, 5),
-                    "V2-B6-TB dual-edge Rise reset mismatch");
+                    fn_expected_data(0, 0, 2, 7, GPX_SLOPE_RISE, 3, 5),
+                    "V2-B6-TB dual-edge Rise post-terminal mismatch");
                 send_and_expect(
                     fn_raw_data(0, 0, 2, 8, GPX_SLOPE_FALL, 4, 5),
-                    fn_expected_data(0, 0, 2, 8, GPX_SLOPE_FALL, 0, 4, 5),
-                    "V2-B6-TB dual-edge Fall reset mismatch");
+                    fn_expected_data(0, 0, 2, 8, GPX_SLOPE_FALL, 4, 5),
+                    "V2-B6-TB dual-edge Fall post-terminal mismatch");
 
                 abort_event <= '1';
                 wait_clocks(1);
@@ -432,8 +434,8 @@ begin
                 abort_event <= '0';
                 send_and_expect(
                     fn_raw_data(0, 0, 2, 9, GPX_SLOPE_RISE, 5, 6),
-                    fn_expected_data(0, 0, 2, 9, GPX_SLOPE_RISE, 0, 5, 6),
-                    "V2-B6-TB abort did not reset Return index");
+                    fn_expected_data(0, 0, 2, 9, GPX_SLOPE_RISE, 5, 6),
+                    "V2-B6-TB abort recovery mismatch");
 
             when others =>
                 expected_fault := C_GPX_HIT_DECODER_FAULTS_CLEAR;
@@ -465,7 +467,7 @@ begin
                     fn_raw_data(2, 1, 1, 16#7E#,
                         GPX_SLOPE_FALL, 16#1FFFF#, 3),
                     fn_expected_data(2, 1, 1, 16#7E#,
-                        GPX_SLOPE_FALL, 0, 16#1FFFF#, 3),
+                        GPX_SLOPE_FALL, 16#1FFFF#, 3),
                     "V2-B6-TB valid reduced topology data");
                 send_and_expect(
                     fn_raw_control(GPX_RAW_TIMEOUT, 2, 1, 3, '1', "101"),
@@ -476,8 +478,8 @@ begin
                     fn_raw_data(2, 1, 1, 16#7F#,
                         GPX_SLOPE_FALL, 16#10001#, 4),
                     fn_expected_data(2, 1, 1, 16#7F#,
-                        GPX_SLOPE_FALL, 0, 16#10001#, 4),
-                    "V2-B6-TB timeout did not reset Return index");
+                        GPX_SLOPE_FALL, 16#10001#, 4),
+                    "V2-B6-TB post-timeout decode mismatch");
 
                 assert fault_sticky.chip_index_error = '1' and
                        fault_sticky.stop_index_error = '1' and

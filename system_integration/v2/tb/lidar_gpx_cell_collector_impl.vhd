@@ -27,7 +27,6 @@ entity lidar_gpx_cell_collector_impl is
         i_stop_index     : in  std_logic_vector(2 downto 0);
         i_start_number   : in  std_logic_vector(7 downto 0);
         i_slope          : in  std_logic;
-        i_return_index   : in  std_logic_vector(2 downto 0);
         i_hit            : in  std_logic_vector(16 downto 0);
         i_faulted        : in  std_logic;
         i_timeout_cause  : in  std_logic_vector(2 downto 0);
@@ -94,7 +93,6 @@ begin
         result.stop_index    := unsigned(i_stop_index);
         result.start_number  := unsigned(i_start_number);
         result.slope         := fn_gpx_slope_from_bit(i_slope);
-        result.return_index  := unsigned(i_return_index);
         result.hit           := unsigned(i_hit);
         result.faulted       := i_faulted;
         result.timeout_cause := i_timeout_cause;
@@ -148,11 +146,11 @@ begin
 
     o_fault_pulse <= fault_pulse_c.hit_capacity_drop &
                      fault_pulse_c.start_number_nonzero &
-                     fault_pulse_c.return_sequence_error &
+                     fault_pulse_c.return_overflow &
                      fault_pulse_c.context_mismatch;
     o_fault_sticky <= fault_sticky_c.hit_capacity_drop &
                       fault_sticky_c.start_number_nonzero &
-                      fault_sticky_c.return_sequence_error &
+                      fault_sticky_c.return_overflow &
                       fault_sticky_c.context_mismatch;
 
 end architecture rtl;

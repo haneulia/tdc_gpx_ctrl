@@ -27,14 +27,13 @@ entity lidar_gpx_hit_decoder_impl is
         o_stop_index   : out std_logic_vector(2 downto 0);
         o_start_number : out std_logic_vector(7 downto 0);
         o_slope        : out std_logic;
-        o_return_index : out std_logic_vector(2 downto 0);
         o_hit          : out std_logic_vector(16 downto 0);
         o_faulted      : out std_logic;
         o_timeout_cause : out std_logic_vector(2 downto 0);
         o_shot_context : out gpx_shot_context_t;
         o_chip_shot_seq : out std_logic_vector(15 downto 0);
-        o_fault_pulse  : out std_logic_vector(3 downto 0);
-        o_fault_sticky : out std_logic_vector(3 downto 0)
+        o_fault_pulse  : out std_logic_vector(2 downto 0);
+        o_fault_sticky : out std_logic_vector(2 downto 0)
     );
 end entity lidar_gpx_hit_decoder_impl;
 
@@ -96,19 +95,16 @@ begin
     o_stop_index <= std_logic_vector(hit_event_c.stop_index);
     o_start_number <= std_logic_vector(hit_event_c.start_number);
     o_slope <= fn_gpx_slope_to_bit(hit_event_c.slope);
-    o_return_index <= std_logic_vector(hit_event_c.return_index);
     o_hit <= std_logic_vector(hit_event_c.hit);
     o_faulted <= hit_event_c.faulted;
     o_timeout_cause <= hit_event_c.timeout_cause;
     o_shot_context <= fn_pack_shot_context(hit_event_c.shot_context);
     o_chip_shot_seq <= std_logic_vector(hit_event_c.chip_shot_seq);
 
-    o_fault_pulse <= fault_pulse_c.return_overflow &
-                     fault_pulse_c.slope_role_error &
+    o_fault_pulse <= fault_pulse_c.slope_role_error &
                      fault_pulse_c.stop_index_error &
                      fault_pulse_c.chip_index_error;
-    o_fault_sticky <= fault_sticky_c.return_overflow &
-                      fault_sticky_c.slope_role_error &
+    o_fault_sticky <= fault_sticky_c.slope_role_error &
                       fault_sticky_c.stop_index_error &
                       fault_sticky_c.chip_index_error;
 

@@ -20,7 +20,6 @@ package lidar_gpx_data_pkg is
     constant C_GPX_HIT_WIDTH      : positive := 17;
 
     subtype gpx_stop_index_t is unsigned(2 downto 0);
-    subtype gpx_return_index_t is unsigned(2 downto 0);
     subtype gpx_channel_code_t is unsigned(1 downto 0);
     subtype gpx_start_number_t is unsigned(7 downto 0);
     subtype gpx_hit_value_t is unsigned(C_GPX_HIT_WIDTH - 1 downto 0);
@@ -48,7 +47,6 @@ package lidar_gpx_data_pkg is
         stop_index    : gpx_stop_index_t;
         start_number  : gpx_start_number_t;
         slope         : gpx_slope_t;
-        return_index  : gpx_return_index_t;
         hit           : gpx_hit_value_t;
         faulted       : std_logic;
         timeout_cause : std_logic_vector(2 downto 0);
@@ -62,7 +60,6 @@ package lidar_gpx_data_pkg is
         chip_index_error : std_logic;
         stop_index_error : std_logic;
         slope_role_error : std_logic;
-        return_overflow  : std_logic;
     end record gpx_hit_decoder_faults_t;
 
     type gpx_hit_value_array_t is array (
@@ -98,7 +95,7 @@ package lidar_gpx_data_pkg is
 
     type gpx_cell_collector_faults_t is record
         context_mismatch     : std_logic;
-        return_sequence_error : std_logic;
+        return_overflow       : std_logic;
         start_number_nonzero : std_logic;
         hit_capacity_drop    : std_logic;
     end record gpx_cell_collector_faults_t;
@@ -112,7 +109,6 @@ package lidar_gpx_data_pkg is
         stop_index    => (others => '0'),
         start_number  => (others => '0'),
         slope         => GPX_SLOPE_FALL,
-        return_index  => (others => '0'),
         hit           => (others => '0'),
         faulted       => '0',
         timeout_cause => (others => '0'),
@@ -123,8 +119,7 @@ package lidar_gpx_data_pkg is
     constant C_GPX_HIT_DECODER_FAULTS_CLEAR : gpx_hit_decoder_faults_t := (
         chip_index_error => '0',
         stop_index_error => '0',
-        slope_role_error => '0',
-        return_overflow  => '0'
+        slope_role_error => '0'
     );
 
     constant C_GPX_CELL_EVENT_IDLE : gpx_cell_event_t := (
@@ -148,7 +143,7 @@ package lidar_gpx_data_pkg is
     constant C_GPX_CELL_COLLECTOR_FAULTS_CLEAR :
         gpx_cell_collector_faults_t := (
             context_mismatch      => '0',
-            return_sequence_error => '0',
+            return_overflow       => '0',
             start_number_nonzero  => '0',
             hit_capacity_drop     => '0'
         );

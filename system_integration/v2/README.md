@@ -46,7 +46,8 @@ multiple clocks and is checked against this reference model.
   lane/coordinator, H2B-2B completed indexed image activation and H3 closed
   the 32-physical-STOP / 16-logical-APD x 7-Return B5 acquisition boundary.
   Stage 6 I0 froze the Hit/Cell/Frame oracle, I1 completed the typed B6 Hit
-  decoder and I2 completed the width-independent B7 Cell collector. Frame,
+  decoder, I2 completed the width-independent B7 Cell collector and I2A closed
+  their registered ownership/timing optimization. Frame,
   formatter and the full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
@@ -66,9 +67,10 @@ Checkpoint F was completed in this fixed order:
 Each boundary passed before the next block was migrated. Checkpoint F ran the
 Processing/TDC 150/200 and 200/150 MHz profiles, Checkpoint G preserved the
 direct low-latency STOP path, and H2A through H3 now own the atomic event CDC
-and typed acquisition boundaries. Stage 6 I1 owns the B6 raw-to-Hit boundary
-and I2 owns B7 Hit-to-Cell collection; the next implementation is B8 Frame lane
-assembly against the frozen v1 oracle.
+and typed acquisition boundaries. Stage 6 I1 owns B6 raw parsing, I2 owns B7
+Return ordering and Hit-to-Cell collection, and I2A proves their direct linked
+boundary; the next implementation is B8 Frame lane assembly against the frozen
+v1 oracle.
 
 Run the current package regression with:
 
@@ -246,8 +248,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The pass marker is `LIDAR_V2_GPX_HIT_DECODER_PASS`. It verifies the complete
-I-Mode field mapping, 4-Chip dedicated and one-Chip dual-edge Return identity,
-8th-Return no-wrap handling, identity diagnostics and output backpressure at
+I-Mode field mapping, 4-Chip dedicated and one-Chip dual-edge topology,
+identity diagnostics, registered input/output behavior and backpressure at
 Processing 150 and 200 MHz. See
 `system_integration/v2_architecture/V2_CHECKPOINT_I1_GPX_HIT_DECODER.md`.
 
@@ -260,6 +262,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 The pass marker is `LIDAR_V2_GPX_CELL_COLLECTOR_PASS`. It verifies runtime
 visible-Hit clipping without shortening physical drain, Hit[16] preservation,
-dedicated and dual-edge Cell ordering, timeout/abort recovery and output
-backpressure at Processing 150 and 200 MHz. See
+dedicated and dual-edge Cell ordering, 8th-Return no-wrap handling,
+timeout/abort scrub recovery, B6-B7 direct linking and output backpressure at
+Processing 150 and 200 MHz. See
 `system_integration/v2_architecture/V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md`.
+The ownership and timing optimization evidence is in
+`system_integration/v2_architecture/V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md`.

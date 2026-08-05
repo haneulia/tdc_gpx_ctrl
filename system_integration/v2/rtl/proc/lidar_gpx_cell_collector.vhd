@@ -9,7 +9,8 @@ use work.lidar_gpx_data_pkg.all;
 
 -- B7 width-independent Hit-to-Cell collector.
 --
--- A Cell is one Shot x Chip x STOP x slope. Hit payload remains 17 bit here;
+-- A Cell is one Shot x Chip x STOP x slope. B7 is the single owner of the
+-- physical Return order inside that Cell. Hit payload remains 17 bit here;
 -- AXIS width, byte packing and VDMA geometry belong to later boundaries.
 entity lidar_gpx_cell_collector is
     generic (
@@ -21,8 +22,8 @@ entity lidar_gpx_cell_collector is
         i_abort        : in  std_logic;
         i_clear_sticky : in  std_logic;
 
-        i_active_version     : in unsigned(15 downto 0);
-        i_max_hits_per_stop  : in unsigned(2 downto 0);
+        i_active_version    : in unsigned(15 downto 0);
+        i_max_hits_per_stop : in unsigned(2 downto 0);
 
         i_hit_event : in  gpx_hit_event_t;
         o_hit_ready : out std_logic;
@@ -39,12 +40,23 @@ architecture rtl of lidar_gpx_cell_collector is
 
     constant C_CELL_ADDRESS_COUNT : positive :=
         C_MAX_CHIPS * 2 * C_MAX_STOPS_PER_CHIP;
+    constant C_CELLS_PER_CHIP : positive := 2 * C_MAX_STOPS_PER_CHIP;
+
+    constant C_META_COUNT_LO : natural := 0;
+    constant C_META_COUNT_HI : natural := 2;
+    constant C_META_DROPPED  : natural := 3;
+    constant C_META_ERROR    : natural := 4;
 
     type collector_state_t is (
         S_COLLECT,
-        S_HIT_READ,
+        S_EVENT_SELECT,
+        S_SCRUB_META,
+        S_EVENT_CHECK,
+        S_EVENT_ROUTE,
+        S_HIT_META_READ,
         S_HIT_APPLY,
-        S_CELL_READ,
+        S_CELL_META_READ,
+        S_CELL_HIT_READ,
         S_CELL_LOAD,
         S_CELL_WAIT,
         S_CONTROL_LOAD,
@@ -53,10 +65,14 @@ architecture rtl of lidar_gpx_cell_collector is
 
     type hit_bank_t is array (0 to C_CELL_ADDRESS_COUNT - 1) of
         gpx_hit_value_t;
-    type count_memory_t is array (0 to C_CELL_ADDRESS_COUNT - 1) of
-        unsigned(2 downto 0);
+    subtype cell_meta_t is std_logic_vector(C_META_ERROR downto 0);
+    type cell_meta_memory_t is array (0 to C_CELL_ADDRESS_COUNT - 1) of
+        cell_meta_t;
+    subtype shot_identity_t is std_logic_vector(51 downto 0);
     type context_by_chip_t is array (0 to C_MAX_CHIPS - 1) of
         shot_start_event_t;
+    type identity_by_chip_t is array (0 to C_MAX_CHIPS - 1) of
+        shot_identity_t;
     type sequence_by_chip_t is array (0 to C_MAX_CHIPS - 1) of
         unsigned(15 downto 0);
     type max_hits_by_chip_t is array (0 to C_MAX_CHIPS - 1) of
@@ -64,8 +80,9 @@ architecture rtl of lidar_gpx_cell_collector is
 
     signal state_r : collector_state_t := S_COLLECT;
 
-    -- Payload RAM is intentionally not reset. Per-cell visible count masks
-    -- every stale location after reset, abort and terminal cleanup.
+    -- Payload and metadata RAMs are intentionally not reset. The first event
+    -- of each Chip Shot is held while its 16 metadata addresses are scrubbed.
+    -- A zero metadata count makes every stale Hit payload location invisible.
     signal hit_bank_0_r : hit_bank_t;
     signal hit_bank_1_r : hit_bank_t;
     signal hit_bank_2_r : hit_bank_t;
@@ -73,6 +90,8 @@ architecture rtl of lidar_gpx_cell_collector is
     signal hit_bank_4_r : hit_bank_t;
     signal hit_bank_5_r : hit_bank_t;
     signal hit_bank_6_r : hit_bank_t;
+    signal cell_meta_r  : cell_meta_memory_t;
+
     attribute ram_style : string;
     attribute ram_style of hit_bank_0_r : signal is "distributed";
     attribute ram_style of hit_bank_1_r : signal is "distributed";
@@ -81,18 +100,13 @@ architecture rtl of lidar_gpx_cell_collector is
     attribute ram_style of hit_bank_4_r : signal is "distributed";
     attribute ram_style of hit_bank_5_r : signal is "distributed";
     attribute ram_style of hit_bank_6_r : signal is "distributed";
+    attribute ram_style of cell_meta_r  : signal is "distributed";
 
-    signal seen_count_r    : count_memory_t := (others => (others => '0'));
-    signal visible_count_r : count_memory_t := (others => (others => '0'));
-    signal hit_dropped_r   : std_logic_vector(
-        C_CELL_ADDRESS_COUNT - 1 downto 0) := (others => '0');
-    signal cell_error_r    : std_logic_vector(
-        C_CELL_ADDRESS_COUNT - 1 downto 0) := (others => '0');
-
-    signal shot_active_r  : std_logic_vector(C_MAX_CHIPS - 1 downto 0) :=
+    signal shot_active_r : std_logic_vector(C_MAX_CHIPS - 1 downto 0) :=
         (others => '0');
     signal shot_context_r : context_by_chip_t :=
         (others => C_SHOT_START_EVENT_IDLE);
+    signal shot_identity_r : identity_by_chip_t := (others => (others => '0'));
     signal chip_sequence_r : sequence_by_chip_t :=
         (others => (others => '0'));
     signal max_hits_r : max_hits_by_chip_t :=
@@ -102,41 +116,53 @@ architecture rtl of lidar_gpx_cell_collector is
     signal lower_emitted_r : std_logic_vector(C_MAX_CHIPS - 1 downto 0) :=
         (others => '0');
 
-    signal emit_chip_r          : natural range 0 to C_MAX_CHIPS - 1 := 0;
-    signal emit_stop_r          : natural range 0 to C_MAX_STOPS_PER_CHIP - 1 := 0;
-    signal emit_stop_first_r    : natural range 0 to C_MAX_STOPS_PER_CHIP := 0;
-    signal emit_stop_last_r     : natural range 0 to C_MAX_STOPS_PER_CHIP - 1 := 0;
-    signal emit_slope_r         : gpx_slope_t := GPX_SLOPE_RISE;
-    signal emit_control_kind_r  : gpx_cell_event_kind_t := GPX_CELL_DRAIN_DONE;
-    signal emit_ififo_r         : std_logic := '0';
-    signal emit_error_fill_r    : std_logic := '0';
-    signal emit_timeout_cause_r : std_logic_vector(2 downto 0) :=
+    -- The input event and its selected per-Chip owner context are registered
+    -- before any wide identity comparison. This keeps the upstream ready path
+    -- independent of metadata RAM and context comparison logic.
+    signal pending_event_r : gpx_hit_event_t := C_GPX_HIT_EVENT_IDLE;
+    signal pending_chip_r : natural range 0 to C_MAX_CHIPS - 1 := 0;
+    signal pending_identity_r : shot_identity_t := (others => '0');
+    signal pending_expected_identity_r : shot_identity_t := (others => '0');
+    signal pending_owner_context_r : shot_start_event_t :=
+        C_SHOT_START_EVENT_IDLE;
+    signal pending_owner_sequence_r : unsigned(15 downto 0) :=
         (others => '0');
-
-    signal read_hits_r      : gpx_hit_value_array_t :=
-        (others => (others => '0'));
-    signal read_hit_count_r : unsigned(2 downto 0) := (others => '0');
-    signal read_dropped_r   : std_logic := '0';
-    signal read_error_r     : std_logic := '0';
-
-    -- Hit metadata uses an explicit read/apply pipeline. This prevents the
-    -- 64-address count arrays from becoming a cross-address read/modify/write
-    -- mux in one Processing-clock cycle.
+    signal pending_owner_max_hits_r : unsigned(2 downto 0) :=
+        to_unsigned(1, 3);
+    signal pending_requested_max_hits_r : unsigned(2 downto 0) :=
+        to_unsigned(1, 3);
+    signal pending_owner_fault_r : std_logic := '0';
+    signal pending_cfg_valid_r : std_logic := '0';
+    signal pending_compare_fault_r : std_logic_vector(4 downto 0) :=
+        (others => '0');
     signal pending_address_r : natural range 0 to
         C_CELL_ADDRESS_COUNT - 1 := 0;
-    attribute max_fanout : integer;
-    attribute max_fanout of pending_address_r : signal is 8;
-    signal pending_chip_r : natural range 0 to C_MAX_CHIPS - 1 := 0;
-    signal pending_return_r : unsigned(2 downto 0) := (others => '0');
-    signal pending_hit_r : gpx_hit_value_t := (others => '0');
-    signal pending_start_nonzero_r : std_logic := '0';
-    signal pending_store_limit_r : unsigned(2 downto 0) :=
-        to_unsigned(1, 3);
-    signal selected_seen_r    : unsigned(2 downto 0) := (others => '0');
-    signal selected_visible_r : unsigned(2 downto 0) := (others => '0');
+    signal scrub_index_r : natural range 0 to C_CELLS_PER_CHIP - 1 := 0;
 
-    signal cell_event_r   : gpx_cell_event_t := C_GPX_CELL_EVENT_IDLE;
-    signal fault_pulse_r  : gpx_cell_collector_faults_t :=
+    signal meta_read_r : cell_meta_t := (others => '0');
+    signal cell_address_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal cell_error_read_r : std_logic := '0';
+
+    signal emit_chip_r : natural range 0 to C_MAX_CHIPS - 1 := 0;
+    signal emit_stop_r : natural range 0 to C_MAX_STOPS_PER_CHIP - 1 := 0;
+    signal emit_stop_first_r : natural range 0 to C_MAX_STOPS_PER_CHIP := 0;
+    signal emit_stop_last_r : natural range 0 to
+        C_MAX_STOPS_PER_CHIP - 1 := 0;
+    signal emit_slope_r : gpx_slope_t := GPX_SLOPE_RISE;
+    signal emit_control_kind_r : gpx_cell_event_kind_t :=
+        GPX_CELL_DRAIN_DONE;
+    signal emit_ififo_r : std_logic := '0';
+    signal emit_error_fill_r : std_logic := '0';
+    signal emit_timeout_cause_r : std_logic_vector(2 downto 0) :=
+        (others => '0');
+    signal emit_context_r : shot_start_event_t := C_SHOT_START_EVENT_IDLE;
+    signal emit_sequence_r : unsigned(15 downto 0) := (others => '0');
+    signal emit_max_hits_r : unsigned(2 downto 0) := to_unsigned(1, 3);
+    signal emit_faulted_r : std_logic := '0';
+
+    signal cell_event_r : gpx_cell_event_t := C_GPX_CELL_EVENT_IDLE;
+    signal fault_pulse_r : gpx_cell_collector_faults_t :=
         C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
     signal fault_sticky_r : gpx_cell_collector_faults_t :=
         C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
@@ -151,9 +177,22 @@ architecture rtl of lidar_gpx_cell_collector is
         if slope = GPX_SLOPE_FALL then
             slope_offset := C_MAX_STOPS_PER_CHIP;
         end if;
-        return chip_index * (2 * C_MAX_STOPS_PER_CHIP) +
-               slope_offset + stop_index;
+        return chip_index * C_CELLS_PER_CHIP + slope_offset + stop_index;
     end function fn_cell_address;
+
+    function fn_shot_identity(
+        event_value : gpx_hit_event_t
+    ) return shot_identity_t is
+    begin
+        return std_logic_vector(event_value.chip_shot_seq) &
+               std_logic_vector(
+                   event_value.shot_context.request.active_version) &
+               std_logic_vector(
+                   event_value.shot_context.request.shot_index) &
+               std_logic_vector(
+                   event_value.shot_context.request.face_index) &
+               event_value.shot_context.request.source_sim;
+    end function fn_shot_identity;
 
     function fn_slope_supported(
         chip_index : natural;
@@ -221,56 +260,63 @@ begin
     o_fault_sticky <= fault_sticky_r;
 
     p_collect : process (i_clk)
-        variable chip_index     : natural range 0 to C_MAX_CHIPS - 1;
-        variable stop_index     : natural range 0 to C_MAX_STOPS_PER_CHIP - 1;
-        variable address_value  : natural range 0 to C_CELL_ADDRESS_COUNT - 1;
-        variable return_index   : natural range 0 to C_MAX_RETURNS_PER_STOP;
-        variable visible_count  : natural range 0 to C_MAX_RETURNS_PER_STOP;
-        variable store_limit    : natural range 1 to C_MAX_RETURNS_PER_STOP;
-        variable effective_max  : unsigned(2 downto 0);
-        variable first_stop     : natural range 0 to C_MAX_STOPS_PER_CHIP;
-        variable last_stop      : natural range 0 to C_MAX_STOPS_PER_CHIP - 1;
-        variable next_exists    : boolean;
-        variable result         : gpx_cell_event_t;
-        variable context_fault  : boolean;
+        variable chip_index    : natural range 0 to C_MAX_CHIPS - 1;
+        variable stop_index    : natural range 0 to C_MAX_STOPS_PER_CHIP - 1;
+        variable address_value : natural range 0 to C_CELL_ADDRESS_COUNT - 1;
+        variable first_stop    : natural range 0 to C_MAX_STOPS_PER_CHIP;
+        variable last_stop     : natural range 0 to
+            C_MAX_STOPS_PER_CHIP - 1;
+        variable seen_count    : natural range 0 to C_MAX_RETURNS_PER_STOP;
+        variable visible_count : natural range 0 to C_MAX_RETURNS_PER_STOP;
+        variable effective_max : unsigned(2 downto 0);
+        variable meta_value    : cell_meta_t;
+        variable context_fault : boolean;
+        variable event_faulted : std_logic;
+        variable initial_fault : std_logic;
+        variable next_exists   : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 state_r            <= S_COLLECT;
-                seen_count_r       <= (others => (others => '0'));
-                visible_count_r    <= (others => (others => '0'));
-                hit_dropped_r      <= (others => '0');
-                cell_error_r       <= (others => '0');
                 shot_active_r      <= (others => '0');
                 shot_context_r     <= (others => C_SHOT_START_EVENT_IDLE);
+                shot_identity_r    <= (others => (others => '0'));
                 chip_sequence_r    <= (others => (others => '0'));
                 max_hits_r         <= (others => (others => '0'));
                 shot_fault_r       <= (others => '0');
                 lower_emitted_r    <= (others => '0');
-                emit_chip_r        <= 0;
-                emit_stop_r        <= 0;
-                emit_stop_first_r  <= 0;
-                emit_stop_last_r   <= 0;
-                emit_slope_r       <= GPX_SLOPE_RISE;
-                emit_control_kind_r <= GPX_CELL_DRAIN_DONE;
-                emit_ififo_r       <= '0';
-                emit_error_fill_r  <= '0';
-                emit_timeout_cause_r <= (others => '0');
-                read_hits_r        <= (others => (others => '0'));
-                read_hit_count_r   <= (others => '0');
-                read_dropped_r     <= '0';
-                read_error_r       <= '0';
-                pending_address_r  <= 0;
+                pending_event_r    <= C_GPX_HIT_EVENT_IDLE;
                 pending_chip_r     <= 0;
-                pending_return_r   <= (others => '0');
-                pending_hit_r      <= (others => '0');
-                pending_start_nonzero_r <= '0';
-                pending_store_limit_r <= to_unsigned(1, 3);
-                selected_seen_r    <= (others => '0');
-                selected_visible_r <= (others => '0');
-                cell_event_r       <= C_GPX_CELL_EVENT_IDLE;
-                fault_pulse_r      <= C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
-                fault_sticky_r     <= C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
+                pending_identity_r <= (others => '0');
+                pending_expected_identity_r <= (others => '0');
+                pending_owner_context_r <= C_SHOT_START_EVENT_IDLE;
+                pending_owner_sequence_r <= (others => '0');
+                pending_owner_max_hits_r <= to_unsigned(1, 3);
+                pending_requested_max_hits_r <= to_unsigned(1, 3);
+                pending_owner_fault_r <= '0';
+                pending_cfg_valid_r <= '0';
+                pending_compare_fault_r <= (others => '0');
+                pending_address_r <= 0;
+                scrub_index_r <= 0;
+                meta_read_r <= (others => '0');
+                cell_address_r <= 0;
+                cell_error_read_r <= '0';
+                emit_chip_r <= 0;
+                emit_stop_r <= 0;
+                emit_stop_first_r <= 0;
+                emit_stop_last_r <= 0;
+                emit_slope_r <= GPX_SLOPE_RISE;
+                emit_control_kind_r <= GPX_CELL_DRAIN_DONE;
+                emit_ififo_r <= '0';
+                emit_error_fill_r <= '0';
+                emit_timeout_cause_r <= (others => '0');
+                emit_context_r <= C_SHOT_START_EVENT_IDLE;
+                emit_sequence_r <= (others => '0');
+                emit_max_hits_r <= to_unsigned(1, 3);
+                emit_faulted_r <= '0';
+                cell_event_r <= C_GPX_CELL_EVENT_IDLE;
+                fault_pulse_r <= C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
+                fault_sticky_r <= C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
             else
                 fault_pulse_r <= C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
 
@@ -280,10 +326,6 @@ begin
 
                 if i_abort = '1' then
                     state_r         <= S_COLLECT;
-                    seen_count_r    <= (others => (others => '0'));
-                    visible_count_r <= (others => (others => '0'));
-                    hit_dropped_r   <= (others => '0');
-                    cell_error_r    <= (others => '0');
                     shot_active_r   <= (others => '0');
                     shot_fault_r    <= (others => '0');
                     lower_emitted_r <= (others => '0');
@@ -295,320 +337,379 @@ begin
                                 chip_index := to_integer(i_hit_event.chip_index);
 
                                 if chip_index >= G_BUILD_CONFIG.num_chips then
-                                    fault_pulse_r.context_mismatch  <= '1';
+                                    fault_pulse_r.context_mismatch <= '1';
                                     fault_sticky_r.context_mismatch <= '1';
                                 else
                                     effective_max := fn_effective_max_hits(
                                         i_max_hits_per_stop);
-                                    context_fault := false;
 
-                                    if shot_active_r(chip_index) = '0' then
-                                        shot_active_r(chip_index) <= '1';
-                                        shot_context_r(chip_index) <=
-                                            i_hit_event.shot_context;
-                                        chip_sequence_r(chip_index) <=
-                                            i_hit_event.chip_shot_seq;
-                                        max_hits_r(chip_index) <= effective_max;
-                                        shot_fault_r(chip_index) <=
-                                            i_hit_event.faulted;
-                                        lower_emitted_r(chip_index) <= '0';
+                                    pending_event_r <= i_hit_event;
+                                    pending_chip_r <= chip_index;
+                                    pending_requested_max_hits_r <=
+                                        effective_max;
+                                    pending_identity_r <=
+                                        fn_shot_identity(i_hit_event);
 
-                                        if i_hit_event.shot_context.request.
-                                                active_version /=
-                                           i_active_version or
-                                           i_max_hits_per_stop = 0 or
-                                           to_integer(i_max_hits_per_stop) >
-                                               G_BUILD_CONFIG.
-                                                   max_returns_per_stop then
-                                            context_fault := true;
-                                            shot_fault_r(chip_index) <= '1';
-                                        end if;
+                                    if i_hit_event.shot_context.request.
+                                            active_version = i_active_version and
+                                       i_max_hits_per_stop /= 0 and
+                                       to_integer(i_max_hits_per_stop) <=
+                                           G_BUILD_CONFIG.
+                                               max_returns_per_stop then
+                                        pending_cfg_valid_r <= '1';
                                     else
-                                        if chip_sequence_r(chip_index) /=
-                                               i_hit_event.chip_shot_seq or
-                                           shot_context_r(chip_index).request.
-                                               active_version /=
-                                               i_hit_event.shot_context.request.
-                                                   active_version or
-                                           shot_context_r(chip_index).request.
-                                               shot_index /=
-                                               i_hit_event.shot_context.request.
-                                                   shot_index or
-                                           shot_context_r(chip_index).request.
-                                               face_index /=
-                                               i_hit_event.shot_context.request.
-                                                   face_index or
-                                           shot_context_r(chip_index).request.
-                                               source_sim /=
-                                               i_hit_event.shot_context.request.
-                                                   source_sim or
-                                           max_hits_r(chip_index) /=
-                                               effective_max or
-                                           i_hit_event.shot_context.request.
-                                               active_version /=
-                                               i_active_version then
-                                            context_fault := true;
-                                            shot_fault_r(chip_index) <= '1';
-                                        end if;
-
-                                        if i_hit_event.faulted = '1' then
-                                            shot_fault_r(chip_index) <= '1';
-                                        end if;
+                                        pending_cfg_valid_r <= '0';
                                     end if;
-
-                                    if context_fault then
-                                        fault_pulse_r.context_mismatch  <= '1';
-                                        fault_sticky_r.context_mismatch <= '1';
-                                    end if;
-
-                                    if i_hit_event.kind = GPX_HIT_DATA then
-                                        stop_index := to_integer(
-                                            i_hit_event.stop_index);
-                                        pending_address_r <= fn_cell_address(
-                                            chip_index,
-                                            i_hit_event.slope,
-                                            stop_index);
-                                        pending_chip_r   <= chip_index;
-                                        pending_return_r <=
-                                            i_hit_event.return_index;
-                                        pending_hit_r <= i_hit_event.hit;
-                                        if i_hit_event.start_number /= 0 then
-                                            pending_start_nonzero_r <= '1';
-                                        else
-                                            pending_start_nonzero_r <= '0';
-                                        end if;
-
-                                        if shot_active_r(chip_index) = '0' then
-                                            pending_store_limit_r <= effective_max;
-                                        else
-                                            pending_store_limit_r <=
-                                                max_hits_r(chip_index);
-                                        end if;
-                                        state_r <= S_HIT_READ;
-                                    else
-                                        emit_chip_r <= chip_index;
-                                        emit_ififo_r <= i_hit_event.ififo_id;
-                                        emit_timeout_cause_r <=
-                                            i_hit_event.timeout_cause;
-
-                                        case i_hit_event.kind is
-                                            when GPX_HIT_IFIFO1_DONE =>
-                                                emit_control_kind_r <=
-                                                    GPX_CELL_IFIFO1_DONE;
-                                                first_stop := 0;
-                                                if G_BUILD_CONFIG.stops_per_chip >
-                                                   4 then
-                                                    last_stop := 3;
-                                                else
-                                                    last_stop :=
-                                                        G_BUILD_CONFIG.
-                                                            stops_per_chip - 1;
-                                                end if;
-                                                emit_error_fill_r <=
-                                                    i_hit_event.faulted;
-
-                                            when GPX_HIT_DRAIN_DONE =>
-                                                emit_control_kind_r <=
-                                                    GPX_CELL_DRAIN_DONE;
-                                                if lower_emitted_r(
-                                                        chip_index) = '1' then
-                                                    first_stop := 4;
-                                                else
-                                                    first_stop := 0;
-                                                end if;
-                                                last_stop :=
-                                                    G_BUILD_CONFIG.
-                                                        stops_per_chip - 1;
-                                                emit_error_fill_r <=
-                                                    i_hit_event.faulted;
-
-                                            when GPX_HIT_TIMEOUT =>
-                                                emit_control_kind_r <=
-                                                    GPX_CELL_TIMEOUT;
-                                                if lower_emitted_r(
-                                                        chip_index) = '1' then
-                                                    first_stop := 4;
-                                                else
-                                                    first_stop := 0;
-                                                end if;
-                                                last_stop :=
-                                                    G_BUILD_CONFIG.
-                                                        stops_per_chip - 1;
-                                                emit_error_fill_r <= '1';
-                                                shot_fault_r(chip_index) <= '1';
-
-                                            when GPX_HIT_DATA =>
-                                                first_stop := 0;
-                                                last_stop := 0;
-                                        end case;
-
-                                        emit_stop_first_r <= first_stop;
-                                        emit_stop_last_r  <= last_stop;
-                                        emit_stop_r       <= first_stop;
-                                        emit_slope_r      <= fn_first_slope(
-                                            chip_index);
-
-                                        if fn_has_emit_cells(
-                                                chip_index, first_stop) then
-                                            state_r <= S_CELL_READ;
-                                        else
-                                            state_r <= S_CONTROL_LOAD;
-                                        end if;
-                                    end if;
+                                    state_r <= S_EVENT_SELECT;
                                 end if;
                             end if;
 
-                        when S_HIT_READ =>
-                            selected_seen_r <=
-                                seen_count_r(pending_address_r);
-                            selected_visible_r <=
-                                visible_count_r(pending_address_r);
+                        when S_EVENT_SELECT =>
+                            chip_index := pending_chip_r;
+                            initial_fault := pending_event_r.faulted;
+                            if pending_cfg_valid_r = '0' then
+                                initial_fault := '1';
+                            end if;
+
+                            if shot_active_r(chip_index) = '0' then
+                                pending_expected_identity_r <=
+                                    pending_identity_r;
+                                pending_owner_context_r <=
+                                    pending_event_r.shot_context;
+                                pending_owner_sequence_r <=
+                                    pending_event_r.chip_shot_seq;
+                                pending_owner_max_hits_r <=
+                                    pending_requested_max_hits_r;
+                                pending_owner_fault_r <= initial_fault;
+
+                                shot_active_r(chip_index) <= '1';
+                                shot_context_r(chip_index) <=
+                                    pending_event_r.shot_context;
+                                shot_identity_r(chip_index) <=
+                                    pending_identity_r;
+                                chip_sequence_r(chip_index) <=
+                                    pending_event_r.chip_shot_seq;
+                                max_hits_r(chip_index) <=
+                                    pending_requested_max_hits_r;
+                                shot_fault_r(chip_index) <= initial_fault;
+                                lower_emitted_r(chip_index) <= '0';
+
+                                scrub_index_r <= 0;
+                                state_r <= S_SCRUB_META;
+                            else
+                                pending_expected_identity_r <=
+                                    shot_identity_r(chip_index);
+                                pending_owner_context_r <=
+                                    shot_context_r(chip_index);
+                                pending_owner_sequence_r <=
+                                    chip_sequence_r(chip_index);
+                                pending_owner_max_hits_r <=
+                                    max_hits_r(chip_index);
+                                pending_owner_fault_r <=
+                                    shot_fault_r(chip_index);
+                                state_r <= S_EVENT_CHECK;
+                            end if;
+
+                        when S_SCRUB_META =>
+                            address_value := pending_chip_r *
+                                C_CELLS_PER_CHIP + scrub_index_r;
+                            cell_meta_r(address_value) <= (others => '0');
+
+                            if scrub_index_r = C_CELLS_PER_CHIP - 1 then
+                                state_r <= S_EVENT_CHECK;
+                            else
+                                scrub_index_r <= scrub_index_r + 1;
+                            end if;
+
+                        when S_EVENT_CHECK =>
+                            if pending_identity_r(51 downto 36) /=
+                               pending_expected_identity_r(51 downto 36) then
+                                pending_compare_fault_r(0) <= '1';
+                            else
+                                pending_compare_fault_r(0) <= '0';
+                            end if;
+                            if pending_identity_r(35 downto 20) /=
+                               pending_expected_identity_r(35 downto 20) then
+                                pending_compare_fault_r(1) <= '1';
+                            else
+                                pending_compare_fault_r(1) <= '0';
+                            end if;
+                            if pending_identity_r(19 downto 4) /=
+                               pending_expected_identity_r(19 downto 4) then
+                                pending_compare_fault_r(2) <= '1';
+                            else
+                                pending_compare_fault_r(2) <= '0';
+                            end if;
+                            if pending_identity_r(3 downto 0) /=
+                               pending_expected_identity_r(3 downto 0) then
+                                pending_compare_fault_r(3) <= '1';
+                            else
+                                pending_compare_fault_r(3) <= '0';
+                            end if;
+                            if pending_owner_max_hits_r /=
+                                   pending_requested_max_hits_r or
+                               pending_cfg_valid_r = '0' then
+                                pending_compare_fault_r(4) <= '1';
+                            else
+                                pending_compare_fault_r(4) <= '0';
+                            end if;
+                            state_r <= S_EVENT_ROUTE;
+
+                        when S_EVENT_ROUTE =>
+                            context_fault := pending_compare_fault_r /=
+                                "00000";
+
+                            event_faulted := pending_owner_fault_r or
+                                pending_event_r.faulted;
+                            if context_fault then
+                                event_faulted := '1';
+                                shot_fault_r(pending_chip_r) <= '1';
+                                fault_pulse_r.context_mismatch <= '1';
+                                fault_sticky_r.context_mismatch <= '1';
+                            elsif pending_event_r.faulted = '1' then
+                                shot_fault_r(pending_chip_r) <= '1';
+                            end if;
+
+                            if pending_event_r.kind = GPX_HIT_DATA then
+                                stop_index := to_integer(
+                                    pending_event_r.stop_index);
+                                pending_address_r <= fn_cell_address(
+                                    pending_chip_r,
+                                    pending_event_r.slope,
+                                    stop_index);
+                                state_r <= S_HIT_META_READ;
+                            else
+                                emit_chip_r <= pending_chip_r;
+                                emit_ififo_r <= pending_event_r.ififo_id;
+                                emit_timeout_cause_r <=
+                                    pending_event_r.timeout_cause;
+                                emit_context_r <= pending_owner_context_r;
+                                emit_sequence_r <= pending_owner_sequence_r;
+                                emit_max_hits_r <= pending_owner_max_hits_r;
+                                emit_faulted_r <= event_faulted;
+
+                                case pending_event_r.kind is
+                                    when GPX_HIT_IFIFO1_DONE =>
+                                        emit_control_kind_r <=
+                                            GPX_CELL_IFIFO1_DONE;
+                                        first_stop := 0;
+                                        if G_BUILD_CONFIG.stops_per_chip > 4 then
+                                            last_stop := 3;
+                                        else
+                                            last_stop := G_BUILD_CONFIG.
+                                                stops_per_chip - 1;
+                                        end if;
+                                        emit_error_fill_r <=
+                                            pending_event_r.faulted;
+
+                                    when GPX_HIT_DRAIN_DONE =>
+                                        emit_control_kind_r <=
+                                            GPX_CELL_DRAIN_DONE;
+                                        if lower_emitted_r(
+                                                pending_chip_r) = '1' then
+                                            first_stop := 4;
+                                        else
+                                            first_stop := 0;
+                                        end if;
+                                        last_stop := G_BUILD_CONFIG.
+                                            stops_per_chip - 1;
+                                        emit_error_fill_r <=
+                                            pending_event_r.faulted;
+
+                                    when GPX_HIT_TIMEOUT =>
+                                        emit_control_kind_r <= GPX_CELL_TIMEOUT;
+                                        if lower_emitted_r(
+                                                pending_chip_r) = '1' then
+                                            first_stop := 4;
+                                        else
+                                            first_stop := 0;
+                                        end if;
+                                        last_stop := G_BUILD_CONFIG.
+                                            stops_per_chip - 1;
+                                        emit_error_fill_r <= '1';
+                                        emit_faulted_r <= '1';
+                                        shot_fault_r(pending_chip_r) <= '1';
+
+                                    when GPX_HIT_DATA =>
+                                        first_stop := 0;
+                                        last_stop := 0;
+                                end case;
+
+                                emit_stop_first_r <= first_stop;
+                                emit_stop_last_r <= last_stop;
+                                emit_stop_r <= first_stop;
+                                emit_slope_r <= fn_first_slope(
+                                    pending_chip_r);
+
+                                if fn_has_emit_cells(
+                                        pending_chip_r, first_stop) then
+                                    state_r <= S_CELL_META_READ;
+                                else
+                                    state_r <= S_CONTROL_LOAD;
+                                end if;
+                            end if;
+
+                        when S_HIT_META_READ =>
+                            meta_read_r <= cell_meta_r(pending_address_r);
                             state_r <= S_HIT_APPLY;
 
                         when S_HIT_APPLY =>
                             address_value := pending_address_r;
-                            return_index := to_integer(pending_return_r);
+                            meta_value := meta_read_r;
+                            seen_count := to_integer(unsigned(meta_value(
+                                C_META_COUNT_HI downto C_META_COUNT_LO)));
 
-                            if pending_start_nonzero_r = '1' then
-                                cell_error_r(address_value) <= '1';
+                            if pending_event_r.start_number /= 0 then
+                                meta_value(C_META_ERROR) := '1';
                                 shot_fault_r(pending_chip_r) <= '1';
                                 fault_pulse_r.start_number_nonzero <= '1';
                                 fault_sticky_r.start_number_nonzero <= '1';
                             end if;
 
-                            if return_index /= to_integer(selected_seen_r) then
-                                cell_error_r(address_value) <= '1';
-                                shot_fault_r(pending_chip_r) <= '1';
-                                fault_pulse_r.return_sequence_error <= '1';
-                                fault_sticky_r.return_sequence_error <= '1';
-                            else
-                                if selected_seen_r < to_unsigned(
-                                        C_MAX_RETURNS_PER_STOP,
-                                        selected_seen_r'length) then
-                                    seen_count_r(address_value) <=
-                                        selected_seen_r + 1;
-                                end if;
-
-                                visible_count := to_integer(
-                                    selected_visible_r);
-                                store_limit := to_integer(
-                                    pending_store_limit_r);
-                                if visible_count < store_limit then
-                                    case visible_count is
+                            if seen_count <
+                               G_BUILD_CONFIG.max_returns_per_stop then
+                                if seen_count < to_integer(
+                                        pending_owner_max_hits_r) then
+                                    case seen_count is
                                         when 0 =>
                                             hit_bank_0_r(address_value) <=
-                                                pending_hit_r;
+                                                pending_event_r.hit;
                                         when 1 =>
                                             hit_bank_1_r(address_value) <=
-                                                pending_hit_r;
+                                                pending_event_r.hit;
                                         when 2 =>
                                             hit_bank_2_r(address_value) <=
-                                                pending_hit_r;
+                                                pending_event_r.hit;
                                         when 3 =>
                                             hit_bank_3_r(address_value) <=
-                                                pending_hit_r;
+                                                pending_event_r.hit;
                                         when 4 =>
                                             hit_bank_4_r(address_value) <=
-                                                pending_hit_r;
+                                                pending_event_r.hit;
                                         when 5 =>
                                             hit_bank_5_r(address_value) <=
-                                                pending_hit_r;
+                                                pending_event_r.hit;
                                         when 6 =>
                                             hit_bank_6_r(address_value) <=
-                                                pending_hit_r;
+                                                pending_event_r.hit;
                                         when others =>
                                             null;
                                     end case;
-                                    visible_count_r(address_value) <=
-                                        selected_visible_r + 1;
                                 else
-                                    hit_dropped_r(address_value) <= '1';
+                                    meta_value(C_META_DROPPED) := '1';
                                     fault_pulse_r.hit_capacity_drop <= '1';
                                     fault_sticky_r.hit_capacity_drop <= '1';
                                 end if;
+
+                                meta_value(
+                                    C_META_COUNT_HI downto C_META_COUNT_LO) :=
+                                    std_logic_vector(to_unsigned(
+                                        seen_count + 1, 3));
+                            else
+                                meta_value(C_META_DROPPED) := '1';
+                                meta_value(C_META_ERROR) := '1';
+                                shot_fault_r(pending_chip_r) <= '1';
+                                fault_pulse_r.return_overflow <= '1';
+                                fault_sticky_r.return_overflow <= '1';
+                                fault_pulse_r.hit_capacity_drop <= '1';
+                                fault_sticky_r.hit_capacity_drop <= '1';
                             end if;
+
+                            cell_meta_r(address_value) <= meta_value;
                             state_r <= S_COLLECT;
 
-                        when S_CELL_READ =>
+                        when S_CELL_META_READ =>
                             address_value := fn_cell_address(
                                 emit_chip_r, emit_slope_r, emit_stop_r);
-                            if visible_count_r(address_value) > 0 then
-                                read_hits_r(0) <= hit_bank_0_r(address_value);
+                            cell_address_r <= address_value;
+                            meta_read_r <= cell_meta_r(address_value);
+                            state_r <= S_CELL_HIT_READ;
+
+                        when S_CELL_HIT_READ =>
+                            seen_count := to_integer(unsigned(meta_read_r(
+                                C_META_COUNT_HI downto C_META_COUNT_LO)));
+                            if seen_count > to_integer(emit_max_hits_r) then
+                                visible_count := to_integer(emit_max_hits_r);
                             else
-                                read_hits_r(0) <= (others => '0');
+                                visible_count := seen_count;
                             end if;
-                            if visible_count_r(address_value) > 1 then
-                                read_hits_r(1) <= hit_bank_1_r(address_value);
+
+                            cell_event_r.hit_count <= to_unsigned(
+                                visible_count, cell_event_r.hit_count'length);
+                            cell_event_r.hit_dropped <=
+                                meta_read_r(C_META_DROPPED);
+                            cell_error_read_r <= meta_read_r(C_META_ERROR);
+
+                            if visible_count > 0 then
+                                cell_event_r.hits(0) <=
+                                    hit_bank_0_r(cell_address_r);
                             else
-                                read_hits_r(1) <= (others => '0');
+                                cell_event_r.hits(0) <= (others => '0');
                             end if;
-                            if visible_count_r(address_value) > 2 then
-                                read_hits_r(2) <= hit_bank_2_r(address_value);
+                            if visible_count > 1 then
+                                cell_event_r.hits(1) <=
+                                    hit_bank_1_r(cell_address_r);
                             else
-                                read_hits_r(2) <= (others => '0');
+                                cell_event_r.hits(1) <= (others => '0');
                             end if;
-                            if visible_count_r(address_value) > 3 then
-                                read_hits_r(3) <= hit_bank_3_r(address_value);
+                            if visible_count > 2 then
+                                cell_event_r.hits(2) <=
+                                    hit_bank_2_r(cell_address_r);
                             else
-                                read_hits_r(3) <= (others => '0');
+                                cell_event_r.hits(2) <= (others => '0');
                             end if;
-                            if visible_count_r(address_value) > 4 then
-                                read_hits_r(4) <= hit_bank_4_r(address_value);
+                            if visible_count > 3 then
+                                cell_event_r.hits(3) <=
+                                    hit_bank_3_r(cell_address_r);
                             else
-                                read_hits_r(4) <= (others => '0');
+                                cell_event_r.hits(3) <= (others => '0');
                             end if;
-                            if visible_count_r(address_value) > 5 then
-                                read_hits_r(5) <= hit_bank_5_r(address_value);
+                            if visible_count > 4 then
+                                cell_event_r.hits(4) <=
+                                    hit_bank_4_r(cell_address_r);
                             else
-                                read_hits_r(5) <= (others => '0');
+                                cell_event_r.hits(4) <= (others => '0');
                             end if;
-                            if visible_count_r(address_value) > 6 then
-                                read_hits_r(6) <= hit_bank_6_r(address_value);
+                            if visible_count > 5 then
+                                cell_event_r.hits(5) <=
+                                    hit_bank_5_r(cell_address_r);
                             else
-                                read_hits_r(6) <= (others => '0');
+                                cell_event_r.hits(5) <= (others => '0');
                             end if;
-                            read_hit_count_r <= visible_count_r(address_value);
-                            read_dropped_r   <= hit_dropped_r(address_value);
-                            read_error_r     <= cell_error_r(address_value);
-                            state_r          <= S_CELL_LOAD;
+                            if visible_count > 6 then
+                                cell_event_r.hits(6) <=
+                                    hit_bank_6_r(cell_address_r);
+                            else
+                                cell_event_r.hits(6) <= (others => '0');
+                            end if;
+                            state_r <= S_CELL_LOAD;
 
                         when S_CELL_LOAD =>
-                            result := C_GPX_CELL_EVENT_IDLE;
-                            result.valid      := '1';
-                            result.kind       := GPX_CELL_DATA;
-                            result.chip_index := to_unsigned(
-                                emit_chip_r, result.chip_index'length);
+                            cell_event_r.valid <= '1';
+                            cell_event_r.kind <= GPX_CELL_DATA;
+                            cell_event_r.chip_index <= to_unsigned(
+                                emit_chip_r, cell_event_r.chip_index'length);
                             if emit_stop_r >= 4 then
-                                result.ififo_id := '1';
+                                cell_event_r.ififo_id <= '1';
+                            else
+                                cell_event_r.ififo_id <= '0';
                             end if;
-                            result.stop_index := to_unsigned(
-                                emit_stop_r, result.stop_index'length);
-                            result.slope     := emit_slope_r;
-                            result.hit_count := read_hit_count_r;
-                            result.max_hits  := max_hits_r(emit_chip_r);
-                            result.hits      := read_hits_r;
-                            result.hit_dropped := read_dropped_r;
-                            result.error_fill  := emit_error_fill_r;
-                            result.faulted := read_error_r or
-                                shot_fault_r(emit_chip_r) or
-                                emit_error_fill_r;
-                            result.timeout_cause := emit_timeout_cause_r;
-                            result.shot_context  :=
-                                shot_context_r(emit_chip_r);
-                            result.chip_shot_seq :=
-                                chip_sequence_r(emit_chip_r);
-                            cell_event_r <= result;
-                            state_r      <= S_CELL_WAIT;
+                            cell_event_r.stop_index <= to_unsigned(
+                                emit_stop_r, cell_event_r.stop_index'length);
+                            cell_event_r.slope <= emit_slope_r;
+                            cell_event_r.max_hits <= emit_max_hits_r;
+                            cell_event_r.error_fill <= emit_error_fill_r;
+                            cell_event_r.faulted <= cell_error_read_r or
+                                emit_faulted_r or emit_error_fill_r;
+                            cell_event_r.timeout_cause <=
+                                emit_timeout_cause_r;
+                            cell_event_r.shot_context <= emit_context_r;
+                            cell_event_r.chip_shot_seq <= emit_sequence_r;
+                            state_r <= S_CELL_WAIT;
 
                         when S_CELL_WAIT =>
                             if cell_event_r.valid = '1' and
                                i_cell_ready = '1' then
-                                address_value := fn_cell_address(
-                                    emit_chip_r, emit_slope_r, emit_stop_r);
-                                seen_count_r(address_value)    <= (others => '0');
-                                visible_count_r(address_value) <= (others => '0');
-                                hit_dropped_r(address_value)   <= '0';
-                                cell_error_r(address_value)    <= '0';
                                 cell_event_r.valid <= '0';
 
                                 next_exists := false;
@@ -619,35 +720,36 @@ begin
                                       fn_slope_supported(
                                           emit_chip_r, GPX_SLOPE_FALL) then
                                     emit_slope_r <= GPX_SLOPE_FALL;
-                                    emit_stop_r  <= emit_stop_first_r;
+                                    emit_stop_r <= emit_stop_first_r;
                                     next_exists := true;
                                 end if;
 
                                 if next_exists then
-                                    state_r <= S_CELL_READ;
+                                    state_r <= S_CELL_META_READ;
                                 else
                                     state_r <= S_CONTROL_LOAD;
                                 end if;
                             end if;
 
                         when S_CONTROL_LOAD =>
-                            result := C_GPX_CELL_EVENT_IDLE;
-                            result.valid         := '1';
-                            result.kind          := emit_control_kind_r;
-                            result.chip_index    := to_unsigned(
-                                emit_chip_r, result.chip_index'length);
-                            result.ififo_id      := emit_ififo_r;
-                            result.max_hits      := max_hits_r(emit_chip_r);
-                            result.error_fill    := emit_error_fill_r;
-                            result.faulted       :=
-                                shot_fault_r(emit_chip_r) or
-                                emit_error_fill_r;
-                            result.timeout_cause := emit_timeout_cause_r;
-                            result.shot_context  :=
-                                shot_context_r(emit_chip_r);
-                            result.chip_shot_seq :=
-                                chip_sequence_r(emit_chip_r);
-                            cell_event_r <= result;
+                            cell_event_r.valid <= '1';
+                            cell_event_r.kind <= emit_control_kind_r;
+                            cell_event_r.chip_index <= to_unsigned(
+                                emit_chip_r, cell_event_r.chip_index'length);
+                            cell_event_r.ififo_id <= emit_ififo_r;
+                            cell_event_r.stop_index <= (others => '0');
+                            cell_event_r.slope <= fn_first_slope(emit_chip_r);
+                            cell_event_r.hit_count <= (others => '0');
+                            cell_event_r.max_hits <= emit_max_hits_r;
+                            cell_event_r.hits <= (others => (others => '0'));
+                            cell_event_r.hit_dropped <= '0';
+                            cell_event_r.error_fill <= emit_error_fill_r;
+                            cell_event_r.faulted <=
+                                emit_faulted_r or emit_error_fill_r;
+                            cell_event_r.timeout_cause <=
+                                emit_timeout_cause_r;
+                            cell_event_r.shot_context <= emit_context_r;
+                            cell_event_r.chip_shot_seq <= emit_sequence_r;
 
                             if emit_control_kind_r =
                                GPX_CELL_IFIFO1_DONE then
@@ -662,23 +764,8 @@ begin
 
                                 if emit_control_kind_r /=
                                    GPX_CELL_IFIFO1_DONE then
-                                    for slope_value in gpx_slope_t loop
-                                        for stop_value in 0 to
-                                                C_MAX_STOPS_PER_CHIP - 1 loop
-                                            address_value := fn_cell_address(
-                                                emit_chip_r,
-                                                slope_value,
-                                                stop_value);
-                                            seen_count_r(address_value) <=
-                                                (others => '0');
-                                            visible_count_r(address_value) <=
-                                                (others => '0');
-                                            hit_dropped_r(address_value) <= '0';
-                                            cell_error_r(address_value) <= '0';
-                                        end loop;
-                                    end loop;
-                                    shot_active_r(emit_chip_r)   <= '0';
-                                    shot_fault_r(emit_chip_r)    <= '0';
+                                    shot_active_r(emit_chip_r) <= '0';
+                                    shot_fault_r(emit_chip_r) <= '0';
                                     lower_emitted_r(emit_chip_r) <= '0';
                                 end if;
                                 state_r <= S_COLLECT;

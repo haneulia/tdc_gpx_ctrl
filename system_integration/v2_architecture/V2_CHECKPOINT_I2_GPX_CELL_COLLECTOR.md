@@ -46,7 +46,7 @@ slope_offset = 0 for Rise, 8 for Fall
 chip = 0..3, stop = 0..7
 ```
 
-Hit payload는 Return 번호별 7개 LUTRAM bank에 저장한다.
+Hit payload는 B7이 결정한 Return 순서별 7개 LUTRAM bank에 저장한다.
 
 ```text
 bank[return 0] : 64 x 17 bit
@@ -55,11 +55,21 @@ bank[return 6] : 64 x 17 bit
 total          : 64 x 7 x 17 = 7,616 bit
 ```
 
-입력은 한 사이클에 Hit 하나만 쓰고, Cell 출력은 선택된 주소의 7개 bank를
-병렬로 읽는다. payload RAM은 reset하지 않는다. 대신 `visible_count=0`으로
-Cell을 무효화하고, 읽을 때 유효 개수 밖의 slot을 0으로 마스킹한다. 이 방식은
-큰 RAM reset fanout 없이 abort 이후 stale Hit가 다음 Shot에 노출되는 것을
-막는다.
+입력은 한 번에 Hit 하나만 쓰고, Cell 출력은 선택된 주소의 7개 bank를 병렬로
+읽는다. 별도 FF 배열이던 count/drop/error는 다음 64x5 metadata LUTRAM 하나로
+통합했다.
+
+```text
+meta[2:0] = 해당 Cell이 수신한 물리 Return 수, 0..7 포화
+meta[3]   = runtime max_hits 초과로 버린 Hit 존재
+meta[4]   = 해당 Cell 오류
+```
+
+payload와 metadata RAM은 reset하지 않는다. 각 Chip의 새 Shot 첫 event를 입력
+register에 보관한 채 그 Chip의 16개 metadata 주소를 한 clock에 하나씩 0으로
+scrub한다. count가 0이면 stale payload가 보이지 않고, Cell을 읽을 때 count 밖의
+slot을 0으로 마스킹한다. abort도 큰 RAM reset fanout을 만들지 않으며 다음 Shot의
+동일 scrub 절차가 stale Hit 노출을 막는다.
 
 ### 3.1 LUTRAM을 선택한 이유
 
@@ -77,18 +87,20 @@ LUTRAM 168개로 정상 추론됐다.
 
 ### 4.1 Return과 visible Hit
 
-B6 Return 번호는 물리 drain 결과이므로 항상 build 최대 7개까지 유지된다.
-runtime `max_hits_per_stop`은 Cell에 보이는 Hit 수만 제한한다.
+B7은 같은 `Shot + Chip + STOP + slope` Cell에 정상 수신된 순서대로 payload bank
+0..6을 선택한다. runtime `max_hits_per_stop`은 Cell에 보이는 Hit 수만 제한하며,
+물리 GPX drain은 계속 최대 7 Return을 읽는다.
 
 ```text
-seen_count    = 실제 수신 Return 수, 0..7
-visible_count = Cell에 저장한 Hit 수, 0..runtime max_hits
+accepted_count = 실제 수신 Return 수, 0..7 포화
+visible_count  = min(accepted_count, runtime max_hits)
 ```
 
-예를 들어 runtime 값이 3이면 Return 0, 1, 2는 저장하고 Return 3..6은 계속
-소비하되 저장하지 않는다. 해당 Cell의 `hit_dropped=1`과
-`hit_capacity_drop` 진단을 남긴다. GPX IFIFO drain 수를 줄이지 않으므로 다음
-Shot에 이전 데이터가 남는 원인이 되지 않는다.
+예를 들어 runtime 값이 3이면 수신 순서 0, 1, 2는 저장하고 3..6은 계속 소비하되
+Cell에 노출하지 않는다. 해당 Cell의 `hit_dropped=1`과 `hit_capacity_drop`
+진단을 남긴다. 8번째 event는 count를 wrap하지 않고 `return_overflow`와 drop/error
+진단을 남긴다. GPX IFIFO drain 수를 줄이지 않으므로 다음 Shot에 이전 데이터가
+남는 원인이 되지 않는다.
 
 runtime 값은 첫 Chip/Shot event에서 snapshot한다. 같은 Chip Shot 중 값이나
 active version이 바뀌면 `context_mismatch`로 진단한다.
@@ -126,34 +138,37 @@ abort는 입력 ready를 즉시 0으로 하고 pending Cell과 metadata를 폐�
 
 ## 6. 순차 처리와 처리 예산
 
-200 MHz 타이밍을 위해 한 Hit의 metadata 처리를 다음 세 단계로 나눴다.
+200 MHz 타이밍을 위해 한 Hit 처리를 다음 순차 단계로 나눴다.
 
 ```text
-1. Cell 주소와 Hit 등록
-2. 선택 주소의 seen/visible count 등록
-3. Return 검사와 LUTRAM/metadata 갱신
+1. 입력 event와 runtime max_hits snapshot 등록
+2. Chip별 owner 문맥 선택 및 등록
+3. 52-bit identity를 16/16/16/4-bit 비교 register로 분할
+4. 비교 결과 축약과 data/control 경로 선택
+5. metadata LUTRAM read
+6. Return 검사와 payload/metadata LUTRAM write
 ```
 
 ready가 계속 높은 경우의 B7 단독 처리량은 다음과 같다.
 
 | 항목 | Processing clocks |
 |---|---:|
-| Hit 하나의 다음 accept 간격 | 3 |
-| Data Cell 하나 출력 | 3 |
+| 활성 Shot의 정상 Hit 다음 accept 간격 | 6 |
+| 새 Chip Shot의 첫 event 추가 비용 | 16 metadata scrub clocks |
+| Data Cell 하나 출력 | 4 + downstream wait |
 | Group control Cell 출력 | 2 |
-| dedicated Chip 하나, 8 STOP x 7 Return | 196 |
-| default 4-Chip dedicated Shot | 784 |
 
-default 최대 Shot은 150 MHz에서 약 `5.227 us`, 200 MHz에서 `3.920 us`다.
-이 값은 B7만의 처리 시간이며 B8/B9와 VDMA/Ethernet 예산을 포함하지 않는다.
-전체 Shot 간격 충족 여부는 I4와 Stage 8 HTML 정렬에서 다시 합산한다.
+이 수치는 단일 B7의 상태 전이 비용이다. B6 입력/output register, B8/B9,
+VDMA/Ethernet을 포함한 전체 Shot 예산은 I4와 Stage 8 HTML 정렬에서 합산한다.
+순차화로 latency는 늘었지만 B6/B7 사이의 wide combinational 경로를 제거했고,
+현재 GPX bus drain 속도와 Shot 간격 계약 안에서는 처리량을 제한하지 않는다.
 
 ## 7. 진단
 
 | Fault | 의미 | 데이터 처리 |
 |---|---|---|
 | `context_mismatch` | 같은 Chip Shot에서 sequence/version/shot identity 또는 max_hits 불일치 | Shot fault 표시 |
-| `return_sequence_error` | B6 Return 번호가 현재 seen count와 불일치 | 해당 Hit 저장 안 함 |
+| `return_overflow` | 같은 Cell의 8번째 이후 물리 Return | consume-drop, count no-wrap |
 | `start_number_nonzero` | 현재 single-START Frame 계약 밖의 StartNum | Hit는 보존, Cell fault 표시 |
 | `hit_capacity_drop` | runtime visible Hit 제한 초과 | Hit consume-drop, Cell dropped 표시 |
 
@@ -193,20 +208,30 @@ CTL20은 synthetic source 전용이며 physical LVDS-to-STOP 초저지연 경로
 |---|---|---|---|
 | Dedicated 2-Rise/2-Fall | PASS | PASS | Rise/Fall 전용 Chip 정렬, Hit[16], runtime drop |
 | One-Chip dual-edge | PASS | PASS | Rise/Fall 독립 Cell과 결정적 순서 |
-| Fault/timeout/abort | PASS | PASS | 네 fault, error-fill, sticky clear, pending Cell 폐기 |
+| Fault/timeout/abort | PASS | PASS | 8번째 Return, 네 fault, error-fill, sticky clear, stale metadata scrub |
 | Backpressure | PASS | PASS | 전체 Cell record 안정성 |
+| B6-B7 직접 연결 | PASS | PASS | raw 28-bit 입력부터 Cell exact compare, max_hits=3, 8번째 Return, output stall |
 
 `xc7z020clg484-2` OOC post-route 결과:
 
 | Processing clock | WNS | Total LUT | LUTRAM | FF | Latch | Blocking DRC |
 |---:|---:|---:|---:|---:|---:|---:|
-| 150 MHz | +1.107 ns | 1,563 | 168 | 1,554 | 0 | 0 |
-| 200 MHz | +0.369 ns | 1,565 | 168 | 1,554 | 0 | 0 |
+| 150 MHz | +1.674 ns | 651 | 176 | 1,170 | 0 | 0 |
+| 200 MHz | +0.864 ns | 651 | 176 | 1,170 | 0 | 0 |
+
+B6+B7 직접 연결 OOC 결과:
+
+| Processing clock | WNS | Total LUT | LUTRAM | FF | Latch | Blocking DRC |
+|---:|---:|---:|---:|---:|---:|---:|
+| 150 MHz | +2.195 ns | 666 | 176 | 1,473 | 0 | 0 |
+| 200 MHz | +0.745 ns | 666 | 176 | 1,473 | 0 | 0 |
 
 최종 증거:
 
-- `signoff_results/sessions/260805154200_stage6_i2_b7_final_v2_gpx_cell_collector`
+- `signoff_results/sessions/260805_b6b7_input_select_final_v2_gpx_cell_collector`
+- `signoff_results/sessions/260805_b6b7_sequential_final_v2_gpx_cell_collector`
 
 OOC clock port에는 parent의 `HD.CLK_SRC`가 없으므로 최종 clock insertion/skew는
-I4 parent 통합 구현에서 다시 확인한다. I2는 B7 경계 완료이며 Stage 6 전체
-sign-off는 아니다. 다음 단계는 I3/B8 Frame lane assembly다.
+I4 parent 통합 구현에서 다시 확인한다. 최적화 전후 비교와 경계별 이유는
+`V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md`에 기록한다. I2는 B7 경계
+완료이며 Stage 6 전체 sign-off는 아니다. 다음 단계는 I3/B8 Frame lane assembly다.

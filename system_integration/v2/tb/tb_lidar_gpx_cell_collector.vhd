@@ -62,7 +62,6 @@ architecture sim of tb_lidar_gpx_cell_collector is
         chip_index     : natural;
         stop_index     : natural;
         slope_value    : gpx_slope_t;
-        return_index   : natural;
         hit_value      : natural;
         start_number   : natural;
         shot_index     : natural;
@@ -80,7 +79,6 @@ architecture sim of tb_lidar_gpx_cell_collector is
         result.stop_index    := to_unsigned(stop_index, 3);
         result.start_number  := to_unsigned(start_number, 8);
         result.slope         := slope_value;
-        result.return_index  := to_unsigned(return_index, 3);
         result.hit           := to_unsigned(hit_value, C_GPX_HIT_WIDTH);
         result.shot_context  := fn_shot_context(
             shot_index, active_version);
@@ -161,9 +159,9 @@ begin
                 pulse_seen.context_mismatch <=
                     pulse_seen.context_mismatch or
                     fault_pulse.context_mismatch;
-                pulse_seen.return_sequence_error <=
-                    pulse_seen.return_sequence_error or
-                    fault_pulse.return_sequence_error;
+                pulse_seen.return_overflow <=
+                    pulse_seen.return_overflow or
+                    fault_pulse.return_overflow;
                 pulse_seen.start_number_nonzero <=
                     pulse_seen.start_number_nonzero or
                     fault_pulse.start_number_nonzero;
@@ -304,15 +302,15 @@ begin
             when 0 =>
                 max_hits <= to_unsigned(3, 3);
                 send_event(fn_hit_data(
-                    0, 0, GPX_SLOPE_RISE, 0, 16#10001#, 0, 1, 5));
+                    0, 0, GPX_SLOPE_RISE, 16#10001#, 0, 1, 5));
                 send_event(fn_hit_data(
-                    0, 0, GPX_SLOPE_RISE, 1, 16#00002#, 0, 1, 5));
+                    0, 0, GPX_SLOPE_RISE, 16#00002#, 0, 1, 5));
                 send_event(fn_hit_data(
-                    0, 0, GPX_SLOPE_RISE, 2, 16#10003#, 0, 1, 5));
+                    0, 0, GPX_SLOPE_RISE, 16#10003#, 0, 1, 5));
                 send_event(fn_hit_data(
-                    0, 0, GPX_SLOPE_RISE, 3, 16#00004#, 0, 1, 5));
+                    0, 0, GPX_SLOPE_RISE, 16#00004#, 0, 1, 5));
                 send_event(fn_hit_data(
-                    0, 2, GPX_SLOPE_RISE, 0, 16#05555#, 0, 1, 5));
+                    0, 2, GPX_SLOPE_RISE, 16#05555#, 0, 1, 5));
                 send_event(fn_hit_control(
                     GPX_HIT_IFIFO1_DONE, 0, '0', 1, 5));
 
@@ -331,7 +329,7 @@ begin
                 expect_control(GPX_CELL_IFIFO1_DONE, 0);
 
                 send_event(fn_hit_data(
-                    0, 4, GPX_SLOPE_RISE, 0, 16#1ABCD#, 0, 1, 5));
+                    0, 4, GPX_SLOPE_RISE, 16#1ABCD#, 0, 1, 5));
                 send_event(fn_hit_control(
                     GPX_HIT_DRAIN_DONE, 0, '1', 1, 5));
                 expected_hits(0) := to_unsigned(16#1ABCD#, 17);
@@ -340,7 +338,7 @@ begin
                 expect_control(GPX_CELL_DRAIN_DONE, 0);
 
                 send_event(fn_hit_data(
-                    2, 0, GPX_SLOPE_FALL, 0, 16#12345#, 0, 2, 5));
+                    2, 0, GPX_SLOPE_FALL, 16#12345#, 0, 2, 5));
                 send_event(fn_hit_control(
                     GPX_HIT_IFIFO1_DONE, 2, '0', 2, 5));
                 expected_hits := (others => (others => '0'));
@@ -361,13 +359,13 @@ begin
             when 1 =>
                 max_hits <= to_unsigned(7, 3);
                 send_event(fn_hit_data(
-                    0, 2, GPX_SLOPE_RISE, 0, 16#10011#, 0, 3, 5));
+                    0, 2, GPX_SLOPE_RISE, 16#10011#, 0, 3, 5));
                 send_event(fn_hit_data(
-                    0, 2, GPX_SLOPE_FALL, 0, 16#00021#, 0, 3, 5));
+                    0, 2, GPX_SLOPE_FALL, 16#00021#, 0, 3, 5));
                 send_event(fn_hit_data(
-                    0, 2, GPX_SLOPE_RISE, 1, 16#10012#, 0, 3, 5));
+                    0, 2, GPX_SLOPE_RISE, 16#10012#, 0, 3, 5));
                 send_event(fn_hit_data(
-                    0, 2, GPX_SLOPE_FALL, 1, 16#00022#, 0, 3, 5));
+                    0, 2, GPX_SLOPE_FALL, 16#00022#, 0, 3, 5));
                 send_event(fn_hit_control(
                     GPX_HIT_IFIFO1_DONE, 0, '0', 3, 5));
 
@@ -401,15 +399,23 @@ begin
             when others =>
                 max_hits <= to_unsigned(2, 3);
                 send_event(fn_hit_data(
-                    0, 1, GPX_SLOPE_RISE, 0, 16#10031#, 1, 10, 5));
+                    0, 1, GPX_SLOPE_RISE, 16#10031#, 1, 10, 5));
                 send_event(fn_hit_data(
-                    0, 1, GPX_SLOPE_RISE, 2, 16#00032#, 0, 10, 5));
+                    0, 1, GPX_SLOPE_RISE, 16#00032#, 0, 10, 5));
                 send_event(fn_hit_data(
-                    0, 1, GPX_SLOPE_RISE, 1, 16#10033#, 0, 10, 5));
+                    0, 1, GPX_SLOPE_RISE, 16#10033#, 0, 10, 5));
                 send_event(fn_hit_data(
-                    0, 1, GPX_SLOPE_RISE, 2, 16#00034#, 0, 10, 5));
+                    0, 1, GPX_SLOPE_RISE, 16#00034#, 0, 10, 5));
                 send_event(fn_hit_data(
-                    0, 1, GPX_SLOPE_FALL, 0, 16#10041#, 0, 10, 6));
+                    0, 1, GPX_SLOPE_RISE, 16#10035#, 0, 10, 5));
+                send_event(fn_hit_data(
+                    0, 1, GPX_SLOPE_RISE, 16#00036#, 0, 10, 5));
+                send_event(fn_hit_data(
+                    0, 1, GPX_SLOPE_RISE, 16#10037#, 0, 10, 5));
+                send_event(fn_hit_data(
+                    0, 1, GPX_SLOPE_RISE, 16#00038#, 0, 10, 5));
+                send_event(fn_hit_data(
+                    0, 1, GPX_SLOPE_FALL, 16#10041#, 0, 10, 6));
                 send_event(fn_hit_control(
                     GPX_HIT_TIMEOUT, 0, '1', 10, 5, '1', "101"));
 
@@ -419,7 +425,7 @@ begin
                         if stop_value = 1 and
                            slope_value = GPX_SLOPE_RISE then
                             expected_hits(0) := to_unsigned(16#10031#, 17);
-                            expected_hits(1) := to_unsigned(16#10033#, 17);
+                            expected_hits(1) := to_unsigned(16#00032#, 17);
                             expect_data(0, stop_value, slope_value, 2,
                                 expected_hits, '1', '1', '1');
                         elsif stop_value = 1 and
@@ -437,11 +443,11 @@ begin
                     GPX_CELL_TIMEOUT, 0, '1', '1', "101");
 
                 assert fault_sticky.context_mismatch = '1' and
-                       fault_sticky.return_sequence_error = '1' and
+                       fault_sticky.return_overflow = '1' and
                        fault_sticky.start_number_nonzero = '1' and
                        fault_sticky.hit_capacity_drop = '1' and
                        pulse_seen.context_mismatch = '1' and
-                       pulse_seen.return_sequence_error = '1' and
+                       pulse_seen.return_overflow = '1' and
                        pulse_seen.start_number_nonzero = '1' and
                        pulse_seen.hit_capacity_drop = '1'
                     report "V2-B7-TB fault pulse/sticky summary mismatch"
@@ -457,7 +463,7 @@ begin
                     severity failure;
 
                 send_event(fn_hit_data(
-                    0, 0, GPX_SLOPE_RISE, 0, 16#10055#, 0, 11, 5));
+                    0, 0, GPX_SLOPE_RISE, 16#10055#, 0, 11, 5));
                 send_event(fn_hit_control(
                     GPX_HIT_IFIFO1_DONE, 0, '0', 11, 5));
                 loop
@@ -471,6 +477,28 @@ begin
                 assert cell_event.valid = '0' and hit_ready = '1'
                     report "V2-B7-TB abort did not clear pending Cell"
                     severity failure;
+
+                -- A new Chip Shot must scrub stale metadata sequentially.
+                -- The aborted Shot 11 Hit at Rise/STOP0 must not reappear.
+                send_event(fn_hit_data(
+                    0, 1, GPX_SLOPE_RISE, 16#10066#, 0, 12, 5));
+                send_event(fn_hit_control(
+                    GPX_HIT_DRAIN_DONE, 0, '1', 12, 5));
+                for slope_value in GPX_SLOPE_RISE downto GPX_SLOPE_FALL loop
+                    for stop_value in 0 to 7 loop
+                        expected_hits := (others => (others => '0'));
+                        if slope_value = GPX_SLOPE_RISE and
+                           stop_value = 1 then
+                            expected_hits(0) := to_unsigned(16#10066#, 17);
+                            expect_data(0, stop_value, slope_value, 1,
+                                expected_hits);
+                        else
+                            expect_data(0, stop_value, slope_value, 0,
+                                expected_hits);
+                        end if;
+                    end loop;
+                end loop;
+                expect_control(GPX_CELL_DRAIN_DONE, 0);
         end case;
 
         report "LIDAR_V2_GPX_CELL_COLLECTOR_PASS clk_mhz=" &

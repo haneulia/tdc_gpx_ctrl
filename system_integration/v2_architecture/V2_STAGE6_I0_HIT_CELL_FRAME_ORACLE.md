@@ -46,29 +46,30 @@ IFIFO2: stop = 4 + ChaCode   -- STOP 4..7
 `stops_per_chip`보다 큰 복원 결과는 데이터로 내보내지 않고 identity fault로
 기록한다.
 
-### 3.2 Return 번호
+### 3.2 Return 순서의 소유자
 
-Return 번호는 다음 네 값이 같은 Hit끼리 독립적으로 0부터 증가한다.
+GPX raw word에는 Return 번호가 없다. B6는 field를 파싱하고 topology만 검사하며,
+Return 순서를 부여하지 않는다. 같은 Cell의 물리 수신 순서는 Cell 주소와 저장소를
+소유하는 B7이 다음 key로 단독 관리한다.
 
 ```text
-key = chip + stop + slope + shot
-return_index = 0..max_returns_per_stop-1
+key = Shot + Chip + STOP + slope
+B7 accepted count = 0..7 saturation
 ```
 
-따라서 한 Chip dual-edge 구성에서 같은 STOP의 Rise Return 0과 Fall Return 0은
-서로 독립적이다. 8번째 Return은 3-bit index를 0으로 wrap하지 않고 consume-drop
-후 `return_overflow` 진단을 남긴다. runtime `max_hits_per_stop`은 이후 Cell이
-노출할 Hit 수를 제한하는 값이며, 물리 raw drain이나 B6 Return identity를
-줄이는 값으로 사용하지 않는다.
+따라서 한 Chip dual-edge 구성에서 같은 STOP의 Rise와 Fall은 서로 다른 Cell이며
+각각 독립적으로 최대 7 Return을 갖는다. 8번째 Return은 count를 0으로 wrap하지
+않고 B7에서 consume-drop 후 `return_overflow` 진단을 남긴다. runtime
+`max_hits_per_stop`은 Cell이 노출할 Hit 수만 제한하고 물리 raw drain은 줄이지 않는다.
 
 ### 3.3 제어 event
 
-| B5 event | B6 event | Return counter 처리 |
+| B5 event | B6 event | B6 처리 |
 |---|---|---|
-| `GPX_RAW_IFIFO1_DONE` | `GPX_HIT_IFIFO1_DONE` | 유지; IFIFO2가 이어짐 |
-| `GPX_RAW_DRAIN_DONE` | `GPX_HIT_DRAIN_DONE` | 해당 Chip의 모든 STOP/slope counter clear |
-| `GPX_RAW_TIMEOUT` | `GPX_HIT_TIMEOUT` | 해당 Chip counter clear, fault 문맥 보존 |
-| abort/reset | 출력 valid와 모든 counter clear | 다음 Shot을 Return 0부터 시작 |
+| `GPX_RAW_IFIFO1_DONE` | `GPX_HIT_IFIFO1_DONE` | 문맥과 제어 kind 보존 |
+| `GPX_RAW_DRAIN_DONE` | `GPX_HIT_DRAIN_DONE` | 문맥과 제어 kind 보존 |
+| `GPX_RAW_TIMEOUT` | `GPX_HIT_TIMEOUT` | fault/timeout 문맥 보존 |
+| abort/reset | pending input/output event 폐기 | Return state 없음 |
 
 모든 제어 event도 Chip, IFIFO, Shot context, Chip shot sequence, fault/timeout
 원인을 보존한다.
@@ -81,9 +82,10 @@ Rise/Fall이 counter를 공유한다. 전용 slope Chip에서는 문제가 드�
 갈라진다. 이후 v1 Cell builder는 slope별 별도 count를 다시 사용하므로 실제
 Cell 저장 순서는 우연히 정상이고, 중간 B6 Return metadata만 일관되지 않다.
 
-v2는 사용자가 확정한 "STOP/slope당 최대 7 Return" 계약에 맞춰 counter를
-분리한다. 이것은 byte formatter 변경이 아니라 B6 identity 결함 교정이며,
-dual-edge exact test로 별도 증명한다.
+v2는 사용자가 확정한 "STOP/slope당 최대 7 Return" 계약에 맞춰 B6의 중간
+Return metadata를 제거하고 B7 Cell metadata로 소유권을 단일화한다. 이것은 byte
+formatter 변경이 아니며, dual-edge와 8번째 Return의 B6-B7 직접 연결 test로
+별도 증명한다.
 
 ## 5. B7/B8 후속 불변조건
 

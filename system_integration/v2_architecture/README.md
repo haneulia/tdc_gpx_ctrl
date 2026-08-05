@@ -13,9 +13,9 @@
 > physical all-chip activation ACK. H3 proved the complete 32-physical-STOP /
 > 16-logical-APD, 7-Return B5 acquisition boundary under timeout, cap and
 > backpressure in both routine clock profiles. Stage 6 is in progress: I0 froze
-> the Hit/Cell/Frame oracle, I1 completed the B6 typed Hit decoder and I2
-> completed width-independent B7 Cell collection. B8 Frame lane assembly is
-> next.
+> the Hit/Cell/Frame oracle, I1 completed the B6 typed Hit decoder, I2 completed
+> width-independent B7 Cell collection, and I2A closed the registered B6/B7
+> ownership and timing optimization. B8 Frame lane assembly is next.
 
 ## 1. Purpose
 
@@ -79,8 +79,9 @@ The redesign has four goals:
 | [V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md](V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md) | Indexed GPX image portal, atomic snapshot, physical programming ACK and Echo non-regression evidence |
 | [V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md](V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md) | Processing/TDC production assembly, 32 physical STOP / 16 logical APD x 7-Return B5 identity, cap/purge, CDC and implementation evidence |
 | [V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md](V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md) | Frozen B6..B8 field, Return, Cell and Frame comparison contract |
-| [V2_CHECKPOINT_I1_GPX_HIT_DECODER.md](V2_CHECKPOINT_I1_GPX_HIT_DECODER.md) | Typed B6 raw-to-Hit decoder, dual-edge Return correction, diagnostics and route evidence |
-| [V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md](V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md) | Width-independent B7 Cell storage, ordering, runtime Hit limit, LUTRAM rationale and route evidence |
+| [V2_CHECKPOINT_I1_GPX_HIT_DECODER.md](V2_CHECKPOINT_I1_GPX_HIT_DECODER.md) | Registered B6 raw-to-Hit parser, topology diagnostics and route evidence |
+| [V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md](V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md) | Width-independent B7 Return ownership, Cell storage, ordering, runtime Hit limit and route evidence |
+| [V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md](V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md) | B6/B7 ownership cleanup, sequential metadata pipeline, linked 150/200 MHz timing and low-latency exceptions |
 
 ## 4. Target Top-Level Shape
 

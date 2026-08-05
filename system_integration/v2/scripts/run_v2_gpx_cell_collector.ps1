@@ -1,7 +1,8 @@
 param(
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [switch]$SkipSimulation,
-    [switch]$SkipImplementation
+    [switch]$SkipImplementation,
+    [switch]$LinkedImplementation
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,14 +37,23 @@ $CommonFiles = @(
     "$Hdl/system_integration/v2/pkg/lidar_gpx_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_event_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_data_pkg.vhd",
+    "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_hit_decoder.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_cell_collector.vhd"
 )
 $SimFiles = $CommonFiles + @(
-    "$Hdl/system_integration/v2/tb/tb_lidar_gpx_cell_collector.vhd"
+    "$Hdl/system_integration/v2/tb/tb_lidar_gpx_cell_collector.vhd",
+    "$Hdl/system_integration/v2/tb/tb_lidar_gpx_hit_cell_pipeline.vhd"
 )
 $SynthFiles = $CommonFiles + @(
-    "$Hdl/system_integration/v2/tb/lidar_gpx_cell_collector_impl.vhd"
+    "$Hdl/system_integration/v2/tb/lidar_gpx_cell_collector_impl.vhd",
+    "$Hdl/system_integration/v2/tb/lidar_gpx_hit_cell_pipeline_impl.vhd"
 )
+
+if ($LinkedImplementation) {
+    $ImplementationTop = "lidar_gpx_hit_cell_pipeline_impl"
+} else {
+    $ImplementationTop = "lidar_gpx_cell_collector_impl"
+}
 
 $Project = Join-Path $Work "v2_gpx_cell_collector_vhdl.prj"
 $VerilogProject = Join-Path $Work "v2_gpx_cell_collector_verilog.prj"
@@ -66,7 +76,9 @@ $SimulationProfiles = @(
     "tb_lidar_gpx_cell_collector_dual_150",
     "tb_lidar_gpx_cell_collector_dual_200",
     "tb_lidar_gpx_cell_collector_faults_150",
-    "tb_lidar_gpx_cell_collector_faults_200"
+    "tb_lidar_gpx_cell_collector_faults_200",
+    "tb_lidar_gpx_hit_cell_pipeline_150",
+    "tb_lidar_gpx_hit_cell_pipeline_200"
 )
 
 if (-not $SkipSimulation) {
@@ -97,7 +109,7 @@ if (-not $SkipSimulation) {
                 "-log", $SimLog.Replace('\', '/')
             )
             if ((Get-Content -Raw -LiteralPath $SimLog) -notmatch
-                "LIDAR_V2_GPX_CELL_COLLECTOR_PASS") {
+                "LIDAR_V2_GPX_(CELL_COLLECTOR|HIT_CELL_PIPELINE)_PASS") {
                 throw "$Top did not report the final PASS marker"
             }
         }
@@ -148,7 +160,7 @@ if (-not $SkipImplementation) {
             "package require ::tclapp::aldec::activehdl 1.42",
             "set_msg_config -id {Route 35-198} -suppress",
             "read_vhdl -vhdl2008 [list $ReadFiles]",
-            "synth_design -top lidar_gpx_cell_collector_impl -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy none -generic G_PROC_CLK_MHZ=$($Profile.mhz)",
+            "synth_design -top $ImplementationTop -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy none -generic G_PROC_CLK_MHZ=$($Profile.mhz)",
             "create_clock -name proc_clk -period $($Profile.period) [get_ports i_clk]",
             "opt_design",
             "place_design",
@@ -197,6 +209,9 @@ $Scenario = [ordered]@{
     processing_clocks_mhz = @(150, 200)
     cell_key = "Shot + Chip + STOP + slope"
     canonical_hit_width_bits = 17
+    return_owner = "B7 derives per-Cell Return order; B6 parses and validates only"
+    metadata_storage = "one 64x5 distributed RAM: count[2:0], dropped, error"
+    new_shot_scrub = "16 sequential metadata writes per active Chip"
     runtime_visible_hit_limit = "1..7; physical drain remains 1..7"
     output_width_dependency = $false
     dedicated_topology = "4 chips x 8 STOP, 2-rise / 2-fall"
@@ -206,6 +221,8 @@ $Scenario = [ordered]@{
     echo_delay_equation = "delay[channel] = channel_0 + channel * increment"
     per_channel_echo_delay_table = $false
     echo_receiver_build_option_unchanged = $true
+    linked_b6_b7_regression = $true
+    implementation_top = $ImplementationTop
     simulation_profiles = $SimulationProfiles
     implementation_profiles = @($ImplementationProfiles)
 }

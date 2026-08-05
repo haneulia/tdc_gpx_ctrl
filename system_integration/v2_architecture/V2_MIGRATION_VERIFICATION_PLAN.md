@@ -280,7 +280,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
-| 6 | I | In progress | I0 oracle, I1/B6 and I2/B7 complete; sessions `260805_stage6_i1_b6_final_v2_gpx_hit_decoder`, `260805154200_stage6_i2_b7_final_v2_gpx_cell_collector` | Hit, Cell and Frame pipeline |
+| 6 | I | In progress | I0 oracle, I1/B6, I2/B7 and I2A B6-B7 optimization complete; sessions `260805_b6_no_refill_final_v2_gpx_hit_decoder`, `260805_b6b7_input_select_final_v2_gpx_cell_collector`, `260805_b6b7_sequential_final_v2_gpx_cell_collector` | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
@@ -296,8 +296,9 @@ physical all-Chip programming ACK. H3 then closed the B5 end-to-end boundary
 for 32 physical GPX STOP lanes representing 16 logical APD channels, normal
 full-capacity drain, timeout, cap/purge and backpressure at
 150/200 and 200/150 MHz. Stage 6 / Checkpoint I is now in progress: I0 froze
-the B6..B8 oracle, I1 completed B6 and I2 completed width-independent B7 Cell
-collection. The only valid next step is **B8 Frame lane assembly**.
+the B6..B8 oracle, I1 completed B6, I2 completed width-independent B7 Cell
+collection, and I2A closed B6/B7 Return ownership plus sequential timing
+optimization. The only valid next step is **B8 Frame lane assembly**.
 Stage 6 or later work must not be treated as
 migrated merely because its v1 implementation exists.
 
@@ -436,23 +437,28 @@ Frame records. The order remains fixed:
 
 1. **I0 complete:** freeze the v1 B6..B8 source hashes, bit meanings and
    intentional correction list;
-2. **I1/B6 complete:** decode all I-Mode fields into `gpx_hit_event_t`, assign
-   Return by Chip/STOP/slope, and prove dedicated plus dual-edge topology;
-3. **I2/B7 complete:** collect typed Hits into width-independent Cell records,
-   preserve Hit bit 16 and apply runtime visible-Hit capacity;
-4. **I3/B8 pending:** assemble slope lanes and Frame ordering without pulling
+2. **I1/B6 complete:** decode all I-Mode fields into `gpx_hit_event_t`, validate
+   build topology, and prove dedicated plus dual-edge field preservation;
+3. **I2/B7 complete:** own Return order by Chip/STOP/slope, collect typed Hits
+   into width-independent Cell records, preserve Hit bit 16 and apply runtime
+   visible-Hit capacity;
+4. **I2A complete:** remove duplicate Return state from B6, pipeline B6/B7
+   ready/context/RAM paths and prove the directly linked boundary at 150/200 MHz;
+5. **I3/B8 pending:** assemble slope lanes and Frame ordering without pulling
    AXIS width or VDMA padding into canonical geometry;
-5. **I4 pending:** integrate B5 through B8 and rerun the 150/200 and 200/150
+6. **I4 pending:** integrate B5 through B8 and rerun the 150/200 and 200/150
    MHz profiles before closing Checkpoint I.
 
-I1 intentionally corrects the v1 intermediate Return metadata that shared one
-STOP counter across Rise/Fall. The v2 counter key is Chip + STOP + slope, so a
-one-Chip dual-edge build produces independent Return 0..6 sequences. The
-eighth Return is consumed and diagnosed without a wrapped output event.
+I2A removes the v1-style intermediate Return metadata from B6. B7 is the single
+owner of the Chip + STOP + slope Cell count, so a one-Chip dual-edge build has
+independent Rise/Fall Return 0..6 sequences. The eighth Return reaches B7 and
+is consumed and diagnosed without a wrapped output event.
 
 I0 is documented in `V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md`; I1 structure,
 tests, resource use and timing are documented in
 `V2_CHECKPOINT_I1_GPX_HIT_DECODER.md`. I2 Cell storage, ordering, throughput,
 Echo non-regression and route evidence are documented in
-`V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md`. Checkpoint I remains open until B8
-and integrated B5..B8 evidence are complete.
+`V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md`. The ownership cleanup, sequential
+pipeline and linked timing evidence are documented in
+`V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md`. Checkpoint I remains open
+until B8 and integrated B5..B8 evidence are complete.
