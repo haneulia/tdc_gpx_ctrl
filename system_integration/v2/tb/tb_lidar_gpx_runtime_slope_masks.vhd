@@ -11,7 +11,8 @@ use work.lidar_gpx_data_pkg.all;
 
 entity tb_lidar_gpx_runtime_slope_masks is
     generic (
-        G_CLK_MHZ : positive := 150
+        G_CLK_MHZ  : positive := 150;
+        G_ALL_DUAL : boolean := false
     );
 end entity tb_lidar_gpx_runtime_slope_masks;
 
@@ -23,8 +24,13 @@ architecture sim of tb_lidar_gpx_runtime_slope_masks is
         result.proc_clk_mhz := G_CLK_MHZ;
         result.tdc_clk_mhz := 200;
         result.num_chips := 4;
-        result.rise_capability_mask := "0011";
-        result.fall_capability_mask := "1100";
+        if G_ALL_DUAL then
+            result.rise_capability_mask := "1111";
+            result.fall_capability_mask := "1111";
+        else
+            result.rise_capability_mask := "0011";
+            result.fall_capability_mask := "1100";
+        end if;
         result.num_faces := 4;
         result.enable_echo_receiver := false;
         result.enable_echo_simulation := false;
@@ -44,8 +50,12 @@ architecture sim of tb_lidar_gpx_runtime_slope_masks is
         return result;
     end function fn_context;
 
-    function fn_raw_data(chip_index : natural) return gpx_raw_event_t is
+    function fn_raw_data(
+        chip_index : natural;
+        slope_value : gpx_slope_t
+    ) return gpx_raw_event_t is
         variable result : gpx_raw_event_t := C_GPX_RAW_EVENT_IDLE;
+        variable hit_value : natural := 100 + chip_index;
     begin
         result.valid := '1';
         result.kind := GPX_RAW_DATA;
@@ -53,9 +63,14 @@ architecture sim of tb_lidar_gpx_runtime_slope_masks is
         result.ififo_id := '0';
         result.raw_word(C_GPX_RAW_CHACODE_HI downto
             C_GPX_RAW_CHACODE_LO) := "00";
-        result.raw_word(C_GPX_RAW_SLOPE_BIT) := '1';
+        if slope_value = GPX_SLOPE_RISE then
+            result.raw_word(C_GPX_RAW_SLOPE_BIT) := '1';
+        else
+            result.raw_word(C_GPX_RAW_SLOPE_BIT) := '0';
+            hit_value := 200 + chip_index;
+        end if;
         result.raw_word(C_GPX_RAW_HIT_HI downto C_GPX_RAW_HIT_LO) :=
-            std_logic_vector(to_unsigned(100 + chip_index, 17));
+            std_logic_vector(to_unsigned(hit_value, 17));
         result.shot_context := fn_context;
         result.chip_shot_seq := to_unsigned(1, 16);
         return result;
@@ -80,6 +95,9 @@ architecture sim of tb_lidar_gpx_runtime_slope_masks is
 
     constant C_BUILD_CONFIG : lidar_build_config_t := fn_build_config;
     constant C_CLK_PERIOD : time := 1 us / G_CLK_MHZ;
+    constant C_ACTIVE_RISE_MASK : chip_mask_t := "1111";
+    constant C_ACTIVE_FALL_MASK : chip_mask_t :=
+        "1111" when G_ALL_DUAL else "0000";
 
     signal clk          : std_logic := '0';
     signal rst_n        : std_logic := '0';
@@ -109,8 +127,8 @@ begin
             i_rst_n            => rst_n,
             i_abort            => '0',
             i_clear_sticky     => '0',
-            i_active_rise_mask => "1111",
-            i_active_fall_mask => "0000",
+            i_active_rise_mask => C_ACTIVE_RISE_MASK,
+            i_active_fall_mask => C_ACTIVE_FALL_MASK,
             i_raw_event        => raw_event,
             o_raw_ready        => raw_ready,
             o_hit_event        => hit_event,
@@ -130,8 +148,8 @@ begin
             i_clear_sticky      => '0',
             i_active_version    => to_unsigned(7, 16),
             i_max_hits_per_stop => to_unsigned(2, 3),
-            i_active_rise_mask  => "1111",
-            i_active_fall_mask  => "0000",
+            i_active_rise_mask  => C_ACTIVE_RISE_MASK,
+            i_active_fall_mask  => C_ACTIVE_FALL_MASK,
             i_hit_event         => hit_event,
             o_hit_ready         => hit_ready,
             o_cell_event        => cell_event,
@@ -148,15 +166,27 @@ begin
                 control_count <= 0;
             elsif cell_event.valid = '1' and cell_ready = '1' then
                 if cell_event.kind = GPX_CELL_DATA then
-                    assert cell_event.slope = GPX_SLOPE_RISE
-                        report "V2-SLOPE-TB Fall Cell emitted while Fall disabled"
-                        severity failure;
+                    if not G_ALL_DUAL then
+                        assert cell_event.slope = GPX_SLOPE_RISE
+                            report "V2-SLOPE-TB Fall Cell emitted while Fall disabled"
+                            severity failure;
+                    end if;
                     if cell_event.stop_index = 0 then
-                        assert cell_event.hit_count = 1 and
-                               to_integer(cell_event.hits(0)) =
-                                   100 + to_integer(cell_event.chip_index)
+                        assert cell_event.hit_count = 1
                             report "V2-SLOPE-TB runtime Rise payload lost"
                             severity failure;
+                        if cell_event.slope = GPX_SLOPE_RISE then
+                            assert to_integer(cell_event.hits(0)) =
+                                    100 + to_integer(cell_event.chip_index)
+                                report "V2-SLOPE-TB runtime Rise payload mismatch"
+                                severity failure;
+                        else
+                            assert G_ALL_DUAL and
+                                   to_integer(cell_event.hits(0)) =
+                                    200 + to_integer(cell_event.chip_index)
+                                report "V2-SLOPE-TB runtime Fall payload mismatch"
+                                severity failure;
+                        end if;
                     else
                         assert cell_event.hit_count = 0
                             report "V2-SLOPE-TB unexpected nonzero Cell"
@@ -195,12 +225,16 @@ begin
         wait_clocks(3);
 
         for chip_index in 0 to C_MAX_CHIPS - 1 loop
-            send_raw(fn_raw_data(chip_index));
+            send_raw(fn_raw_data(chip_index, GPX_SLOPE_RISE));
+            if G_ALL_DUAL then
+                send_raw(fn_raw_data(chip_index, GPX_SLOPE_FALL));
+            end if;
             send_raw(fn_raw_control(GPX_RAW_IFIFO1_DONE, chip_index));
             send_raw(fn_raw_control(GPX_RAW_DRAIN_DONE, chip_index));
         end loop;
 
-        while data_count < C_MAX_CHIPS * C_MAX_STOPS_PER_CHIP or
+        while data_count < C_MAX_CHIPS * C_MAX_STOPS_PER_CHIP *
+                (1 + boolean'pos(G_ALL_DUAL)) or
               control_count < C_MAX_CHIPS * 2 loop
             wait until rising_edge(clk);
         end loop;
@@ -231,4 +265,18 @@ architecture sim of tb_lidar_gpx_runtime_slope_masks_200 is
 begin
     u_tb : entity work.tb_lidar_gpx_runtime_slope_masks
         generic map (G_CLK_MHZ => 200);
+end architecture;
+
+entity tb_lidar_gpx_runtime_slope_dual4_150 is end entity;
+architecture sim of tb_lidar_gpx_runtime_slope_dual4_150 is
+begin
+    u_tb : entity work.tb_lidar_gpx_runtime_slope_masks
+        generic map (G_CLK_MHZ => 150, G_ALL_DUAL => true);
+end architecture;
+
+entity tb_lidar_gpx_runtime_slope_dual4_200 is end entity;
+architecture sim of tb_lidar_gpx_runtime_slope_dual4_200 is
+begin
+    u_tb : entity work.tb_lidar_gpx_runtime_slope_masks
+        generic map (G_CLK_MHZ => 200, G_ALL_DUAL => true);
 end architecture;

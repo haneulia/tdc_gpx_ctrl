@@ -48,7 +48,8 @@ multiple clocks and is checked against this reference model.
   Stage 6 I0 froze the Hit/Cell/Frame oracle, I1 completed the typed B6 Hit
   decoder, I2 completed the width-independent B7 Cell collector, I2A closed
   their registered ownership/timing optimization and I3 completed canonical
-  Rise/Fall B8 Frame-lane assembly. The integrated B5..B8 path, formatter and
+  Rise/Fall B8 Frame-lane assembly, including one-Chip and four-Chip all-dual
+  slope operation. The integrated B5..B8 path, formatter and
   the full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 

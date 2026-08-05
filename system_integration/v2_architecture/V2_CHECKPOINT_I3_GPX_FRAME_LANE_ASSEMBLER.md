@@ -90,6 +90,7 @@ Falling 비활성 설정에서는 전용 2-Rise/2-Fall build라도 모든 활성
 ```text
 Falling ON, dedicated 4-Chip : Rise=0011, Fall=1100
 Falling ON, one-Chip dual   : Rise=0001, Fall=0001
+Falling ON, all-Chip dual   : Rise=1111, Fall=1111
 Falling OFF, active 4-Chip  : Rise=1111, Fall=0000
 ```
 
@@ -133,6 +134,7 @@ slot_count = popcount(active_slope_mask) x stops_per_chip
 |---|---|---|
 | 4-Chip dedicated | Chip 0 STOP 0..7, Chip 1 STOP 0..7, 총 16 | Chip 2 STOP 0..7, Chip 3 STOP 0..7, 총 16 |
 | 1-Chip dual-edge | Chip 0 STOP 0..7, 총 8 | Chip 0 STOP 0..7, 총 8 |
+| 4-Chip all dual-edge | Chip 0..3 각각 STOP 0..7, 총 32 | Chip 0..3 각각 STOP 0..7, 총 32 |
 | 4-Chip Falling OFF | Chip 0..3 각각 STOP 0..7, 총 32 | 생성하지 않음 |
 
 따라서 32 physical STOP 전체가 Rise인 경우에도 채널 정렬은
@@ -153,22 +155,36 @@ payload RAM은 reset하지 않는다. Shot 시작 시 presence bit만 0으로 �
 presence=0인 주소는 RAM의 이전 값 대신 명시적인 blank Cell로 출력한다. 이 방식은
 큰 RAM reset fanout을 피하면서 stale payload 노출을 차단한다.
 
+각 Rise/Fall lane에는 1-entry packed-word prefetch register가 있다. LUTRAM read와
+typed event 조립을 서로 다른 clock 단계로 분리하고, output holding register가
+막힌 동안에는 prefetch가 다음 Cell 하나를 보존한다. 초기 1-clock warm-up 뒤에는
+lane당 1 Cell/clock 처리율을 유지한다. Chip/STOP read cursor에는 `max_fanout=16`을
+적용하여 147-bit LUTRAM을 구성하는 RAM32 그룹 가까이에 순차 주소 복제본을
+배치할 수 있게 했다.
+
 ## 8. 순차 처리 단계
 
 ```mermaid
 stateDiagram-v2
     [*] --> S_COLLECT
     S_COLLECT --> S_EVENT_CHECK: Cell handshake
-    S_EVENT_CHECK --> S_EVENT_APPLY: context/mask/geometry 등록
-    S_EVENT_APPLY --> S_COLLECT: Shot terminal 미완료
+    S_EVENT_CHECK --> S_SHOT_GEOMETRY: 새 Shot snapshot
+    S_EVENT_CHECK --> S_EVENT_APPLY: 기존 Shot context 확인
+    S_SHOT_GEOMETRY --> S_SHOT_BOUNDARY: gap/geometry 등록
+    S_SHOT_BOUNDARY --> S_EVENT_APPLY: last-column/fault 등록
+    S_EVENT_APPLY --> S_CELL_WRITE: 유효 Cell write 예약
+    S_CELL_WRITE --> S_COLLECT: LUTRAM/presence 순차 갱신
+    S_EVENT_APPLY --> S_COLLECT: 저장 없는 event
     S_EVENT_APPLY --> S_EMIT_INIT: 모든 활성 Chip terminal 완료
     S_EMIT_INIT --> S_EMIT: slot counter와 첫 Chip 등록
     S_EMIT --> S_COLLECT: Rise/Fall line 모두 drain
 ```
 
-긴 context 비교, event 적용, line 초기화, RAM read/output load를 서로 다른 clock
-단계에 배치했다. 출력은 등록된 holding register이며, ready가 계속 1이면 첫 load
-이후 각 활성 lane에서 매 clock Cell 하나를 전달한다.
+geometry/gap 산술, last-column 판정, event 검증, LUTRAM write, LUTRAM read와 typed
+event 조립을 서로 다른 clock 단계에 배치했다. FSM은 one-hot 순차 상태를 사용한다.
+출력은 등록된 holding register이며, ready가 계속 1이면 prefetch warm-up 이후 각
+활성 lane에서 매 clock Cell 하나를 전달한다. 이 추가 latency는 B8 내부에만 있으며
+물리적 `fire_done` 저지연 경로에는 포함되지 않는다.
 
 ## 9. column gap과 Face 종료 계약
 
@@ -220,12 +236,14 @@ stateDiagram-v2
 |---|---|---|---|
 | dedicated 2-Rise/2-Fall | PASS | PASS | out-of-order 입력을 16/16 slot으로 재정렬 |
 | one-Chip dual-edge | PASS | PASS | 동일 Chip의 Rise/Fall 8/8 slot 독립성 |
+| 4-Chip all dual-edge | PASS | PASS | Rise 32 + Fall 32 Cell의 payload와 canonical 순서 |
 | Falling OFF | PASS | PASS | 4 Chip x 8 STOP = Rise 32, Fall 0 |
 | fault + independent stall | PASS | PASS | blank, duplicate, masked payload, output 안정성 |
 | linked B6-B7 runtime mask | PASS | PASS | Fall-OFF raw word부터 32 Rise Cell까지 exact compare |
+| linked B6-B7 all dual | PASS | PASS | 4 Chip의 Rise/Fall raw word부터 64 Cell까지 exact compare |
 
 최종 simulation evidence:
-`signoff_results/sessions/260805224000_b8_emit_pipe_sim_v2_gpx_frame_lane_assembler`
+`signoff_results/sessions/260805_b8_dual4_timing_signoff_v2_gpx_frame_lane_assembler`
 
 ### 11.2 OOC 구현
 
@@ -233,11 +251,25 @@ stateDiagram-v2
 
 | Processing clock | WNS | Total LUT | Logic LUT | LUTRAM | FF | BRAM | DSP | Latch | Blocking DRC |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 150 MHz | +0.687 ns | 714 | 514 | 200 | 1,138 | 0 | 0 | 0 | 0 |
-| 200 MHz | +0.195 ns | 722 | 522 | 200 | 1,138 | 0 | 0 | 0 | 0 |
+| 150 MHz | +1.383 ns | 706 | 506 | 200 | 1,614 | 0 | 0 | 0 | 0 |
+| 200 MHz | +0.507 ns | 711 | 511 | 200 | 1,614 | 0 | 0 | 0 | 0 |
 
 최종 implementation evidence:
-`signoff_results/sessions/260805224500_b8_emit_pipe_ooc_v2_gpx_frame_lane_assembler`
+`signoff_results/sessions/260805_b8_dual4_timing_signoff_v2_gpx_frame_lane_assembler`
+
+기존 200 MHz WNS가 `+0.195 ns`에 머문 직접 원인은 다음 세 경로였다.
+
+1. Shot geometry와 gap/last-column 진단을 같은 cycle에 계산하여 sticky fault까지
+   누적한 16-bit 산술 및 다단 LUT 경로
+2. `32 x 147-bit` LUTRAM이 다수의 RAM32 primitive로 펼쳐지면서 read address 한
+   bit에 fanout 163이 생긴 route-dominated 경로
+3. binary FSM next-state와 Cell duplicate/mask 판정이 한 조합식으로 합쳐진 경로
+
+geometry/boundary와 Cell write를 순차 단계로 분리하고, lane prefetch, 주소 fanout
+제한, one-hot FSM을 적용한 뒤 200 MHz WNS는 `+0.507 ns`가 됐다. 현재 최악 경로는
+Rise emit slot에서 다음 Chip cursor로 가는 6-level 경로이며 지연의 약 77%가
+배선이다. 따라서 이 OOC 수치는 B8 단독 통과 증거이지 parent 배치 후의 최종
+시스템 WNS 보증은 아니다.
 
 Vivado user Tcl Store catalog 경고는 host 설치 환경 경고이며, archived report의
 design critical warning/error, latch, blocking DRC 판정과 분리했다. OOC의

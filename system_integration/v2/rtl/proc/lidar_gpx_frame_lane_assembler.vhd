@@ -77,12 +77,20 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     type assembler_state_t is (
         S_COLLECT,
         S_EVENT_CHECK,
+        S_SHOT_GEOMETRY,
+        S_SHOT_BOUNDARY,
         S_EVENT_APPLY,
+        S_CELL_WRITE,
         S_EMIT_INIT,
         S_EMIT
     );
 
     signal state_r : assembler_state_t := S_COLLECT;
+
+    -- One-hot state bits keep control decode shallow at 200 MHz. The added
+    -- flip-flops are negligible beside the two wide Cell payload memories.
+    attribute fsm_encoding : string;
+    attribute fsm_encoding of state_r : signal is "one_hot";
 
     -- Payload RAM has no reset. Per-Shot presence bits are the sole validity
     -- owner, so stale RAM contents can never become visible after reset/abort.
@@ -111,6 +119,25 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     signal chip_sequence_r : chip_sequence_array_t :=
         (others => (others => '0'));
 
+    -- Geometry arithmetic and wide Cell-memory control terminate in dedicated
+    -- registers. They intentionally add latency, not throughput pressure: B7
+    -- produces Cells more slowly than this assembler consumes them.
+    signal pending_geometry_fault_r : std_logic := '0';
+    signal pending_gap_fault_r : std_logic := '0';
+    signal pending_last_index_r : shot_index_t := (others => '0');
+    signal pending_rise_address_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
+    signal pending_fall_address_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
+    signal pending_write_rise_r : std_logic := '0';
+    signal pending_write_fall_r : std_logic := '0';
+
+    -- Keep separate address copies so one 5-bit source does not drive both
+    -- 147-bit distributed memories after placement.
+    attribute keep : string;
+    attribute keep of pending_rise_address_r : signal is "true";
+    attribute keep of pending_fall_address_r : signal is "true";
+
     signal history_valid_r   : std_logic := '0';
     signal history_face_r    : face_index_t := (others => '0');
     signal history_version_r : unsigned(15 downto 0) := (others => '0');
@@ -129,6 +156,37 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     signal fall_emit_slot_r : natural range 0 to C_CELLS_PER_SLOPE := 0;
     signal rise_slot_count_r : natural range 0 to C_CELLS_PER_SLOPE := 0;
     signal fall_slot_count_r : natural range 0 to C_CELLS_PER_SLOPE := 0;
+
+    -- The packed 147-bit LUTRAM expands to many physical RAM32 primitives.
+    -- Bound address fanout so synthesis may place local register replicas
+    -- beside those RAM groups instead of routing one cursor across all of them.
+    attribute max_fanout : integer;
+    attribute max_fanout of rise_emit_chip_r : signal is 16;
+    attribute max_fanout of fall_emit_chip_r : signal is 16;
+    attribute max_fanout of rise_emit_stop_r : signal is 16;
+    attribute max_fanout of fall_emit_stop_r : signal is 16;
+    attribute max_fanout of pending_rise_address_r : signal is 16;
+    attribute max_fanout of pending_fall_address_r : signal is 16;
+
+    -- Each lane reads distributed RAM into a packed local register before
+    -- constructing the typed output event. This keeps the RAM-to-register
+    -- route local while preserving one Cell/clock after pipeline warm-up.
+    signal rise_prefetch_valid_r : std_logic := '0';
+    signal fall_prefetch_valid_r : std_logic := '0';
+    signal rise_prefetch_word_r : cell_word_t := (others => '0');
+    signal fall_prefetch_word_r : cell_word_t := (others => '0');
+    signal rise_prefetch_present_r : std_logic := '0';
+    signal fall_prefetch_present_r : std_logic := '0';
+    signal rise_prefetch_chip_r : natural range 0 to C_MAX_CHIPS - 1 := 0;
+    signal fall_prefetch_chip_r : natural range 0 to C_MAX_CHIPS - 1 := 0;
+    signal rise_prefetch_stop_r : natural range 0 to
+        C_MAX_STOPS_PER_CHIP - 1 := 0;
+    signal fall_prefetch_stop_r : natural range 0 to
+        C_MAX_STOPS_PER_CHIP - 1 := 0;
+    signal rise_prefetch_slot_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
+    signal fall_prefetch_slot_r : natural range 0 to
+        C_CELLS_PER_SLOPE - 1 := 0;
 
     signal rise_event_r : gpx_frame_cell_event_t :=
         C_GPX_FRAME_CELL_EVENT_IDLE;
@@ -345,8 +403,7 @@ begin
         variable shot_fault_v : std_logic;
         variable geometry_fault_v : boolean;
         variable shot_complete_v : boolean;
-        variable rise_empty_after_v : boolean;
-        variable fall_empty_after_v : boolean;
+        variable cell_write_v : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -365,6 +422,13 @@ begin
                 shot_gap_before_r <= (others => '0');
                 shot_faulted_r <= '0';
                 chip_sequence_r <= (others => (others => '0'));
+                pending_geometry_fault_r <= '0';
+                pending_gap_fault_r <= '0';
+                pending_last_index_r <= (others => '0');
+                pending_rise_address_r <= 0;
+                pending_fall_address_r <= 0;
+                pending_write_rise_r <= '0';
+                pending_write_fall_r <= '0';
                 history_valid_r <= '0';
                 history_face_r <= (others => '0');
                 history_version_r <= (others => '0');
@@ -380,6 +444,8 @@ begin
                 fall_emit_slot_r <= 0;
                 rise_slot_count_r <= 0;
                 fall_slot_count_r <= 0;
+                rise_prefetch_valid_r <= '0';
+                fall_prefetch_valid_r <= '0';
                 rise_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
                 fall_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
                 rise_line_done_r <= '0';
@@ -406,9 +472,16 @@ begin
                     pending_context_match_r <= '0';
                     shot_terminal_r <= (others => '0');
                     shot_faulted_r <= '0';
+                    pending_geometry_fault_r <= '0';
+                    pending_gap_fault_r <= '0';
+                    pending_last_index_r <= (others => '0');
+                    pending_write_rise_r <= '0';
+                    pending_write_fall_r <= '0';
                     history_valid_r <= '0';
                     rise_emit_active_r <= '0';
                     fall_emit_active_r <= '0';
+                    rise_prefetch_valid_r <= '0';
+                    fall_prefetch_valid_r <= '0';
                     rise_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
                     fall_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
                 elsif state_r = S_COLLECT then
@@ -418,51 +491,20 @@ begin
                     end if;
 
                 elsif state_r = S_EVENT_CHECK then
+                    pending_rise_address_r <= fn_cell_address(
+                        to_integer(pending_event_r.chip_index),
+                        to_integer(pending_event_r.stop_index));
+                    pending_fall_address_r <= fn_cell_address(
+                        to_integer(pending_event_r.chip_index),
+                        to_integer(pending_event_r.stop_index));
+                    pending_geometry_fault_r <= '0';
+                    pending_gap_fault_r <= '0';
+
                     if shot_active_r = '0' then
                         rise_mask_v := i_active_rise_mask;
                         fall_mask_v := i_active_fall_mask;
                         context_v := pending_event_r.shot_context;
                         columns_v := i_columns_per_face;
-                        gap_v := (others => '0');
-                        geometry_fault_v := false;
-                        expected_chip_v := rise_mask_v or fall_mask_v;
-
-                        if expected_chip_v = "0000" or
-                           columns_v = 0 or
-                           context_v.request.active_version /=
-                               i_active_version or
-                           context_v.request.shot_index >= columns_v then
-                            geometry_fault_v := true;
-                        end if;
-
-                        if history_valid_r = '0' or
-                           history_version_r /= i_active_version or
-                           history_face_r /= context_v.request.face_index or
-                           history_last_r = '1' then
-                            gap_v := context_v.request.shot_index;
-                            if history_valid_r = '1' and
-                               history_last_r = '0' and
-                               (history_version_r /= i_active_version or
-                                history_face_r /=
-                                    context_v.request.face_index) then
-                                geometry_fault_v := true;
-                            end if;
-                        elsif context_v.request.shot_index >
-                              history_column_r then
-                            gap_v := context_v.request.shot_index -
-                                history_column_r - 1;
-                        else
-                            gap_v := context_v.request.shot_index;
-                            geometry_fault_v := true;
-                        end if;
-
-                        if context_v.request.shot_index + 1 >= columns_v then
-                            if context_v.request.last_in_face /= '1' then
-                                geometry_fault_v := true;
-                            end if;
-                        elsif context_v.request.last_in_face /= '0' then
-                            geometry_fault_v := true;
-                        end if;
 
                         rise_present_r <= (others => '0');
                         fall_present_r <= (others => '0');
@@ -473,25 +515,10 @@ begin
                         shot_rise_mask_r <= rise_mask_v;
                         shot_fall_mask_r <= fall_mask_v;
                         shot_columns_r <= columns_v;
-                        shot_gap_before_r <= gap_v;
+                        shot_gap_before_r <= (others => '0');
                         shot_faulted_r <= '0';
                         pending_context_match_r <= '1';
-
-                        history_valid_r <= '1';
-                        history_face_r <= context_v.request.face_index;
-                        history_version_r <= context_v.request.active_version;
-                        history_column_r <= context_v.request.shot_index;
-                        history_last_r <= context_v.request.last_in_face;
-
-                        if gap_v /= 0 then
-                            fault_pulse_r.column_gap <= '1';
-                            fault_sticky_r.column_gap <= '1';
-                        end if;
-                        if geometry_fault_v then
-                            shot_faulted_r <= '1';
-                            fault_pulse_r.geometry_error <= '1';
-                            fault_sticky_r.geometry_error <= '1';
-                        end if;
+                        state_r <= S_SHOT_GEOMETRY;
                     elsif pending_event_r.shot_context = shot_context_r and
                           i_active_version =
                               shot_context_r.request.active_version and
@@ -499,8 +526,90 @@ begin
                           i_active_fall_mask = shot_fall_mask_r and
                           i_columns_per_face = shot_columns_r then
                         pending_context_match_r <= '1';
+                        state_r <= S_EVENT_APPLY;
                     else
                         pending_context_match_r <= '0';
+                        state_r <= S_EVENT_APPLY;
+                    end if;
+
+                elsif state_r = S_SHOT_GEOMETRY then
+                    context_v := shot_context_r;
+                    columns_v := shot_columns_r;
+                    gap_v := (others => '0');
+                    geometry_fault_v := false;
+                    expected_chip_v := shot_rise_mask_r or shot_fall_mask_r;
+
+                    if expected_chip_v = "0000" or
+                       columns_v = 0 or
+                       context_v.request.active_version /=
+                           i_active_version or
+                       context_v.request.shot_index >= columns_v then
+                        geometry_fault_v := true;
+                    end if;
+
+                    if history_valid_r = '0' or
+                       history_version_r /= i_active_version or
+                       history_face_r /= context_v.request.face_index or
+                       history_last_r = '1' then
+                        gap_v := context_v.request.shot_index;
+                        if history_valid_r = '1' and
+                           history_last_r = '0' and
+                           (history_version_r /= i_active_version or
+                            history_face_r /= context_v.request.face_index) then
+                            geometry_fault_v := true;
+                        end if;
+                    elsif context_v.request.shot_index > history_column_r then
+                        gap_v := context_v.request.shot_index -
+                            history_column_r - 1;
+                    else
+                        gap_v := context_v.request.shot_index;
+                        geometry_fault_v := true;
+                    end if;
+
+                    if columns_v = 0 then
+                        pending_last_index_r <= (others => '0');
+                    else
+                        pending_last_index_r <= columns_v - 1;
+                    end if;
+
+                    shot_gap_before_r <= gap_v;
+                    if geometry_fault_v then
+                        pending_geometry_fault_r <= '1';
+                    else
+                        pending_geometry_fault_r <= '0';
+                    end if;
+
+                    history_valid_r <= '1';
+                    history_face_r <= context_v.request.face_index;
+                    history_version_r <= context_v.request.active_version;
+                    history_column_r <= context_v.request.shot_index;
+                    history_last_r <= context_v.request.last_in_face;
+
+                    state_r <= S_SHOT_BOUNDARY;
+
+                elsif state_r = S_SHOT_BOUNDARY then
+                    geometry_fault_v := pending_geometry_fault_r = '1';
+
+                    if shot_columns_r /= 0 then
+                        if shot_context_r.request.shot_index =
+                           pending_last_index_r then
+                            if shot_context_r.request.last_in_face /= '1' then
+                                geometry_fault_v := true;
+                            end if;
+                        elsif shot_context_r.request.last_in_face /= '0' then
+                            geometry_fault_v := true;
+                        end if;
+                    end if;
+
+                    if geometry_fault_v then
+                        pending_geometry_fault_r <= '1';
+                    else
+                        pending_geometry_fault_r <= '0';
+                    end if;
+                    if shot_gap_before_r /= 0 then
+                        pending_gap_fault_r <= '1';
+                    else
+                        pending_gap_fault_r <= '0';
                     end if;
                     state_r <= S_EVENT_APPLY;
 
@@ -514,11 +623,27 @@ begin
                     fall_mask_v := shot_fall_mask_r;
                     shot_fault_v := shot_faulted_r;
                     shot_complete_v := false;
+                    cell_write_v := false;
+                    pending_write_rise_r <= '0';
+                    pending_write_fall_r <= '0';
+
+                    if pending_gap_fault_r = '1' then
+                        fault_pulse_r.column_gap <= '1';
+                        fault_sticky_r.column_gap <= '1';
+                    end if;
+                    pending_gap_fault_r <= '0';
+
+                    if pending_geometry_fault_r = '1' then
+                        shot_fault_v := '1';
+                        fault_pulse_r.geometry_error <= '1';
+                        fault_sticky_r.geometry_error <= '1';
+                    end if;
+                    pending_geometry_fault_r <= '0';
 
                     if pending_context_match_r /= '1' then
-                            shot_fault_v := '1';
-                            fault_pulse_r.context_mismatch <= '1';
-                            fault_sticky_r.context_mismatch <= '1';
+                        shot_fault_v := '1';
+                        fault_pulse_r.context_mismatch <= '1';
+                        fault_sticky_r.context_mismatch <= '1';
                     elsif chip_index >= G_BUILD_CONFIG.num_chips or
                           stop_index >= G_BUILD_CONFIG.stops_per_chip then
                         shot_fault_v := '1';
@@ -531,29 +656,27 @@ begin
                             fault_pulse_r.unexpected_cell <= '1';
                             fault_sticky_r.unexpected_cell <= '1';
                         elsif pending_event_r.kind = GPX_CELL_DATA then
-                            address_value := fn_cell_address(
-                                chip_index, stop_index);
                             if pending_event_r.slope = GPX_SLOPE_RISE and
                                rise_mask_v(chip_index) = '1' then
+                                address_value := pending_rise_address_r;
                                 if rise_present_v(address_value) = '1' then
                                     shot_fault_v := '1';
                                     fault_pulse_r.duplicate_cell <= '1';
                                     fault_sticky_r.duplicate_cell <= '1';
                                 else
-                                    rise_memory_r(address_value) <=
-                                        fn_pack_cell(pending_event_r);
-                                    rise_present_v(address_value) := '1';
+                                    pending_write_rise_r <= '1';
+                                    cell_write_v := true;
                                 end if;
                             elsif pending_event_r.slope = GPX_SLOPE_FALL and
                                   fall_mask_v(chip_index) = '1' then
+                                address_value := pending_fall_address_r;
                                 if fall_present_v(address_value) = '1' then
                                     shot_fault_v := '1';
                                     fault_pulse_r.duplicate_cell <= '1';
                                     fault_sticky_r.duplicate_cell <= '1';
                                 else
-                                    fall_memory_r(address_value) <=
-                                        fn_pack_cell(pending_event_r);
-                                    fall_present_v(address_value) := '1';
+                                    pending_write_fall_r <= '1';
+                                    cell_write_v := true;
                                 end if;
                             elsif pending_event_r.hit_count /= 0 then
                                 shot_fault_v := '1';
@@ -609,9 +732,32 @@ begin
                         state_r <= S_EMIT_INIT;
                     end if;
 
-                    if not shot_complete_v then
+                    if not shot_complete_v and cell_write_v then
+                        state_r <= S_CELL_WRITE;
+                    elsif not shot_complete_v then
                         state_r <= S_COLLECT;
                     end if;
+
+                elsif state_r = S_CELL_WRITE then
+                    rise_present_v := rise_present_r;
+                    fall_present_v := fall_present_r;
+
+                    if pending_write_rise_r = '1' then
+                        rise_memory_r(pending_rise_address_r) <=
+                            fn_pack_cell(pending_event_r);
+                        rise_present_v(pending_rise_address_r) := '1';
+                    end if;
+                    if pending_write_fall_r = '1' then
+                        fall_memory_r(pending_fall_address_r) <=
+                            fn_pack_cell(pending_event_r);
+                        fall_present_v(pending_fall_address_r) := '1';
+                    end if;
+
+                    rise_present_r <= rise_present_v;
+                    fall_present_r <= fall_present_v;
+                    pending_write_rise_r <= '0';
+                    pending_write_fall_r <= '0';
+                    state_r <= S_COLLECT;
 
                 elsif state_r = S_EMIT_INIT then
                     rise_slot_count_r <= fn_popcount(shot_rise_mask_r) *
@@ -636,6 +782,8 @@ begin
                     end if;
                     rise_event_r.valid <= '0';
                     fall_event_r.valid <= '0';
+                    rise_prefetch_valid_r <= '0';
+                    fall_prefetch_valid_r <= '0';
                     state_r <= S_EMIT;
                 else
                     if rise_event_r.valid = '1' and i_rise_ready = '1' and
@@ -647,19 +795,39 @@ begin
                         fall_line_done_r <= '1';
                     end if;
 
+                    if rise_event_r.valid = '0' or i_rise_ready = '1' then
+                        if rise_prefetch_valid_r = '1' then
+                            rise_event_r <= fn_make_frame_event(
+                                rise_prefetch_word_r,
+                                rise_prefetch_present_r,
+                                rise_prefetch_chip_r,
+                                rise_prefetch_stop_r,
+                                GPX_SLOPE_RISE,
+                                rise_prefetch_slot_r,
+                                rise_slot_count_r,
+                                shot_context_r,
+                                shot_max_hits_r,
+                                chip_sequence_r(rise_prefetch_chip_r),
+                                shot_gap_before_r,
+                                shot_faulted_r);
+                            rise_prefetch_valid_r <= '0';
+                        else
+                            rise_event_r.valid <= '0';
+                        end if;
+                    end if;
+
                     if rise_emit_active_r = '1' and
-                       (rise_event_r.valid = '0' or i_rise_ready = '1') then
+                       (rise_prefetch_valid_r = '0' or
+                        ((rise_event_r.valid = '0' or i_rise_ready = '1') and
+                         rise_prefetch_valid_r = '1')) then
                         address_value := fn_cell_address(
                             rise_emit_chip_r, rise_emit_stop_r);
-                        rise_event_r <= fn_make_frame_event(
-                            rise_memory_r(address_value),
-                            rise_present_r(address_value),
-                            rise_emit_chip_r, rise_emit_stop_r,
-                            GPX_SLOPE_RISE, rise_emit_slot_r,
-                            rise_slot_count_r, shot_context_r,
-                            shot_max_hits_r,
-                            chip_sequence_r(rise_emit_chip_r),
-                            shot_gap_before_r, shot_faulted_r);
+                        rise_prefetch_word_r <= rise_memory_r(address_value);
+                        rise_prefetch_present_r <= rise_present_r(address_value);
+                        rise_prefetch_chip_r <= rise_emit_chip_r;
+                        rise_prefetch_stop_r <= rise_emit_stop_r;
+                        rise_prefetch_slot_r <= rise_emit_slot_r;
+                        rise_prefetch_valid_r <= '1';
 
                         if rise_emit_slot_r + 1 = rise_slot_count_r then
                             rise_emit_active_r <= '0';
@@ -674,23 +842,41 @@ begin
                                     shot_rise_mask_r, rise_emit_chip_r);
                             end if;
                         end if;
-                    elsif rise_event_r.valid = '1' and i_rise_ready = '1' then
-                        rise_event_r.valid <= '0';
+                    end if;
+
+                    if fall_event_r.valid = '0' or i_fall_ready = '1' then
+                        if fall_prefetch_valid_r = '1' then
+                            fall_event_r <= fn_make_frame_event(
+                                fall_prefetch_word_r,
+                                fall_prefetch_present_r,
+                                fall_prefetch_chip_r,
+                                fall_prefetch_stop_r,
+                                GPX_SLOPE_FALL,
+                                fall_prefetch_slot_r,
+                                fall_slot_count_r,
+                                shot_context_r,
+                                shot_max_hits_r,
+                                chip_sequence_r(fall_prefetch_chip_r),
+                                shot_gap_before_r,
+                                shot_faulted_r);
+                            fall_prefetch_valid_r <= '0';
+                        else
+                            fall_event_r.valid <= '0';
+                        end if;
                     end if;
 
                     if fall_emit_active_r = '1' and
-                       (fall_event_r.valid = '0' or i_fall_ready = '1') then
+                       (fall_prefetch_valid_r = '0' or
+                        ((fall_event_r.valid = '0' or i_fall_ready = '1') and
+                         fall_prefetch_valid_r = '1')) then
                         address_value := fn_cell_address(
                             fall_emit_chip_r, fall_emit_stop_r);
-                        fall_event_r <= fn_make_frame_event(
-                            fall_memory_r(address_value),
-                            fall_present_r(address_value),
-                            fall_emit_chip_r, fall_emit_stop_r,
-                            GPX_SLOPE_FALL, fall_emit_slot_r,
-                            fall_slot_count_r, shot_context_r,
-                            shot_max_hits_r,
-                            chip_sequence_r(fall_emit_chip_r),
-                            shot_gap_before_r, shot_faulted_r);
+                        fall_prefetch_word_r <= fall_memory_r(address_value);
+                        fall_prefetch_present_r <= fall_present_r(address_value);
+                        fall_prefetch_chip_r <= fall_emit_chip_r;
+                        fall_prefetch_stop_r <= fall_emit_stop_r;
+                        fall_prefetch_slot_r <= fall_emit_slot_r;
+                        fall_prefetch_valid_r <= '1';
 
                         if fall_emit_slot_r + 1 = fall_slot_count_r then
                             fall_emit_active_r <= '0';
@@ -705,18 +891,14 @@ begin
                                     shot_fall_mask_r, fall_emit_chip_r);
                             end if;
                         end if;
-                    elsif fall_event_r.valid = '1' and i_fall_ready = '1' then
-                        fall_event_r.valid <= '0';
                     end if;
 
-                    rise_empty_after_v := rise_emit_active_r = '0' and
-                        (rise_event_r.valid = '0' or
-                         (rise_event_r.valid = '1' and i_rise_ready = '1'));
-                    fall_empty_after_v := fall_emit_active_r = '0' and
-                        (fall_event_r.valid = '0' or
-                         (fall_event_r.valid = '1' and i_fall_ready = '1'));
-
-                    if rise_empty_after_v and fall_empty_after_v then
+                    if rise_emit_active_r = '0' and
+                       rise_prefetch_valid_r = '0' and
+                       rise_event_r.valid = '0' and
+                       fall_emit_active_r = '0' and
+                       fall_prefetch_valid_r = '0' and
+                       fall_event_r.valid = '0' then
                         state_r <= S_COLLECT;
                         shot_active_r <= '0';
                         shot_terminal_r <= (others => '0');

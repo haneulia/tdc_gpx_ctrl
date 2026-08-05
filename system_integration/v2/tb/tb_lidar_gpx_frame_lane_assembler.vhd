@@ -11,7 +11,7 @@ use work.lidar_gpx_data_pkg.all;
 entity tb_lidar_gpx_frame_lane_assembler is
     generic (
         G_CLK_MHZ  : positive := 150;
-        G_SCENARIO : natural range 0 to 3 := 0
+        G_SCENARIO : natural range 0 to 4 := 0
     );
 end entity tb_lidar_gpx_frame_lane_assembler;
 
@@ -30,6 +30,10 @@ architecture sim of tb_lidar_gpx_frame_lane_assembler is
             result.num_chips            := 1;
             result.rise_capability_mask := "0001";
             result.fall_capability_mask := "0001";
+        elsif G_SCENARIO = 4 then
+            result.num_chips            := 4;
+            result.rise_capability_mask := "1111";
+            result.fall_capability_mask := "1111";
         else
             result.num_chips            := 4;
             result.rise_capability_mask := "0011";
@@ -43,7 +47,7 @@ architecture sim of tb_lidar_gpx_frame_lane_assembler is
         case G_SCENARIO is
             when 0 | 3 => return "0011";
             when 1     => return "0001";
-            when 2     => return "1111";
+            when 2 | 4 => return "1111";
         end case;
     end function fn_rise_mask;
 
@@ -53,6 +57,7 @@ architecture sim of tb_lidar_gpx_frame_lane_assembler is
             when 0 | 3 => return "1100";
             when 1     => return "0001";
             when 2     => return "0000";
+            when 4     => return "1111";
         end case;
     end function fn_fall_mask;
 
@@ -655,4 +660,18 @@ architecture sim of tb_lidar_gpx_frame_lane_faults_200 is
 begin
     u_tb : entity work.tb_lidar_gpx_frame_lane_assembler
         generic map (G_CLK_MHZ => 200, G_SCENARIO => 3);
+end architecture;
+
+entity tb_lidar_gpx_frame_lane_dual4_150 is end entity;
+architecture sim of tb_lidar_gpx_frame_lane_dual4_150 is
+begin
+    u_tb : entity work.tb_lidar_gpx_frame_lane_assembler
+        generic map (G_CLK_MHZ => 150, G_SCENARIO => 4);
+end architecture;
+
+entity tb_lidar_gpx_frame_lane_dual4_200 is end entity;
+architecture sim of tb_lidar_gpx_frame_lane_dual4_200 is
+begin
+    u_tb : entity work.tb_lidar_gpx_frame_lane_assembler
+        generic map (G_CLK_MHZ => 200, G_SCENARIO => 4);
 end architecture;

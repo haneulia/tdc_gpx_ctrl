@@ -72,8 +72,12 @@ $SimulationProfiles = @(
     "tb_lidar_gpx_frame_lane_fall_off_200",
     "tb_lidar_gpx_frame_lane_faults_150",
     "tb_lidar_gpx_frame_lane_faults_200",
+    "tb_lidar_gpx_frame_lane_dual4_150",
+    "tb_lidar_gpx_frame_lane_dual4_200",
     "tb_lidar_gpx_runtime_slope_masks_150",
-    "tb_lidar_gpx_runtime_slope_masks_200"
+    "tb_lidar_gpx_runtime_slope_masks_200",
+    "tb_lidar_gpx_runtime_slope_dual4_150",
+    "tb_lidar_gpx_runtime_slope_dual4_200"
 )
 
 if (-not $SkipSimulation) {
@@ -207,6 +211,7 @@ $Scenario = [ordered]@{
     vdma_padding_dependency = $false
     gap_metadata = "leading/interior gap_before; trailing closure needs Face-close event"
     runtime_fall_off = "all active Chips on Rise, no Fall line"
+    maximum_topology = "four Chips, Rise and Fall on every Chip"
     storage = "two 32x147 distributed Cell payload RAMs plus presence bits"
     backpressure = "independent registered Rise/Fall output holding registers"
     simulation_profiles = $SimulationProfiles
