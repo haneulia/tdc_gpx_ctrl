@@ -37,9 +37,11 @@ multiple clocks and is checked against this reference model.
 - Stage 2 and Stage 3 / Checkpoint F are closed. F0 through F5 cover the
   Processing source contract, B0 through B3, production assembly, local drain
   and the observation-only AXIS monitor.
-- The next allowed step is Stage 4 / Checkpoint G Echo frontend. The v2 TDC
-  acquisition, frame/formatter and full parent datapath remain unmigrated; the
-  existence of their v1 cores does not mark those Stages complete.
+- Stage 4 / Checkpoint G Echo frontend is closed. Stage 5 is active: H0 froze
+  the B5 oracle, H1 wrapped the proven physical GPX bus and H2A verified the
+  atomic Processing/TDC Shot/result gateways. H2B acquisition coordination,
+  frame/formatter and the full parent datapath remain unmigrated; the existence
+  of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
 
@@ -54,9 +56,10 @@ Checkpoint F was completed in this fixed order:
 6. `laser_executor` and B3 comparison;
 7. direct registered-path integration and read-only AXIS monitoring.
 
-Each boundary passed before the next block was migrated. The final Checkpoint
-F gate ran Processing/TDC 150/200 and 200/150 MHz profiles. Stage 4 now starts
-with the Echo frontend and must preserve the direct low-latency STOP path.
+Each boundary passed before the next block was migrated. Checkpoint F ran the
+Processing/TDC 150/200 and 200/150 MHz profiles, Checkpoint G preserved the
+direct low-latency STOP path, and H2A now owns only the atomic event CDC
+boundary. The next implementation is the typed H2B acquisition coordinator.
 
 Run the current package regression with:
 
@@ -182,3 +185,16 @@ monitor without stalling control, and requires non-negative WNS, zero latches,
 the expected 16 ASYNC_REG cells, exactly two raw `fire_done` endpoints and zero
 Critical CDC findings. See
 `system_integration/v2_architecture/V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`.
+
+Run the GPX Shot/result gateway functional, CDC and implementation regression
+with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_event_gateway.ps1
+```
+
+The pass marker is `LIDAR_V2_GPX_EVENT_GATEWAY_PASS`. It verifies exact
+95-bit Shot and 149-bit raw-result payload order under backpressure for
+150/200, 200/150 and shared-clock 150 MHz profiles. See
+`system_integration/v2_architecture/V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md`.

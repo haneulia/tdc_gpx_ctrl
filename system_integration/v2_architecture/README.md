@@ -6,8 +6,9 @@
 > datapath is being migrated. Stage 2, Stage 3 / Checkpoint F and Stage 4 /
 > Checkpoint G are closed. F0 through F5 cover B0 through B3; G covers B4,
 > including 16/32-channel physical Echo, optional simulation and compact delay
-> expansion. Stage 5 is in progress: H0 froze the B5 oracle and H1 proved the
-> typed GPX physical-bus wrapper. H2 acquisition coordination and CDC are next.
+> expansion. Stage 5 is in progress: H0 froze the B5 oracle, H1 proved the
+> typed GPX physical-bus wrapper and H2A proved the atomic Shot/result CDC
+> gateways. H2B acquisition coordination is next.
 
 ## 1. Purpose
 
@@ -64,6 +65,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_G_ECHO_FRONTEND.md](V2_CHECKPOINT_G_ECHO_FRONTEND.md) | Echo module roles, CH0/STEP expansion, build-option behavior and sign-off evidence |
 | [V2_STAGE5_H0_GPX_ACQUISITION_ORACLE.md](V2_STAGE5_H0_GPX_ACQUISITION_ORACLE.md) | Frozen GPX bus, IFIFO ordering, status-pin and B5 raw-word oracle |
 | [V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md](V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md) | Typed physical-bus wrapper, OEN modes, bus-timing width guard and implementation evidence |
+| [V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md](V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md) | Atomic Shot/result payloads, SYNC/ASYNC CDC, backpressure and implementation evidence |
 
 ## 4. Target Top-Level Shape
 
