@@ -210,6 +210,11 @@ commit 시 `CFG_RUNTIME_BUS_TIMING`으로 거부된다. 짧지만 1..7 범위에
 `TDC_CAPTURE_ADJUST`는 17-bit two's-complement field이다. 음수도 상위
 reserved bit를 sign-extension하지 않고 `[16:0]`에만 기록한다.
 
+`TARGET_RANGE + TDC_CAPTURE_ADJUST`를 TDC clock 수로 올림 변환한 값은
+검증된 GPX acquisition watchdog 폭 때문에 65,535 clocks 이하여야 한다.
+그보다 큰 shadow 설정은 COMMIT에서 `CFG_RUNTIME_CAPTURE_WINDOW`로 거부되며,
+하위 16 bit로 잘라서 적용하지 않는다.
+
 현재 `TDC_SCAN_TIMEOUT=0`은 0 TDC clocks로 그대로 파생된다. 실제 GPX
 watchdog에서 0을 disable로 해석할지 금지할지는 Stage 5 acquisition 계약에서
 최종 확정해야 하며 CSR block이 임의로 의미를 바꾸지 않는다.

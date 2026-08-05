@@ -9,6 +9,10 @@ package lidar_build_pkg is
     constant C_MAX_RETURNS_PER_STOP : positive := 7;
     constant C_MAX_FACES           : positive := 5;
     constant C_POSITION_WIDTH      : positive := 15;
+    -- The proven GPX acquisition watchdog and per-shot capture budget are
+    -- 16 bit. Commit validation rejects larger derived TDC-clock windows so
+    -- an accepted runtime value can never be truncated at the v1 boundary.
+    constant C_GPX_CAPTURE_COUNTER_MAX_CLKS : positive := 65_535;
 
     subtype chip_mask_t is std_logic_vector(C_MAX_CHIPS - 1 downto 0);
     subtype face_mask_t is std_logic_vector(C_MAX_FACES - 1 downto 0);

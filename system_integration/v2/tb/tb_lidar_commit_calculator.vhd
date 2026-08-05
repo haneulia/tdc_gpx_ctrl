@@ -150,8 +150,18 @@ begin
             "V2-CALC-003 150/200 MHz conversion");
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
-        v_cfg.laser.target_range_window_5ns := unsigned'(x"FFFFFF00");
-        run_case("V2-CALC-004 wide time product", v_cfg, CFG_OK);
+        v_cfg.laser.fire_done_timeout_5ns_ticks := to_unsigned(1, 16);
+        v_cfg.laser.target_range_window_5ns := to_unsigned(
+            C_GPX_CAPTURE_COUNTER_MAX_CLKS, 32);
+        run_case("V2-CALC-004 capture counter maximum", v_cfg, CFG_OK);
+        check(to_integer(s_derived.capture_window_tdc_clks)
+              = C_GPX_CAPTURE_COUNTER_MAX_CLKS,
+            "V2-CALC-004 exact 16-bit GPX capture boundary");
+
+        v_cfg.laser.target_range_window_5ns := to_unsigned(
+            C_GPX_CAPTURE_COUNTER_MAX_CLKS + 1, 32);
+        run_case("V2-CALC-004A capture counter overflow", v_cfg,
+            CFG_RUNTIME_CAPTURE_WINDOW);
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
         v_cfg.tdc.falling_enable := '0';

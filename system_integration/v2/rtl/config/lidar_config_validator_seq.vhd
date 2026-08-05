@@ -51,6 +51,8 @@ architecture rtl of lidar_config_validator_seq is
         S_CHECK_FIRE_TIMEOUT,
         S_CALC_CAPTURE_WINDOW,
         S_CHECK_CAPTURE_WINDOW,
+        S_START_CAPTURE_CLOCK_PRODUCT,
+        S_WAIT_CAPTURE_CLOCK_PRODUCT,
         S_CHECK_ACTIVE_MASK,
         S_CHECK_SLOPE_BALANCE,
         S_CHECK_TDC_LIMITS,
@@ -346,7 +348,27 @@ begin
                         else
                             r_capture_window <= unsigned(
                                 r_capture_sum(31 downto 0));
-                            r_state <= S_CHECK_ACTIVE_MASK;
+                            r_state <= S_START_CAPTURE_CLOCK_PRODUCT;
+                        end if;
+
+                    when S_START_CAPTURE_CLOCK_PRODUCT =>
+                        r_mul_left <= unsigned(r_capture_sum(31 downto 0));
+                        r_mul_right <= to_unsigned(
+                            G_BUILD_CONFIG.tdc_clk_mhz, r_mul_right'length);
+                        r_mul_start <= '1';
+                        r_state <= S_WAIT_CAPTURE_CLOCK_PRODUCT;
+
+                    when S_WAIT_CAPTURE_CLOCK_PRODUCT =>
+                        if i_mul_done = '1' then
+                            if i_mul_product > to_unsigned(
+                               C_GPX_CAPTURE_COUNTER_MAX_CLKS
+                               * C_5NS_TICK_RATE_MHZ,
+                               i_mul_product'length) then
+                                r_error <= CFG_RUNTIME_CAPTURE_WINDOW;
+                                r_state <= S_FINISH_ERROR;
+                            else
+                                r_state <= S_CHECK_ACTIVE_MASK;
+                            end if;
                         end if;
 
                     when S_CHECK_ACTIVE_MASK =>

@@ -192,6 +192,7 @@ package body lidar_config_reference_pkg is
         variable zero_chip_mask    : chip_mask_t := (others => '0');
         variable zero_face_mask    : face_mask_t := (others => '0');
         variable capture_window    : signed(33 downto 0);
+        variable capture_clock_product : unsigned(63 downto 0);
         variable effective_rise    : chip_mask_t;
         variable effective_fall    : chip_mask_t;
     begin
@@ -284,6 +285,14 @@ package body lidar_config_reference_pkg is
         capture_window := fn_capture_window_ext(runtime_cfg);
         if capture_window <= 0
            or capture_window(33 downto 32) /= "00" then
+            return CFG_RUNTIME_CAPTURE_WINDOW;
+        end if;
+        capture_clock_product := resize(
+            unsigned(capture_window(31 downto 0)), 32)
+            * to_unsigned(build_cfg.tdc_clk_mhz, 32);
+        if capture_clock_product > to_unsigned(
+            C_GPX_CAPTURE_COUNTER_MAX_CLKS * C_5NS_TICK_RATE_MHZ,
+            capture_clock_product'length) then
             return CFG_RUNTIME_CAPTURE_WINDOW;
         end if;
 

@@ -66,6 +66,7 @@ The redesign has four goals:
 | [V2_STAGE5_H0_GPX_ACQUISITION_ORACLE.md](V2_STAGE5_H0_GPX_ACQUISITION_ORACLE.md) | Frozen GPX bus, IFIFO ordering, status-pin and B5 raw-word oracle |
 | [V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md](V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md) | Typed physical-bus wrapper, OEN modes, bus-timing width guard and implementation evidence |
 | [V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md](V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md) | Atomic Shot/result payloads, SYNC/ASYNC CDC, backpressure and implementation evidence |
+| [V2_STAGE5_H2B_ACQUISITION_PLAN.md](V2_STAGE5_H2B_ACQUISITION_PLAN.md) | H2B lane/coordinator decomposition, capture-width guard and Echo non-regression contract |
 
 ## 4. Target Top-Level Shape
 

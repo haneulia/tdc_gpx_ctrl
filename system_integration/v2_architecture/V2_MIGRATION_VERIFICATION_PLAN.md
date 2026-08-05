@@ -383,11 +383,15 @@ Required order and current status:
 3. **H2A complete:** add named Processing-to-TDC command and
    TDC-to-Processing result gateways, with direct registered SYNC and
    handshake/FIFO ASYNC paths;
-4. **H2B next:** preserve `tdc_gpx_chip_run` IFIFO1/IFIFO2 drain ordering
-   behind a typed acquisition coordinator;
-5. **H3 pending:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
+4. **H2B-0 complete:** reject a derived capture window above the proven
+   16-bit GPX watchdog range instead of silently truncating it;
+5. **H2B-1 next:** preserve `tdc_gpx_chip_run` IFIFO1/IFIFO2 drain ordering
+   behind a typed single-Chip acquisition lane;
+6. **H2B-2 pending:** broadcast one accepted Shot to every active lane and
+   merge typed results without losing Chip identity;
+7. **H3 pending:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
    status changes, timeout, cap and output backpressure;
-6. **H3 pending:** run routine 150/200 and 200/150 MHz integration profiles and
+8. **H3 pending:** run routine 150/200 and 200/150 MHz integration profiles and
    close Checkpoint H only when all B5 evidence is archived.
 
 H1 evidence is recorded in `V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md` and H2A
@@ -395,3 +399,5 @@ evidence is recorded in `V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md`. The central
 CSR keeps a 6-bit `BUS_TICKS` field for ABI stability, but commit validation now
 accepts only 1..7 because the proven physical PHY owns a 3-bit input. Values
 above 7 are rejected before PREPARE and cannot be silently truncated.
+The H2B acquisition decomposition and the 16-bit capture-window evidence are
+recorded in `V2_STAGE5_H2B_ACQUISITION_PLAN.md`.

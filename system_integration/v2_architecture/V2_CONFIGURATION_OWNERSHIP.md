@@ -156,6 +156,11 @@ board offset is a named calibration and must be visible in active readback.
 The deterministic re-arm margin is an implementation-owned, read-only number;
 it is not another runtime timing knob.
 
+The proven GPX acquisition watchdog is 16 bit. Therefore the derived capture
+window must satisfy `ceil(capture_window_5ns * TDC_CLK_MHZ / 200) <= 65535`.
+The commit validator rejects a larger value as `CFG_RUNTIME_CAPTURE_WINDOW`;
+the TDC lane never truncates an accepted 32-bit source value.
+
 Commit validation includes:
 
 - requested optical interval is not smaller than one optical state;

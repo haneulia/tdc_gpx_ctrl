@@ -294,6 +294,19 @@ begin
               and to_integer(derived_cfg.capture_window_tdc_clks) = 134,
             "V2-DERIVE-016 adjusted range and ceil conversion at 100 MHz");
 
+        build_cfg := C_DEFAULT_BUILD_CONFIG;
+        runtime_cfg := C_DEFAULT_RUNTIME_CONFIG;
+        runtime_cfg.laser.fire_done_timeout_5ns_ticks := to_unsigned(1, 16);
+        runtime_cfg.laser.target_range_window_5ns := to_unsigned(
+            C_GPX_CAPTURE_COUNTER_MAX_CLKS, 32);
+        check_error(fn_validate_runtime_config(build_cfg, runtime_cfg), CFG_OK,
+            "V2-CFG-021A exact GPX capture-counter maximum");
+        runtime_cfg.laser.target_range_window_5ns := to_unsigned(
+            C_GPX_CAPTURE_COUNTER_MAX_CLKS + 1, 32);
+        check_error(fn_validate_runtime_config(build_cfg, runtime_cfg),
+            CFG_RUNTIME_CAPTURE_WINDOW,
+            "V2-CFG-021B reject GPX capture-counter overflow");
+
         -- Direction changes traversal, never the stored geometry or columns.
         build_cfg := C_DEFAULT_BUILD_CONFIG;
         runtime_cfg := C_DEFAULT_RUNTIME_CONFIG;
