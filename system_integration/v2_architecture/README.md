@@ -13,8 +13,9 @@
 > physical all-chip activation ACK. H3 proved the complete 32-physical-STOP /
 > 16-logical-APD, 7-Return B5 acquisition boundary under timeout, cap and
 > backpressure in both routine clock profiles. Stage 6 is in progress: I0 froze
-> the Hit/Cell/Frame oracle and I1 completed the B6 typed Hit decoder. B7 Cell
-> collection is next.
+> the Hit/Cell/Frame oracle, I1 completed the B6 typed Hit decoder and I2
+> completed width-independent B7 Cell collection. B8 Frame lane assembly is
+> next.
 
 ## 1. Purpose
 
@@ -79,6 +80,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md](V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md) | Processing/TDC production assembly, 32 physical STOP / 16 logical APD x 7-Return B5 identity, cap/purge, CDC and implementation evidence |
 | [V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md](V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md) | Frozen B6..B8 field, Return, Cell and Frame comparison contract |
 | [V2_CHECKPOINT_I1_GPX_HIT_DECODER.md](V2_CHECKPOINT_I1_GPX_HIT_DECODER.md) | Typed B6 raw-to-Hit decoder, dual-edge Return correction, diagnostics and route evidence |
+| [V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md](V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md) | Width-independent B7 Cell storage, ordering, runtime Hit limit, LUTRAM rationale and route evidence |
 
 ## 4. Target Top-Level Shape
 

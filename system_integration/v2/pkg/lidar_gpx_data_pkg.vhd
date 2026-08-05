@@ -65,6 +65,44 @@ package lidar_gpx_data_pkg is
         return_overflow  : std_logic;
     end record gpx_hit_decoder_faults_t;
 
+    type gpx_hit_value_array_t is array (
+        0 to C_MAX_RETURNS_PER_STOP - 1) of gpx_hit_value_t;
+
+    type gpx_cell_event_kind_t is (
+        GPX_CELL_DATA,
+        GPX_CELL_IFIFO1_DONE,
+        GPX_CELL_DRAIN_DONE,
+        GPX_CELL_TIMEOUT
+    );
+
+    -- B7 width-independent Cell. AXIS width and byte padding do not appear in
+    -- this record; the formatter later converts valid Hit slots into the
+    -- canonical 32-bit-word ABI.
+    type gpx_cell_event_t is record
+        valid         : std_logic;
+        kind          : gpx_cell_event_kind_t;
+        chip_index    : gpx_chip_index_t;
+        ififo_id      : std_logic;
+        stop_index    : gpx_stop_index_t;
+        slope         : gpx_slope_t;
+        hit_count     : unsigned(2 downto 0);
+        max_hits      : unsigned(2 downto 0);
+        hits          : gpx_hit_value_array_t;
+        hit_dropped   : std_logic;
+        error_fill    : std_logic;
+        faulted       : std_logic;
+        timeout_cause : std_logic_vector(2 downto 0);
+        shot_context  : shot_start_event_t;
+        chip_shot_seq : unsigned(15 downto 0);
+    end record gpx_cell_event_t;
+
+    type gpx_cell_collector_faults_t is record
+        context_mismatch     : std_logic;
+        return_sequence_error : std_logic;
+        start_number_nonzero : std_logic;
+        hit_capacity_drop    : std_logic;
+    end record gpx_cell_collector_faults_t;
+
     constant C_GPX_HIT_EVENT_IDLE : gpx_hit_event_t := (
         valid         => '0',
         kind          => GPX_HIT_DATA,
@@ -88,6 +126,32 @@ package lidar_gpx_data_pkg is
         slope_role_error => '0',
         return_overflow  => '0'
     );
+
+    constant C_GPX_CELL_EVENT_IDLE : gpx_cell_event_t := (
+        valid         => '0',
+        kind          => GPX_CELL_DATA,
+        chip_index    => (others => '0'),
+        ififo_id      => '0',
+        stop_index    => (others => '0'),
+        slope         => GPX_SLOPE_FALL,
+        hit_count     => (others => '0'),
+        max_hits      => (others => '0'),
+        hits          => (others => (others => '0')),
+        hit_dropped   => '0',
+        error_fill    => '0',
+        faulted       => '0',
+        timeout_cause => (others => '0'),
+        shot_context  => C_SHOT_START_EVENT_IDLE,
+        chip_shot_seq => (others => '0')
+    );
+
+    constant C_GPX_CELL_COLLECTOR_FAULTS_CLEAR :
+        gpx_cell_collector_faults_t := (
+            context_mismatch      => '0',
+            return_sequence_error => '0',
+            start_number_nonzero  => '0',
+            hit_capacity_drop     => '0'
+        );
 
     function fn_gpx_slope_from_bit(value : std_logic) return gpx_slope_t;
     function fn_gpx_slope_to_bit(value : gpx_slope_t) return std_logic;

@@ -14,7 +14,7 @@ unchanged and is used as the observable-behavior reference during migration.
 | `pkg/lidar_csr_map_pkg.vhd` | Unified CSR address/field and pack/unpack ABI | Yes |
 | `pkg/lidar_gpx_pkg.vhd` | Typed GPX bus, image, Shot and acquisition-result contracts | Yes |
 | `pkg/lidar_gpx_image_pkg.vhd` | Adapter to the single board-proven v1 GPX default image | Yes |
-| `pkg/lidar_gpx_data_pkg.vhd` | I-Mode fields, typed B6 Hit event and decoder faults | Yes |
+| `pkg/lidar_gpx_data_pkg.vhd` | I-Mode fields plus typed B6 Hit and B7 Cell contracts | Yes |
 | `pkg/lidar_config_reference_pkg.vhd` | Exact arithmetic oracle for tests and equivalence checks | No |
 | `rtl/config/` | Sequential validator, derivation controller and shared arithmetic | Yes |
 | `rtl/csr/` | AXI4-Lite shadow/status/IRQ bank and atomic-config boundary | Yes |
@@ -45,8 +45,9 @@ multiple clocks and is checked against this reference model.
   atomic Processing/TDC Shot/result gateways, H2B-1/2A completed the typed
   lane/coordinator, H2B-2B completed indexed image activation and H3 closed
   the 32-physical-STOP / 16-logical-APD x 7-Return B5 acquisition boundary.
-  Stage 6 I0 froze the Hit/Cell/Frame oracle and I1 completed the typed B6 Hit
-  decoder. Cell/Frame, frame/formatter and the full parent datapath remain unmigrated;
+  Stage 6 I0 froze the Hit/Cell/Frame oracle, I1 completed the typed B6 Hit
+  decoder and I2 completed the width-independent B7 Cell collector. Frame,
+  formatter and the full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
@@ -65,9 +66,9 @@ Checkpoint F was completed in this fixed order:
 Each boundary passed before the next block was migrated. Checkpoint F ran the
 Processing/TDC 150/200 and 200/150 MHz profiles, Checkpoint G preserved the
 direct low-latency STOP path, and H2A through H3 now own the atomic event CDC
-and typed acquisition boundaries. Stage 6 I1 now owns the B6 raw-to-Hit
-boundary; the next implementation is the B7 Cell collector against the frozen
-v1 oracle.
+and typed acquisition boundaries. Stage 6 I1 owns the B6 raw-to-Hit boundary
+and I2 owns B7 Hit-to-Cell collection; the next implementation is B8 Frame lane
+assembly against the frozen v1 oracle.
 
 Run the current package regression with:
 
@@ -249,3 +250,16 @@ I-Mode field mapping, 4-Chip dedicated and one-Chip dual-edge Return identity,
 8th-Return no-wrap handling, identity diagnostics and output backpressure at
 Processing 150 and 200 MHz. See
 `system_integration/v2_architecture/V2_CHECKPOINT_I1_GPX_HIT_DECODER.md`.
+
+Run the width-independent GPX Cell-collector regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_cell_collector.ps1
+```
+
+The pass marker is `LIDAR_V2_GPX_CELL_COLLECTOR_PASS`. It verifies runtime
+visible-Hit clipping without shortening physical drain, Hit[16] preservation,
+dedicated and dual-edge Cell ordering, timeout/abort recovery and output
+backpressure at Processing 150 and 200 MHz. See
+`system_integration/v2_architecture/V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md`.
