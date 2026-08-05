@@ -67,6 +67,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md](V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md) | Typed physical-bus wrapper, OEN modes, bus-timing width guard and implementation evidence |
 | [V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md](V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md) | Atomic Shot/result payloads, SYNC/ASYNC CDC, backpressure and implementation evidence |
 | [V2_STAGE5_H2B_ACQUISITION_PLAN.md](V2_STAGE5_H2B_ACQUISITION_PLAN.md) | H2B lane/coordinator decomposition, capture-width guard and Echo non-regression contract |
+| [V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md](V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md) | Single-Chip lifecycle, image normalization, typed event ordering and 150/200 MHz evidence |
 
 ## 4. Target Top-Level Shape
 

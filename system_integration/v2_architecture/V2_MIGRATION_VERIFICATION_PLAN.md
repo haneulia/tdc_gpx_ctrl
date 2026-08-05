@@ -279,7 +279,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
-| 5 | H | In progress | H0 oracle + H1 bus wrapper + H2A event gateways PASS; H2B/H3 pending | Proven GPX bus/acquisition wrapper |
+| 5 | H | In progress | H0, H1, H2A, H2B-0 and H2B-1 PASS; H2B-2/H3 pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
@@ -288,9 +288,11 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
 closed at Checkpoint F and Stage 4 is closed at Checkpoint G. F0a/F0b through
 F5 cover B0..B3 and G covers the B4 physical/synthetic Echo boundary. Stage 5
-is now active: H0 froze the oracle, H1 proved the typed physical-bus wrapper
-and H2A proved the atomic command/result CDC boundary. The only valid next step
-is **H2B acquisition coordination**, followed by H3 B5 end-to-end closure.
+is now active: H0 froze the oracle, H1 proved the typed physical-bus wrapper,
+H2A proved the atomic command/result CDC boundary, H2B-0 closed the capture-
+counter width and H2B-1 proved one typed acquisition lane. The only valid next
+step is **H2B-2 multi-Chip acquisition coordination**, followed by H3 B5
+end-to-end closure.
 Stage 6 or later work must not be treated as
 migrated merely because its v1 implementation exists.
 
@@ -385,9 +387,9 @@ Required order and current status:
    handshake/FIFO ASYNC paths;
 4. **H2B-0 complete:** reject a derived capture window above the proven
    16-bit GPX watchdog range instead of silently truncating it;
-5. **H2B-1 next:** preserve `tdc_gpx_chip_run` IFIFO1/IFIFO2 drain ordering
+5. **H2B-1 complete:** preserve `tdc_gpx_chip_run` IFIFO1/IFIFO2 drain ordering
    behind a typed single-Chip acquisition lane;
-6. **H2B-2 pending:** broadcast one accepted Shot to every active lane and
+6. **H2B-2 next:** broadcast one accepted Shot to every active lane and
    merge typed results without losing Chip identity;
 7. **H3 pending:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
    status changes, timeout, cap and output backpressure;
@@ -401,3 +403,5 @@ accepts only 1..7 because the proven physical PHY owns a 3-bit input. Values
 above 7 are rejected before PREPARE and cannot be silently truncated.
 The H2B acquisition decomposition and the 16-bit capture-window evidence are
 recorded in `V2_STAGE5_H2B_ACQUISITION_PLAN.md`.
+The single-Chip lane implementation and evidence are recorded in
+`V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md`.
