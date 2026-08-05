@@ -279,7 +279,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
-| 5 | H | In progress | H0, H1, H2A, H2B-0 and H2B-1 PASS; H2B-2/H3 pending | Proven GPX bus/acquisition wrapper |
+| 5 | H | In progress | H0, H1, H2A, H2B-0, H2B-1 and H2B-2A PASS; H2B-2B/H3 pending | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
@@ -290,9 +290,9 @@ closed at Checkpoint F and Stage 4 is closed at Checkpoint G. F0a/F0b through
 F5 cover B0..B3 and G covers the B4 physical/synthetic Echo boundary. Stage 5
 is now active: H0 froze the oracle, H1 proved the typed physical-bus wrapper,
 H2A proved the atomic command/result CDC boundary, H2B-0 closed the capture-
-counter width and H2B-1 proved one typed acquisition lane. The only valid next
-step is **H2B-2 multi-Chip acquisition coordination**, followed by H3 B5
-end-to-end closure.
+counter width, H2B-1 proved one typed acquisition lane and H2B-2A proved the
+multi-Chip coordinator. The only valid next step is **H2B-2B GPX image portal
+and physical programming ACK**, followed by H3 B5 end-to-end closure.
 Stage 6 or later work must not be treated as
 migrated merely because its v1 implementation exists.
 
@@ -389,11 +389,14 @@ Required order and current status:
    16-bit GPX watchdog range instead of silently truncating it;
 5. **H2B-1 complete:** preserve `tdc_gpx_chip_run` IFIFO1/IFIFO2 drain ordering
    behind a typed single-Chip acquisition lane;
-6. **H2B-2 next:** broadcast one accepted Shot to every active lane and
-   merge typed results without losing Chip identity;
-7. **H3 pending:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
+6. **H2B-2A complete:** broadcast one accepted Shot to every active lane,
+   merge typed results through registered lane ingress slots and complete only
+   after all active terminal events cross the output handshake;
+7. **H2B-2B next:** provide the indexed GPX image portal and defer TDC-domain
+   ACTIVATE ACK until every physically present Chip completes programming;
+8. **H3 pending:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
    status changes, timeout, cap and output backpressure;
-8. **H3 pending:** run routine 150/200 and 200/150 MHz integration profiles and
+9. **H3 pending:** run routine 150/200 and 200/150 MHz integration profiles and
    close Checkpoint H only when all B5 evidence is archived.
 
 H1 evidence is recorded in `V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md` and H2A
@@ -405,3 +408,5 @@ The H2B acquisition decomposition and the 16-bit capture-window evidence are
 recorded in `V2_STAGE5_H2B_ACQUISITION_PLAN.md`.
 The single-Chip lane implementation and evidence are recorded in
 `V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md`.
+The multi-Chip coordinator implementation and evidence are recorded in
+`V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md`.

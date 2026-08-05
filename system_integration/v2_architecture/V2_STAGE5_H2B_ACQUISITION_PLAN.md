@@ -48,13 +48,26 @@ v2의 capture-window 계산 결과는 32 bit지만, 검증된 GPX drain watchdog
    변환한다.
 5. output backpressure 동안 event의 모든 field를 안정적으로 유지한다.
 
-### H2B-2: 다중 Chip coordinator
+### H2B-2A: 다중 Chip coordinator
 
 1. runtime active Chip mask에 포함된 lane에만 Shot을 전달한다.
 2. 한 Shot은 활성 lane 전체가 수락할 수 있을 때만 원자적으로 승인한다.
 3. Chip identity를 잃지 않고 결과를 deterministic order로 merge한다.
 4. 모든 활성 lane의 terminal event가 확인되어야 다음 Shot을 받을 수 있다.
 5. 비활성 Chip의 pin 출력과 event는 정지 상태를 유지한다.
+
+H2B-2A는 완료되었다. 상세 결과는
+`V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md`에 기록한다.
+
+### H2B-2B: GPX image portal과 activation 완료
+
+1. 16-entry GPX register image는 16개 CSR word를 직접 점유하지 않고 indexed
+   command/data 두 word로 접근한다.
+2. 준비된 image snapshot은 한 configuration transaction의 일부로 고정한다.
+3. 같은 image를 build-time present Chip 전체에 적용한다.
+4. TDC-domain ACTIVATE ACK는 모든 물리 Chip의 programming 완료 후에만
+   configuration manager로 반환한다.
+5. programming timeout과 lane fault를 configuration 실패 진단으로 전달한다.
 
 ### H3: B5 비교와 종료 조건
 
@@ -103,6 +116,9 @@ channel_delay[n] = CHANNEL_0_DELAY + n * CHANNEL_STEP, n = 1..31
 
 현재 unified CSR의 CTL20 한 word가 두 값을 소유한다. H2B/H3에서 채널별
 delay register를 추가하지 않는다.
+
+H2B-2B의 GPX image portal은 CTL20을 변경하거나 Echo delay word를 재사용하지
+않는다.
 
 ## 5. 구현 금지 사항
 

@@ -2,6 +2,8 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+use work.lidar_build_pkg.all;
+
 package lidar_gpx_pkg is
 
     constant C_GPX_BUS_DATA_WIDTH : positive := 28;
@@ -78,6 +80,17 @@ package lidar_gpx_pkg is
         command_collision_sticky  : std_logic;
         bus_fatal_sticky          : std_logic;
     end record gpx_lane_faults_t;
+
+    -- Fixed maximum-size arrays keep the internal v2 boundary strongly typed.
+    -- The public IP wrapper may flatten only G_BUILD_CONFIG.num_chips lanes.
+    type gpx_bus_data_array_t is array (0 to C_MAX_CHIPS - 1) of
+        gpx_bus_data_t;
+    type gpx_bus_address_array_t is array (0 to C_MAX_CHIPS - 1) of
+        gpx_bus_address_t;
+    type gpx_lane_status_array_t is array (0 to C_MAX_CHIPS - 1) of
+        gpx_lane_status_t;
+    type gpx_lane_faults_array_t is array (0 to C_MAX_CHIPS - 1) of
+        gpx_lane_faults_t;
 
     constant C_GPX_BUS_TIMING_DEFAULT : gpx_bus_timing_t := (
         clock_div => to_unsigned(2, 6),

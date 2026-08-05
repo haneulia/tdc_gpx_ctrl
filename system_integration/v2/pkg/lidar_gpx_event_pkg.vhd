@@ -42,6 +42,9 @@ package lidar_gpx_event_pkg is
         chip_shot_seq : unsigned(15 downto 0);
     end record gpx_raw_event_t;
 
+    type gpx_raw_event_array_t is array (0 to C_MAX_CHIPS - 1) of
+        gpx_raw_event_t;
+
     constant C_GPX_RAW_EVENT_PAYLOAD_WIDTH : positive :=
         2 + 2 + 1 + C_GPX_BUS_DATA_WIDTH + 1 + 3 +
         C_GPX_SHOT_CONTEXT_WIDTH + 16;
