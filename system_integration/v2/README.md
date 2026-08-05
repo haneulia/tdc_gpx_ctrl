@@ -39,11 +39,12 @@ multiple clocks and is checked against this reference model.
 - Stage 2 and Stage 3 / Checkpoint F are closed. F0 through F5 cover the
   Processing source contract, B0 through B3, production assembly, local drain
   and the observation-only AXIS monitor.
-- Stage 4 / Checkpoint G Echo frontend is closed. Stage 5 is active: H0 froze
+- Stage 4 / Checkpoint G Echo frontend and Stage 5 / Checkpoint H are closed. H0 froze
   the B5 oracle, H1 wrapped the proven physical GPX bus, H2A verified the
   atomic Processing/TDC Shot/result gateways, H2B-1/2A completed the typed
-  lane/coordinator and H2B-2B completed indexed image activation. H3 B5 oracle
-  comparison, frame/formatter and the full parent datapath remain unmigrated;
+  lane/coordinator, H2B-2B completed indexed image activation and H3 closed
+  the 16-channel x 7-Return B5 acquisition boundary. Hit/Cell/Frame,
+  frame/formatter and the full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
@@ -61,9 +62,9 @@ Checkpoint F was completed in this fixed order:
 
 Each boundary passed before the next block was migrated. Checkpoint F ran the
 Processing/TDC 150/200 and 200/150 MHz profiles, Checkpoint G preserved the
-direct low-latency STOP path, and H2A/H2B now own the atomic event CDC and
-typed acquisition boundaries. The next implementation is H3 B5 end-to-end
-comparison against the frozen v1 oracle.
+direct low-latency STOP path, and H2A through H3 now own the atomic event CDC
+and typed acquisition boundaries. The next implementation is Stage 6 Hit,
+Cell and Frame migration against the frozen v1 oracle.
 
 Run the current package regression with:
 
@@ -215,3 +216,18 @@ atomic Shot broadcast, deterministic registered merge, terminal completion and
 the GPX image activation link at 150/200 and 200/150 MHz. See
 `system_integration/v2_architecture/V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md` and
 `system_integration/v2_architecture/V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md`.
+
+Run the production GPX acquisition-subsystem regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_acquisition_subsystem.ps1
+```
+
+The pass marker is `LIDAR_V2_GPX_ACQUISITION_SUBSYSTEM_PASS`. It verifies
+4 Chip x 4 STOP x 7 Return, exact raw-28/Shot identity, timeout recovery,
+build-derived physical cap/purge and one-full-Shot backpressure for 150/200 and
+200/150 MHz. The implementation gate requires non-negative WNS, zero latches,
+zero Critical CDC and zero blocking DRC. Echo delay remains CTL20
+`CH0 + channel * STEP`; no 32-word delay table is added. See
+`system_integration/v2_architecture/V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`.

@@ -89,6 +89,8 @@ architecture rtl of lidar_gpx_acquisition_lane is
         fn_time_ps_to_clks_ceil(
             c_TDC_EF_DATA_VALID_MAX_PS,
             G_BUILD_CONFIG.tdc_clk_mhz) + c_TDC_STATUS_SYNC_CLKS;
+    constant C_DRAIN_CAP_QUADS : positive :=
+        fn_gpx_drain_cap_quads(G_BUILD_CONFIG);
 
     type lane_state_t is (
         LANE_BOOT,
@@ -145,6 +147,7 @@ architecture rtl of lidar_gpx_acquisition_lane is
     signal err_raw_overflow_c : std_logic;
     signal err_raw_drop_c : std_logic;
     signal err_drain_cap_c : std_logic;
+    signal physical_drain_cap_sticky_r : std_logic := '0';
     signal err_reg_overflow_c : std_logic;
     signal run_timeout_c : std_logic;
     signal run_timeout_cause_c : std_logic_vector(2 downto 0);
@@ -167,7 +170,12 @@ architecture rtl of lidar_gpx_acquisition_lane is
         result.stops_per_chip := to_unsigned(
             G_BUILD_CONFIG.stops_per_chip,
             result.stops_per_chip'length);
-        result.n_drain_cap := (others => '0');
+        -- One cap unit is four raw words per IFIFO. Use the immutable build
+        -- capacity so a malformed GPX stream cannot exceed the implemented
+        -- STOP/Return storage, while runtime max_hits remains a downstream
+        -- cell/formatter policy and never changes physical drain safety.
+        result.n_drain_cap := to_unsigned(
+            C_DRAIN_CAP_QUADS, result.n_drain_cap'length);
         result.cfg_reg7 := image(7);
 
         if active_valid = '1' then
@@ -249,6 +257,9 @@ begin
         severity failure;
     assert G_CHIP_INDEX < G_BUILD_CONFIG.num_chips
         report "V2-GPX-LANE-002 Chip index is outside the build topology"
+        severity failure;
+    assert C_DRAIN_CAP_QUADS <= 15
+        report "V2-GPX-LANE-005 build-derived physical drain cap exceeds GPX field"
         severity failure;
     assert i_active_valid = '0' or
            i_active_config.derived.capture_window_tdc_clks(31 downto 16) = 0
@@ -460,16 +471,38 @@ begin
 
                 -- synthesis translate_off
                 assert not (i_config_apply = '1' and o_config_ready = '0')
-                    report "V2-GPX-LANE-005 config apply while lane is not ready"
+                    report "V2-GPX-LANE-006 config apply while lane is not ready"
                     severity warning;
                 assert not (raw_valid_c = '1' and
                             shot_context_r.valid = '0')
-                    report "V2-GPX-LANE-006 raw event has no Shot context"
+                    report "V2-GPX-LANE-007 raw event has no Shot context"
                     severity failure;
                 -- synthesis translate_on
             end if;
         end if;
     end process p_control;
+
+    -- The legacy controller's o_err_drain_cap reports only the response-bus
+    -- quarantine cap. Preserve the physical IFIFO output-cap event as a
+    -- sticky as well; otherwise the final faulted terminal beat is the only
+    -- evidence after downstream consumption. Event assertion wins a
+    -- simultaneous software clear.
+    p_physical_drain_cap_status : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                physical_drain_cap_sticky_r <= '0';
+            else
+                if i_clear_status = '1' then
+                    physical_drain_cap_sticky_r <= '0';
+                end if;
+                if raw_valid_c = '1' and raw_user_c(7) = '1' and
+                   raw_user_c(0) = '1' and raw_user_c(5) = '1' then
+                    physical_drain_cap_sticky_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_physical_drain_cap_status;
 
     u_controller : entity work.tdc_gpx_chip_ctrl
         generic map (
@@ -601,7 +634,10 @@ begin
         sequence_pulse            => err_sequence_c,
         response_mismatch_sticky  => err_rsp_mismatch_c,
         raw_drop_sticky           => err_raw_drop_c,
-        drain_cap_sticky          => err_drain_cap_c,
+        -- Summary of either immutable physical output-cap truncation or the
+        -- legacy response-bus quarantine cap.
+        drain_cap_sticky          => err_drain_cap_c or
+                                     physical_drain_cap_sticky_r,
         register_overflow_sticky  => err_reg_overflow_c,
         run_timeout_pulse         => run_timeout_c,
         run_timeout_cause         => run_timeout_cause_c,

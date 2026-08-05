@@ -124,3 +124,17 @@ H2B-1은 Echo RTL과 CSR을 변경하지 않았다.
 6. TDC-domain config gateway의 ACTIVATE/RELEASE가 외부 GPX programming 완료를
    기다리도록 acknowledgement 책임을 연결한다.
 7. timeout, cap, status 변화 및 long backpressure를 H3 v1 oracle과 비교한다.
+
+## 8. H3 후속 종료 기록
+
+위 항목은 H2B-2A, H2B-2B와 H3에서 모두 완료되었다. H3에서 물리 drain cap은
+runtime Hit 정책과 분리해 다음 합성 topology 식으로 고정했다.
+
+```text
+cap_words_per_ififo = stops_per_chip * max_returns_per_stop
+cap_quads = ceil(cap_words_per_ififo / 4)
+```
+
+물리 cap 도달은 faulted terminal event뿐 아니라 `drain_cap_sticky`에도
+기록한다. 상세 결과와 증적은
+`V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`를 따른다.

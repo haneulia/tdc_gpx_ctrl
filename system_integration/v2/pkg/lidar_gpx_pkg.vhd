@@ -10,6 +10,18 @@ package lidar_gpx_pkg is
     constant C_GPX_BUS_ADDR_WIDTH : positive := 4;
     constant C_GPX_REGISTER_COUNT : positive := 16;
 
+    -- Compile-time acquisition capacities. The physical drain cap is derived
+    -- from immutable topology, never from the runtime formatter Hit limit.
+    function fn_gpx_drain_cap_quads(
+        build_cfg : lidar_build_config_t
+    ) return positive;
+    function fn_gpx_events_per_shot_capacity(
+        build_cfg : lidar_build_config_t
+    ) return positive;
+    function fn_gpx_result_fifo_depth(
+        build_cfg : lidar_build_config_t
+    ) return positive;
+
     subtype gpx_bus_data_t is
         std_logic_vector(C_GPX_BUS_DATA_WIDTH - 1 downto 0);
     subtype gpx_bus_address_t is
@@ -150,3 +162,57 @@ package lidar_gpx_pkg is
     );
 
 end package lidar_gpx_pkg;
+
+package body lidar_gpx_pkg is
+
+    function fn_div_ceil(
+        value   : positive;
+        divisor : positive
+    ) return positive is
+    begin
+        return (value + divisor - 1) / divisor;
+    end function fn_div_ceil;
+
+    function fn_power_of_two_ceil(value : positive) return positive is
+        variable result : positive := 1;
+    begin
+        while result < value loop
+            result := result * 2;
+        end loop;
+        return result;
+    end function fn_power_of_two_ceil;
+
+    function fn_gpx_drain_cap_quads(
+        build_cfg : lidar_build_config_t
+    ) return positive is
+    begin
+        return fn_div_ceil(
+            build_cfg.stops_per_chip * build_cfg.max_returns_per_stop,
+            4);
+    end function fn_gpx_drain_cap_quads;
+
+    function fn_gpx_events_per_shot_capacity(
+        build_cfg : lidar_build_config_t
+    ) return positive is
+        variable events_per_chip : positive;
+    begin
+        events_per_chip :=
+            2 * build_cfg.stops_per_chip *
+                build_cfg.max_returns_per_stop + 2;
+        return build_cfg.num_chips * events_per_chip;
+    end function fn_gpx_events_per_shot_capacity;
+
+    function fn_gpx_result_fifo_depth(
+        build_cfg : lidar_build_config_t
+    ) return positive is
+        variable required_depth : positive;
+    begin
+        required_depth := fn_power_of_two_ceil(
+            fn_gpx_events_per_shot_capacity(build_cfg));
+        if required_depth < 16 then
+            return 16;
+        end if;
+        return required_depth;
+    end function fn_gpx_result_fifo_depth;
+
+end package body lidar_gpx_pkg;

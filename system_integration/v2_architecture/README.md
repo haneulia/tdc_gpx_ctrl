@@ -6,11 +6,13 @@
 > datapath is being migrated. Stage 2, Stage 3 / Checkpoint F and Stage 4 /
 > Checkpoint G are closed. F0 through F5 cover B0 through B3; G covers B4,
 > including 16/32-channel physical Echo, optional simulation and compact delay
-> expansion. Stage 5 is in progress: H0 froze the B5 oracle, H1 proved the
+> expansion. Stage 5 / Checkpoint H is closed: H0 froze the B5 oracle, H1 proved the
 > typed GPX physical-bus wrapper, H2A proved the atomic Shot/result CDC
 > gateways, and H2B-2A proved multi-Chip Shot coordination and registered
 > result merge. H2B-2B proved the two-word indexed GPX image portal and
-> physical all-chip activation ACK. H3 v1-oracle integration comparison is next.
+> physical all-chip activation ACK. H3 proved the complete 16-channel,
+> 7-Return B5 acquisition boundary under timeout, cap and backpressure in both
+> routine clock profiles. Stage 6 Hit/Cell/Frame migration is next.
 
 ## 1. Purpose
 
@@ -72,6 +74,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md](V2_CHECKPOINT_H2B1_GPX_ACQUISITION_LANE.md) | Single-Chip lifecycle, image normalization, typed event ordering and 150/200 MHz evidence |
 | [V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md](V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md) | Multi-Chip Shot broadcast, registered fair merge, terminal completion and 150/200 MHz evidence |
 | [V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md](V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md) | Indexed GPX image portal, atomic snapshot, physical programming ACK and Echo non-regression evidence |
+| [V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md](V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md) | Processing/TDC production assembly, 16-channel x 7-Return B5 identity, cap/purge, CDC and implementation evidence |
 
 ## 4. Target Top-Level Shape
 

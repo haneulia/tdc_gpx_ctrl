@@ -279,7 +279,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
-| 5 | H | In progress | H0, H1, H2A, H2B-0, H2B-1, H2B-2A and H2B-2B PASS; H3 pending | Proven GPX bus/acquisition wrapper |
+| 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_stage5_h3_diag_sim_r7_v2_gpx_acquisition_subsystem`, `260805_stage5_h3_bram_impl_r4_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
@@ -288,12 +288,14 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
 closed at Checkpoint F and Stage 4 is closed at Checkpoint G. F0a/F0b through
 F5 cover B0..B3 and G covers the B4 physical/synthetic Echo boundary. Stage 5
-is now active: H0 froze the oracle, H1 proved the typed physical-bus wrapper,
+is closed at Checkpoint H: H0 froze the oracle, H1 proved the typed physical-bus wrapper,
 H2A proved the atomic command/result CDC boundary, H2B-0 closed the capture-
 counter width, H2B-1 proved one typed acquisition lane, H2B-2A proved the
 multi-Chip coordinator and H2B-2B closed the indexed GPX image portal plus
-physical all-Chip programming ACK. The only valid next step is **H3 B5
-end-to-end oracle closure**.
+physical all-Chip programming ACK. H3 then closed the B5 end-to-end boundary
+for normal full-capacity drain, timeout, cap/purge and backpressure at
+150/200 and 200/150 MHz. The only valid next step is **Stage 6 / Checkpoint I
+Hit, Cell and Frame migration**.
 Stage 6 or later work must not be treated as
 migrated merely because its v1 implementation exists.
 
@@ -370,14 +372,14 @@ without an Echo-specific command FSM. Checkpoint G consumes F5
 `shot_start_event_t`, but does not claim that the event has crossed into the
 GPX acquisition domain.
 
-## 8. Immediate Next RTL Work Package: Stage 5 / Checkpoint H
+## 8. Completed RTL Work Package: Stage 5 / Checkpoint H
 
 Checkpoint H wraps the proven v1 GPX bus engine behind typed command/result
 records. The first pass preserves its physical bus FSM and verifies B5 before
 any algorithmic cleanup. Echo diagnostics remain observation-only and must not
 be reinterpreted as IFIFO occupancy or GPX completion.
 
-Required order and current status:
+Required order and final status:
 
 1. **H0 complete:** freeze v1 bus/acquisition sources, pin semantics, IFIFO
    order and the 28-bit B5 word contract;
@@ -396,10 +398,10 @@ Required order and current status:
 7. **H2B-2B complete:** provide the CTL21/22 indexed GPX image portal and
    defer TDC-domain ACTIVATE ACK until every physically present Chip completes
    programming. CTL20 remains the compact Echo `CH0 + channel * STEP` profile;
-8. **H3 next:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
+8. **H3 complete:** compare B5 `chip + IFIFO + raw_28 + shot` identity under
    status changes, timeout, cap and output backpressure;
-9. **H3 pending:** run routine 150/200 and 200/150 MHz integration profiles and
-   close Checkpoint H only when all B5 evidence is archived.
+9. **H3 complete:** routine 150/200 and 200/150 MHz integration profiles passed
+   with non-negative WNS, zero latches, zero Critical CDC and zero blocking DRC.
 
 H1 evidence is recorded in `V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md` and H2A
 evidence is recorded in `V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md`. The central
@@ -414,3 +416,6 @@ The multi-Chip coordinator implementation and evidence are recorded in
 `V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md`.
 The indexed image transaction, deferred physical activation and evidence are
 recorded in `V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md`.
+The production acquisition assembly, topology-sized result FIFO, cap/purge
+behavior and final B5 evidence are recorded in
+`V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`.

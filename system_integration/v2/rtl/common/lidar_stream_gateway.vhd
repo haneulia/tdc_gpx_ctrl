@@ -145,7 +145,10 @@ begin
         u_async_fifo : xpm_fifo_async
             generic map (
                 CDC_SYNC_STAGES   => 2,
-                FIFO_MEMORY_TYPE  => "distributed",
+                -- Let XPM keep small control FIFOs in distributed RAM and
+                -- move topology-sized result FIFOs into BRAM. This avoids a
+                -- user-facing memory-selection generic and follows capacity.
+                FIFO_MEMORY_TYPE  => "auto",
                 FIFO_READ_LATENCY => 0,
                 FIFO_WRITE_DEPTH  => G_FIFO_DEPTH,
                 READ_DATA_WIDTH   => G_WIDTH,

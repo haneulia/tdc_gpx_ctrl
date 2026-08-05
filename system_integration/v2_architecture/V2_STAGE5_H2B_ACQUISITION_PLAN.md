@@ -73,7 +73,7 @@ H2B-2B는 완료되었다. CTL21/22 두 word로 portal을 구성했고, 32 CTL /
 4 IRQ 주소 경계는 유지했다. 상세 결과는
 `V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md`에 기록한다.
 
-### H3: B5 비교와 종료 조건
+### H3: B5 비교와 종료 조건 완료
 
 다음 identity를 v1 oracle과 exact compare한다.
 
@@ -83,6 +83,16 @@ Shot context + Chip + IFIFO + raw 28-bit word + event kind + sequence
 
 정상 drain뿐 아니라 IFIFO status 변화, timeout, Hit cap, output backpressure 및
 150/200 MHz와 200/150 MHz 비동기 조합을 포함한다.
+
+H3는 완료되었다. 4 Chip x 4 STOP x 7 Return의 최대 profile에서 IFIFO당
+28 word, Chip당 58 event, Shot당 232 event를 exact compare했다. result FIFO는
+한 Shot 전체를 저장할 수 있도록 topology에서 256 entry로 자동 산정한다.
+정상 full-capacity drain, timeout recovery, 물리 cap/purge와 long output
+backpressure가 두 routine clock profile에서 모두 통과했다.
+
+상세 구조와 증적은 `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`에 기록한다.
+Checkpoint H 다음 작업은 Stage 6 Hit/Cell/Frame pipeline이며 H2B/H3에서
+formatter 기능을 앞당겨 구현하지 않는다.
 
 ## 3. H2B-0 검증 결과
 
