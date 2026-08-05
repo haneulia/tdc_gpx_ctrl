@@ -279,7 +279,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 2 | E | Complete | `6cd1adf` | Unified 32 CTL / 32 STAT / 4 IRQ CSR boundary |
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
-| 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_stage5_h3_diag_sim_r7_v2_gpx_acquisition_subsystem`, `260805_stage5_h3_bram_impl_r4_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
+| 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
@@ -293,7 +293,8 @@ H2A proved the atomic command/result CDC boundary, H2B-0 closed the capture-
 counter width, H2B-1 proved one typed acquisition lane, H2B-2A proved the
 multi-Chip coordinator and H2B-2B closed the indexed GPX image portal plus
 physical all-Chip programming ACK. H3 then closed the B5 end-to-end boundary
-for normal full-capacity drain, timeout, cap/purge and backpressure at
+for 32 physical GPX STOP lanes representing 16 logical APD channels, normal
+full-capacity drain, timeout, cap/purge and backpressure at
 150/200 and 200/150 MHz. The only valid next step is **Stage 6 / Checkpoint I
 Hit, Cell and Frame migration**.
 Stage 6 or later work must not be treated as
@@ -402,6 +403,13 @@ Required order and final status:
    status changes, timeout, cap and output backpressure;
 9. **H3 complete:** routine 150/200 and 200/150 MHz integration profiles passed
    with non-negative WNS, zero latches, zero Critical CDC and zero blocking DRC.
+
+H3 capacity correction distinguishes physical STOP lanes from logical APD
+channels. The default dedicated 2-Rise/2-Fall topology has 4 Chips x 8 STOP =
+32 physical lanes and 16 logical APD channels. Each IFIFO owns four STOP lanes,
+so its cap is 28 words on a single-slope Chip and 56 words on a dual-edge Chip.
+The result FIFO depth is derived from those build masks; no runtime CSR or new
+generic was added.
 
 H1 evidence is recorded in `V2_CHECKPOINT_H1_GPX_BUS_ENGINE.md` and H2A
 evidence is recorded in `V2_CHECKPOINT_H2A_GPX_EVENT_GATEWAYS.md`. The central

@@ -11,8 +11,8 @@ use work.lidar_gpx_image_pkg.all;
 use work.lidar_gpx_event_pkg.all;
 
 -- Scalar-port OOC harness for the complete Processing/TDC B5 acquisition
--- assembly. The 4 x 4-STOP profile represents 16 externally observable APD
--- channels and Return 1..7 capacity.
+-- assembly. Four chips expose 32 physical STOP lanes. Dedicated 2-rise/2-fall
+-- masks represent 16 APD channels observed as 16 rise and 16 fall lanes.
 entity lidar_gpx_acquisition_subsystem_impl is
     generic (
         G_PROC_CLK_MHZ : positive := 150;
@@ -66,10 +66,10 @@ architecture rtl of lidar_gpx_acquisition_subsystem_impl is
         tdc_clk_mhz            => G_TDC_CLK_MHZ,
         stream_clock_mode      => STREAM_CLOCK_ASYNC,
         num_chips              => 4,
-        stops_per_chip         => 4,
+        stops_per_chip         => 8,
         max_returns_per_stop   => 7,
-        rise_capability_mask   => "1111",
-        fall_capability_mask   => "0000",
+        rise_capability_mask   => "0011",
+        fall_capability_mask   => "1100",
         output_width           => 32,
         num_faces              => 4,
         enable_echo_receiver   => false,
@@ -81,7 +81,7 @@ architecture rtl of lidar_gpx_acquisition_subsystem_impl is
             fn_default_runtime_config(C_BUILD_CONFIG);
         variable result : lidar_active_config_t;
     begin
-        runtime.tdc.falling_enable := '0';
+        runtime.tdc.falling_enable := '1';
         result.version := to_unsigned(1, 16);
         result.source := runtime;
         result.derived := fn_derive_runtime_config(C_BUILD_CONFIG, runtime);

@@ -43,7 +43,8 @@ multiple clocks and is checked against this reference model.
   the B5 oracle, H1 wrapped the proven physical GPX bus, H2A verified the
   atomic Processing/TDC Shot/result gateways, H2B-1/2A completed the typed
   lane/coordinator, H2B-2B completed indexed image activation and H3 closed
-  the 16-channel x 7-Return B5 acquisition boundary. Hit/Cell/Frame,
+  the 32-physical-STOP / 16-logical-APD x 7-Return B5 acquisition boundary.
+  Hit/Cell/Frame,
   frame/formatter and the full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
@@ -225,9 +226,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The pass marker is `LIDAR_V2_GPX_ACQUISITION_SUBSYSTEM_PASS`. It verifies
-4 Chip x 4 STOP x 7 Return, exact raw-28/Shot identity, timeout recovery,
-build-derived physical cap/purge and one-full-Shot backpressure for 150/200 and
-200/150 MHz. The implementation gate requires non-negative WNS, zero latches,
-zero Critical CDC and zero blocking DRC. Echo delay remains CTL20
+4 Chip x 8 STOP x 7 Return with dedicated 2-rise/2-fall roles, exact
+raw-28/Shot identity, timeout recovery, build-derived physical cap/purge and
+one-full-Shot backpressure for 150/200 and 200/150 MHz. The 32 physical GPX
+STOP lanes represent 16 logical APD channels observed on both slopes. The
+implementation gate requires non-negative WNS, zero latches, zero Critical CDC
+and zero blocking DRC. Echo delay remains CTL20
 `CH0 + channel * STEP`; no 32-word delay table is added. See
 `system_integration/v2_architecture/V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`.

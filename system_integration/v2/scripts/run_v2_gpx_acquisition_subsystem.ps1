@@ -265,8 +265,10 @@ New-Item -ItemType Directory -Force -Path $Archive | Out-Null
 $Scenario = [ordered]@{
     checkpoint = "H3"
     chip_count = 4
-    stops_per_chip = 4
-    observable_channels = 16
+    stops_per_chip = 8
+    physical_tdc_stop_lanes = 32
+    logical_apd_channels = 16
+    slope_topology = "dedicated 2-rise / 2-fall"
     max_returns_per_stop = 7
     words_per_ififo_capacity = 28
     events_per_chip_capacity = 58
@@ -289,6 +291,7 @@ $Scenario = [ordered]@{
     contracts = @(
         "Processing Shot and STOP cross through named asynchronous gateways",
         "raw 28-bit words and Shot identity remain atomic under backpressure",
+        "registered-ready result ingress cuts the result FIFO ready/reset timing cone",
         "one full-capacity Shot fits in the result FIFO",
         "physical drain cap is build-derived, not runtime max_hits",
         "malformed FIFO tails are purged after bounded observable data"

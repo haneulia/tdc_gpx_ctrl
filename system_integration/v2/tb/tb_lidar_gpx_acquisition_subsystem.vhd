@@ -22,10 +22,11 @@ end entity tb_lidar_gpx_acquisition_subsystem;
 architecture sim of tb_lidar_gpx_acquisition_subsystem is
 
     constant C_CHIPS : positive := 4;
-    constant C_STOPS_PER_CHIP : positive := 4;
+    constant C_STOPS_PER_CHIP : positive := 8;
+    constant C_STOPS_PER_IFIFO : positive := 4;
     constant C_RETURNS_PER_STOP : positive := 7;
     constant C_WORDS_PER_IFIFO : positive :=
-        C_STOPS_PER_CHIP * C_RETURNS_PER_STOP;
+        C_STOPS_PER_IFIFO * C_RETURNS_PER_STOP;
     constant C_NORMAL_EVENTS_PER_CHIP : positive :=
         2 * C_WORDS_PER_IFIFO + 2;
     constant C_NORMAL_TOTAL_EVENTS : positive :=
@@ -46,8 +47,23 @@ architecture sim of tb_lidar_gpx_acquisition_subsystem is
         num_chips              => C_CHIPS,
         stops_per_chip         => C_STOPS_PER_CHIP,
         max_returns_per_stop   => C_RETURNS_PER_STOP,
+        rise_capability_mask   => "0011",
+        fall_capability_mask   => "1100",
+        output_width           => 32,
+        num_faces              => 4,
+        enable_echo_receiver   => false,
+        enable_echo_simulation => false
+    );
+
+    constant C_DUAL_EDGE_BUILD_CONFIG : lidar_build_config_t := (
+        proc_clk_mhz           => G_PROC_CLK_MHZ,
+        tdc_clk_mhz            => G_TDC_CLK_MHZ,
+        stream_clock_mode      => STREAM_CLOCK_ASYNC,
+        num_chips              => C_CHIPS,
+        stops_per_chip         => C_STOPS_PER_CHIP,
+        max_returns_per_stop   => C_RETURNS_PER_STOP,
         rise_capability_mask   => "1111",
-        fall_capability_mask   => "0000",
+        fall_capability_mask   => "1111",
         output_width           => 32,
         num_faces              => 4,
         enable_echo_receiver   => false,
@@ -64,7 +80,7 @@ architecture sim of tb_lidar_gpx_acquisition_subsystem is
         variable result : lidar_active_config_t;
     begin
         runtime.tdc.active_chip_mask := "1111";
-        runtime.tdc.falling_enable := '0';
+        runtime.tdc.falling_enable := '1';
         result.version := to_unsigned(21, 16);
         result.source := runtime;
         result.derived := fn_derive_runtime_config(C_BUILD_CONFIG, runtime);
@@ -102,7 +118,11 @@ architecture sim of tb_lidar_gpx_acquisition_subsystem is
             std_logic_vector(to_unsigned(word_index mod 4, 2));
         result(c_RAW_STARTNUM_HI downto c_RAW_STARTNUM_LO) :=
             (others => '0');
-        result(c_RAW_SLOPE_BIT) := ififo_id;
+        if chip_index < 2 then
+            result(c_RAW_SLOPE_BIT) := '1';
+        else
+            result(c_RAW_SLOPE_BIT) := '0';
+        end if;
         hit_value := chip_index * 16#2000# + word_index;
         if ififo_id = '1' then
             hit_value := hit_value + 16#0800#;
@@ -228,15 +248,28 @@ architecture sim of tb_lidar_gpx_acquisition_subsystem is
 
 begin
 
-    assert fn_gpx_drain_cap_quads(C_BUILD_CONFIG) = 7
-        report "V2-GPX-H3-TB build-derived drain cap mismatch"
-        severity failure;
+    gen_capacity_contract : for chip_index in 0 to C_CHIPS - 1 generate
+    begin
+        assert fn_gpx_drain_cap_quads(C_BUILD_CONFIG, chip_index) = 7
+            report "V2-GPX-H3-TB build-derived drain cap mismatch"
+            severity failure;
+        assert fn_gpx_drain_cap_quads(
+                   C_DUAL_EDGE_BUILD_CONFIG, chip_index) = 14
+            report "V2-GPX-H3-TB dual-edge drain cap mismatch"
+            severity failure;
+    end generate gen_capacity_contract;
     assert fn_gpx_events_per_shot_capacity(C_BUILD_CONFIG) =
            C_NORMAL_TOTAL_EVENTS
         report "V2-GPX-H3-TB event-capacity mismatch"
         severity failure;
     assert fn_gpx_result_fifo_depth(C_BUILD_CONFIG) = 256
         report "V2-GPX-H3-TB result FIFO depth mismatch"
+        severity failure;
+    assert fn_gpx_events_per_shot_capacity(C_DUAL_EDGE_BUILD_CONFIG) = 456
+        report "V2-GPX-H3-TB dual-edge event-capacity mismatch"
+        severity failure;
+    assert fn_gpx_result_fifo_depth(C_DUAL_EDGE_BUILD_CONFIG) = 512
+        report "V2-GPX-H3-TB dual-edge result FIFO depth mismatch"
         severity failure;
 
     proc_clk <= not proc_clk after C_PROC_PERIOD / 2
@@ -623,7 +656,8 @@ begin
             report "V2-GPX-H3-TB run arm timeout"
             severity failure;
 
-        -- H3-NORMAL: 16 channels x 7 Returns in both IFIFOs. Hold the
+        -- H3-NORMAL: 32 physical STOP lanes. Dedicated masks model 16 APD
+        -- channels as 16 rising and 16 falling observations. Hold the
         -- Processing consumer stopped until the complete Shot is buffered.
         pulse_score_reset(0);
         load_fifos(C_WORDS_PER_IFIFO, C_WORDS_PER_IFIFO);

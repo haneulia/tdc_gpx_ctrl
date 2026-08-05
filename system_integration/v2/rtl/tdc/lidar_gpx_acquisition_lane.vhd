@@ -90,7 +90,7 @@ architecture rtl of lidar_gpx_acquisition_lane is
             c_TDC_EF_DATA_VALID_MAX_PS,
             G_BUILD_CONFIG.tdc_clk_mhz) + c_TDC_STATUS_SYNC_CLKS;
     constant C_DRAIN_CAP_QUADS : positive :=
-        fn_gpx_drain_cap_quads(G_BUILD_CONFIG);
+        fn_gpx_drain_cap_quads(G_BUILD_CONFIG, G_CHIP_INDEX);
 
     type lane_state_t is (
         LANE_BOOT,

@@ -84,9 +84,13 @@ Shot context + Chip + IFIFO + raw 28-bit word + event kind + sequence
 정상 drain뿐 아니라 IFIFO status 변화, timeout, Hit cap, output backpressure 및
 150/200 MHz와 200/150 MHz 비동기 조합을 포함한다.
 
-H3는 완료되었다. 4 Chip x 4 STOP x 7 Return의 최대 profile에서 IFIFO당
-28 word, Chip당 58 event, Shot당 232 event를 exact compare했다. result FIFO는
-한 Shot 전체를 저장할 수 있도록 topology에서 256 entry로 자동 산정한다.
+H3는 완료되었다. 4 Chip x 8 STOP = 32개 물리 STOP lane을 사용하고,
+전용 2-Rise/2-Fall topology에서 16개 논리 APD 채널의 양 edge를 관찰한다.
+각 GPX IFIFO는 4개 STOP을 담당하므로 slope당 최대 7 Return일 때 전용
+Chip의 IFIFO당 28 word, Chip당 58 event, Shot당 232 event를 exact compare했다.
+result FIFO는 한 Shot 전체를 저장할 수 있도록 topology에서 256 entry로
+자동 산정한다. 한 Chip이 Rise/Fall을 모두 읽는 dual-edge 구성은 같은 mask에서
+IFIFO당 56 word, Chip당 114 event로 자동 확장된다.
 정상 full-capacity drain, timeout recovery, 물리 cap/purge와 long output
 backpressure가 두 routine clock profile에서 모두 통과했다.
 

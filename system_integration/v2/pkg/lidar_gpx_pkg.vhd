@@ -10,10 +10,13 @@ package lidar_gpx_pkg is
     constant C_GPX_BUS_ADDR_WIDTH : positive := 4;
     constant C_GPX_REGISTER_COUNT : positive := 16;
 
-    -- Compile-time acquisition capacities. The physical drain cap is derived
-    -- from immutable topology, never from the runtime formatter Hit limit.
+    -- Compile-time acquisition capacities. Each physical IFIFO owns at most
+    -- four STOP channels. A chip that can be active in both slope lanes needs
+    -- twice the Return capacity of a dedicated-slope chip. These bounds are
+    -- derived from immutable topology, never from runtime formatter settings.
     function fn_gpx_drain_cap_quads(
-        build_cfg : lidar_build_config_t
+        build_cfg  : lidar_build_config_t;
+        chip_index : natural
     ) return positive;
     function fn_gpx_events_per_shot_capacity(
         build_cfg : lidar_build_config_t
@@ -165,6 +168,32 @@ end package lidar_gpx_pkg;
 
 package body lidar_gpx_pkg is
 
+    function fn_chip_slope_capacity(
+        build_cfg  : lidar_build_config_t;
+        chip_index : natural
+    ) return positive is
+        variable result : natural := 0;
+    begin
+        assert chip_index < build_cfg.num_chips
+            report "lidar_gpx_pkg: capacity requested for absent GPX chip"
+            severity failure;
+
+        if build_cfg.rise_capability_mask(chip_index) = '1' then
+            result := result + 1;
+        end if;
+        if build_cfg.fall_capability_mask(chip_index) = '1' then
+            result := result + 1;
+        end if;
+
+        assert result > 0
+            report "lidar_gpx_pkg: GPX chip has no slope capability"
+            severity failure;
+        if result = 0 then
+            return 1;
+        end if;
+        return result;
+    end function fn_chip_slope_capacity;
+
     function fn_div_ceil(
         value   : positive;
         divisor : positive
@@ -183,23 +212,38 @@ package body lidar_gpx_pkg is
     end function fn_power_of_two_ceil;
 
     function fn_gpx_drain_cap_quads(
-        build_cfg : lidar_build_config_t
+        build_cfg  : lidar_build_config_t;
+        chip_index : natural
     ) return positive is
+        variable ififo_stop_channels : positive;
+        variable slope_capacity      : positive;
     begin
+        if build_cfg.stops_per_chip > 4 then
+            ififo_stop_channels := 4;
+        else
+            ififo_stop_channels := build_cfg.stops_per_chip;
+        end if;
+        slope_capacity := fn_chip_slope_capacity(build_cfg, chip_index);
+
         return fn_div_ceil(
-            build_cfg.stops_per_chip * build_cfg.max_returns_per_stop,
+            ififo_stop_channels * build_cfg.max_returns_per_stop *
+                slope_capacity,
             4);
     end function fn_gpx_drain_cap_quads;
 
     function fn_gpx_events_per_shot_capacity(
         build_cfg : lidar_build_config_t
     ) return positive is
-        variable events_per_chip : positive;
+        variable events_total : natural := 0;
     begin
-        events_per_chip :=
-            2 * build_cfg.stops_per_chip *
-                build_cfg.max_returns_per_stop + 2;
-        return build_cfg.num_chips * events_per_chip;
+        for chip_index in 0 to build_cfg.num_chips - 1 loop
+            -- The legacy GPX controller applies one four-word-unit cap to
+            -- both IFIFOs. Size for the rounded physical boundary plus the
+            -- IFIFO1_DONE and final TERMINAL control events.
+            events_total := events_total +
+                2 * 4 * fn_gpx_drain_cap_quads(build_cfg, chip_index) + 2;
+        end loop;
+        return events_total;
     end function fn_gpx_events_per_shot_capacity;
 
     function fn_gpx_result_fifo_depth(

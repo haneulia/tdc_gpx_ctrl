@@ -97,6 +97,11 @@ architecture rtl of lidar_gpx_acquisition_subsystem is
 
     signal tdc_event_c : gpx_raw_event_t;
     signal tdc_event_ready_c : std_logic;
+    signal tdc_event_payload_c : gpx_raw_event_payload_t;
+    signal buffered_event_payload_c : gpx_raw_event_payload_t;
+    signal buffered_event_valid_c : std_logic;
+    signal buffered_event_c : gpx_raw_event_t;
+    signal result_gateway_ready_c : std_logic;
     signal result_reset_busy_c : std_logic;
 
 begin
@@ -227,6 +232,39 @@ begin
             o_faults         => o_faults
         );
 
+    -- Break the result FIFO full/reset-ready cone before it reaches the
+    -- multi-Chip merge. This two-entry registered-ready boundary preserves
+    -- one event per TDC clock and absorbs one stale-ready cycle without
+    -- changing event ordering or payload identity.
+    tdc_event_payload_c <= fn_pack_raw_event(tdc_event_c);
+
+    u_result_ingress_skid : entity work.tdc_gpx_skid_buffer
+        generic map (
+            g_DATA_WIDTH => C_GPX_RAW_EVENT_PAYLOAD_WIDTH
+        )
+        port map (
+            i_clk     => i_tdc_clk,
+            i_rst_n   => i_tdc_rst_n,
+            i_flush   => '0',
+            i_s_valid => tdc_event_c.valid,
+            o_s_ready => tdc_event_ready_c,
+            i_s_data  => tdc_event_payload_c,
+            o_m_valid => buffered_event_valid_c,
+            i_m_ready => result_gateway_ready_c,
+            o_m_data  => buffered_event_payload_c
+        );
+
+    p_buffered_event : process (all)
+        variable result : gpx_raw_event_t;
+    begin
+        result := C_GPX_RAW_EVENT_IDLE;
+        if buffered_event_valid_c = '1' then
+            result := fn_unpack_raw_event(buffered_event_payload_c);
+            result.valid := '1';
+        end if;
+        buffered_event_c <= result;
+    end process p_buffered_event;
+
     u_result_gateway : entity work.lidar_gpx_result_gateway
         generic map (
             G_BUILD_CONFIG => G_BUILD_CONFIG,
@@ -235,8 +273,8 @@ begin
         port map (
             i_tdc_clk     => i_tdc_clk,
             i_tdc_rst_n   => i_tdc_rst_n,
-            i_tdc_result  => tdc_event_c,
-            o_tdc_ready   => tdc_event_ready_c,
+            i_tdc_result  => buffered_event_c,
+            o_tdc_ready   => result_gateway_ready_c,
             i_proc_clk    => i_proc_clk,
             i_proc_rst_n  => i_proc_rst_n,
             o_proc_result => o_proc_result,
