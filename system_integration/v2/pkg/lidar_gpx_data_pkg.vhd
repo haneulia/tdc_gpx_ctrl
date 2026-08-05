@@ -119,6 +119,22 @@ package lidar_gpx_data_pkg is
         line_faulted   : std_logic;
     end record gpx_frame_cell_event_t;
 
+    -- Ordered Face terminator for B9. gap_before on Cell events covers leading
+    -- and interior holes; trailing_gap closes the remaining columns. all_hole
+    -- is explicit because a Face with no accepted Shot has no Cell context
+    -- from which the formatter could reconstruct its geometry.
+    type gpx_frame_close_event_t is record
+        valid            : std_logic;
+        face_index       : face_index_t;
+        direction        : direction_t;
+        source_sim       : std_logic;
+        active_version   : unsigned(15 downto 0);
+        columns_per_face : shot_index_t;
+        trailing_gap     : shot_index_t;
+        all_hole         : std_logic;
+        face_faulted     : std_logic;
+    end record gpx_frame_close_event_t;
+
     type gpx_frame_assembler_faults_t is record
         context_mismatch    : std_logic;
         unexpected_cell     : std_logic;
@@ -190,6 +206,18 @@ package lidar_gpx_data_pkg is
         gap_before   => (others => '0'),
         slot_blank   => '0',
         line_faulted => '0'
+    );
+
+    constant C_GPX_FRAME_CLOSE_EVENT_IDLE : gpx_frame_close_event_t := (
+        valid            => '0',
+        face_index       => (others => '0'),
+        direction        => DIRECTION_CW,
+        source_sim       => '0',
+        active_version   => (others => '0'),
+        columns_per_face => (others => '0'),
+        trailing_gap     => (others => '0'),
+        all_hole         => '0',
+        face_faulted     => '0'
     );
 
     constant C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR :

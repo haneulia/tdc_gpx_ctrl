@@ -29,6 +29,10 @@ entity lidar_processing_subsystem is
         i_fire_done_raw      : in  std_logic;
         i_clear_diagnostics  : in  std_logic;
 
+        i_face_close_ready   : in  std_logic := '1';
+        o_face_close_event   : out face_close_event_t;
+        o_face_close_overflow_sticky : out std_logic;
+
         m_mon_axis_tready    : in  std_logic;
         m_mon_axis_tvalid    : out std_logic;
         m_mon_axis_tdata     : out processing_monitor_tdata_t;
@@ -100,6 +104,10 @@ architecture rtl of lidar_processing_subsystem is
     signal rearm_active_c    : std_logic;
     signal scheduler_idle_c  : std_logic;
     signal pipeline_idle_c   : std_logic;
+    signal face_close_event_c : face_close_event_t;
+    signal face_close_block_c : std_logic;
+    signal face_close_idle_c : std_logic;
+    signal face_close_overflow_c : std_logic;
 
 begin
 
@@ -107,7 +115,8 @@ begin
         report "V2-PROC-001 invalid build configuration"
         severity failure;
 
-    pipeline_idle_c <= scheduler_idle_c and not executor_busy_c;
+    pipeline_idle_c <= scheduler_idle_c and not executor_busy_c and
+        face_close_idle_c;
 
     o_position_event    <= position_event_c;
     o_face_event        <= face_event_c;
@@ -124,6 +133,8 @@ begin
     o_physical_arm      <= physical_arm_c;
     o_rearm_active      <= rearm_active_c;
     o_pipeline_idle     <= pipeline_idle_c;
+    o_face_close_event  <= face_close_event_c;
+    o_face_close_overflow_sticky <= face_close_overflow_c;
 
     o_b0_to_accept_clks <= C_B0_TO_EXECUTOR_ACCEPT_CLKS;
     o_physical_to_fire_clks <= C_PHYSICAL_SAMPLE_TO_FIRE_CLKS;
@@ -198,7 +209,8 @@ begin
             i_clk                     => i_clk,
             i_rst_n                   => i_rst_n,
             i_enable                  =>
-                i_operation_state.scheduler_enable,
+                i_operation_state.scheduler_enable and
+                not face_close_block_c,
             i_active_valid            => i_active_valid,
             i_active_config           => i_active_config,
             i_face_event              => face_event_c,
@@ -211,6 +223,26 @@ begin
             o_schedule_overrun_sticky => schedule_overrun_sticky_c,
             o_schedule_overrun_count  => schedule_overrun_count_c,
             o_idle                    => scheduler_idle_c
+        );
+
+    u_face_close_owner : entity work.lidar_face_close_owner
+        generic map (
+            G_BUILD_CONFIG => G_BUILD_CONFIG
+        )
+        port map (
+            i_clk               => i_clk,
+            i_rst_n             => i_rst_n,
+            i_enable            => i_operation_state.scheduler_enable,
+            i_active_valid      => i_active_valid,
+            i_active_config     => i_active_config,
+            i_face_event        => face_event_c,
+            i_executor_ready    => executor_ready_c,
+            i_clear_diagnostics => i_clear_diagnostics,
+            o_close_event       => face_close_event_c,
+            i_close_ready       => i_face_close_ready,
+            o_scheduler_block   => face_close_block_c,
+            o_idle              => face_close_idle_c,
+            o_overflow_sticky   => face_close_overflow_c
         );
 
     u_executor : entity work.laser_executor
@@ -287,6 +319,12 @@ begin
                 if shot_result_c.valid = '1' then
                     assert shot_result_c.request = current_request_c
                         report "V2-PROC-006 shot-result identity mismatch"
+                        severity failure;
+                end if;
+                if face_close_event_c.valid = '1' then
+                    assert face_close_event_c.active_version =
+                           i_active_config.version
+                        report "V2-PROC-007 Face-close/config mismatch"
                         severity failure;
                 end if;
             end if;

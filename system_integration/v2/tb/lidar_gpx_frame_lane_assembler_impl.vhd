@@ -3,6 +3,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
+use work.lidar_event_types_pkg.all;
 use work.lidar_gpx_data_pkg.all;
 
 -- OOC implementation wrapper. Typed ports deliberately remain visible so
@@ -22,13 +23,18 @@ entity lidar_gpx_frame_lane_assembler_impl is
         i_columns_per_face : in unsigned(15 downto 0);
         i_cell_event : in  gpx_cell_event_t;
         o_cell_ready : out std_logic;
+        i_face_close_event : in face_close_event_t;
+        o_face_close_ready : out std_logic;
         o_rise_event : out gpx_frame_cell_event_t;
         i_rise_ready : in  std_logic;
         o_fall_event : out gpx_frame_cell_event_t;
         i_fall_ready : in  std_logic;
+        o_frame_close_event : out gpx_frame_close_event_t;
+        i_frame_close_ready : in std_logic;
         o_rise_line_done : out std_logic;
         o_fall_line_done : out std_logic;
         o_shot_done      : out std_logic;
+        o_shot_done_context : out shot_start_event_t;
         o_idle           : out std_logic;
         o_fault_pulse  : out gpx_frame_assembler_faults_t;
         o_fault_sticky : out gpx_frame_assembler_faults_t
@@ -69,13 +75,18 @@ begin
             i_columns_per_face => i_columns_per_face,
             i_cell_event       => i_cell_event,
             o_cell_ready       => o_cell_ready,
+            i_face_close_event => i_face_close_event,
+            o_face_close_ready => o_face_close_ready,
             o_rise_event       => o_rise_event,
             i_rise_ready       => i_rise_ready,
             o_fall_event       => o_fall_event,
             i_fall_ready       => i_fall_ready,
+            o_frame_close_event => o_frame_close_event,
+            i_frame_close_ready => i_frame_close_ready,
             o_rise_line_done   => o_rise_line_done,
             o_fall_line_done   => o_fall_line_done,
             o_shot_done        => o_shot_done,
+            o_shot_done_context => o_shot_done_context,
             o_idle             => o_idle,
             o_fault_pulse      => o_fault_pulse,
             o_fault_sticky     => o_fault_sticky

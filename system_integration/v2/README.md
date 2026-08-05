@@ -49,8 +49,10 @@ multiple clocks and is checked against this reference model.
   decoder, I2 completed the width-independent B7 Cell collector, I2A closed
   their registered ownership/timing optimization and I3 completed canonical
   Rise/Fall B8 Frame-lane assembly, including one-Chip and four-Chip all-dual
-  slope operation. The integrated B5..B8 path, formatter and
-  the full parent datapath remain unmigrated;
+  slope operation. I4 now closes the integrated B5..B8 path, explicit
+  Face-close ownership, trailing/all-hole completion and both routine
+  asynchronous clock profiles. The formatter and the full parent datapath
+  remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
@@ -71,9 +73,9 @@ Processing/TDC 150/200 and 200/150 MHz profiles, Checkpoint G preserved the
 direct low-latency STOP path, and H2A through H3 now own the atomic event CDC
 and typed acquisition boundaries. Stage 6 I1 owns B6 raw parsing, I2 owns B7
 Return ordering and Hit-to-Cell collection, I2A proves their direct linked
-boundary, and I3 owns width-neutral B8 Rise/Fall Frame-lane assembly. The next
-implementation is I4 B5..B8 integration, including an explicit Face-close event
-for trailing and all-hole Face completion.
+boundary, I3 owns width-neutral B8 Rise/Fall Frame-lane assembly, and I4 proves
+the complete B5..B8 production chain plus explicit Face-close ordering. The
+next implementation is Stage 7 / Checkpoint J, the B9 AXIS/VDMA formatter.
 
 Run the current package regression with:
 
@@ -284,3 +286,19 @@ The pass markers are `LIDAR_V2_GPX_FRAME_LANE_ASSEMBLER_PASS` and
 one-Chip dual-edge, Falling-OFF all-Rise, fault and independent-lane
 backpressure scenarios at Processing 150 and 200 MHz. See
 `system_integration/v2_architecture/V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md`.
+
+Run the integrated B5-B8 GPX regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_b5_b8_subsystem.ps1
+```
+
+The pass marker is `LIDAR_V2_GPX_B5_B8_SUBSYSTEM_PASS`. It drives dedicated
+2-Rise/2-Fall and four-Chip all-dual GPX bus models, compares every lower
+17-bit Hit through B5-B8, and verifies leading/trailing holes, an all-hole
+Face and close backpressure at 150/200 and 200/150 MHz. OOC implementation
+requires non-negative WNS, three
+asynchronous FIFOs, 230 ASYNC_REG cells, zero latches, zero Critical CDC and
+zero blocking DRC categories. See
+`system_integration/v2_architecture/V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`.

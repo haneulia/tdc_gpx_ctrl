@@ -280,7 +280,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
-| 6 | I | In progress | I0 oracle, I1/B6, I2/B7, I2A B6-B7 optimization and I3/B8 complete; sessions `260805224000_b8_emit_pipe_sim_v2_gpx_frame_lane_assembler`, `260805224500_b8_emit_pipe_ooc_v2_gpx_frame_lane_assembler` | Hit, Cell and Frame pipeline |
+| 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
@@ -295,12 +295,13 @@ multi-Chip coordinator and H2B-2B closed the indexed GPX image portal plus
 physical all-Chip programming ACK. H3 then closed the B5 end-to-end boundary
 for 32 physical GPX STOP lanes representing 16 logical APD channels, normal
 full-capacity drain, timeout, cap/purge and backpressure at
-150/200 and 200/150 MHz. Stage 6 / Checkpoint I is now in progress: I0 froze
+150/200 and 200/150 MHz. Stage 6 / Checkpoint I is now complete: I0 froze
 the B6..B8 oracle, I1 completed B6, I2 completed width-independent B7 Cell
 collection, I2A closed B6/B7 Return ownership plus sequential timing
-optimization, and I3 completed canonical Rise/Fall B8 Frame-lane assembly.
-The only valid next step is **I4 B5..B8 integration plus explicit Face-close
-ownership for trailing and all-hole completion**.
+optimization, I3 completed canonical Rise/Fall B8 Frame-lane assembly, and I4
+closed the production B5..B8 chain plus explicit Face-close ownership for
+trailing and all-hole completion. The only valid next step is **Stage 7 /
+Checkpoint J B9 AXIS/VDMA formatter integration**.
 Stage 6 or later work must not be treated as
 migrated merely because its v1 implementation exists.
 
@@ -432,7 +433,7 @@ The production acquisition assembly, topology-sized result FIFO, cap/purge
 behavior and final B5 evidence are recorded in
 `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`.
 
-## 9. Active RTL Work Package: Stage 6 / Checkpoint I
+## 9. Completed RTL Work Package: Stage 6 / Checkpoint I
 
 Checkpoint I converts the verified B5 raw stream into canonical Hit, Cell and
 Frame records. The order remains fixed:
@@ -450,9 +451,9 @@ Frame records. The order remains fixed:
    AXIS width or VDMA padding into canonical geometry; prove dedicated,
    one-Chip dual-edge, Falling-OFF and independent lane backpressure at
    150/200 MHz;
-6. **I4 pending:** define the explicit Face-close event, integrate B5 through
-   B8 and rerun the 150/200 and 200/150 MHz profiles before closing
-   Checkpoint I.
+6. **I4 complete:** own the explicit Face-close event, integrate B5 through
+   B8, prove dedicated and four-Chip all-dual exact payloads, then pass the
+   150/200 and 200/150 MHz profiles.
 
 I2A removes the v1-style intermediate Return metadata from B6. B7 is the single
 owner of the Chip + STOP + slope Cell count, so a one-Chip dual-edge build has
@@ -467,5 +468,6 @@ Echo non-regression and route evidence are documented in
 pipeline and linked timing evidence are documented in
 `V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md`. I3 canonical line ordering,
 runtime slope-mask closure, gap semantics and timing evidence are documented in
-`V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md`. Checkpoint I remains open until
-the explicit Face-close contract and integrated B5..B8 evidence are complete.
+`V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md`. I4 Face-close ownership,
+integrated B5..B8 data flow, timing optimization and final evidence are
+documented in `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`.

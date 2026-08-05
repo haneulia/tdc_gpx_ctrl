@@ -147,7 +147,33 @@ architecture rtl of lidar_gpx_cell_collector is
         (others => '0');
     signal pending_address_r : natural range 0 to
         C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal pending_hit_address_0_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal pending_hit_address_1_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal pending_hit_address_2_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal pending_hit_address_3_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal pending_hit_address_4_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal pending_hit_address_5_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
+    signal pending_hit_address_6_r : natural range 0 to
+        C_CELL_ADDRESS_COUNT - 1 := 0;
     signal scrub_index_r : natural range 0 to C_CELLS_PER_CHIP - 1 := 0;
+
+    -- Seven local copies prevent one six-bit write address from spanning all
+    -- 119 Hit payload bits. KEEP preserves the physical fanout partition;
+    -- this is register replication, not an additional pipeline stage.
+    attribute keep : string;
+    attribute keep of pending_hit_address_0_r : signal is "true";
+    attribute keep of pending_hit_address_1_r : signal is "true";
+    attribute keep of pending_hit_address_2_r : signal is "true";
+    attribute keep of pending_hit_address_3_r : signal is "true";
+    attribute keep of pending_hit_address_4_r : signal is "true";
+    attribute keep of pending_hit_address_5_r : signal is "true";
+    attribute keep of pending_hit_address_6_r : signal is "true";
 
     signal meta_read_r : cell_meta_t := (others => '0');
     signal cell_address_r : natural range 0 to
@@ -315,6 +341,13 @@ begin
                 pending_cfg_valid_r <= '0';
                 pending_compare_fault_r <= (others => '0');
                 pending_address_r <= 0;
+                pending_hit_address_0_r <= 0;
+                pending_hit_address_1_r <= 0;
+                pending_hit_address_2_r <= 0;
+                pending_hit_address_3_r <= 0;
+                pending_hit_address_4_r <= 0;
+                pending_hit_address_5_r <= 0;
+                pending_hit_address_6_r <= 0;
                 scrub_index_r <= 0;
                 meta_read_r <= (others => '0');
                 cell_address_r <= 0;
@@ -511,10 +544,18 @@ begin
                                    pending_owner_fall_r) then
                                 stop_index := to_integer(
                                     pending_event_r.stop_index);
-                                pending_address_r <= fn_cell_address(
+                                address_value := fn_cell_address(
                                     pending_chip_r,
                                     pending_event_r.slope,
                                     stop_index);
+                                pending_address_r <= address_value;
+                                pending_hit_address_0_r <= address_value;
+                                pending_hit_address_1_r <= address_value;
+                                pending_hit_address_2_r <= address_value;
+                                pending_hit_address_3_r <= address_value;
+                                pending_hit_address_4_r <= address_value;
+                                pending_hit_address_5_r <= address_value;
+                                pending_hit_address_6_r <= address_value;
                                 state_r <= S_HIT_META_READ;
                             elsif pending_event_r.kind = GPX_HIT_DATA then
                                 shot_fault_r(pending_chip_r) <= '1';
@@ -619,25 +660,32 @@ begin
                                         pending_owner_max_hits_r) then
                                     case seen_count is
                                         when 0 =>
-                                            hit_bank_0_r(address_value) <=
+                                            hit_bank_0_r(
+                                                pending_hit_address_0_r) <=
                                                 pending_event_r.hit;
                                         when 1 =>
-                                            hit_bank_1_r(address_value) <=
+                                            hit_bank_1_r(
+                                                pending_hit_address_1_r) <=
                                                 pending_event_r.hit;
                                         when 2 =>
-                                            hit_bank_2_r(address_value) <=
+                                            hit_bank_2_r(
+                                                pending_hit_address_2_r) <=
                                                 pending_event_r.hit;
                                         when 3 =>
-                                            hit_bank_3_r(address_value) <=
+                                            hit_bank_3_r(
+                                                pending_hit_address_3_r) <=
                                                 pending_event_r.hit;
                                         when 4 =>
-                                            hit_bank_4_r(address_value) <=
+                                            hit_bank_4_r(
+                                                pending_hit_address_4_r) <=
                                                 pending_event_r.hit;
                                         when 5 =>
-                                            hit_bank_5_r(address_value) <=
+                                            hit_bank_5_r(
+                                                pending_hit_address_5_r) <=
                                                 pending_event_r.hit;
                                         when 6 =>
-                                            hit_bank_6_r(address_value) <=
+                                            hit_bank_6_r(
+                                                pending_hit_address_6_r) <=
                                                 pending_event_r.hit;
                                         when others =>
                                             null;

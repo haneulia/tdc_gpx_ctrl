@@ -87,6 +87,29 @@ package lidar_event_types_pkg is
 
     subtype shot_index_t is unsigned(15 downto 0);
 
+    -- Processing-owned Face boundary. This event is emitted only for a Face
+    -- traversal admitted by the scheduler and is held with ready/valid until
+    -- the data pipeline accepts it. columns_per_face is the immutable geometry
+    -- of that traversal, so B8/B9 never infer trailing or all-hole columns from
+    -- the presence of TDC data.
+    type face_close_event_t is record
+        valid            : std_logic;
+        face_index       : face_index_t;
+        direction        : direction_t;
+        source_sim       : std_logic;
+        active_version   : unsigned(15 downto 0);
+        columns_per_face : shot_index_t;
+    end record face_close_event_t;
+
+    constant C_FACE_CLOSE_EVENT_IDLE : face_close_event_t := (
+        valid            => '0',
+        face_index       => (others => '0'),
+        direction        => DIRECTION_CW,
+        source_sim       => '0',
+        active_version   => (others => '0'),
+        columns_per_face => (others => '0')
+    );
+
     -- Registered B2 request. shot_index is the geometric column in the Face
     -- lattice, not the number of requests accepted by the executor. Therefore
     -- a skipped busy point remains a visible hole and cannot shift later VDMA

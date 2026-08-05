@@ -41,6 +41,7 @@ $SynthFiles = @(
     "$Hdl/system_integration/v2/rtl/proc/laser_executor_core.vhd",
     "$Hdl/system_integration/v2/rtl/proc/laser_executor.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_processing_axis_monitor.vhd",
+    "$Hdl/system_integration/v2/rtl/proc/lidar_face_close_owner.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_processing_subsystem.vhd",
     "$Hdl/system_integration/v2/tb/lidar_processing_subsystem_impl.vhd"
 )
@@ -62,6 +63,7 @@ $SimFiles = @(
     $SynthFiles[13],
     $SynthFiles[14],
     $SynthFiles[15],
+    $SynthFiles[16],
     "$Hdl/system_integration/v2/rtl/proc/lidar_operation_manager.vhd",
     "$Hdl/system_integration/v2/tb/tb_lidar_processing_subsystem.vhd",
     "$Hdl/system_integration/v2/tb/tb_lidar_processing_subsystem_profiles.vhd"

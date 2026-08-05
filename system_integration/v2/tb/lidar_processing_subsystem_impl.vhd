@@ -24,6 +24,9 @@ entity lidar_processing_subsystem_impl is
         i_enc_z             : in  std_logic;
         i_fire_done_raw     : in  std_logic;
         i_clear_diagnostics : in  std_logic;
+        i_face_close_ready  : in  std_logic;
+        o_face_close_event  : out face_close_event_t;
+        o_face_close_overflow_sticky : out std_logic;
         m_mon_axis_tready   : in  std_logic;
         m_mon_axis_tvalid   : out std_logic;
         m_mon_axis_tdata    : out processing_monitor_tdata_t;
@@ -70,6 +73,10 @@ begin
             i_enc_z              => i_enc_z,
             i_fire_done_raw      => i_fire_done_raw,
             i_clear_diagnostics  => i_clear_diagnostics,
+            i_face_close_ready   => i_face_close_ready,
+            o_face_close_event   => o_face_close_event,
+            o_face_close_overflow_sticky =>
+                o_face_close_overflow_sticky,
             m_mon_axis_tready    => m_mon_axis_tready,
             m_mon_axis_tvalid    => m_mon_axis_tvalid,
             m_mon_axis_tdata     => m_mon_axis_tdata,

@@ -137,6 +137,8 @@ architecture sim of tb_lidar_processing_subsystem is
     signal fire_done_sync_clks : unsigned(15 downto 0);
     signal rearm_margin_clks   : unsigned(15 downto 0);
     signal diagnostics : processing_diagnostics_t;
+    signal face_close_event : face_close_event_t;
+    signal face_close_overflow_sticky : std_logic;
 
 begin
 
@@ -177,6 +179,10 @@ begin
             i_enc_z              => enc_z,
             i_fire_done_raw      => fire_done_raw,
             i_clear_diagnostics  => clear_diagnostics,
+            i_face_close_ready   => '1',
+            o_face_close_event   => face_close_event,
+            o_face_close_overflow_sticky =>
+                face_close_overflow_sticky,
             m_mon_axis_tready    => mon_ready,
             m_mon_axis_tvalid    => mon_valid,
             m_mon_axis_tdata     => mon_data,

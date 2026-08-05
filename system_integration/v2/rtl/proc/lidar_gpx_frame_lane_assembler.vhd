@@ -31,14 +31,22 @@ entity lidar_gpx_frame_lane_assembler is
         i_cell_event : in  gpx_cell_event_t;
         o_cell_ready : out std_logic;
 
+        i_face_close_event : in face_close_event_t :=
+            C_FACE_CLOSE_EVENT_IDLE;
+        o_face_close_ready : out std_logic;
+
         o_rise_event : out gpx_frame_cell_event_t;
         i_rise_ready : in  std_logic;
         o_fall_event : out gpx_frame_cell_event_t;
         i_fall_ready : in  std_logic;
 
+        o_frame_close_event : out gpx_frame_close_event_t;
+        i_frame_close_ready : in  std_logic := '1';
+
         o_rise_line_done : out std_logic;
         o_fall_line_done : out std_logic;
         o_shot_done      : out std_logic;
+        o_shot_done_context : out shot_start_event_t;
         o_idle           : out std_logic;
 
         o_fault_pulse  : out gpx_frame_assembler_faults_t;
@@ -140,6 +148,8 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
 
     signal history_valid_r   : std_logic := '0';
     signal history_face_r    : face_index_t := (others => '0');
+    signal history_direction_r : direction_t := DIRECTION_CW;
+    signal history_source_r  : std_logic := '0';
     signal history_version_r : unsigned(15 downto 0) := (others => '0');
     signal history_column_r  : shot_index_t := (others => '0');
     signal history_last_r    : std_logic := '0';
@@ -195,6 +205,11 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     signal rise_line_done_r : std_logic := '0';
     signal fall_line_done_r : std_logic := '0';
     signal shot_done_r      : std_logic := '0';
+    signal shot_done_context_r : shot_start_event_t :=
+        C_SHOT_START_EVENT_IDLE;
+    signal frame_close_event_r : gpx_frame_close_event_t :=
+        C_GPX_FRAME_CLOSE_EVENT_IDLE;
+    signal face_close_ready_c : std_logic;
 
     signal fault_pulse_r : gpx_frame_assembler_faults_t :=
         C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR;
@@ -369,14 +384,25 @@ begin
         severity failure;
 
     o_cell_ready <= '1' when i_rst_n = '1' and i_abort = '0' and
-                            state_r = S_COLLECT else
+                            state_r = S_COLLECT and
+                            i_face_close_event.valid = '0' and
+                            frame_close_event_r.valid = '0' else
                     '0';
+    face_close_ready_c <= '1' when i_rst_n = '1' and i_abort = '0' and
+                                  state_r = S_COLLECT and
+                                  shot_active_r = '0' and
+                                  frame_close_event_r.valid = '0' else
+                          '0';
+    o_face_close_ready <= face_close_ready_c;
     o_rise_event <= rise_event_r;
     o_fall_event <= fall_event_r;
+    o_frame_close_event <= frame_close_event_r;
     o_rise_line_done <= rise_line_done_r;
     o_fall_line_done <= fall_line_done_r;
     o_shot_done      <= shot_done_r;
-    o_idle <= '1' when state_r = S_COLLECT and shot_active_r = '0' else '0';
+    o_shot_done_context <= shot_done_context_r;
+    o_idle <= '1' when state_r = S_COLLECT and shot_active_r = '0' and
+                         frame_close_event_r.valid = '0' else '0';
     o_fault_pulse  <= fault_pulse_r;
     o_fault_sticky <= fault_sticky_r;
 
@@ -404,6 +430,9 @@ begin
         variable geometry_fault_v : boolean;
         variable shot_complete_v : boolean;
         variable cell_write_v : boolean;
+        variable close_v : gpx_frame_close_event_t;
+        variable trailing_gap_v : shot_index_t;
+        variable close_fault_v : boolean;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -431,6 +460,8 @@ begin
                 pending_write_fall_r <= '0';
                 history_valid_r <= '0';
                 history_face_r <= (others => '0');
+                history_direction_r <= DIRECTION_CW;
+                history_source_r <= '0';
                 history_version_r <= (others => '0');
                 history_column_r <= (others => '0');
                 history_last_r <= '0';
@@ -451,13 +482,21 @@ begin
                 rise_line_done_r <= '0';
                 fall_line_done_r <= '0';
                 shot_done_r <= '0';
+                shot_done_context_r <= C_SHOT_START_EVENT_IDLE;
+                frame_close_event_r <= C_GPX_FRAME_CLOSE_EVENT_IDLE;
                 fault_pulse_r <= C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR;
                 fault_sticky_r <= C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR;
             else
                 rise_line_done_r <= '0';
                 fall_line_done_r <= '0';
                 shot_done_r <= '0';
+                shot_done_context_r.valid <= '0';
                 fault_pulse_r <= C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR;
+
+                if frame_close_event_r.valid = '1' and
+                   i_frame_close_ready = '1' then
+                    frame_close_event_r.valid <= '0';
+                end if;
 
                 if i_clear_sticky = '1' then
                     fault_sticky_r <= C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR;
@@ -484,8 +523,73 @@ begin
                     fall_prefetch_valid_r <= '0';
                     rise_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
                     fall_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
+                    frame_close_event_r <= C_GPX_FRAME_CLOSE_EVENT_IDLE;
                 elsif state_r = S_COLLECT then
-                    if i_cell_event.valid = '1' then
+                    if i_face_close_event.valid = '1' and
+                       face_close_ready_c = '1' then
+                        close_v := C_GPX_FRAME_CLOSE_EVENT_IDLE;
+                        close_v.valid := '1';
+                        close_v.face_index := i_face_close_event.face_index;
+                        close_v.direction := i_face_close_event.direction;
+                        close_v.source_sim := i_face_close_event.source_sim;
+                        close_v.active_version :=
+                            i_face_close_event.active_version;
+                        close_v.columns_per_face :=
+                            i_face_close_event.columns_per_face;
+                        trailing_gap_v := (others => '0');
+                        close_fault_v := false;
+
+                        if i_face_close_event.active_version /=
+                               i_active_version or
+                           i_face_close_event.columns_per_face /=
+                               i_columns_per_face or
+                           to_integer(i_face_close_event.face_index) >=
+                               G_BUILD_CONFIG.num_faces or
+                           i_face_close_event.columns_per_face = 0 then
+                            close_fault_v := true;
+                        end if;
+
+                        if history_valid_r = '0' then
+                            close_v.all_hole := '1';
+                            trailing_gap_v :=
+                                i_face_close_event.columns_per_face;
+                        elsif history_face_r =
+                                  i_face_close_event.face_index and
+                              history_direction_r =
+                                  i_face_close_event.direction and
+                              history_source_r =
+                                  i_face_close_event.source_sim and
+                              history_version_r =
+                                  i_face_close_event.active_version then
+                            if history_last_r = '1' then
+                                trailing_gap_v := (others => '0');
+                            elsif history_column_r <
+                                  i_face_close_event.columns_per_face then
+                                trailing_gap_v :=
+                                    i_face_close_event.columns_per_face -
+                                    history_column_r - 1;
+                            else
+                                close_fault_v := true;
+                            end if;
+                        else
+                            close_fault_v := true;
+                        end if;
+
+                        close_v.trailing_gap := trailing_gap_v;
+                        if close_fault_v then
+                            close_v.face_faulted := '1';
+                            fault_pulse_r.geometry_error <= '1';
+                            fault_sticky_r.geometry_error <= '1';
+                        end if;
+                        if trailing_gap_v /= 0 then
+                            fault_pulse_r.column_gap <= '1';
+                            fault_sticky_r.column_gap <= '1';
+                        end if;
+
+                        frame_close_event_r <= close_v;
+                        history_valid_r <= '0';
+                        history_last_r <= '0';
+                    elsif i_cell_event.valid = '1' then
                         pending_event_r <= i_cell_event;
                         state_r <= S_EVENT_CHECK;
                     end if;
@@ -581,6 +685,8 @@ begin
 
                     history_valid_r <= '1';
                     history_face_r <= context_v.request.face_index;
+                    history_direction_r <= context_v.request.direction;
+                    history_source_r <= context_v.request.source_sim;
                     history_version_r <= context_v.request.active_version;
                     history_column_r <= context_v.request.shot_index;
                     history_last_r <= context_v.request.last_in_face;
@@ -833,14 +939,19 @@ begin
                             rise_emit_active_r <= '0';
                         else
                             rise_emit_slot_r <= rise_emit_slot_r + 1;
-                            if rise_emit_stop_r + 1 <
-                               G_BUILD_CONFIG.stops_per_chip then
-                                rise_emit_stop_r <= rise_emit_stop_r + 1;
-                            else
-                                rise_emit_stop_r <= 0;
-                                rise_emit_chip_r <= fn_next_chip(
-                                    shot_rise_mask_r, rise_emit_chip_r);
-                            end if;
+                        end if;
+
+                        -- Cursor position is independent of the emitted-slot
+                        -- terminal test. Keeping these feedback cones separate
+                        -- removes the former slot->Chip route without adding
+                        -- latency or changing one-Cell/clock throughput.
+                        if rise_emit_stop_r + 1 <
+                           G_BUILD_CONFIG.stops_per_chip then
+                            rise_emit_stop_r <= rise_emit_stop_r + 1;
+                        else
+                            rise_emit_stop_r <= 0;
+                            rise_emit_chip_r <= fn_next_chip(
+                                shot_rise_mask_r, rise_emit_chip_r);
                         end if;
                     end if;
 
@@ -882,14 +993,15 @@ begin
                             fall_emit_active_r <= '0';
                         else
                             fall_emit_slot_r <= fall_emit_slot_r + 1;
-                            if fall_emit_stop_r + 1 <
-                               G_BUILD_CONFIG.stops_per_chip then
-                                fall_emit_stop_r <= fall_emit_stop_r + 1;
-                            else
-                                fall_emit_stop_r <= 0;
-                                fall_emit_chip_r <= fn_next_chip(
-                                    shot_fall_mask_r, fall_emit_chip_r);
-                            end if;
+                        end if;
+
+                        if fall_emit_stop_r + 1 <
+                           G_BUILD_CONFIG.stops_per_chip then
+                            fall_emit_stop_r <= fall_emit_stop_r + 1;
+                        else
+                            fall_emit_stop_r <= 0;
+                            fall_emit_chip_r <= fn_next_chip(
+                                shot_fall_mask_r, fall_emit_chip_r);
                         end if;
                     end if;
 
@@ -903,6 +1015,8 @@ begin
                         shot_active_r <= '0';
                         shot_terminal_r <= (others => '0');
                         shot_done_r <= '1';
+                        shot_done_context_r <= shot_context_r;
+                        shot_done_context_r.valid <= '1';
                     end if;
                 end if;
             end if;
@@ -927,6 +1041,15 @@ begin
                         severity failure;
                     assert fall_event_r.slot_count /= 0
                         report "V2-B8-006 zero Fall slot count"
+                        severity failure;
+                end if;
+                if frame_close_event_r.valid = '1' then
+                    assert frame_close_event_r.columns_per_face /= 0
+                        report "V2-B8-007 zero-column Face close"
+                        severity failure;
+                    assert frame_close_event_r.trailing_gap <=
+                           frame_close_event_r.columns_per_face
+                        report "V2-B8-008 trailing gap exceeds Face geometry"
                         severity failure;
                 end if;
             end if;

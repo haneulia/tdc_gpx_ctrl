@@ -181,10 +181,14 @@ architecture sim of tb_lidar_gpx_frame_lane_assembler is
     signal clear_sticky : std_logic := '0';
     signal cell_event   : gpx_cell_event_t := C_GPX_CELL_EVENT_IDLE;
     signal cell_ready   : std_logic;
+    signal face_close_event : face_close_event_t := C_FACE_CLOSE_EVENT_IDLE;
+    signal face_close_ready : std_logic;
     signal rise_event   : gpx_frame_cell_event_t;
     signal fall_event   : gpx_frame_cell_event_t;
     signal rise_ready   : std_logic := '0';
     signal fall_ready   : std_logic := '0';
+    signal frame_close_event : gpx_frame_close_event_t;
+    signal shot_done_context : shot_start_event_t;
     signal rise_line_done : std_logic;
     signal fall_line_done : std_logic;
     signal shot_done      : std_logic;
@@ -218,13 +222,18 @@ begin
             i_columns_per_face => to_unsigned(C_COLUMNS, 16),
             i_cell_event       => cell_event,
             o_cell_ready       => cell_ready,
+            i_face_close_event => face_close_event,
+            o_face_close_ready => face_close_ready,
             o_rise_event       => rise_event,
             i_rise_ready       => rise_ready,
             o_fall_event       => fall_event,
             i_fall_ready       => fall_ready,
+            o_frame_close_event => frame_close_event,
+            i_frame_close_ready => '1',
             o_rise_line_done   => rise_line_done,
             o_fall_line_done   => fall_line_done,
             o_shot_done        => shot_done,
+            o_shot_done_context => shot_done_context,
             o_idle             => idle,
             o_fault_pulse      => fault_pulse,
             o_fault_sticky     => fault_sticky
