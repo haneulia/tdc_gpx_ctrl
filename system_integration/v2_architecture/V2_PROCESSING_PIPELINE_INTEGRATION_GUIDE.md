@@ -412,3 +412,41 @@ monitor_drop_pulse/sticky/count
 그 판정은 TDC/frame/formatter migration과 HTML 비교를 모두 통과한 뒤에
 가능하다. 각 다음 체크포인트는 이 문서의 필드 계보, 위험 표와 조립 체크리스트를
 갱신해야 완료로 인정한다.
+
+## 14. Stage 6 B5-B8 확장 흐름
+
+Processing의 Shot identity는 GPX acquisition 이후에도 새로 계산하지 않고 typed
+record로 이어진다.
+
+```mermaid
+flowchart LR
+    B5["B5 acquisition<br/>28-bit raw event"]
+    B6["B6 Hit decoder<br/>17-bit Hit"]
+    B7["B7 Cell collector<br/>STOP/slope x Return 0..6"]
+    B8["B8 Frame lane assembler<br/>Chip/STOP order"]
+    R["Rise logical line"]
+    F["Fall logical line"]
+    B9["B9 AXIS/VDMA formatter"]
+
+    B5 --> B6 --> B7 --> B8
+    B8 --> R --> B9
+    B8 --> F --> B9
+```
+
+| 경계 | 현재 상태 | 핵심 보장 |
+|---|---|---|
+| B5 | 완료 | 외부 GPX 28-bit raw word와 Shot/Chip identity |
+| B6 | 완료 | I-Mode field와 17-bit Hit 보존, runtime slope mask 검사 |
+| B7 | 완료 | STOP/slope별 최대 7 Return, 폭 독립 Cell |
+| B8 | I3 완료 | 논리 Chip/STOP 정렬, Rise/Fall 독립 backpressure, blank Cell |
+| B9 | 미완료 | 32/64/128-bit repack, prefix, HSIZE/VSIZE, SOF/EOL |
+
+B8의 `slot`은 AXIS beat나 VDMA line이 아니라 Cell의 논리 순번이다. 한 slope의
+slot 수는 `popcount(active_slope_mask) x stops_per_chip`이며, output width가
+변해도 이 값은 변하지 않는다.
+
+현재 B8은 accepted Shot 사이의 선두 및 중간 column hole을 `gap_before`로
+보존한다. 그러나 scheduler가 버린 마지막 column이나 모든 column이 버려진
+Face는 Cell stream만으로 알 수 없다. I4에서 별도의 `face_close_event`를
+Processing 경계에서 전달한 뒤 B5-B8 통합을 닫아야 한다. 자세한 구조와 검증은
+`V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md`를 따른다.

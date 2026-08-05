@@ -14,7 +14,7 @@ unchanged and is used as the observable-behavior reference during migration.
 | `pkg/lidar_csr_map_pkg.vhd` | Unified CSR address/field and pack/unpack ABI | Yes |
 | `pkg/lidar_gpx_pkg.vhd` | Typed GPX bus, image, Shot and acquisition-result contracts | Yes |
 | `pkg/lidar_gpx_image_pkg.vhd` | Adapter to the single board-proven v1 GPX default image | Yes |
-| `pkg/lidar_gpx_data_pkg.vhd` | I-Mode fields plus typed B6 Hit and B7 Cell contracts | Yes |
+| `pkg/lidar_gpx_data_pkg.vhd` | I-Mode fields plus typed B6 Hit, B7 Cell and B8 Frame-lane contracts | Yes |
 | `pkg/lidar_config_reference_pkg.vhd` | Exact arithmetic oracle for tests and equivalence checks | No |
 | `rtl/config/` | Sequential validator, derivation controller and shared arithmetic | Yes |
 | `rtl/csr/` | AXI4-Lite shadow/status/IRQ bank and atomic-config boundary | Yes |
@@ -46,9 +46,10 @@ multiple clocks and is checked against this reference model.
   lane/coordinator, H2B-2B completed indexed image activation and H3 closed
   the 32-physical-STOP / 16-logical-APD x 7-Return B5 acquisition boundary.
   Stage 6 I0 froze the Hit/Cell/Frame oracle, I1 completed the typed B6 Hit
-  decoder, I2 completed the width-independent B7 Cell collector and I2A closed
-  their registered ownership/timing optimization. Frame,
-  formatter and the full parent datapath remain unmigrated;
+  decoder, I2 completed the width-independent B7 Cell collector, I2A closed
+  their registered ownership/timing optimization and I3 completed canonical
+  Rise/Fall B8 Frame-lane assembly. The integrated B5..B8 path, formatter and
+  the full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
@@ -68,9 +69,10 @@ Each boundary passed before the next block was migrated. Checkpoint F ran the
 Processing/TDC 150/200 and 200/150 MHz profiles, Checkpoint G preserved the
 direct low-latency STOP path, and H2A through H3 now own the atomic event CDC
 and typed acquisition boundaries. Stage 6 I1 owns B6 raw parsing, I2 owns B7
-Return ordering and Hit-to-Cell collection, and I2A proves their direct linked
-boundary; the next implementation is B8 Frame lane assembly against the frozen
-v1 oracle.
+Return ordering and Hit-to-Cell collection, I2A proves their direct linked
+boundary, and I3 owns width-neutral B8 Rise/Fall Frame-lane assembly. The next
+implementation is I4 B5..B8 integration, including an explicit Face-close event
+for trailing and all-hole Face completion.
 
 Run the current package regression with:
 
@@ -268,3 +270,16 @@ Processing 150 and 200 MHz. See
 `system_integration/v2_architecture/V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md`.
 The ownership and timing optimization evidence is in
 `system_integration/v2_architecture/V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md`.
+
+Run the canonical GPX Frame-lane regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_frame_lane_assembler.ps1
+```
+
+The pass markers are `LIDAR_V2_GPX_FRAME_LANE_ASSEMBLER_PASS` and
+`LIDAR_V2_GPX_RUNTIME_SLOPE_MASKS_PASS`. The regression verifies dedicated,
+one-Chip dual-edge, Falling-OFF all-Rise, fault and independent-lane
+backpressure scenarios at Processing 150 and 200 MHz. See
+`system_integration/v2_architecture/V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md`.

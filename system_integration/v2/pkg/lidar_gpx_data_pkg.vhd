@@ -100,6 +100,36 @@ package lidar_gpx_data_pkg is
         hit_capacity_drop    : std_logic;
     end record gpx_cell_collector_faults_t;
 
+    -- B8 emits one typed event per canonical Cell slot. The event describes
+    -- logical line ordering only: AXIS beat width, byte padding, the 48-byte
+    -- prefix and VDMA HSIZE/VSIZE remain formatter-owned concerns.
+    subtype gpx_frame_slot_t is unsigned(5 downto 0);
+
+    type gpx_frame_cell_event_t is record
+        valid          : std_logic;
+        cell           : gpx_cell_event_t;
+        slot_index     : gpx_frame_slot_t;
+        slot_count     : gpx_frame_slot_t;
+        line_start     : std_logic;
+        line_end       : std_logic;
+        first_column   : std_logic;
+        last_column    : std_logic;
+        gap_before     : shot_index_t;
+        slot_blank     : std_logic;
+        line_faulted   : std_logic;
+    end record gpx_frame_cell_event_t;
+
+    type gpx_frame_assembler_faults_t is record
+        context_mismatch    : std_logic;
+        unexpected_cell     : std_logic;
+        duplicate_cell      : std_logic;
+        duplicate_terminal  : std_logic;
+        missing_cell        : std_logic;
+        geometry_error      : std_logic;
+        column_gap          : std_logic;
+        masked_payload_drop : std_logic;
+    end record gpx_frame_assembler_faults_t;
+
     constant C_GPX_HIT_EVENT_IDLE : gpx_hit_event_t := (
         valid         => '0',
         kind          => GPX_HIT_DATA,
@@ -146,6 +176,32 @@ package lidar_gpx_data_pkg is
             return_overflow       => '0',
             start_number_nonzero  => '0',
             hit_capacity_drop     => '0'
+        );
+
+    constant C_GPX_FRAME_CELL_EVENT_IDLE : gpx_frame_cell_event_t := (
+        valid        => '0',
+        cell         => C_GPX_CELL_EVENT_IDLE,
+        slot_index   => (others => '0'),
+        slot_count   => (others => '0'),
+        line_start   => '0',
+        line_end     => '0',
+        first_column => '0',
+        last_column  => '0',
+        gap_before   => (others => '0'),
+        slot_blank   => '0',
+        line_faulted => '0'
+    );
+
+    constant C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR :
+        gpx_frame_assembler_faults_t := (
+            context_mismatch    => '0',
+            unexpected_cell     => '0',
+            duplicate_cell      => '0',
+            duplicate_terminal  => '0',
+            missing_cell        => '0',
+            geometry_error      => '0',
+            column_gap          => '0',
+            masked_payload_drop => '0'
         );
 
     function fn_gpx_slope_from_bit(value : std_logic) return gpx_slope_t;

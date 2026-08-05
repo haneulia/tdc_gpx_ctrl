@@ -22,6 +22,14 @@ entity lidar_gpx_hit_decoder is
         i_abort        : in  std_logic;
         i_clear_sticky : in  std_logic;
 
+        -- Atomic runtime lane ownership. With Falling disabled the derived
+        -- Rise mask may include every active Chip, even in a dedicated
+        -- 2-Rise/2-Fall build profile.
+        i_active_rise_mask : in chip_mask_t :=
+            G_BUILD_CONFIG.rise_capability_mask;
+        i_active_fall_mask : in chip_mask_t :=
+            G_BUILD_CONFIG.fall_capability_mask;
+
         i_raw_event : in  gpx_raw_event_t;
         o_raw_ready : out std_logic;
 
@@ -57,13 +65,15 @@ architecture rtl of lidar_gpx_hit_decoder is
 
     function fn_slope_supported(
         chip_index : natural;
-        slope      : gpx_slope_t
+        slope      : gpx_slope_t;
+        rise_mask  : chip_mask_t;
+        fall_mask  : chip_mask_t
     ) return boolean is
     begin
         if slope = GPX_SLOPE_RISE then
-            return G_BUILD_CONFIG.rise_capability_mask(chip_index) = '1';
+            return rise_mask(chip_index) = '1';
         end if;
-        return G_BUILD_CONFIG.fall_capability_mask(chip_index) = '1';
+        return fall_mask(chip_index) = '1';
     end function fn_slope_supported;
 
 begin
@@ -143,7 +153,9 @@ begin
                                 fault_pulse_r.stop_index_error  <= '1';
                                 fault_sticky_r.stop_index_error <= '1';
                             elsif not fn_slope_supported(
-                                      chip_index, slope_value) then
+                                      chip_index, slope_value,
+                                      i_active_rise_mask,
+                                      i_active_fall_mask) then
                                 fault_pulse_r.slope_role_error  <= '1';
                                 fault_sticky_r.slope_role_error <= '1';
                             else

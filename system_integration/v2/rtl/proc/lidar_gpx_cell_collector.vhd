@@ -24,6 +24,10 @@ entity lidar_gpx_cell_collector is
 
         i_active_version    : in unsigned(15 downto 0);
         i_max_hits_per_stop : in unsigned(2 downto 0);
+        i_active_rise_mask  : in chip_mask_t :=
+            G_BUILD_CONFIG.rise_capability_mask;
+        i_active_fall_mask  : in chip_mask_t :=
+            G_BUILD_CONFIG.fall_capability_mask;
 
         i_hit_event : in  gpx_hit_event_t;
         o_hit_ready : out std_logic;
@@ -115,6 +119,10 @@ architecture rtl of lidar_gpx_cell_collector is
         (others => '0');
     signal lower_emitted_r : std_logic_vector(C_MAX_CHIPS - 1 downto 0) :=
         (others => '0');
+    signal rise_enabled_r : std_logic_vector(C_MAX_CHIPS - 1 downto 0) :=
+        (others => '0');
+    signal fall_enabled_r : std_logic_vector(C_MAX_CHIPS - 1 downto 0) :=
+        (others => '0');
 
     -- The input event and its selected per-Chip owner context are registered
     -- before any wide identity comparison. This keeps the upstream ready path
@@ -132,6 +140,8 @@ architecture rtl of lidar_gpx_cell_collector is
     signal pending_requested_max_hits_r : unsigned(2 downto 0) :=
         to_unsigned(1, 3);
     signal pending_owner_fault_r : std_logic := '0';
+    signal pending_owner_rise_r : std_logic := '0';
+    signal pending_owner_fall_r : std_logic := '0';
     signal pending_cfg_valid_r : std_logic := '0';
     signal pending_compare_fault_r : std_logic_vector(4 downto 0) :=
         (others => '0');
@@ -160,6 +170,8 @@ architecture rtl of lidar_gpx_cell_collector is
     signal emit_sequence_r : unsigned(15 downto 0) := (others => '0');
     signal emit_max_hits_r : unsigned(2 downto 0) := to_unsigned(1, 3);
     signal emit_faulted_r : std_logic := '0';
+    signal emit_rise_enabled_r : std_logic := '0';
+    signal emit_fall_enabled_r : std_logic := '0';
 
     signal cell_event_r : gpx_cell_event_t := C_GPX_CELL_EVENT_IDLE;
     signal fault_pulse_r : gpx_cell_collector_faults_t :=
@@ -195,21 +207,22 @@ architecture rtl of lidar_gpx_cell_collector is
     end function fn_shot_identity;
 
     function fn_slope_supported(
-        chip_index : natural;
-        slope      : gpx_slope_t
+        slope        : gpx_slope_t;
+        rise_enabled : std_logic;
+        fall_enabled : std_logic
     ) return boolean is
     begin
         if slope = GPX_SLOPE_RISE then
-            return G_BUILD_CONFIG.rise_capability_mask(chip_index) = '1';
+            return rise_enabled = '1';
         end if;
-        return G_BUILD_CONFIG.fall_capability_mask(chip_index) = '1';
+        return fall_enabled = '1';
     end function fn_slope_supported;
 
     function fn_first_slope(
-        chip_index : natural
+        rise_enabled : std_logic
     ) return gpx_slope_t is
     begin
-        if fn_slope_supported(chip_index, GPX_SLOPE_RISE) then
+        if rise_enabled = '1' then
             return GPX_SLOPE_RISE;
         end if;
         return GPX_SLOPE_FALL;
@@ -217,13 +230,14 @@ architecture rtl of lidar_gpx_cell_collector is
 
     function fn_has_emit_cells(
         chip_index : natural;
-        first_stop : natural
+        first_stop : natural;
+        rise_enabled : std_logic;
+        fall_enabled : std_logic
     ) return boolean is
     begin
         return chip_index < G_BUILD_CONFIG.num_chips and
                first_stop < G_BUILD_CONFIG.stops_per_chip and
-               (fn_slope_supported(chip_index, GPX_SLOPE_RISE) or
-                fn_slope_supported(chip_index, GPX_SLOPE_FALL));
+               (rise_enabled = '1' or fall_enabled = '1');
     end function fn_has_emit_cells;
 
     function fn_effective_max_hits(
@@ -285,6 +299,8 @@ begin
                 max_hits_r         <= (others => (others => '0'));
                 shot_fault_r       <= (others => '0');
                 lower_emitted_r    <= (others => '0');
+                rise_enabled_r     <= (others => '0');
+                fall_enabled_r     <= (others => '0');
                 pending_event_r    <= C_GPX_HIT_EVENT_IDLE;
                 pending_chip_r     <= 0;
                 pending_identity_r <= (others => '0');
@@ -294,6 +310,8 @@ begin
                 pending_owner_max_hits_r <= to_unsigned(1, 3);
                 pending_requested_max_hits_r <= to_unsigned(1, 3);
                 pending_owner_fault_r <= '0';
+                pending_owner_rise_r <= '0';
+                pending_owner_fall_r <= '0';
                 pending_cfg_valid_r <= '0';
                 pending_compare_fault_r <= (others => '0');
                 pending_address_r <= 0;
@@ -314,6 +332,8 @@ begin
                 emit_sequence_r <= (others => '0');
                 emit_max_hits_r <= to_unsigned(1, 3);
                 emit_faulted_r <= '0';
+                emit_rise_enabled_r <= '0';
+                emit_fall_enabled_r <= '0';
                 cell_event_r <= C_GPX_CELL_EVENT_IDLE;
                 fault_pulse_r <= C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
                 fault_sticky_r <= C_GPX_CELL_COLLECTOR_FAULTS_CLEAR;
@@ -329,6 +349,8 @@ begin
                     shot_active_r   <= (others => '0');
                     shot_fault_r    <= (others => '0');
                     lower_emitted_r <= (others => '0');
+                    rise_enabled_r  <= (others => '0');
+                    fall_enabled_r  <= (others => '0');
                     cell_event_r    <= C_GPX_CELL_EVENT_IDLE;
                 else
                     case state_r is
@@ -381,6 +403,10 @@ begin
                                 pending_owner_max_hits_r <=
                                     pending_requested_max_hits_r;
                                 pending_owner_fault_r <= initial_fault;
+                                pending_owner_rise_r <=
+                                    i_active_rise_mask(chip_index);
+                                pending_owner_fall_r <=
+                                    i_active_fall_mask(chip_index);
 
                                 shot_active_r(chip_index) <= '1';
                                 shot_context_r(chip_index) <=
@@ -393,6 +419,10 @@ begin
                                     pending_requested_max_hits_r;
                                 shot_fault_r(chip_index) <= initial_fault;
                                 lower_emitted_r(chip_index) <= '0';
+                                rise_enabled_r(chip_index) <=
+                                    i_active_rise_mask(chip_index);
+                                fall_enabled_r(chip_index) <=
+                                    i_active_fall_mask(chip_index);
 
                                 scrub_index_r <= 0;
                                 state_r <= S_SCRUB_META;
@@ -407,6 +437,10 @@ begin
                                     max_hits_r(chip_index);
                                 pending_owner_fault_r <=
                                     shot_fault_r(chip_index);
+                                pending_owner_rise_r <=
+                                    rise_enabled_r(chip_index);
+                                pending_owner_fall_r <=
+                                    fall_enabled_r(chip_index);
                                 state_r <= S_EVENT_CHECK;
                             end if;
 
@@ -470,7 +504,11 @@ begin
                                 shot_fault_r(pending_chip_r) <= '1';
                             end if;
 
-                            if pending_event_r.kind = GPX_HIT_DATA then
+                            if pending_event_r.kind = GPX_HIT_DATA and
+                               fn_slope_supported(
+                                   pending_event_r.slope,
+                                   pending_owner_rise_r,
+                                   pending_owner_fall_r) then
                                 stop_index := to_integer(
                                     pending_event_r.stop_index);
                                 pending_address_r <= fn_cell_address(
@@ -478,6 +516,11 @@ begin
                                     pending_event_r.slope,
                                     stop_index);
                                 state_r <= S_HIT_META_READ;
+                            elsif pending_event_r.kind = GPX_HIT_DATA then
+                                shot_fault_r(pending_chip_r) <= '1';
+                                fault_pulse_r.context_mismatch <= '1';
+                                fault_sticky_r.context_mismatch <= '1';
+                                state_r <= S_COLLECT;
                             else
                                 emit_chip_r <= pending_chip_r;
                                 emit_ififo_r <= pending_event_r.ififo_id;
@@ -487,6 +530,8 @@ begin
                                 emit_sequence_r <= pending_owner_sequence_r;
                                 emit_max_hits_r <= pending_owner_max_hits_r;
                                 emit_faulted_r <= event_faulted;
+                                emit_rise_enabled_r <= pending_owner_rise_r;
+                                emit_fall_enabled_r <= pending_owner_fall_r;
 
                                 case pending_event_r.kind is
                                     when GPX_HIT_IFIFO1_DONE =>
@@ -539,10 +584,12 @@ begin
                                 emit_stop_last_r <= last_stop;
                                 emit_stop_r <= first_stop;
                                 emit_slope_r <= fn_first_slope(
-                                    pending_chip_r);
+                                    pending_owner_rise_r);
 
                                 if fn_has_emit_cells(
-                                        pending_chip_r, first_stop) then
+                                        pending_chip_r, first_stop,
+                                        pending_owner_rise_r,
+                                        pending_owner_fall_r) then
                                     state_r <= S_CELL_META_READ;
                                 else
                                     state_r <= S_CONTROL_LOAD;
@@ -717,8 +764,7 @@ begin
                                     emit_stop_r <= emit_stop_r + 1;
                                     next_exists := true;
                                 elsif emit_slope_r = GPX_SLOPE_RISE and
-                                      fn_slope_supported(
-                                          emit_chip_r, GPX_SLOPE_FALL) then
+                                      emit_fall_enabled_r = '1' then
                                     emit_slope_r <= GPX_SLOPE_FALL;
                                     emit_stop_r <= emit_stop_first_r;
                                     next_exists := true;
@@ -738,7 +784,8 @@ begin
                                 emit_chip_r, cell_event_r.chip_index'length);
                             cell_event_r.ififo_id <= emit_ififo_r;
                             cell_event_r.stop_index <= (others => '0');
-                            cell_event_r.slope <= fn_first_slope(emit_chip_r);
+                            cell_event_r.slope <= fn_first_slope(
+                                emit_rise_enabled_r);
                             cell_event_r.hit_count <= (others => '0');
                             cell_event_r.max_hits <= emit_max_hits_r;
                             cell_event_r.hits <= (others => (others => '0'));
@@ -767,6 +814,8 @@ begin
                                     shot_active_r(emit_chip_r) <= '0';
                                     shot_fault_r(emit_chip_r) <= '0';
                                     lower_emitted_r(emit_chip_r) <= '0';
+                                    rise_enabled_r(emit_chip_r) <= '0';
+                                    fall_enabled_r(emit_chip_r) <= '0';
                                 end if;
                                 state_r <= S_COLLECT;
                             end if;
