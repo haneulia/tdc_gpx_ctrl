@@ -14,6 +14,7 @@ unchanged and is used as the observable-behavior reference during migration.
 | `pkg/lidar_csr_map_pkg.vhd` | Unified CSR address/field and pack/unpack ABI | Yes |
 | `pkg/lidar_gpx_pkg.vhd` | Typed GPX bus, image, Shot and acquisition-result contracts | Yes |
 | `pkg/lidar_gpx_image_pkg.vhd` | Adapter to the single board-proven v1 GPX default image | Yes |
+| `pkg/lidar_gpx_data_pkg.vhd` | I-Mode fields, typed B6 Hit event and decoder faults | Yes |
 | `pkg/lidar_config_reference_pkg.vhd` | Exact arithmetic oracle for tests and equivalence checks | No |
 | `rtl/config/` | Sequential validator, derivation controller and shared arithmetic | Yes |
 | `rtl/csr/` | AXI4-Lite shadow/status/IRQ bank and atomic-config boundary | Yes |
@@ -44,8 +45,8 @@ multiple clocks and is checked against this reference model.
   atomic Processing/TDC Shot/result gateways, H2B-1/2A completed the typed
   lane/coordinator, H2B-2B completed indexed image activation and H3 closed
   the 32-physical-STOP / 16-logical-APD x 7-Return B5 acquisition boundary.
-  Hit/Cell/Frame,
-  frame/formatter and the full parent datapath remain unmigrated;
+  Stage 6 I0 froze the Hit/Cell/Frame oracle and I1 completed the typed B6 Hit
+  decoder. Cell/Frame, frame/formatter and the full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
@@ -64,8 +65,9 @@ Checkpoint F was completed in this fixed order:
 Each boundary passed before the next block was migrated. Checkpoint F ran the
 Processing/TDC 150/200 and 200/150 MHz profiles, Checkpoint G preserved the
 direct low-latency STOP path, and H2A through H3 now own the atomic event CDC
-and typed acquisition boundaries. The next implementation is Stage 6 Hit,
-Cell and Frame migration against the frozen v1 oracle.
+and typed acquisition boundaries. Stage 6 I1 now owns the B6 raw-to-Hit
+boundary; the next implementation is the B7 Cell collector against the frozen
+v1 oracle.
 
 Run the current package regression with:
 
@@ -234,3 +236,16 @@ implementation gate requires non-negative WNS, zero latches, zero Critical CDC
 and zero blocking DRC. Echo delay remains CTL20
 `CH0 + channel * STEP`; no 32-word delay table is added. See
 `system_integration/v2_architecture/V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`.
+
+Run the typed GPX Hit-decoder regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_hit_decoder.ps1
+```
+
+The pass marker is `LIDAR_V2_GPX_HIT_DECODER_PASS`. It verifies the complete
+I-Mode field mapping, 4-Chip dedicated and one-Chip dual-edge Return identity,
+8th-Return no-wrap handling, identity diagnostics and output backpressure at
+Processing 150 and 200 MHz. See
+`system_integration/v2_architecture/V2_CHECKPOINT_I1_GPX_HIT_DECODER.md`.

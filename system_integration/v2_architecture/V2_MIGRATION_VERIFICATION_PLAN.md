@@ -280,7 +280,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 3 | F | Complete | `V2_CHECKPOINT_F5_PROCESSING_SUBSYSTEM.md`; session `260804_f5_busy_opt_v2_processing_subsystem` | Processing event pipeline |
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
-| 6 | I | Pending | B6..B8 evidence pending | Hit, Cell and Frame pipeline |
+| 6 | I | In progress | I0 oracle and I1/B6 complete; `260805_stage6_i1_b6_final_v2_gpx_hit_decoder` | Hit, Cell and Frame pipeline |
 | 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
@@ -295,8 +295,9 @@ multi-Chip coordinator and H2B-2B closed the indexed GPX image portal plus
 physical all-Chip programming ACK. H3 then closed the B5 end-to-end boundary
 for 32 physical GPX STOP lanes representing 16 logical APD channels, normal
 full-capacity drain, timeout, cap/purge and backpressure at
-150/200 and 200/150 MHz. The only valid next step is **Stage 6 / Checkpoint I
-Hit, Cell and Frame migration**.
+150/200 and 200/150 MHz. Stage 6 / Checkpoint I is now in progress: I0 froze
+the B6..B8 oracle and I1 completed B6. The only valid next step is **B7 Cell
+collection**.
 Stage 6 or later work must not be treated as
 migrated merely because its v1 implementation exists.
 
@@ -427,3 +428,29 @@ recorded in `V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md`.
 The production acquisition assembly, topology-sized result FIFO, cap/purge
 behavior and final B5 evidence are recorded in
 `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`.
+
+## 9. Active RTL Work Package: Stage 6 / Checkpoint I
+
+Checkpoint I converts the verified B5 raw stream into canonical Hit, Cell and
+Frame records. The order remains fixed:
+
+1. **I0 complete:** freeze the v1 B6..B8 source hashes, bit meanings and
+   intentional correction list;
+2. **I1/B6 complete:** decode all I-Mode fields into `gpx_hit_event_t`, assign
+   Return by Chip/STOP/slope, and prove dedicated plus dual-edge topology;
+3. **I2/B7 next:** collect typed Hits into width-independent Cell records,
+   preserve Hit bit 16 and apply runtime visible-Hit capacity;
+4. **I3/B8 pending:** assemble slope lanes and Frame ordering without pulling
+   AXIS width or VDMA padding into canonical geometry;
+5. **I4 pending:** integrate B5 through B8 and rerun the 150/200 and 200/150
+   MHz profiles before closing Checkpoint I.
+
+I1 intentionally corrects the v1 intermediate Return metadata that shared one
+STOP counter across Rise/Fall. The v2 counter key is Chip + STOP + slope, so a
+one-Chip dual-edge build produces independent Return 0..6 sequences. The
+eighth Return is consumed and diagnosed without a wrapped output event.
+
+I0 is documented in `V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md`; I1 structure,
+tests, resource use and timing are documented in
+`V2_CHECKPOINT_I1_GPX_HIT_DECODER.md`. Checkpoint I remains open until B7, B8
+and integrated B5..B8 evidence are complete.

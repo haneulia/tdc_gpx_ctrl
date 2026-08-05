@@ -12,8 +12,9 @@
 > result merge. H2B-2B proved the two-word indexed GPX image portal and
 > physical all-chip activation ACK. H3 proved the complete 32-physical-STOP /
 > 16-logical-APD, 7-Return B5 acquisition boundary under timeout, cap and
-> backpressure in both routine clock profiles. Stage 6 Hit/Cell/Frame migration
-> is next.
+> backpressure in both routine clock profiles. Stage 6 is in progress: I0 froze
+> the Hit/Cell/Frame oracle and I1 completed the B6 typed Hit decoder. B7 Cell
+> collection is next.
 
 ## 1. Purpose
 
@@ -76,6 +77,8 @@ The redesign has four goals:
 | [V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md](V2_CHECKPOINT_H2B2A_GPX_COORDINATOR.md) | Multi-Chip Shot broadcast, registered fair merge, terminal completion and 150/200 MHz evidence |
 | [V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md](V2_CHECKPOINT_H2B2B_GPX_CONFIG_ACTIVATION.md) | Indexed GPX image portal, atomic snapshot, physical programming ACK and Echo non-regression evidence |
 | [V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md](V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md) | Processing/TDC production assembly, 32 physical STOP / 16 logical APD x 7-Return B5 identity, cap/purge, CDC and implementation evidence |
+| [V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md](V2_STAGE6_I0_HIT_CELL_FRAME_ORACLE.md) | Frozen B6..B8 field, Return, Cell and Frame comparison contract |
+| [V2_CHECKPOINT_I1_GPX_HIT_DECODER.md](V2_CHECKPOINT_I1_GPX_HIT_DECODER.md) | Typed B6 raw-to-Hit decoder, dual-edge Return correction, diagnostics and route evidence |
 
 ## 4. Target Top-Level Shape
 
