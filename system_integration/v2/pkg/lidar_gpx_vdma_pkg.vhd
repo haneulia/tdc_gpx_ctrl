@@ -32,6 +32,13 @@ package lidar_gpx_vdma_pkg is
     subtype gpx_vdma_word_count_t is unsigned(2 downto 0);
     subtype gpx_vdma_block_count_t is unsigned(5 downto 0);
 
+    type gpx_vdma_prefix_blocks_t is array (
+        0 to C_GPX_VDMA_PREFIX_BLOCKS - 1
+    ) of gpx_vdma_block_t;
+
+    constant C_GPX_VDMA_PREFIX_BLOCKS_ZERO :
+        gpx_vdma_prefix_blocks_t := (others => (others => '0'));
+
     type gpx_vdma_word_event_t is record
         valid          : std_logic;
         data           : gpx_vdma_word_t;

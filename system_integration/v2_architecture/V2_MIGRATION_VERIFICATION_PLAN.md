@@ -281,7 +281,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
-| 7 | J | Pending | B9 evidence pending | AXIS/VDMA formatter |
+| 7 | J | In progress | `V2_STAGE7_J0_AXIS_VDMA_ORACLE.md`; `V2_CHECKPOINT_J1_GPX_CELL_WORD_SERIALIZER.md`; `V2_CHECKPOINT_J2_GPX_VDMA_LANE_FORMATTER.md` | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
@@ -300,10 +300,12 @@ the B6..B8 oracle, I1 completed B6, I2 completed width-independent B7 Cell
 collection, I2A closed B6/B7 Return ownership plus sequential timing
 optimization, I3 completed canonical Rise/Fall B8 Frame-lane assembly, and I4
 closed the production B5..B8 chain plus explicit Face-close ownership for
-trailing and all-hole completion. The only valid next step is **Stage 7 /
-Checkpoint J B9 AXIS/VDMA formatter integration**.
-Stage 6 or later work must not be treated as
-migrated merely because its v1 implementation exists.
+trailing and all-hole completion. Stage 7 / Checkpoint J is in progress: J0
+froze the B9 contract, J1 completed canonical Cell serialization and J2
+completed one-lane 32/64/128-bit line formatting. The only valid next step is
+**J3 dual-lane Face-close, hole and abort ownership**.
+Checkpoint J or a later stage must not be treated as migrated merely because
+its v1 implementation exists or because an intermediate J sub-step passed.
 
 Commit only after the focused sub-step passes. Intermediate commits inside a
 Checkpoint are allowed, but the Checkpoint result document and status row move
@@ -471,3 +473,21 @@ runtime slope-mask closure, gap semantics and timing evidence are documented in
 `V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md`. I4 Face-close ownership,
 integrated B5..B8 data flow, timing optimization and final evidence are
 documented in `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`.
+
+## 10. In-Progress RTL Work Package: Stage 7 / Checkpoint J
+
+Checkpoint J converts the canonical B8 Cell lanes into the VDMA byte contract.
+Its current sub-step status is:
+
+| Step | Status | Evidence |
+|---:|---|---|
+| J0 | Complete | `V2_STAGE7_J0_AXIS_VDMA_ORACLE.md` |
+| J1 | Complete | `V2_CHECKPOINT_J1_GPX_CELL_WORD_SERIALIZER.md`; session `260806_j1_cell_word_v2_v2_gpx_cell_word_serializer` |
+| J2 | Complete | `V2_CHECKPOINT_J2_GPX_VDMA_LANE_FORMATTER.md`; sessions `260806_j2_abort_ready_v2_gpx_vdma_lane_formatter`, `260806_j2_final_impl_v2_gpx_vdma_lane_formatter` |
+| J3 | Pending | Dual-lane holes, Face close and abort/recovery |
+| J4 | Pending | B5-B9 integration at 150/200 and 200/150 MHz |
+
+J2 uses registered `32-bit word -> 128-bit alignment block -> AXIS beat`
+boundaries. Wider output widths change only the number of AXIS beats; they do
+not change canonical line bytes. Checkpoint J remains open until J3 and J4
+also pass.
