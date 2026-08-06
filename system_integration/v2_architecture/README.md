@@ -18,8 +18,9 @@
 > progress. J3/J4 freeze PACKED17, J5/J6 close Shot/Hole serialization and
 > width packing, and J7/J8 close the sequential VDMA profile plus ordered Face
 > Footer. J9 closes the STRIDE-aware DDR-versus-HTML Golden comparison, and
-> J10 closes the portable PS H-Line/Ethernet byte comparison. J11 parent
-> VDMA/HP/cache and board evidence is next.
+> J10 closes the portable PS H-Line/Ethernet byte comparison. K0 synthesisable
+> v2 top integration and K1 full RTL/HTML alignment come before L0 parent
+> VDMA/HP/cache and board evidence.
 
 ## 1. Purpose
 
@@ -96,6 +97,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_J9_DDR_HTML_GOLDEN.md](V2_CHECKPOINT_J9_DDR_HTML_GOLDEN.md) | Executable HTML Golden model, STRIDE-aware DDR capture and every-Word comparison |
 | [V2_PS_HLINE_ETHERNET_ABI_KO.md](V2_PS_HLINE_ETHERNET_ABI_KO.md) | Korean PS cache-ownership, Viewer Face Header, H-Line Header and 3-byte sample ABI |
 | [V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md](V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md) | Portable C PS decoder, HTML packet Golden, Cortex-A9 build and byte-comparison evidence |
+| [V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md](V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md) | Korean v2 top assembly order, parent readiness audit and K0/K1/L0 gates |
 
 ## 4. Target Top-Level Shape
 

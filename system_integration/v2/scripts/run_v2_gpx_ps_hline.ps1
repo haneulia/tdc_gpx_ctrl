@@ -164,7 +164,7 @@ $Scenario = [ordered]@{
     wire_contract = @(
         "packet 0: 1440-byte Face Header",
         "packet 1+: 32-byte H-Line Header plus 3-byte samples")
-    board_exclusion = "Physical DMA cache invalidation remains J11 board evidence"
+    board_exclusion = "Physical DMA cache invalidation remains Stage 9 L0 board evidence"
     cortex_a9_object_sha256 = (Get-FileHash -LiteralPath $ArmObject `
         -Algorithm SHA256).Hash
 }

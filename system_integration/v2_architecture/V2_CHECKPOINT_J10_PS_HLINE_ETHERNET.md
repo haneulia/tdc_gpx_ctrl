@@ -76,7 +76,7 @@ an illegal transport width. Both must be rejected without emitting a packet;
 the fixture is restored before the Golden comparison.
 
 This proves the software API cannot silently bypass ownership. It does not
-prove that a real Cortex-A9 cache line was invalidated; that remains J11 board
+prove that a real Cortex-A9 cache line was invalidated; that remains Stage 9 L0 board
 evidence. The decoder source also cross-compiles with `-Werror` for
 `Cortex-A9`, ARM state, using the Vitis bare-metal compiler.
 
@@ -94,7 +94,8 @@ not the full J9-to-J10 Sign-off path.
 ## Gate decision
 
 J10 is complete for deterministic DDR parsing, transport-width normalization,
-Viewer packet layout and post-synchronization output bytes. J11 must still
-close the real AXI VDMA/HP-port path, OS-specific cache API, measured PS
-processing time, Ethernet transmission time and sustained buffer ownership on
-the `xc7z020clg484-2` board.
+Viewer packet layout and post-synchronization output bytes. K0/K1 must first
+assemble the synthesisable v2 top and close the full RTL/HTML matrix. Stage 9
+L0 then closes the real AXI VDMA/HP-port path, OS-specific cache API, measured
+PS processing time, Ethernet transmission time and sustained buffer ownership
+on the `xc7z020clg484-2` board.

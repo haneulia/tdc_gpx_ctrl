@@ -305,4 +305,6 @@ Any request exceeding the allocated maximum is rejected before commit.
 | J8 | Face-boundary VDMA reconfiguration handshake |
 | J9 | DDR image versus Golden Vector comparison |
 | J10 | Complete: PS H-Line reference decoder and Ethernet packet comparison |
-| J11 | Parent Vivado, implementation timing, and board cache/DMA Sign-off |
+| K0 | Synthesisable v2 top assembly and full boundary integration |
+| K1 | Integrated RTL/HTML operating-matrix comparison |
+| L0 | Parent Vivado, implementation timing, and board cache/DMA Sign-off |

@@ -133,5 +133,5 @@ J7 and J8 are complete at focused RTL/OOC scope. Stage 7 is not yet signed off:
 1. J9 must capture accepted AXIS bytes into a STRIDE-aware DDR image and compare
    every byte/Word with the checked-in HTML Golden Vector.
 2. J10 must decode that same image into deterministic H-Line/Ethernet packets.
-3. J11 must repeat timing and DMA/cache ownership checks in the parent design
+3. Stage 9 L0 must repeat timing and DMA/cache ownership checks in the parent design
    and on the board.

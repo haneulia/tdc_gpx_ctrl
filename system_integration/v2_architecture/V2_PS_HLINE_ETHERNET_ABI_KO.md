@@ -184,13 +184,14 @@ sequenceDiagram
 
 | 항목 | 자동 Sign-off | 실제 보드 필요 |
 |---|---|---|
-| HTML Golden과 DDR 모든 Word 비교 | J9 완료 | 실제 VDMA core 확인은 J11 |
+| HTML Golden과 DDR 모든 Word 비교 | J9 완료 | 실제 VDMA core 확인은 L0 |
 | DDR Footer/Shot/Cell 해석 | J10 완료 | 동일 parser를 보드 buffer에 적용 |
 | 32/64/128-bit 입력의 Viewer payload 동일성 | J10 완료 | 선택한 실제 폭으로 재확인 |
 | Face Header/H-Line packet byte 비교 | J10 완료 | NIC/UDP 송신 후 수신 capture 비교 |
-| DMA/CPU 소유권 순서 위반 검출 | J10 host test 완료 | 실제 cache invalidate 효과는 J11 |
-| 처리시간, cache miss, Ethernet 지속 전송 margin | 계산 모델만으로 확정 불가 | J11 보드 계측 필수 |
+| DMA/CPU 소유권 순서 위반 검출 | J10 host test 완료 | 실제 cache invalidate 효과는 L0 |
+| 처리시간, cache miss, Ethernet 지속 전송 margin | 계산 모델만으로 확정 불가 | L0 보드 계측 필수 |
 
 J10은 **캐시 동기화 이후 디코더가 만들어야 할 결과**를 완전히 고정한다. 그러나
 실제 Zynq-7000 cache line이 올바르게 invalidate되었는지는 PC test가 증명할 수
-없으므로, 그 부분만 J11 보드 Sign-off로 남긴다.
+없으므로, 그 부분만 Stage 9 L0 보드 Sign-off로 남긴다. 그 전에 K0/K1에서
+v2 합성 top과 전체 RTL/HTML 경로를 닫아야 한다.

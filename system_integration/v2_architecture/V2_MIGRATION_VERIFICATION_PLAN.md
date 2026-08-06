@@ -281,8 +281,8 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
-| 7 | J | In progress | J0-J10 complete; `V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` | AXIS/VDMA/PS formatter chain |
-| 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
+| 7 | J | Complete | J0-J10; `V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` | AXIS/VDMA/PS formatter chain |
+| 8 | K | In progress | K0 plan; `V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md` | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
@@ -310,9 +310,11 @@ target-width AXIS packing. J7/J8 now close the 32-byte Face Footer, fixed
 maximum STRIDE, sequential profile calculation and acknowledged Face-boundary
 activation. J9 closes the STRIDE-aware DDR image comparison against the
 executable HTML Golden model. J10 now closes the portable C PS H-Line decoder,
-Viewer Ethernet byte comparison, ownership guards and Cortex-A9 build. The
-only valid next step is **J11 parent VDMA/HP/cache and board Sign-off**.
-Checkpoint J or a later stage must not be treated as migrated merely because
+Viewer Ethernet byte comparison, ownership guards and Cortex-A9 build. This
+closes Checkpoint J. The only valid next step is **Stage 8 K0 synthesisable v2
+top assembly**, followed by K1 full RTL/HTML alignment. Parent VDMA/HP/cache is
+Stage 9 L0 and must not begin against the current v1 parent IP.
+Checkpoint K or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
 
 Commit only after the focused sub-step passes. Intermediate commits inside a
@@ -501,7 +503,6 @@ Its current sub-step status is:
 | J8 | Complete | Sequential profile calculation and acknowledged Face-boundary HSIZE/VSIZE activation; `V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md` |
 | J9 | Complete | XSIM DDR image versus executable HTML Golden Vector, every allocated Word; `V2_CHECKPOINT_J9_DDR_HTML_GOLDEN.md` |
 | J10 | Complete | Portable C PS H-Line decoder and HTML Ethernet packet byte comparison; `V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md`; sessions `260807_j10_full2_v2_gpx_ps_hline`, `260807_j10_final_v2_gpx_ps_hline` |
-| J11 | Pending | Parent implementation, DMA/cache ownership and board Sign-off |
 
 J2 remains useful as a registered transport and backpressure baseline, but its
 repeated 48-byte prefix is not the target ABI. J3/J4 replace that geometry with
@@ -513,4 +514,6 @@ Face boundary and VDMA acknowledgement. J9 compares the resulting DDR image
 against the executable HTML Golden model, and J10 decodes those exact captures
 into byte-exact Viewer Face Header and H-Line packets with the portable C PS
 reference implementation.
-Checkpoint J remains open through board evidence at J11.
+Checkpoint J closes at J10. Stage 8 K owns synthesisable top integration and
+the complete RTL/HTML operating matrix; Stage 9 L owns parent implementation,
+DMA/cache ownership and board release evidence.

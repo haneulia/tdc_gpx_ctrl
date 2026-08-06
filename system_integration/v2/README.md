@@ -85,8 +85,9 @@ Return ordering and Hit-to-Cell collection, I2A proves their direct linked
 boundary, I3 owns width-neutral B8 Rise/Fall Frame-lane assembly, and I4 proves
 the complete B5..B8 production chain plus explicit Face-close ordering. J7/J8
 now close the focused B9 geometry and Footer boundary. J9 and J10 close the
-DDR image and host PS/Viewer comparison. The next implementation is J11, the
-parent VDMA/HP-port, real cache ownership and board measurement gate.
+DDR image and host PS/Viewer comparison. The next implementation is K0, the
+synthesisable v2 top assembly. K1 closes the full RTL/HTML operating matrix
+before L0 attaches the parent VDMA/HP-port and real cache/board measurement.
 
 Run the current package regression with:
 

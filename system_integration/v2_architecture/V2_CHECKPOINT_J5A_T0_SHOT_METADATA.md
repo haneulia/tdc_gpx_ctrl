@@ -93,4 +93,4 @@ Archived sessions:
 3. J7 emits the 32-byte Face Footer.
 4. J8 applies geometry changes only at a Face boundary.
 5. J9/J10 compare the DDR image and PS/Ethernet output against the HTML Golden
-   Vector. J11 supplies the final board DMA/cache evidence.
+   Vector. Stage 9 L0 supplies the final board DMA/cache evidence after K0/K1.

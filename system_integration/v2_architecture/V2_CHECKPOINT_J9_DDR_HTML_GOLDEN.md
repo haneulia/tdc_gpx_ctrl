@@ -90,5 +90,6 @@ fixed STRIDE addressing, SOF/TLAST, and reserved-address preservation.
 
 It is not yet evidence for the physical AXI VDMA core, HP-port arbitration, or
 CPU cache ownership. J10 now decodes these exact captures into byte-checked
-H-Line/Ethernet packets with the portable C reference implementation. J11
-still repeats the ownership sequence with the parent VDMA and on the board.
+H-Line/Ethernet packets with the portable C reference implementation. K0/K1
+must first assemble and align the full v2 top; Stage 9 L0 then repeats the
+ownership sequence with the parent VDMA and on the board.
