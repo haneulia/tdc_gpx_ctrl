@@ -305,8 +305,9 @@ through J2 provide the original B9 oracle, serializer and lane-formatter
 baseline. J3 froze the revised PACKED17 Shot-Line/Face-Footer ABI and HTML
 Golden schema. J4 implemented the target geometry functions, exact Cell
 Metadata map, and Return-filter/physical-overflow ownership. J5A/J5B now close
-the T0/Shot Metadata stream and explicit geometric Hole Lines. The only valid
-next step is **J6 target-width AXIS packing with final-Beat-only padding**.
+the T0/Shot Metadata stream and explicit geometric Hole Lines. J6 closes
+target-width AXIS packing. The only valid next step is **J7 32-byte Face Footer
+and fixed maximum STRIDE integration**.
 Checkpoint J or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
 
@@ -491,7 +492,7 @@ Its current sub-step status is:
 | J4 | Complete | `V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md`; sessions `260806_j4_contract_r2_v2_gpx_cell_collector`, `260806_j4_contract_v2_gpx_cell_word_serializer` |
 | J5A | Complete | T0 capture, exact 16-byte Shot Metadata, and width-independent real-Shot line stream; `V2_CHECKPOINT_J5A_T0_SHOT_METADATA.md` |
 | J5B | Complete | Explicit leading/interior/trailing/all-Hole Line expansion; `V2_CHECKPOINT_J5B_HOLE_LINES.md` |
-| J6 | Pending | Target 32/64/128 packer with final-Beat-only padding |
+| J6 | Complete | Target 32/64/128 packer with final-Beat-only padding; `V2_CHECKPOINT_J6_AXIS_WORD_PACKER.md` |
 | J7 | Pending | 32-byte Face Footer and fixed maximum STRIDE |
 | J8 | Pending | Face-boundary HSIZE/VSIZE reconfiguration handshake |
 | J9 | Pending | XSIM DDR image versus HTML Golden Vector, Word by Word |

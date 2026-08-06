@@ -218,6 +218,15 @@ Only the final Beat of a Shot/Footer line may contain padding. VDMA Stream and
 Memory Map widths match. Zynq-7000 uses an external SmartConnect to convert a
 128-bit VDMA memory path to the 64-bit HP port when that build is selected.
 
+Canonical Words occupy increasing AXIS lanes: the first Word is
+`TDATA[31:0]`, the second is `TDATA[63:32]`, and so on. At 32-bit width no
+transport padding is possible. At 64-bit width the final Beat may contain one
+zero Word; at 128-bit width it may contain one to three zero Words. Because
+HSIZE is already aligned to the selected Beat size, `TKEEP` and `TSTRB` are all
+ones. The zero bytes are part of the VDMA Line allocation, not omitted AXIS
+bytes. `TUSER[0]` marks the first Beat of geometric Shot index zero and `TLAST`
+marks the final Beat of every Shot, Hole, or Footer Line.
+
 ## 9. Atomic reconfiguration
 
 ```text
