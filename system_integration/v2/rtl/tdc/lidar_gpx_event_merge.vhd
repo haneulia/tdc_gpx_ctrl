@@ -63,11 +63,14 @@ begin
     slot_available_c <= '1' when event_r.valid = '0' or
                                 i_event_ready = '1' else '0';
 
-    -- Deliberately do not add same-cycle refill. This local ready depends only
-    -- on the matching ingress register and cannot couple one controller's raw
-    -- FIFO write-enable to another lane's valid signal.
+    -- Deliberately do not add same-cycle refill. Qualify each ingress lane with
+    -- the registered Shot mask here, before central arbitration. This keeps an
+    -- inactive lane from handshaking and removes the wide Shot-mask-to-event
+    -- mux cone from the 200 MHz output register path.
     gen_lane_ready : for index in 0 to C_MAX_CHIPS - 1 generate
-        lane_ready_c(index) <= not ingress_r(index).valid;
+        lane_ready_c(index) <= not ingress_r(index).valid
+            when shot_outstanding_r = '1' and shot_mask_r(index) = '1'
+            else '0';
     end generate gen_lane_ready;
 
     p_select : process (all)
@@ -83,8 +86,7 @@ begin
         if slot_available_c = '1' and shot_outstanding_r = '1' then
             for offset in 0 to C_MAX_CHIPS - 1 loop
                 candidate := (round_robin_r + offset) mod C_MAX_CHIPS;
-                if not found and shot_mask_r(candidate) = '1' and
-                   ingress_r(candidate).valid = '1' then
+                if not found and ingress_r(candidate).valid = '1' then
                     selected_valid_c <= '1';
                     selected_index_c <= candidate;
                     take_value(candidate) := '1';
@@ -161,7 +163,10 @@ begin
                             round_robin_r <= selected_index_c + 1;
                         end if;
                     else
-                        event_r <= C_GPX_RAW_EVENT_IDLE;
+                        -- Payload is don't-care while valid is low. Holding it
+                        -- avoids broadcasting downstream ready into every bit
+                        -- of the wide Shot context as a synchronous clear.
+                        event_r.valid <= '0';
                     end if;
                 end if;
 

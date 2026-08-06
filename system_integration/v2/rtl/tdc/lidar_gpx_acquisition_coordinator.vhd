@@ -112,6 +112,8 @@ architecture rtl of lidar_gpx_acquisition_coordinator is
 
     signal shot_ready_c : std_logic := '0';
     signal shot_accept_c : std_logic := '0';
+    signal shot_dispatch_r : shot_start_event_t := C_SHOT_START_EVENT_IDLE;
+    signal shot_dispatch_mask_r : chip_mask_t := (others => '0');
     signal merge_outstanding_c : std_logic := '0';
     signal merge_terminal_mask_c : chip_mask_t := (others => '0');
 
@@ -136,10 +138,12 @@ begin
     shot_ready_c <= '1' when i_active_valid = '1' and
         i_run_enable = '1' and active_mask_c /= (active_mask_c'range => '0') and
         (lane_shot_ready_c and active_mask_c) = active_mask_c and
+        shot_dispatch_r.valid = '0' and
         merge_outstanding_c = '0' else '0';
     shot_accept_c <= i_shot.valid and shot_ready_c;
 
     config_ready_c <= '1' when config_inflight_r = '0' and
+        shot_dispatch_r.valid = '0' and
         merge_outstanding_c = '0' and
         (lane_config_ready_c and C_PRESENT_MASK) = C_PRESENT_MASK else '0';
     config_accept_c <= i_config_apply and config_ready_c;
@@ -148,6 +152,7 @@ begin
     o_config_ready <= config_ready_c;
     o_config_done <= config_done_r;
     o_safe <= '1' when config_inflight_r = '0' and
+                      shot_dispatch_r.valid = '0' and
                       merge_outstanding_c = '0' and
                       (lane_safe_c and C_PRESENT_MASK) = C_PRESENT_MASK
               else '0';
@@ -171,15 +176,48 @@ begin
         variable value : shot_array_t;
     begin
         value := (others => C_SHOT_START_EVENT_IDLE);
-        if shot_accept_c = '1' then
+        if shot_dispatch_r.valid = '1' then
             for index in 0 to work.lidar_build_pkg.C_MAX_CHIPS - 1 loop
-                if active_mask_c(index) = '1' then
-                    value(index) := i_shot;
+                if shot_dispatch_mask_r(index) = '1' then
+                    value(index) := shot_dispatch_r;
                 end if;
             end loop;
         end if;
         lane_shot_c <= value;
     end process p_shot_broadcast;
+
+    -- Capture the accepted cross-domain Shot before broadcasting it. This
+    -- removes the all-lane-ready reduction from every lane FSM input cone and
+    -- gives all active Chips the same registered Shot context one clock later.
+    p_shot_dispatch : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                shot_dispatch_r <= C_SHOT_START_EVENT_IDLE;
+                shot_dispatch_mask_r <= (others => '0');
+            else
+                if shot_dispatch_r.valid = '1' then
+                    shot_dispatch_r <= C_SHOT_START_EVENT_IDLE;
+                    shot_dispatch_mask_r <= (others => '0');
+                end if;
+
+                if shot_accept_c = '1' then
+                    shot_dispatch_r <= i_shot;
+                    shot_dispatch_r.valid <= '1';
+                    shot_dispatch_mask_r <= active_mask_c;
+                end if;
+
+                -- synthesis translate_off
+                if shot_dispatch_r.valid = '1' then
+                    assert (lane_shot_ready_c and shot_dispatch_mask_r) =
+                           shot_dispatch_mask_r
+                        report "V2-GPX-COORD-005 registered Shot dispatch lost lane readiness"
+                        severity failure;
+                end if;
+                -- synthesis translate_on
+            end if;
+        end if;
+    end process p_shot_dispatch;
 
     p_config_completion : process (i_clk)
         variable completed : chip_mask_t;
@@ -309,8 +347,8 @@ begin
         port map (
             i_clk => i_clk,
             i_rst_n => i_rst_n,
-            i_shot_accept => shot_accept_c,
-            i_shot_mask => active_mask_c,
+            i_shot_accept => shot_dispatch_r.valid,
+            i_shot_mask => shot_dispatch_mask_r,
             i_lane_event => lane_event_c,
             o_lane_ready => lane_event_ready_c,
             o_event => o_event,

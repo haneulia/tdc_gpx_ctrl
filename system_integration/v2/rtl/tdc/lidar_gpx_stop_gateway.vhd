@@ -23,6 +23,8 @@ entity lidar_gpx_stop_gateway is
         i_tdc_rst_n       : in  std_logic;
         o_tdc_stop_tdc    : out std_logic;
 
+        o_proc_reset_busy : out std_logic;
+        o_tdc_reset_busy  : out std_logic;
         o_reset_busy      : out std_logic
     );
 end entity lidar_gpx_stop_gateway;
@@ -30,6 +32,8 @@ end entity lidar_gpx_stop_gateway;
 architecture rtl of lidar_gpx_stop_gateway is
 
     signal stop_tdc_c : std_logic := '0';
+    signal proc_reset_busy_c : std_logic := '0';
+    signal tdc_reset_busy_c : std_logic := '0';
     signal reset_busy_c : std_logic := '0';
     signal overflow_c : std_logic := '0';
 
@@ -40,6 +44,8 @@ begin
         severity failure;
 
     o_tdc_stop_tdc <= stop_tdc_c;
+    o_proc_reset_busy <= proc_reset_busy_c;
+    o_tdc_reset_busy <= tdc_reset_busy_c;
     o_reset_busy <= reset_busy_c;
     o_overflow_sticky <= overflow_c;
 
@@ -59,6 +65,8 @@ begin
         end process p_sync_edge;
 
         stop_tdc_c <= stop_pulse_r;
+        proc_reset_busy_c <= '0';
+        tdc_reset_busy_c <= '0';
         reset_busy_c <= '0';
         overflow_c <= '0';
     end generate gen_sync;
@@ -117,6 +125,8 @@ begin
                 o_destination_valid => destination_valid_c,
                 i_destination_ready => '1',
                 o_destination_data  => destination_data_c,
+                o_source_reset_busy => proc_reset_busy_c,
+                o_destination_reset_busy => tdc_reset_busy_c,
                 o_reset_busy        => reset_busy_c
             );
 

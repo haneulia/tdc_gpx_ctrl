@@ -9,6 +9,8 @@ $ErrorActionPreference = "Stop"
 
 $Hdl = (Resolve-Path (Join-Path $PSScriptRoot "../../..")).Path
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin"
+$Glbl = (Resolve-Path -LiteralPath (
+    "C:/AMDDesignTools/2025.2.1/Vivado/data/verilog/src/glbl.v")).Path
 $OrderFile = Join-Path $PSScriptRoot "v2_rtl_compile_order.txt"
 $WorkRoot = Join-Path $Hdl "tmp/v2_k04_integration"
 $Work = Join-Path $WorkRoot $Stamp
@@ -59,11 +61,16 @@ $SourceFiles += @(
 )
 
 $Project = Join-Path $Work "v2_k04_integration.prj"
+$VerilogProject = Join-Path $Work "v2_k04_integration_verilog.prj"
 $ProjectLines = foreach ($File in $SourceFiles) {
     "vhdl2008 xil_defaultlib `"$($File.Replace('\', '/'))`""
 }
 $ProjectLines += "nosort"
 $ProjectLines | Set-Content -Encoding ASCII -LiteralPath $Project
+@(
+    "verilog xil_defaultlib `"$($Glbl.Replace('\', '/'))`"",
+    "nosort"
+) | Set-Content -Encoding ASCII -LiteralPath $VerilogProject
 
 $RunTcl = Join-Path $Work "run.tcl"
 @("run all", "quit") | Set-Content -Encoding ASCII -LiteralPath $RunTcl
@@ -104,6 +111,9 @@ if ($OnlyImplementation -ne "" -and
 if (-not $SkipSimulation) {
     Push-Location $Work
     try {
+        Invoke-Checked "$Vivado/xvlog.bat" @(
+            "--relax", "-prj", $VerilogProject,
+            "-log", (Join-Path $Work "xvlog.log"))
         Invoke-Checked "$Vivado/xvhdl.bat" @(
             "--2008", "--relax", "-prj", $Project,
             "-log", (Join-Path $Work "xvhdl.log"))
@@ -115,6 +125,7 @@ if (-not $SkipSimulation) {
             "--debug", "off", "--relax", "--mt", "2",
             "--snapshot", $BarrierSnapshot,
             "xil_defaultlib.tb_lidar_processing_activation_barrier",
+            "xil_defaultlib.glbl",
             "-log", $BarrierElab)
         Invoke-Checked "$Vivado/xsim.bat" @(
             $BarrierSnapshot, "-tclbatch", $RunTcl.Replace('\', '/'),
@@ -138,6 +149,7 @@ if (-not $SkipSimulation) {
                     "--generic_top", "G_TDC_CLK_MHZ=$($Profile.tdc)",
                     "--generic_top", "G_SIMULATION_MODE=$($Mode.simulation)",
                     "xil_defaultlib.tb_tdc_gpx_lidar_ctrl_v2_k04",
+                    "xil_defaultlib.glbl",
                     "-log", $ElabLog)
                 Invoke-Checked "$Vivado/xsim.bat" @(
                     $Snapshot, "-tclbatch", $RunTcl.Replace('\', '/'),

@@ -51,6 +51,8 @@ entity lidar_gpx_acquisition_subsystem is
         i_tdc_clear_status  : in  std_logic := '0';
         o_tdc_safe          : out std_logic;
         o_tdc_shot_complete : out std_logic;
+        -- Processing-clock-domain reset busy. Safe for Processing control
+        -- decisions; TDC-domain reset busy is folded into o_tdc_safe.
         o_cdc_reset_busy    : out std_logic;
 
         o_adr        : out gpx_bus_address_array_t;
@@ -89,11 +91,13 @@ architecture rtl of lidar_gpx_acquisition_subsystem is
     signal shot_drop_r : std_logic := '0';
     signal tdc_shot_c : shot_start_event_t;
     signal tdc_shot_ready_c : std_logic;
-    signal shot_reset_busy_c : std_logic;
+    signal shot_proc_reset_busy_c : std_logic;
+    signal shot_tdc_reset_busy_c : std_logic;
 
     signal tdc_stop_c : std_logic;
     signal stop_drop_c : std_logic;
-    signal stop_reset_busy_c : std_logic;
+    signal stop_proc_reset_busy_c : std_logic;
+    signal stop_tdc_reset_busy_c : std_logic;
 
     signal tdc_event_c : gpx_raw_event_t;
     signal tdc_event_ready_c : std_logic;
@@ -102,7 +106,11 @@ architecture rtl of lidar_gpx_acquisition_subsystem is
     signal buffered_event_valid_c : std_logic;
     signal buffered_event_c : gpx_raw_event_t;
     signal result_gateway_ready_c : std_logic;
-    signal result_reset_busy_c : std_logic;
+    signal result_proc_reset_busy_c : std_logic;
+    signal result_tdc_reset_busy_c : std_logic;
+    signal proc_reset_busy_c : std_logic;
+    signal tdc_reset_busy_c : std_logic;
+    signal coordinator_safe_c : std_logic;
 
 begin
 
@@ -118,8 +126,12 @@ begin
     o_proc_shot_ready <= shot_ingress_ready_c;
     o_shot_drop_sticky <= shot_drop_r;
     o_stop_drop_sticky <= stop_drop_c;
-    o_cdc_reset_busy <= shot_reset_busy_c or stop_reset_busy_c or
-        result_reset_busy_c;
+    proc_reset_busy_c <= shot_proc_reset_busy_c or
+        stop_proc_reset_busy_c or result_proc_reset_busy_c;
+    tdc_reset_busy_c <= shot_tdc_reset_busy_c or
+        stop_tdc_reset_busy_c or result_tdc_reset_busy_c;
+    o_cdc_reset_busy <= proc_reset_busy_c;
+    o_tdc_safe <= coordinator_safe_c and not tdc_reset_busy_c;
 
     p_shot_ingress : process (i_proc_clk, i_proc_rst_n)
     begin
@@ -159,7 +171,9 @@ begin
             i_tdc_rst_n  => i_tdc_rst_n,
             o_tdc_shot   => tdc_shot_c,
             i_tdc_ready  => tdc_shot_ready_c,
-            o_reset_busy => shot_reset_busy_c
+            o_proc_reset_busy => shot_proc_reset_busy_c,
+            o_tdc_reset_busy  => shot_tdc_reset_busy_c,
+            o_reset_busy      => open
         );
 
     u_stop_gateway : entity work.lidar_gpx_stop_gateway
@@ -176,7 +190,9 @@ begin
             i_tdc_clk         => i_tdc_clk,
             i_tdc_rst_n       => i_tdc_rst_n,
             o_tdc_stop_tdc    => tdc_stop_c,
-            o_reset_busy      => stop_reset_busy_c
+            o_proc_reset_busy => stop_proc_reset_busy_c,
+            o_tdc_reset_busy  => stop_tdc_reset_busy_c,
+            o_reset_busy      => open
         );
 
     u_coordinator : entity work.lidar_gpx_acquisition_coordinator
@@ -202,7 +218,7 @@ begin
             i_soft_reset     => i_tdc_soft_reset,
             i_force_reinit   => i_tdc_force_reinit,
             i_clear_status   => i_tdc_clear_status,
-            o_safe           => o_tdc_safe,
+            o_safe           => coordinator_safe_c,
             i_shot           => tdc_shot_c,
             o_shot_ready     => tdc_shot_ready_c,
             i_stop_tdc       => tdc_stop_c,
@@ -279,7 +295,9 @@ begin
             i_proc_rst_n  => i_proc_rst_n,
             o_proc_result => o_proc_result,
             i_proc_ready  => i_proc_result_ready,
-            o_reset_busy  => result_reset_busy_c
+            o_tdc_reset_busy  => result_tdc_reset_busy_c,
+            o_proc_reset_busy => result_proc_reset_busy_c,
+            o_reset_busy      => open
         );
 
 end architecture rtl;

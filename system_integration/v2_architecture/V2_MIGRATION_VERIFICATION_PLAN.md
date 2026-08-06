@@ -311,11 +311,12 @@ maximum STRIDE, sequential profile calculation and acknowledged Face-boundary
 activation. J9 closes the STRIDE-aware DDR image comparison against the
 executable HTML Golden model. J10 now closes the portable C PS H-Line decoder,
 Viewer Ethernet byte comparison, ownership guards and Cortex-A9 build. This
-closes Checkpoint J. Stage 8 K0-1 through K0-3 now establish the ownership
-audit, synthesisable public Top shell, atomic Rise/Fall VDMA profile activation
-and acknowledged system-command CDC. The only valid next step is **K0-4
-Processing and Echo integration**, followed by the remaining K0 assembly and
-K1 full RTL/HTML alignment. Parent VDMA/HP/cache is
+closes Checkpoint J. Stage 8 K0-1 through K0-5 now establish the ownership
+audit, synthesisable public Top shell, atomic Rise/Fall VDMA profile activation,
+acknowledged system-command CDC, Processing/Echo ownership, physical GPX
+acquisition and the complete B5..B8 Hit/Cell/Frame-lane path. The only valid
+next step is **K0-6 Shot/Hole/T0/Footer/width-packer integration**, followed by
+the remaining K0 assembly and K1 full RTL/HTML alignment. Parent VDMA/HP/cache is
 Stage 9 L0 and must not begin against the current v1 parent IP.
 Checkpoint K or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
@@ -527,12 +528,12 @@ DMA/cache ownership and board release evidence.
 |---:|---|---|
 | K0-1 | Complete | Ownership/port audit in `V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md` |
 | K0-2 | Complete | Public Top shell and initial canonical order; `V2_CHECKPOINT_K0_2_TOP_SHELL_KO.md` |
-| K0-3 | Complete | Current 80-source order, atomic Rise/Fall VDMA activation and system-command CDC; `V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md` |
-| K0-4 | In progress | Processing and Echo integration |
-| K0-5..K0-10 | Pending | GPX/data/status, implementation and packaging gates |
+| K0-3 | Complete | Atomic Rise/Fall VDMA activation and system-command CDC; `V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md` |
+| K0-4 | Complete | Processing/Echo integration; `V2_CHECKPOINT_K0_4_PROCESSING_ECHO_INTEGRATION_KO.md` |
+| K0-5 | Complete | Physical GPX acquisition and B5..B8 identity; `V2_CHECKPOINT_K0_5_GPX_B5_B8_INTEGRATION_KO.md` |
+| K0-6..K0-10 | Pending | AXIS data/status, implementation and packaging gates |
 
-K0-3 does not close the functional Top. It proves that a configuration version
-cannot be released before both VDMA lane profiles are programmed, and that CSR
-system commands cross to Processing/TDC through an acknowledged boundary.
-K0-4 is the first step that transfers ownership of physical laser/start/stop
-outputs from fail-safe constants to the verified Processing and Echo blocks.
+K0-5 does not close the functional Top. It proves physical GPX programming,
+IFIFO drain and B5..B8 data identity, but its canonical Cell/Face-close streams
+are still drained inside the Top. K0-6 transfers those payloads to the verified
+Shot/Hole/T0/Footer and width-independent AXIS formatting chain.

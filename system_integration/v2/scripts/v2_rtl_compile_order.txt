@@ -62,6 +62,7 @@ system_integration/v2/rtl/tdc/lidar_gpx_event_merge.vhd
 system_integration/v2/rtl/tdc/lidar_gpx_shot_gateway.vhd
 system_integration/v2/rtl/tdc/lidar_gpx_result_gateway.vhd
 system_integration/v2/rtl/tdc/lidar_gpx_stop_gateway.vhd
+system_integration/v2/rtl/tdc/lidar_gpx_run_enable_cdc.vhd
 system_integration/v2/rtl/tdc/lidar_gpx_acquisition_lane.vhd
 system_integration/v2/rtl/tdc/lidar_gpx_acquisition_coordinator.vhd
 system_integration/v2/rtl/tdc/lidar_gpx_acquisition_subsystem.vhd

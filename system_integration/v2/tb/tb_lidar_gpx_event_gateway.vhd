@@ -155,6 +155,8 @@ begin
             i_tdc_rst_n  => tdc_rst_n,
             o_tdc_shot   => tdc_shot,
             i_tdc_ready  => tdc_shot_ready,
+            o_proc_reset_busy => open,
+            o_tdc_reset_busy  => open,
             o_reset_busy => shot_reset_busy
         );
 
@@ -172,6 +174,8 @@ begin
             i_proc_rst_n  => proc_rst_n,
             o_proc_result => proc_result,
             i_proc_ready  => proc_result_ready,
+            o_tdc_reset_busy  => open,
+            o_proc_reset_busy => open,
             o_reset_busy  => result_reset_busy
         );
 

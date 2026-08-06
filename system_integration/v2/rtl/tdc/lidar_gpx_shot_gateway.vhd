@@ -23,7 +23,9 @@ entity lidar_gpx_shot_gateway is
         o_tdc_shot       : out shot_start_event_t;
         i_tdc_ready      : in  std_logic;
 
-        o_reset_busy     : out std_logic
+        o_proc_reset_busy : out std_logic;
+        o_tdc_reset_busy  : out std_logic;
+        o_reset_busy      : out std_logic
     );
 end entity lidar_gpx_shot_gateway;
 
@@ -69,6 +71,8 @@ begin
             o_destination_valid => destination_valid_c,
             i_destination_ready => i_tdc_ready,
             o_destination_data  => destination_payload_c,
+            o_source_reset_busy => o_proc_reset_busy,
+            o_destination_reset_busy => o_tdc_reset_busy,
             o_reset_busy        => o_reset_busy
         );
 

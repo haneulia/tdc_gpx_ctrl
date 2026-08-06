@@ -29,7 +29,11 @@ entity lidar_stream_gateway is
         i_destination_ready : in  std_logic;
         o_destination_data  : out std_logic_vector(G_WIDTH - 1 downto 0);
 
-        o_reset_busy        : out std_logic
+        o_source_reset_busy      : out std_logic;
+        o_destination_reset_busy : out std_logic;
+        -- Diagnostic aggregate only. Do not consume this signal in either
+        -- clock domain; use the matching domain-specific output above.
+        o_reset_busy              : out std_logic
     );
 end entity lidar_stream_gateway;
 
@@ -38,6 +42,8 @@ architecture rtl of lidar_stream_gateway is
     signal source_ready_c : std_logic;
     signal destination_valid_c : std_logic;
     signal destination_data_c : std_logic_vector(G_WIDTH - 1 downto 0);
+    signal source_reset_busy_c : std_logic;
+    signal destination_reset_busy_c : std_logic;
     signal reset_busy_c : std_logic;
 
     function fn_is_power_of_two(value : positive) return boolean is
@@ -57,6 +63,8 @@ begin
     o_source_ready     <= source_ready_c;
     o_destination_valid <= destination_valid_c;
     o_destination_data <= destination_data_c;
+    o_source_reset_busy <= source_reset_busy_c;
+    o_destination_reset_busy <= destination_reset_busy_c;
     o_reset_busy       <= reset_busy_c;
 
     assert G_CLOCK_MODE = STREAM_CLOCK_SYNC or
@@ -76,7 +84,9 @@ begin
         destination_valid_c <= valid_r and i_source_rst_n
             and i_destination_rst_n;
         destination_data_c <= data_r;
-        reset_busy_c <= not i_source_rst_n or not i_destination_rst_n;
+        source_reset_busy_c <= not i_source_rst_n or not i_destination_rst_n;
+        destination_reset_busy_c <= source_reset_busy_c;
+        reset_busy_c <= source_reset_busy_c;
 
         p_sync_slot : process (
             i_source_clk, i_source_rst_n, i_destination_rst_n)
@@ -116,7 +126,9 @@ begin
         destination_valid_c <= not fifo_empty and not rd_rst_busy
             and i_destination_rst_n;
         destination_data_c <= fifo_dout;
-        reset_busy_c <= fifo_rst or wr_rst_busy or rd_rst_busy;
+        source_reset_busy_c <= fifo_rst or wr_rst_busy;
+        destination_reset_busy_c <= rd_rst_busy or not i_destination_rst_n;
+        reset_busy_c <= source_reset_busy_c or destination_reset_busy_c;
 
         -- XPM reset is owned by the source clock. Destination reset asserts
         -- this stretcher asynchronously, then deasserts through two source

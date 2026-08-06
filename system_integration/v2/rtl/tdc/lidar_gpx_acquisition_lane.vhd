@@ -261,11 +261,11 @@ begin
     assert C_DRAIN_CAP_QUADS <= 15
         report "V2-GPX-LANE-005 build-derived physical drain cap exceeds GPX field"
         severity failure;
-    assert i_active_valid = '0' or
+    assert i_active_valid /= '1' or
            i_active_config.derived.capture_window_tdc_clks(31 downto 16) = 0
         report "V2-GPX-LANE-003 accepted capture window exceeds 16-bit controller"
         severity failure;
-    assert i_active_valid = '0' or
+    assert i_active_valid /= '1' or
            i_active_config.source.tdc.bus_ticks(5 downto 3) = 0
         report "V2-GPX-LANE-004 accepted BUS_TICKS exceeds physical width"
         severity failure;
