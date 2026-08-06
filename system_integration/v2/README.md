@@ -21,6 +21,7 @@ unchanged and is used as the observable-behavior reference during migration.
 | `rtl/proc/` | Direct registered Motor/Face/Shot/Laser Processing path | Yes |
 | `tb/` | Self-checking package and RTL tests | No |
 | `scripts/` | Reproducible, compact regressions | No |
+| `sw_reference/` | Portable C PACKED17-to-Viewer decoder and ownership API | PS software |
 
 `lidar_config_reference_pkg` contains wide division on purpose. Production RTL
 does not call it. The sequential commit calculator derives the same values over
@@ -58,8 +59,10 @@ multiple clocks and is checked against this reference model.
   J5A/J5B close T0/Shot Metadata and explicit Hole Lines, J6 closes the sole
   32/64/128-bit AXIS packer, and J7/J8 close the ordered Face Footer plus
   sequential, acknowledged Face-boundary VDMA profile activation. The DDR
-  Golden comparison, PS decoder, and full parent datapath remain unmigrated;
-  the existence of their v1 cores does not mark those Stages complete.
+  Golden comparison is closed by J9, and J10 closes the portable PS H-Line
+  decoder, Viewer packet byte comparison and Cortex-A9 build. The physical
+  parent VDMA/HP/cache path remains unmigrated; the existence of its v1 cores
+  does not mark that Stage complete.
 
 ## Next Implementation Order
 
@@ -81,8 +84,9 @@ and typed acquisition boundaries. Stage 6 I1 owns B6 raw parsing, I2 owns B7
 Return ordering and Hit-to-Cell collection, I2A proves their direct linked
 boundary, I3 owns width-neutral B8 Rise/Fall Frame-lane assembly, and I4 proves
 the complete B5..B8 production chain plus explicit Face-close ordering. J7/J8
-now close the focused B9 geometry and Footer boundary. The next implementation
-is J9, the STRIDE-aware DDR image comparison against the HTML Golden Vector.
+now close the focused B9 geometry and Footer boundary. J9 and J10 close the
+DDR image and host PS/Viewer comparison. The next implementation is J11, the
+parent VDMA/HP-port, real cache ownership and board measurement gate.
 
 Run the current package regression with:
 
@@ -363,3 +367,17 @@ the C08 HTML, checks the frozen Golden JSON, captures a real Shot, a Hole Shot,
 and the ordered Footer through the RTL AXIS path, then compares every DDR Word
 and fixed-STRIDE reserve at 150/200 MHz for 32/64/128-bit builds. See
 `system_integration/v2_architecture/V2_CHECKPOINT_J9_DDR_HTML_GOLDEN.md`.
+
+Run the J9-to-J10 DDR, PS H-Line and Ethernet packet comparison with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_ps_hline.ps1
+```
+
+The final marker is `LIDAR_V2_GPX_PS_HLINE_SIGNOFF_PASS`. The script creates
+fresh 150/200 MHz by 32/64/128-bit DDR captures, executes the portable C PS
+decoder, compares every Viewer packet byte against the HTML Golden model, and
+cross-compiles the same decoder for Cortex-A9. See
+`system_integration/v2_architecture/V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` and
+`system_integration/v2_architecture/V2_PS_HLINE_ETHERNET_ABI_KO.md`.

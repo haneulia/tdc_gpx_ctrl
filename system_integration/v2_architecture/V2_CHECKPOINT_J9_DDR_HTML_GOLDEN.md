@@ -89,6 +89,6 @@ Sign-off evidence for Word order, width packing, HSIZE/VSIZE, Footer splitting,
 fixed STRIDE addressing, SOF/TLAST, and reserved-address preservation.
 
 It is not yet evidence for the physical AXI VDMA core, HP-port arbitration, or
-CPU cache ownership. J10 next decodes this exact image into H-Line/Ethernet
-packets. J11 later repeats the ownership sequence with the parent VDMA and on
-the board.
+CPU cache ownership. J10 now decodes these exact captures into byte-checked
+H-Line/Ethernet packets with the portable C reference implementation. J11
+still repeats the ownership sequence with the parent VDMA and on the board.

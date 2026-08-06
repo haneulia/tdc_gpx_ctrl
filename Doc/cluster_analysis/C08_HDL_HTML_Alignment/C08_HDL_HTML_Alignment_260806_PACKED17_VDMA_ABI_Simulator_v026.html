@@ -151,6 +151,7 @@
         <button id="resetButton">기본값</button>
         <button id="exportButton" class="primary">Golden JSON 저장</button>
         <button id="exportSignoffButton">J9 Sign-off 세트</button>
+        <button id="exportPsSignoffButton">J10 PS Sign-off 세트</button>
       </div>
     </aside>
 
@@ -472,6 +473,82 @@
       };
     }
 
+    function pushU16Le(bytes, value) {
+      bytes.push(value & 0xff, (value >>> 8) & 0xff);
+    }
+
+    function pushU32Le(bytes, value) {
+      bytes.push(value & 0xff, (value >>> 8) & 0xff,
+        (value >>> 16) & 0xff, (value >>> 24) & 0xff);
+    }
+
+    function bytesToHex(bytes) {
+      return bytes.map(value => value.toString(16).padStart(2, "0")).join("").toUpperCase();
+    }
+
+    function buildJ10PsGolden(processingClockMhz) {
+      // Independent Viewer-wire oracle: it does not parse the J9 DDR image.
+      // VDMA width/HSIZE/STRIDE are intentionally absent so all transport
+      // widths normalize to the same application payload.
+      const faceHeader = [];
+      pushU32Le(faceHeader, 0x3148464c); // "LFH1"
+      pushU16Le(faceHeader, 1);          // Viewer ABI version
+      pushU16Le(faceHeader, 64);         // meaningful header bytes
+      pushU32Le(faceHeader, 0x11223344); // Face Frame ID
+      pushU16Le(faceHeader, 0x1234);     // Active Config version
+      faceHeader.push(2, 5);             // Face index, configured Face count
+      faceHeader.push(1, 1, 1, 1);       // Rise, CCW, simulation, Returns
+      faceHeader.push(1, 1, 2, 3);       // lane mask, STOP/Chip, Cell Words, sample bytes
+      pushU16Le(faceHeader, 1);          // Cell slots
+      pushU16Le(faceHeader, 2);          // planned Shots
+      pushU16Le(faceHeader, 2);          // completed Shot/Hole Lines
+      pushU16Le(faceHeader, 1);          // H-Line streams
+      pushU32Le(faceHeader, processingClockMhz * 1000000);
+      pushU32Le(faceHeader, 81);         // TDC bin resolution in ps
+      pushU32Le(faceHeader, 14400);      // decoded states/revolution
+      pushU16Le(faceHeader, 6000);       // Face lower state, inclusive
+      pushU16Le(faceHeader, 7200);       // Face center state
+      pushU16Le(faceHeader, 8400);       // Face upper state, exclusive
+      pushU16Le(faceHeader, 0x0008);     // Footer status: contains Hole
+      pushU32Le(faceHeader, 0x76543210); // first valid T0 tick low
+      pushU32Le(faceHeader, 0x00000001); // first valid T0 tick high
+      pushU16Le(faceHeader, 1);          // H-Line packet count
+      pushU16Le(faceHeader, 0x0005);     // T0 anchor valid + contains Hole
+      while (faceHeader.length < 1440) faceHeader.push(0);
+
+      const hline = [];
+      pushU32Le(hline, 0x314c484c);      // "LHL1"
+      pushU32Le(hline, 0x11223344);      // Face Frame ID
+      pushU16Le(hline, 0x1234);          // Active Config version
+      hline.push(2, 0x2f);               // Face index, Rise/CCW/sim/Hole/final
+      pushU16Le(hline, 0);               // H-Line local index
+      hline.push(0, 0);                  // Cell slot, Return index
+      pushU16Le(hline, 0);               // first Shot index
+      pushU16Le(hline, 2);               // sample count
+      pushU16Le(hline, 0);               // packet index
+      pushU16Le(hline, 1);               // packet count for this H-Line
+      pushU16Le(hline, 1);               // valid sample count
+      pushU16Le(hline, 6);               // sample payload bytes
+      hline.push(3, 1);                   // bytes/sample, visible Returns
+      pushU16Le(hline, 2);               // planned Shots
+      hline.push(0x01, 0x00, 0x03);       // Hit 0x10001 + valid
+      hline.push(0x00, 0x00, 0x04);       // explicit Hole
+
+      return {
+        processing_clock_mhz:processingClockMhz,
+        application_payload_limit_bytes:1440,
+        packets:[
+          {kind:"face_header",length_bytes:faceHeader.length,hex:bytesToHex(faceHeader)},
+          {kind:"hline",length_bytes:hline.length,hex:bytesToHex(hline)}
+        ],
+        decoded:{
+          face_frame_id:"0x11223344", face_index:2, slope:"rise",
+          cell_slot:0, return_index:0, planned_shots:2,
+          samples:["0x030001","0x040000"]
+        }
+      };
+    }
+
     function renderMemory(g) {
       const map = $("memoryMap");
       map.innerHTML = "";
@@ -535,6 +612,13 @@
         check(`J9 ${width}-bit DDR 이미지 크기`, golden.memory_words.length * 4 ===
           golden.geometry.frame_allocation_bytes);
         check(`J9 ${width}-bit STRIDE 예약영역 보존`, golden.memory_words.includes("0xA5A5A5A5"));
+      });
+      [150,200].forEach(clockMhz => {
+        const golden = buildJ10PsGolden(clockMhz);
+        check(`J10 ${clockMhz} MHz Face Header 1440 B`, golden.packets[0].length_bytes === 1440);
+        check(`J10 ${clockMhz} MHz H-Line <= 1440 B`, golden.packets[1].length_bytes <= 1440);
+        check(`J10 ${clockMhz} MHz valid/Hole sample`, golden.decoded.samples.join() ===
+          "0x030001,0x040000");
       });
       const off = laneGeometry({...defaults,fallingEnable:false}, "rise");
       check("Fall OFF에서 모든 Active Chip이 Rise", off.slots === 32);
@@ -641,6 +725,20 @@
       link.click(); URL.revokeObjectURL(link.href);
     }
 
+    function exportJ10PsSignoffGolden() {
+      const data = {
+        schema:"tdc-gpx-packed17-ps-ethernet-golden-v1",
+        generated_by:"C08-v026 buildJ10PsGolden",
+        scenario:"J9 DDR image normalized to Face Header and one H-Line",
+        profiles:[150,200].map(buildJ10PsGolden)
+      };
+      const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "packed17_j10_ps_ethernet_golden.json";
+      link.click(); URL.revokeObjectURL(link.href);
+    }
+
     buildMaskGrid();
     document.querySelectorAll("input,select").forEach(el => el.addEventListener("input", render));
     $("riseTab").addEventListener("click", () => { state.lane="rise"; $("riseTab").classList.add("active"); $("fallTab").classList.remove("active"); render(); });
@@ -648,6 +746,7 @@
     $("resetButton").addEventListener("click", applyDefaults);
     $("exportButton").addEventListener("click", exportGolden);
     $("exportSignoffButton").addEventListener("click", exportJ9SignoffGolden);
+    $("exportPsSignoffButton").addEventListener("click", exportJ10PsSignoffGolden);
     applyDefaults();
   </script>
 </body>

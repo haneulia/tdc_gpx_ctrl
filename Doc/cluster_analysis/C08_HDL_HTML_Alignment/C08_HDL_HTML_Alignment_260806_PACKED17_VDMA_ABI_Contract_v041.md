@@ -247,6 +247,26 @@ ones. The zero bytes are part of the VDMA Line allocation, not omitted AXIS
 bytes. `TUSER[0]` marks the first Beat of geometric Shot index zero and `TLAST`
 marks the final Beat of every Shot, Hole, or Footer Line.
 
+### 8.1 PS normalization and Viewer packets
+
+PS validates the Footer and removes the source VDMA transport geometry before
+creating Viewer data. The Viewer therefore receives the same application
+payload for equivalent 32, 64, and 128-bit DDR inputs.
+
+- packet 0 is one 1440-byte Viewer Face Header;
+- packet 1 and later are H-Line packets of at most 1440 bytes;
+- each H-Line is identified by Face Frame ID, Face index, slope, Cell slot and
+  Return index;
+- each H-Line packet has a 32-byte Header followed by up to 469 three-byte
+  samples in geometric Shot order;
+- the 24-bit sample contains Hit `[16:0]`, Valid, Hole, fault, timeout and abort;
+- all application multi-byte fields are little-endian;
+- VDMA width, HSIZE, VSIZE and STRIDE are PS-internal and are not repeated in
+  the Viewer Header.
+
+The exact byte tables and cache-ownership sequence are defined in
+`system_integration/v2_architecture/V2_PS_HLINE_ETHERNET_ABI_KO.md`.
+
 ## 9. Atomic reconfiguration
 
 ```text
@@ -266,7 +286,9 @@ Any request exceeding the allocated maximum is rejected before commit.
 3. XSIM captures accepted AXIS bytes into a DDR-memory image and compares every
    Word against the same Golden Vector schema.
 4. A host PS reference decoder reads that image using HSIZE, VSIZE, and fixed
-   STRIDE, then emits deterministic H-Line packets for byte comparison.
+   STRIDE, then emits deterministic H-Line packets for byte comparison. J10
+   executes this decoder as portable C, verifies DMA/CPU ownership guards, and
+   cross-compiles the same source for Cortex-A9.
 5. Board Sign-off repeats the decode after DMA cache ownership synchronization.
    FreeRTOS uses explicit invalidate/ownership barriers; PetaLinux uses the DMA
    API rather than direct cached-buffer access.
@@ -282,5 +304,5 @@ Any request exceeding the allocated maximum is rejected before commit.
 | J7 | Face Footer and fixed maximum STRIDE |
 | J8 | Face-boundary VDMA reconfiguration handshake |
 | J9 | DDR image versus Golden Vector comparison |
-| J10 | PS H-Line reference decoder and Ethernet packet comparison |
+| J10 | Complete: PS H-Line reference decoder and Ethernet packet comparison |
 | J11 | Parent Vivado, implementation timing, and board cache/DMA Sign-off |
