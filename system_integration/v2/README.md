@@ -382,3 +382,16 @@ decoder, compares every Viewer packet byte against the HTML Golden model, and
 cross-compiles the same decoder for Cortex-A9. See
 `system_integration/v2_architecture/V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` and
 `system_integration/v2_architecture/V2_PS_HLINE_ETHERNET_ABI_KO.md`.
+
+Run the K0-2 production compile and integrated Top-shell regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_top_shell.ps1
+```
+
+The final marker is `LIDAR_V2_TOP_SHELL_REGRESSION_PASS`. K0-2 compiles all
+production sources in the canonical order and elaborates the fail-safe public
+Top shell at Processing/TDC 150/200 and 200/150 MHz. It is a structural
+checkpoint, not a functional or release Sign-off. See
+`system_integration/v2_architecture/V2_CHECKPOINT_K0_2_TOP_SHELL_KO.md`.
