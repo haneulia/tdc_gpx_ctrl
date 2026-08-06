@@ -191,8 +191,8 @@ ACK 전에는 다음 Face를 시작하지 않는다.
 | 순서 | 작업 | 통과 조건 |
 |---:|---|---|
 | K0-1 | top port, generic, record ownership 표 작성 | **완료**: 모든 신호 owner/consumer와 미구현 경계가 확정 |
-| K0-2 | 빈 top shell과 package compile order 생성 | **완료**: production 78개 소스와 150/200, 200/150 MHz elaboration PASS |
-| K0-3 | unified CSR/config/operation 연결 | shadow/active version과 IRQ exact compare |
+| K0-2 | 빈 top shell과 package compile order 생성 | **완료**: production compile order와 150/200, 200/150 MHz elaboration PASS |
+| K0-3 | 원자적 unified CSR/config/VDMA profile과 command CDC 연결 | **완료**: 80개 production 소스, 양 lane ACK barrier, active version/IRQ exact compare PASS |
 | K0-4 | Processing + Echo 연결 | fire/start/stop와 simulation exclusion 유지 |
 | K0-5 | GPX acquisition + B5..B8 연결 | raw28와 Hit17, 16 APD, Return7 identity |
 | K0-6 | Shot/Hole/T0 + Footer + width packer 연결 | J9 DDR Golden과 모든 Word 동일 |
@@ -266,10 +266,12 @@ triple buffering으로 DMA-owned, ready-for-CPU, CPU-owned 상태를 분리한�
 - J10: 완료.
 - K0-1: 완료. 단일 소유권 표와 구현 공백을 확정했다.
 - K0-2: 완료. public Top 셸, production compile order와 두 routine clock profile을 닫았다.
-- K0-3 이후: 미구현, 다음 작업.
+- K0-3: 완료. Rise/Fall VDMA ACK가 모두 끝난 뒤에만 Active version을 공개하며,
+  `CLEAR_STATUS`/`SOFT_RESET`은 acknowledged CDC로 두 목적지에 전달된다.
+- K0-4 이후: 미구현, 다음 작업.
 - K1: K0 이후.
 - L0: 현재 parent에 VDMA/HP/software가 없어 실행 불가.
 
 따라서 현재는 통합 IP 또는 전체 시스템 release Sign-off가 아니다. 다음 코드
-작업은 parent BD 수정이 아니라 `tdc_gpx_lidar_ctrl_v2_top`에서 VDMA profile을
-포함한 원자적 설정 승인과 CSR command CDC를 연결하는 K0-3이다.
+작업은 parent BD 수정이 아니라 `tdc_gpx_lidar_ctrl_v2_top`에 Processing과 Echo를
+연결하고 physical/simulation 발사 경로의 상호 배제를 검증하는 K0-4이다.

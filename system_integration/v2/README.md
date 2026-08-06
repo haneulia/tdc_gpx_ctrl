@@ -60,7 +60,9 @@ multiple clocks and is checked against this reference model.
   32/64/128-bit AXIS packer, and J7/J8 close the ordered Face Footer plus
   sequential, acknowledged Face-boundary VDMA profile activation. The DDR
   Golden comparison is closed by J9, and J10 closes the portable PS H-Line
-  decoder, Viewer packet byte comparison and Cortex-A9 build. The physical
+  decoder, Viewer packet byte comparison and Cortex-A9 build. K0-2 establishes
+  the synthesisable public Top shell and K0-3 closes atomic Rise/Fall VDMA
+  profile activation plus acknowledged CSR system-command CDC. The physical
   parent VDMA/HP/cache path remains unmigrated; the existence of its v1 cores
   does not mark that Stage complete.
 
@@ -395,3 +397,18 @@ production sources in the canonical order and elaborates the fail-safe public
 Top shell at Processing/TDC 150/200 and 200/150 MHz. It is a structural
 checkpoint, not a functional or release Sign-off. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K0_2_TOP_SHELL_KO.md`.
+
+Run the K0-3 atomic configuration and system-command CDC regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k03_integration.ps1
+```
+
+The final markers are `LIDAR_V2_SYSTEM_COMMAND_CDC_PASS` and
+`LIDAR_V2_TOP_K03_INTEGRATION_PASS`. The regression proves that Rise and Fall
+VDMA programming acknowledgements form one configuration activation barrier,
+that Return-count changes update HSIZE while preserving fixed maximum STRIDE,
+and that `CLEAR_STATUS`/`SOFT_RESET` reach both destinations through an
+acknowledged CDC. See
+`system_integration/v2_architecture/V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md`.

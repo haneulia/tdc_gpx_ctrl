@@ -9,6 +9,7 @@ entity lidar_config_subsystem is
         G_BUILD_CONFIG       : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG;
         G_CSR_CLK_MHZ        : positive := 100;
         G_PHASE_TIMEOUT_US   : positive := 1000;
+        G_PROC_DEFER_ACTIVATE_ACK : boolean := false;
         G_TDC_DEFER_ACTIVATE_ACK : boolean := false
     );
     port (
@@ -22,6 +23,8 @@ entity lidar_config_subsystem is
         i_shadow           : in  lidar_runtime_config_t;
         i_proc_safe        : in  std_logic;
         i_tdc_safe         : in  std_logic;
+        i_proc_activate_complete : in std_logic := '0';
+        i_proc_activate_fault    : in std_logic := '0';
         i_tdc_activate_complete : in std_logic := '0';
         i_tdc_activate_fault    : in std_logic := '0';
         o_busy             : out std_logic;
@@ -38,6 +41,7 @@ entity lidar_config_subsystem is
         o_tdc_enable       : out std_logic;
         o_tdc_active_valid : out std_logic;
         o_tdc_active       : out lidar_active_config_t;
+        o_proc_activate_start : out std_logic;
         o_tdc_activate_start : out std_logic;
         o_prepare_req      : out std_logic;
         o_activate_req     : out std_logic;
@@ -101,7 +105,7 @@ begin
 
     u_proc_gateway : entity work.lidar_config_gateway
         generic map (
-            G_DEFER_ACTIVATE_ACK => false
+            G_DEFER_ACTIVATE_ACK => G_PROC_DEFER_ACTIVATE_ACK
         )
         port map (
             i_csr_clk         => i_csr_clk,
@@ -113,12 +117,12 @@ begin
             i_release_req     => release_req,
             i_candidate       => candidate,
             i_safe_to_prepare => i_proc_safe,
-            i_activate_complete => '1',
-            i_activate_fault    => '0',
+            i_activate_complete => i_proc_activate_complete,
+            i_activate_fault    => i_proc_activate_fault,
             o_prepare_ack     => proc_prepare_ack,
             o_activate_ack    => proc_activate_ack,
             o_release_ack     => proc_release_ack,
-            o_activate_start  => open,
+            o_activate_start  => o_proc_activate_start,
             o_fault_csr       => proc_fault,
             o_domain_enable   => o_proc_enable,
             o_active_valid    => o_proc_active_valid,

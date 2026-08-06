@@ -3,6 +3,10 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
+use work.lidar_config_types_pkg.all;
+use work.lidar_event_types_pkg.all;
+use work.lidar_gpx_pkg.all;
+use work.lidar_gpx_vdma_pkg.all;
 use work.lidar_processing_pkg.all;
 
 -- Stage 8 K0 integration boundary. Until K0 is complete this architecture
@@ -180,7 +184,7 @@ entity tdc_gpx_lidar_ctrl_v2_top is
         "SENSITIVITY LEVEL_HIGH";
 end entity tdc_gpx_lidar_ctrl_v2_top;
 
-architecture k0_shell of tdc_gpx_lidar_ctrl_v2_top is
+architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
 
     function fn_build_config return lidar_build_config_t is
         variable result : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG;
@@ -206,6 +210,36 @@ architecture k0_shell of tdc_gpx_lidar_ctrl_v2_top is
 
     constant C_BUILD_CONFIG : lidar_build_config_t := fn_build_config;
 
+    signal csr_clear_status_c : std_logic;
+    signal csr_soft_reset_c : std_logic;
+    signal system_command_ready_c : std_logic;
+    signal system_command_rejected_c : std_logic;
+    signal proc_clear_status_c : std_logic;
+    signal proc_soft_reset_c : std_logic;
+    signal tdc_clear_status_c : std_logic;
+    signal tdc_soft_reset_c : std_logic;
+
+    signal config_busy_c : std_logic;
+    signal config_done_c : std_logic;
+    signal config_rejected_c : std_logic;
+    signal config_reject_error_c : lidar_cfg_error_t;
+    signal config_error_c : lidar_cfg_error_t;
+    signal config_recovery_c : std_logic;
+    signal active_valid_c : std_logic;
+    signal active_config_c : lidar_active_config_t;
+    signal proc_enable_c : std_logic;
+    signal proc_active_valid_c : std_logic;
+    signal proc_active_config_c : lidar_active_config_t;
+    signal tdc_enable_c : std_logic;
+    signal tdc_active_valid_c : std_logic;
+    signal tdc_active_config_c : lidar_active_config_t;
+    signal proc_activate_start_c : std_logic;
+    signal proc_activate_complete_c : std_logic;
+    signal proc_activate_fault_c : std_logic;
+
+    signal rise_active_profile_c : gpx_vdma_lane_profile_t;
+    signal fall_active_profile_c : gpx_vdma_lane_profile_t;
+
 begin
 
     assert fn_is_legal_clock_mhz(G_CSR_CLK_MHZ)
@@ -228,18 +262,139 @@ begin
             integer'image(G_TDC_CLK_MHZ)
         severity note;
 
-    -- K0-2 fail-safe shell. No command can be accepted and no physical pulse
-    -- or AXIS transfer can be emitted before the owning subsystem is wired.
-    s_axi_csr_awready <= '0';
-    s_axi_csr_wready  <= '0';
-    s_axi_csr_bresp   <= (others => '0');
-    s_axi_csr_bvalid  <= '0';
-    s_axi_csr_arready <= '0';
-    s_axi_csr_rdata   <= (others => '0');
-    s_axi_csr_rresp   <= (others => '0');
-    s_axi_csr_rvalid  <= '0';
-    o_irq             <= '0';
+    assert false
+        report "LIDAR_V2_TOP_K03_CONFIG_PASS proc_mhz=" &
+            integer'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
+            integer'image(G_TDC_CLK_MHZ)
+        severity note;
 
+    u_csr_config : entity work.lidar_csr_config_subsystem
+        generic map (
+            G_BUILD_CONFIG => C_BUILD_CONFIG,
+            G_CSR_CLK_MHZ => G_CSR_CLK_MHZ,
+            G_PHASE_TIMEOUT_US => G_PHASE_TIMEOUT_US,
+            G_PROC_DEFER_ACTIVATE_ACK => true,
+            G_TDC_DEFER_ACTIVATE_ACK => false
+        )
+        port map (
+            i_csr_clk => s_axi_csr_aclk,
+            i_csr_rst_n => s_axi_csr_aresetn,
+            i_proc_clk => proc_aclk,
+            i_proc_rst_n => proc_aresetn,
+            i_tdc_clk => i_tdc_clk,
+            i_tdc_rst_n => i_tdc_aresetn,
+            s_axi_awaddr => s_axi_csr_awaddr,
+            s_axi_awprot => s_axi_csr_awprot,
+            s_axi_awvalid => s_axi_csr_awvalid,
+            s_axi_awready => s_axi_csr_awready,
+            s_axi_wdata => s_axi_csr_wdata,
+            s_axi_wstrb => s_axi_csr_wstrb,
+            s_axi_wvalid => s_axi_csr_wvalid,
+            s_axi_wready => s_axi_csr_wready,
+            s_axi_bresp => s_axi_csr_bresp,
+            s_axi_bvalid => s_axi_csr_bvalid,
+            s_axi_bready => s_axi_csr_bready,
+            s_axi_araddr => s_axi_csr_araddr,
+            s_axi_arprot => s_axi_csr_arprot,
+            s_axi_arvalid => s_axi_csr_arvalid,
+            s_axi_arready => s_axi_csr_arready,
+            s_axi_rdata => s_axi_csr_rdata,
+            s_axi_rresp => s_axi_csr_rresp,
+            s_axi_rvalid => s_axi_csr_rvalid,
+            s_axi_rready => s_axi_csr_rready,
+            i_proc_safe => '1',
+            i_tdc_safe => '1',
+            i_external_laser_permit => i_external_laser_permit,
+            i_tdc_config_ready => '0',
+            i_tdc_config_done => '0',
+            i_tdc_config_fault => '0',
+            i_proc_activate_complete => proc_activate_complete_c,
+            i_proc_activate_fault => proc_activate_fault_c,
+            i_system_command_ready => system_command_ready_c,
+            i_system_command_rejected => system_command_rejected_c,
+            o_irq => o_irq,
+            o_clear_status => csr_clear_status_c,
+            o_soft_reset_request => csr_soft_reset_c,
+            o_busy => config_busy_c,
+            o_done => config_done_c,
+            o_commit_rejected => config_rejected_c,
+            o_reject_error => config_reject_error_c,
+            o_error => config_error_c,
+            o_recovery_required => config_recovery_c,
+            o_active_valid => active_valid_c,
+            o_active => active_config_c,
+            o_proc_enable => proc_enable_c,
+            o_proc_active_valid => proc_active_valid_c,
+            o_proc_active => proc_active_config_c,
+            o_tdc_enable => tdc_enable_c,
+            o_tdc_active_valid => tdc_active_valid_c,
+            o_tdc_active => tdc_active_config_c,
+            o_tdc_register_image => open,
+            o_tdc_config_apply => open,
+            o_proc_activate_start => proc_activate_start_c,
+            o_prepare_req => open,
+            o_activate_req => open,
+            o_release_req => open,
+            o_operation_state => open,
+            o_operation_command_accepted => open,
+            o_operation_command_rejected => open,
+            o_operation_permit_trip => open,
+            o_operation_safe_to_prepare => open
+        );
+
+    u_system_command_cdc : entity work.lidar_system_command_cdc
+        port map (
+            i_source_clk => s_axi_csr_aclk,
+            i_source_rst_n => s_axi_csr_aresetn,
+            i_clear_status => csr_clear_status_c,
+            i_soft_reset => csr_soft_reset_c,
+            o_source_ready => system_command_ready_c,
+            o_source_busy => open,
+            o_source_rejected => system_command_rejected_c,
+            i_proc_clk => proc_aclk,
+            i_proc_rst_n => proc_aresetn,
+            o_proc_clear_status => proc_clear_status_c,
+            o_proc_soft_reset => proc_soft_reset_c,
+            i_tdc_clk => i_tdc_clk,
+            i_tdc_rst_n => i_tdc_aresetn,
+            o_tdc_clear_status => tdc_clear_status_c,
+            o_tdc_soft_reset => tdc_soft_reset_c
+        );
+
+    u_vdma_profile_transaction :
+        entity work.lidar_gpx_vdma_profile_transaction
+        generic map (
+            G_BUILD_CONFIG => C_BUILD_CONFIG
+        )
+        port map (
+            i_clk => proc_aclk,
+            i_rst_n => proc_aresetn,
+            i_abort => proc_soft_reset_c,
+            i_activate_start => proc_activate_start_c,
+            i_active_valid => proc_active_valid_c,
+            i_active_config => proc_active_config_c,
+            i_datapath_idle => '1',
+            o_rise_cfg_valid => o_vdma_rise_cfg_valid,
+            i_rise_cfg_ready => i_vdma_rise_cfg_ready,
+            o_rise_cfg_enable => o_vdma_rise_cfg_enable,
+            o_rise_hsize_bytes => o_vdma_rise_hsize_bytes,
+            o_rise_vsize_lines => o_vdma_rise_vsize_lines,
+            o_rise_stride_bytes => o_vdma_rise_stride_bytes,
+            o_fall_cfg_valid => o_vdma_fall_cfg_valid,
+            i_fall_cfg_ready => i_vdma_fall_cfg_ready,
+            o_fall_cfg_enable => o_vdma_fall_cfg_enable,
+            o_fall_hsize_bytes => o_vdma_fall_hsize_bytes,
+            o_fall_vsize_lines => o_vdma_fall_vsize_lines,
+            o_fall_stride_bytes => o_vdma_fall_stride_bytes,
+            o_rise_active_profile => rise_active_profile_c,
+            o_fall_active_profile => fall_active_profile_c,
+            o_activate_complete => proc_activate_complete_c,
+            o_activate_fault => proc_activate_fault_c,
+            o_busy => open
+        );
+
+    -- K0-3 connects configuration and VDMA programming only. Physical laser,
+    -- Echo, GPX bus and payload streams remain fail-safe until K0-4..K0-7.
     o_fire_pulse      <= '0';
     o_start_tdc       <= '0';
     o_stop_tdc        <= '0';
@@ -277,15 +432,4 @@ begin
     m_axis_fall_tvalid <= '0';
     m_axis_fall_tlast  <= '0';
 
-    o_vdma_rise_cfg_valid   <= '0';
-    o_vdma_rise_cfg_enable  <= '0';
-    o_vdma_rise_hsize_bytes <= (others => '0');
-    o_vdma_rise_vsize_lines <= (others => '0');
-    o_vdma_rise_stride_bytes <= (others => '0');
-    o_vdma_fall_cfg_valid   <= '0';
-    o_vdma_fall_cfg_enable  <= '0';
-    o_vdma_fall_hsize_bytes <= (others => '0');
-    o_vdma_fall_vsize_lines <= (others => '0');
-    o_vdma_fall_stride_bytes <= (others => '0');
-
-end architecture k0_shell;
+end architecture rtl;

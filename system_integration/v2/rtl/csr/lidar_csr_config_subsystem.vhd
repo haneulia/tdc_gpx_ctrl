@@ -14,6 +14,7 @@ entity lidar_csr_config_subsystem is
         G_BUILD_CONFIG     : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG;
         G_CSR_CLK_MHZ      : positive := 100;
         G_PHASE_TIMEOUT_US : positive := 1000;
+        G_PROC_DEFER_ACTIVATE_ACK : boolean := false;
         G_TDC_DEFER_ACTIVATE_ACK : boolean := false
     );
     port (
@@ -50,6 +51,10 @@ entity lidar_csr_config_subsystem is
         i_tdc_config_ready : in std_logic := '0';
         i_tdc_config_done  : in std_logic := '0';
         i_tdc_config_fault : in std_logic := '0';
+        i_proc_activate_complete : in std_logic := '0';
+        i_proc_activate_fault    : in std_logic := '0';
+        i_system_command_ready    : in std_logic := '1';
+        i_system_command_rejected : in std_logic := '0';
 
         o_irq                : out std_logic;
         o_clear_status       : out std_logic;
@@ -70,6 +75,7 @@ entity lidar_csr_config_subsystem is
         o_tdc_active         : out lidar_active_config_t;
         o_tdc_register_image : out gpx_register_image_t;
         o_tdc_config_apply   : out std_logic;
+        o_proc_activate_start : out std_logic;
         o_prepare_req        : out std_logic;
         o_activate_req       : out std_logic;
         o_release_req        : out std_logic;
@@ -177,6 +183,8 @@ begin
             i_operation_command_ready => w_operation_command_ready,
             i_operation_command_busy  => w_operation_command_busy,
             i_operation_command_rejected => w_operation_cdc_rejected,
+            i_system_command_ready    => i_system_command_ready,
+            i_system_command_rejected => i_system_command_rejected,
             o_shadow             => w_shadow,
             o_gpx_image_shadow   => w_gpx_shadow_image,
             o_commit             => w_commit,
@@ -232,6 +240,7 @@ begin
             G_BUILD_CONFIG     => G_BUILD_CONFIG,
             G_CSR_CLK_MHZ      => G_CSR_CLK_MHZ,
             G_PHASE_TIMEOUT_US => G_PHASE_TIMEOUT_US,
+            G_PROC_DEFER_ACTIVATE_ACK => G_PROC_DEFER_ACTIVATE_ACK,
             G_TDC_DEFER_ACTIVATE_ACK => G_TDC_DEFER_ACTIVATE_ACK
         )
         port map (
@@ -245,6 +254,8 @@ begin
             i_shadow           => w_shadow,
             i_proc_safe        => w_operation_safe,
             i_tdc_safe         => i_tdc_safe,
+            i_proc_activate_complete => i_proc_activate_complete,
+            i_proc_activate_fault    => i_proc_activate_fault,
             i_tdc_activate_complete => w_tdc_activate_complete,
             i_tdc_activate_fault    => w_tdc_activate_fault,
             o_busy             => w_busy,
@@ -261,6 +272,7 @@ begin
             o_tdc_enable       => w_tdc_enable,
             o_tdc_active_valid => w_tdc_active_valid,
             o_tdc_active       => w_tdc_active,
+            o_proc_activate_start => o_proc_activate_start,
             o_tdc_activate_start => w_tdc_activate_start,
             o_prepare_req      => o_prepare_req,
             o_activate_req     => o_activate_req,

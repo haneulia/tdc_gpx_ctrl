@@ -282,7 +282,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
 | 7 | J | Complete | J0-J10; `V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` | AXIS/VDMA/PS formatter chain |
-| 8 | K | In progress | K0 plan; `V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md` | Full RTL integration and HTML alignment |
+| 8 | K | In progress | K0-1 through K0-3; `V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md` | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
@@ -300,7 +300,7 @@ the B6..B8 oracle, I1 completed B6, I2 completed width-independent B7 Cell
 collection, I2A closed B6/B7 Return ownership plus sequential timing
 optimization, I3 completed canonical Rise/Fall B8 Frame-lane assembly, and I4
 closed the production B5..B8 chain plus explicit Face-close ownership for
-trailing and all-hole completion. Stage 7 / Checkpoint J is in progress. J0
+trailing and all-hole completion. Stage 7 / Checkpoint J is complete. J0
 through J2 provide the original B9 oracle, serializer and lane-formatter
 baseline. J3 froze the revised PACKED17 Shot-Line/Face-Footer ABI and HTML
 Golden schema. J4 implemented the target geometry functions, exact Cell
@@ -311,8 +311,11 @@ maximum STRIDE, sequential profile calculation and acknowledged Face-boundary
 activation. J9 closes the STRIDE-aware DDR image comparison against the
 executable HTML Golden model. J10 now closes the portable C PS H-Line decoder,
 Viewer Ethernet byte comparison, ownership guards and Cortex-A9 build. This
-closes Checkpoint J. The only valid next step is **Stage 8 K0 synthesisable v2
-top assembly**, followed by K1 full RTL/HTML alignment. Parent VDMA/HP/cache is
+closes Checkpoint J. Stage 8 K0-1 through K0-3 now establish the ownership
+audit, synthesisable public Top shell, atomic Rise/Fall VDMA profile activation
+and acknowledged system-command CDC. The only valid next step is **K0-4
+Processing and Echo integration**, followed by the remaining K0 assembly and
+K1 full RTL/HTML alignment. Parent VDMA/HP/cache is
 Stage 9 L0 and must not begin against the current v1 parent IP.
 Checkpoint K or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
@@ -517,3 +520,19 @@ reference implementation.
 Checkpoint J closes at J10. Stage 8 K owns synthesisable top integration and
 the complete RTL/HTML operating matrix; Stage 9 L owns parent implementation,
 DMA/cache ownership and board release evidence.
+
+## 15. Active RTL Work Package: Stage 8 / Checkpoint K0
+
+| Step | Status | Evidence |
+|---:|---|---|
+| K0-1 | Complete | Ownership/port audit in `V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md` |
+| K0-2 | Complete | Public Top shell and initial canonical order; `V2_CHECKPOINT_K0_2_TOP_SHELL_KO.md` |
+| K0-3 | Complete | Current 80-source order, atomic Rise/Fall VDMA activation and system-command CDC; `V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md` |
+| K0-4 | In progress | Processing and Echo integration |
+| K0-5..K0-10 | Pending | GPX/data/status, implementation and packaging gates |
+
+K0-3 does not close the functional Top. It proves that a configuration version
+cannot be released before both VDMA lane profiles are programmed, and that CSR
+system commands cross to Processing/TDC through an acknowledged boundary.
+K0-4 is the first step that transfers ownership of physical laser/start/stop
+outputs from fail-safe constants to the verified Processing and Echo blocks.

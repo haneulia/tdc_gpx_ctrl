@@ -23,6 +23,7 @@ tdc_gpx_chip_run.vhd
 tdc_gpx_chip_reg.vhd
 tdc_gpx_chip_ctrl.vhd
 system_integration/v2/rtl/common/lidar_stream_gateway.vhd
+system_integration/v2/rtl/common/lidar_system_command_cdc.vhd
 system_integration/v2/rtl/config/lidar_u32_u16_multiplier_seq.vhd
 system_integration/v2/rtl/config/lidar_u64_u32_divider_seq.vhd
 system_integration/v2/rtl/config/lidar_config_validator_seq.vhd
@@ -74,6 +75,7 @@ system_integration/v2/rtl/proc/lidar_gpx_shot_line_builder.vhd
 system_integration/v2/rtl/proc/lidar_gpx_hole_line_expander.vhd
 system_integration/v2/rtl/proc/lidar_gpx_frame_close_fork.vhd
 system_integration/v2/rtl/proc/lidar_gpx_vdma_profile_manager.vhd
+system_integration/v2/rtl/proc/lidar_gpx_vdma_profile_transaction.vhd
 system_integration/v2/rtl/proc/lidar_gpx_face_footer_builder.vhd
 system_integration/v2/rtl/proc/lidar_gpx_axis_word_packer.vhd
 system_integration/v2/rtl/proc/lidar_gpx_vdma_lane_formatter.vhd

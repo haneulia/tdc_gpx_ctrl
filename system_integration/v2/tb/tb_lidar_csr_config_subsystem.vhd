@@ -239,6 +239,7 @@ begin
             o_tdc_active         => tdc_active,
             o_tdc_register_image => tdc_register_image,
             o_tdc_config_apply   => tdc_config_apply,
+            o_proc_activate_start => open,
             o_prepare_req        => prepare_req,
             o_activate_req       => activate_req,
             o_release_req        => release_req,

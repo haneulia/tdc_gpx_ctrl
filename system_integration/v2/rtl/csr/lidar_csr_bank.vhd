@@ -56,6 +56,8 @@ entity lidar_csr_bank is
         i_operation_command_ready : in std_logic;
         i_operation_command_busy  : in std_logic;
         i_operation_command_rejected : in std_logic;
+        i_system_command_ready    : in std_logic := '1';
+        i_system_command_rejected : in std_logic := '0';
 
         o_shadow            : out lidar_runtime_config_t;
         o_gpx_image_shadow  : out gpx_register_image_t;
@@ -284,6 +286,10 @@ begin
                         null;
                     elsif v_effective_command(C_CMD_COMMIT_BIT) = '1' then
                         r_commit_pulse <= '1';
+                    elsif v_effective_command(C_CMD_CLEAR_STATUS_BIT) = '1'
+                          and i_system_command_ready /= '1' then
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
                     elsif v_effective_command(C_CMD_CLEAR_STATUS_BIT) = '1' then
                         r_clear_pulse         <= '1';
                         r_done_sticky         <= '0';
@@ -293,6 +299,10 @@ begin
                         r_access_error_sticky <= '0';
                         r_last_error_code     <= x"00";
                         r_last_reject_code    <= x"00";
+                    elsif v_effective_command(C_CMD_SOFT_RESET_BIT) = '1'
+                          and i_system_command_ready /= '1' then
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
                     elsif v_effective_command(C_CMD_SOFT_RESET_BIT) = '1' then
                         r_soft_reset_pulse <= '1';
                     elsif i_operation_command_ready /= '1' then
@@ -410,6 +420,10 @@ begin
             -- write is still diagnosed; the mailbox never silently overwrites
             -- the earlier command.
             if i_operation_command_rejected = '1' then
+                r_access_error_sticky <= '1';
+                r_access_error_event  <= '1';
+            end if;
+            if i_system_command_rejected = '1' then
                 r_access_error_sticky <= '1';
                 r_access_error_event  <= '1';
             end if;

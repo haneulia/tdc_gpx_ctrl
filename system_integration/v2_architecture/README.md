@@ -14,12 +14,14 @@
 > 16-logical-APD, 7-Return B5 acquisition boundary under timeout, cap and
 > backpressure in both routine clock profiles. Stage 6 is closed: I0 froze the
 > Hit/Cell/Frame oracle, I1/I2/I2A close registered Hit/Cell ownership and I3/I4
-> close Frame-lane assembly plus the complete B5..B8 path. Stage 7 is in
-> progress. J3/J4 freeze PACKED17, J5/J6 close Shot/Hole serialization and
+> close Frame-lane assembly plus the complete B5..B8 path. Stage 7 is closed.
+> J3/J4 freeze PACKED17, J5/J6 close Shot/Hole serialization and
 > width packing, and J7/J8 close the sequential VDMA profile plus ordered Face
 > Footer. J9 closes the STRIDE-aware DDR-versus-HTML Golden comparison, and
-> J10 closes the portable PS H-Line/Ethernet byte comparison. K0 synthesisable
-> v2 top integration and K1 full RTL/HTML alignment come before L0 parent
+> J10 closes the portable PS H-Line/Ethernet byte comparison. K0-2 establishes
+> the synthesisable v2 public Top shell and K0-3 closes atomic Rise/Fall VDMA
+> activation plus acknowledged system-command CDC. Remaining K0 integration
+> and K1 full RTL/HTML alignment come before L0 parent
 > VDMA/HP/cache and board evidence.
 
 ## 1. Purpose
@@ -98,6 +100,7 @@ The redesign has four goals:
 | [V2_PS_HLINE_ETHERNET_ABI_KO.md](V2_PS_HLINE_ETHERNET_ABI_KO.md) | Korean PS cache-ownership, Viewer Face Header, H-Line Header and 3-byte sample ABI |
 | [V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md](V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md) | Portable C PS decoder, HTML packet Golden, Cortex-A9 build and byte-comparison evidence |
 | [V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md](V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md) | Korean v2 top assembly order, parent readiness audit and K0/K1/L0 gates |
+| [V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md](V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md) | Atomic Rise/Fall VDMA activation, acknowledged system-command CDC and K0-3 evidence |
 
 ## 4. Target Top-Level Shape
 

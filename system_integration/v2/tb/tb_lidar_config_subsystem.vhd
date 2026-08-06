@@ -99,6 +99,7 @@ begin
             o_tdc_enable        => tdc_enable,
             o_tdc_active_valid  => tdc_active_valid,
             o_tdc_active        => tdc_active,
+            o_proc_activate_start => open,
             o_tdc_activate_start => open,
             o_prepare_req       => prepare_req,
             o_activate_req      => activate_req,
