@@ -70,6 +70,8 @@ package lidar_gpx_vdma_pkg is
         std_logic_vector(C_GPX_VDMA_BLOCK_WIDTH - 1 downto 0);
     constant C_GPX_VDMA_FOOTER_MAGIC  : gpx_vdma_word_t := x"47504631";
     constant C_GPX_VDMA_FOOTER_COMMIT : gpx_vdma_word_t := x"434F4D54";
+    constant C_GPX_VDMA_HOLE_POSITION : std_logic_vector(15 downto 0) :=
+        x"FFFF";
     subtype gpx_vdma_word_index_t is unsigned(2 downto 0);
     subtype gpx_vdma_word_count_t is unsigned(2 downto 0);
     subtype gpx_vdma_block_count_t is unsigned(5 downto 0);
@@ -613,16 +615,24 @@ package body lidar_gpx_vdma_pkg is
     begin
         case word_index is
             when 0 =>
-                result := std_logic_vector(
-                    shot_context.t0_timestamp_ticks(31 downto 0));
+                if shot_status.hole = '0' then
+                    result := std_logic_vector(
+                        shot_context.t0_timestamp_ticks(31 downto 0));
+                end if;
             when 1 =>
-                result := std_logic_vector(
-                    shot_context.t0_timestamp_ticks(63 downto 32));
+                if shot_status.hole = '0' then
+                    result := std_logic_vector(
+                        shot_context.t0_timestamp_ticks(63 downto 32));
+                end if;
             when 2 =>
                 result(15 downto 0) := std_logic_vector(
                     shot_context.request.shot_index);
-                result(31 downto 16) := std_logic_vector(resize(
-                    shot_context.request.position, 16));
+                if shot_status.hole = '1' then
+                    result(31 downto 16) := C_GPX_VDMA_HOLE_POSITION;
+                else
+                    result(31 downto 16) := std_logic_vector(resize(
+                        shot_context.request.position, 16));
+                end if;
             when 3 =>
                 result(C_GPX_SHOT_META_VALID) := shot_status.data_valid;
                 result(C_GPX_SHOT_META_HOLE) := shot_status.hole;
@@ -635,18 +645,22 @@ package body lidar_gpx_vdma_pkg is
                 result(C_GPX_SHOT_META_ABORTED) := shot_status.aborted;
                 result(C_GPX_SHOT_META_LINE_FAULTED) :=
                     shot_status.line_faulted;
-                result(C_GPX_SHOT_META_T0_VALID) :=
-                    shot_context.t0_timestamp_valid;
-                result(C_GPX_SHOT_META_TIME_SYNC_VALID) :=
-                    shot_context.t0_time_sync_valid;
+                if shot_status.hole = '0' then
+                    result(C_GPX_SHOT_META_T0_VALID) :=
+                        shot_context.t0_timestamp_valid;
+                    result(C_GPX_SHOT_META_TIME_SYNC_VALID) :=
+                        shot_context.t0_time_sync_valid;
+                end if;
                 result(C_GPX_SHOT_META_LAST_IN_FACE) :=
                     shot_context.request.last_in_face;
-                result(C_GPX_SHOT_META_SOURCE_LATENCY_VALID) :=
-                    shot_context.request.source_latency_valid;
-                result(C_GPX_SHOT_META_SOURCE_LATENCY_HI downto
-                       C_GPX_SHOT_META_SOURCE_LATENCY_LO) :=
-                    std_logic_vector(
-                        shot_context.request.source_latency_clks);
+                if shot_status.hole = '0' then
+                    result(C_GPX_SHOT_META_SOURCE_LATENCY_VALID) :=
+                        shot_context.request.source_latency_valid;
+                    result(C_GPX_SHOT_META_SOURCE_LATENCY_HI downto
+                           C_GPX_SHOT_META_SOURCE_LATENCY_LO) :=
+                        std_logic_vector(
+                            shot_context.request.source_latency_clks);
+                end if;
             when others =>
                 assert false
                     report "V2-B9-PKG-009 Shot Metadata word index out of range"

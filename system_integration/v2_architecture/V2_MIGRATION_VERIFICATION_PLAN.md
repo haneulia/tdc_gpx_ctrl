@@ -304,8 +304,9 @@ trailing and all-hole completion. Stage 7 / Checkpoint J is in progress. J0
 through J2 provide the original B9 oracle, serializer and lane-formatter
 baseline. J3 froze the revised PACKED17 Shot-Line/Face-Footer ABI and HTML
 Golden schema. J4 implemented the target geometry functions, exact Cell
-Metadata map, and Return-filter/physical-overflow ownership. The only valid
-next step is **J5 Shot Metadata builder and width-independent line stream**.
+Metadata map, and Return-filter/physical-overflow ownership. J5A/J5B now close
+the T0/Shot Metadata stream and explicit geometric Hole Lines. The only valid
+next step is **J6 target-width AXIS packing with final-Beat-only padding**.
 Checkpoint J or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
 
@@ -489,7 +490,7 @@ Its current sub-step status is:
 | J3 | Complete | `C08_HDL_HTML_Alignment_260806_PACKED17_VDMA_ABI_Contract_v041.md`; HTML v026 Golden model |
 | J4 | Complete | `V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md`; sessions `260806_j4_contract_r2_v2_gpx_cell_collector`, `260806_j4_contract_v2_gpx_cell_word_serializer` |
 | J5A | Complete | T0 capture, exact 16-byte Shot Metadata, and width-independent real-Shot line stream; `V2_CHECKPOINT_J5A_T0_SHOT_METADATA.md` |
-| J5B | In progress | Explicit leading/interior/trailing/all-Hole Line expansion |
+| J5B | Complete | Explicit leading/interior/trailing/all-Hole Line expansion; `V2_CHECKPOINT_J5B_HOLE_LINES.md` |
 | J6 | Pending | Target 32/64/128 packer with final-Beat-only padding |
 | J7 | Pending | 32-byte Face Footer and fixed maximum STRIDE |
 | J8 | Pending | Face-boundary HSIZE/VSIZE reconfiguration handshake |

@@ -97,6 +97,23 @@ The Cell Metadata word is:
 Every scheduled geometric Shot occupies one VDMA line, including a missed Shot.
 A missed Shot is emitted as an invalid/hole line so later columns never shift.
 
+The Hole Line encoding is exact and width-independent:
+
+| Field | Hole value |
+|---|---|
+| W0/W1 | Zero; no fabricated T0 |
+| W2 `[15:0]` | Missing geometric Shot index |
+| W2 `[31:16]` | `0xFFFF`, meaning encoder position was not measured |
+| W3 valid/hole | `0/1` |
+| W3 direction/source/last | Preserved from Face geometry |
+| Cell area | All zero, including Cell Metadata valid bit |
+| Line size | Identical to a real Line in the same active Face profile |
+
+A Hole does not become a fault merely because it is explicit. A separate
+geometry, timeout or abort cause sets the corresponding fault bit. Leading and
+interior counts are expanded before the next real Shot; trailing and all-Hole
+counts are expanded before the Face Footer.
+
 ```text
 Shot Line = 16-byte Shot Metadata
           + lane_cell_slots * CELL_BYTES
