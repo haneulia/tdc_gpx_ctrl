@@ -112,6 +112,20 @@ begin
             "V2-BUILD-015 unknown slope mask bit");
 
         build_cfg := C_DEFAULT_BUILD_CONFIG;
+        build_cfg.stops_per_chip := 1;
+        check_error(fn_validate_build_config(build_cfg), CFG_OK,
+            "V2-BUILD-015A one STOP per chip is legal");
+
+        build_cfg.stops_per_chip := 0;
+        check_error(fn_validate_build_config(build_cfg),
+            CFG_BUILD_STOP_COUNT, "V2-BUILD-015B zero STOP is illegal");
+
+        build_cfg.stops_per_chip := C_MAX_STOPS_PER_CHIP + 1;
+        check_error(fn_validate_build_config(build_cfg),
+            CFG_BUILD_STOP_COUNT,
+            "V2-BUILD-015C STOP count above physical maximum");
+
+        build_cfg := C_DEFAULT_BUILD_CONFIG;
         build_cfg.output_width := 96;
         check_error(fn_validate_build_config(build_cfg),
             CFG_BUILD_OUTPUT_WIDTH, "V2-BUILD-016 unsupported output width");

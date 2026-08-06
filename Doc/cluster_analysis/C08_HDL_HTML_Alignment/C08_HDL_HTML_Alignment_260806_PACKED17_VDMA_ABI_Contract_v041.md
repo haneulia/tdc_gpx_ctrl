@@ -163,20 +163,40 @@ There is no PL Face Header at the beginning of the VDMA frame. A 32-byte Face
 Footer is emitted after every planned Shot line and is valid only after Face
 completion.
 
-| Word | Meaning |
+| Word / bits | Exact meaning |
 |---:|---|
-| W0 | Footer magic and ABI version |
-| W1 | Frame identifier |
-| W2 | Face, Slope, direction, simulation, output-width code |
-| W3 | Active Config version |
-| W4 | planned Shot count, Cell count, visible Return count |
-| W5 | active HSIZE and VSIZE |
-| W6 | completed Shot count and Face fault summary |
-| W7 | final commit marker |
+| W0 `[31:0]` | `0x47504631` (`GPF1`): GPX Face Footer, ABI version 1 |
+| W1 `[31:0]` | Face Frame ID. It increments once for every accepted Face entry, wraps naturally at 32 bits, and resets only with the Processing reset |
+| W2 `[2:0]` | Face index, 0 to 4 |
+| W2 `[3]` | Slope lane, 1 Rise / 0 Fall |
+| W2 `[4]` | Direction, 1 CCW / 0 CW |
+| W2 `[5]` | Source, 1 simulation / 0 physical |
+| W2 `[7:6]` | AXIS width code: 0=32, 1=64, 2=128 bits; 3 is reserved |
+| W2 `[31:8]` | Reserved, zero |
+| W3 `[15:0]` | Active Config version used by every Shot in this Face |
+| W3 `[31:16]` | Reserved, zero |
+| W4 `[15:0]` | Planned geometric Shot count |
+| W4 `[21:16]` | Cell slots in each Shot Line |
+| W4 `[24:22]` | Visible Return count, 1 to 7 |
+| W4 `[31:25]` | Reserved, zero |
+| W5 `[15:0]` | Active HSIZE in bytes |
+| W5 `[31:16]` | Active VSIZE in lines, including Footer Line(s) |
+| W6 `[15:0]` | Actually completed Shot/Hole Line count |
+| W6 `[16]` | Face fault summary from the Face-close owner |
+| W6 `[17]` | Completed count differs from planned count |
+| W6 `[18]` | At least one Shot Line fault |
+| W6 `[19]` | At least one explicit Hole Line |
+| W6 `[20]` | At least one Shot timeout |
+| W6 `[21]` | At least one aborted Shot |
+| W6 `[22]` | Every planned Shot was a Hole |
+| W6 `[31:23]` | Reserved, zero |
+| W7 `[31:0]` | `0x434F4D54` (`COMT`): ordered Face completion commit |
 
-PS discards a buffer with a missing/invalid commit marker. Static geometry and
-calibration are not repeated in every Face; PS resolves them by Active Config
-version. PS creates the Viewer Face Header from that config and this Footer.
+PS discards a buffer with a missing/invalid commit marker. W7 is the final
+logical Footer Word at Footer byte offset 28; zero HSIZE padding may follow it
+before the final Footer Line ends. Static geometry and calibration are not
+repeated in every Face; PS resolves them by Active Config version. PS creates
+the Viewer Face Header from that config and this Footer.
 
 ## 7. VDMA geometry
 

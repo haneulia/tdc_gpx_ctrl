@@ -124,6 +124,7 @@ architecture sim of tb_lidar_gpx_b5_b8_subsystem is
         variable result : face_close_event_t := C_FACE_CLOSE_EVENT_IDLE;
     begin
         result.valid := '1';
+        result.face_frame_id := to_unsigned(100 + face_number, 32);
         result.face_index := to_unsigned(face_number, 3);
         result.direction := DIRECTION_CW;
         result.source_sim := '0';
@@ -567,6 +568,8 @@ begin
                     if close_count = 0 then
                         assert frame_close_event.face_index =
                                    to_unsigned(2, 3) and
+                               frame_close_event.face_frame_id =
+                                   to_unsigned(102, 32) and
                                frame_close_event.trailing_gap =
                                    to_unsigned(2, 16) and
                                frame_close_event.all_hole = '0' and
@@ -576,6 +579,8 @@ begin
                     elsif close_count = 1 then
                         assert frame_close_event.face_index =
                                    to_unsigned(3, 3) and
+                               frame_close_event.face_frame_id =
+                                   to_unsigned(103, 32) and
                                frame_close_event.trailing_gap =
                                    to_unsigned(C_COLUMNS_PER_FACE, 16) and
                                frame_close_event.all_hole = '1' and

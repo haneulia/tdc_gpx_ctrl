@@ -39,6 +39,7 @@ architecture sim of tb_lidar_gpx_axis_word_packer is
     signal tlast  : std_logic;
     signal tready : std_logic := '0';
     signal line_done : std_logic;
+    signal frame_done : std_logic;
     signal idle : std_logic;
     signal ready_cycle : natural := 0;
     signal output_done : std_logic := '0';
@@ -111,6 +112,7 @@ begin
             o_m_axis_tlast    => tlast,
             i_m_axis_tready   => tready,
             o_line_done       => line_done,
+            o_frame_done      => frame_done,
             o_idle            => idle
         );
 

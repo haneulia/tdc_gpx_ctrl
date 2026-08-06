@@ -571,6 +571,8 @@ begin
                        face_close_ready_c = '1' then
                         close_v := C_GPX_FRAME_CLOSE_EVENT_IDLE;
                         close_v.valid := '1';
+                        close_v.face_frame_id :=
+                            i_face_close_event.face_frame_id;
                         close_v.face_index := i_face_close_event.face_index;
                         close_v.direction := i_face_close_event.direction;
                         close_v.source_sim := i_face_close_event.source_sim;

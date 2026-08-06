@@ -29,6 +29,7 @@ entity lidar_gpx_axis_word_packer is
         i_m_axis_tready : in  std_logic;
 
         o_line_done : out std_logic;
+        o_frame_done : out std_logic;
         o_idle      : out std_logic
     );
 end entity lidar_gpx_axis_word_packer;
@@ -43,14 +44,17 @@ architecture rtl of lidar_gpx_axis_word_packer is
     signal assembly_word_count_r : natural range 0 to
         C_WORDS_PER_BEAT - 1 := 0;
     signal assembly_sof_r : std_logic := '0';
+    signal assembly_frame_end_r : std_logic := '0';
 
     signal axis_data_r : std_logic_vector(
         G_OUTPUT_WIDTH - 1 downto 0) := (others => '0');
     signal axis_user_r : std_logic := '0';
     signal axis_valid_r : std_logic := '0';
     signal axis_last_r : std_logic := '0';
+    signal axis_frame_end_r : std_logic := '0';
     signal output_ready_c : std_logic;
     signal line_done_r : std_logic := '0';
+    signal frame_done_r : std_logic := '0';
 
     signal line_active_r : std_logic := '0';
     signal expected_word_index_r : gpx_vdma_line_word_index_t :=
@@ -78,6 +82,7 @@ begin
     o_m_axis_tvalid <= axis_valid_r;
     o_m_axis_tlast <= axis_last_r;
     o_line_done <= line_done_r;
+    o_frame_done <= frame_done_r;
     o_idle <= '1' when assembly_word_count_r = 0 and
         axis_valid_r = '0' and line_active_r = '0' else '0';
 
@@ -85,6 +90,7 @@ begin
         variable beat_data_v : std_logic_vector(
             G_OUTPUT_WIDTH - 1 downto 0);
         variable beat_sof_v : std_logic;
+        variable beat_frame_end_v : std_logic;
         variable low_bit : natural;
         variable emit_beat_v : boolean;
     begin
@@ -93,29 +99,38 @@ begin
                 assembly_data_r <= (others => '0');
                 assembly_word_count_r <= 0;
                 assembly_sof_r <= '0';
+                assembly_frame_end_r <= '0';
                 axis_data_r <= (others => '0');
                 axis_user_r <= '0';
                 axis_valid_r <= '0';
                 axis_last_r <= '0';
+                axis_frame_end_r <= '0';
                 line_done_r <= '0';
+                frame_done_r <= '0';
                 line_active_r <= '0';
                 expected_word_index_r <= (others => '0');
                 active_line_word_count_r <= (others => '0');
             else
                 line_done_r <= '0';
+                frame_done_r <= '0';
                 if axis_valid_r = '1' and i_m_axis_tready = '1' then
                     if axis_last_r = '1' then
                         line_done_r <= '1';
                     end if;
+                    if axis_frame_end_r = '1' then
+                        frame_done_r <= '1';
+                    end if;
                     axis_valid_r <= '0';
                     axis_last_r <= '0';
                     axis_user_r <= '0';
+                    axis_frame_end_r <= '0';
                 end if;
 
                 if i_line_word.valid = '1' and
                    o_line_word_ready = '1' then
                     beat_data_v := assembly_data_r;
                     beat_sof_v := assembly_sof_r;
+                    beat_frame_end_v := assembly_frame_end_r;
                     low_bit := assembly_word_count_r *
                         C_GPX_VDMA_WORD_WIDTH;
                     beat_data_v(low_bit + C_GPX_VDMA_WORD_WIDTH - 1
@@ -123,6 +138,9 @@ begin
                     if i_line_word.line_start = '1' and
                        i_line_word.first_column = '1' then
                         beat_sof_v := '1';
+                    end if;
+                    if i_line_word.frame_end = '1' then
+                        beat_frame_end_v := '1';
                     end if;
 
                     emit_beat_v :=
@@ -134,14 +152,17 @@ begin
                         axis_user_r <= beat_sof_v;
                         axis_valid_r <= '1';
                         axis_last_r <= i_line_word.line_end;
+                        axis_frame_end_r <= beat_frame_end_v;
                         assembly_data_r <= (others => '0');
                         assembly_word_count_r <= 0;
                         assembly_sof_r <= '0';
+                        assembly_frame_end_r <= '0';
                     else
                         assembly_data_r <= beat_data_v;
                         assembly_word_count_r <=
                             assembly_word_count_r + 1;
                         assembly_sof_r <= beat_sof_v;
+                        assembly_frame_end_r <= beat_frame_end_v;
                     end if;
 
                     if line_active_r = '0' then
@@ -173,6 +194,11 @@ begin
                        (i_line_word.word_index + 1 =
                         i_line_word.line_word_count)
                     report "V2-B9-J6-002 Line count/end mismatch"
+                    severity failure;
+                assert i_line_word.frame_end = '0' or
+                       (i_line_word.kind = GPX_VDMA_LINE_FACE_FOOTER and
+                        i_line_word.line_end = '1')
+                    report "V2-B9-J6-006 Frame end is not a Footer Line end"
                     severity failure;
                 if line_active_r = '0' then
                     assert i_line_word.line_start = '1' and

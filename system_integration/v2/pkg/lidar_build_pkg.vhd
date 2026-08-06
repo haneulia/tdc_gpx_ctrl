@@ -204,7 +204,7 @@ package body lidar_build_pkg is
             return CFG_BUILD_SYNC_CLOCK_MISMATCH;
         elsif cfg.num_chips < 1 or cfg.num_chips > C_MAX_CHIPS then
             return CFG_BUILD_CHIP_COUNT;
-        elsif cfg.stops_per_chip < 2
+        elsif cfg.stops_per_chip < 1
               or cfg.stops_per_chip > C_MAX_STOPS_PER_CHIP then
             return CFG_BUILD_STOP_COUNT;
         elsif cfg.max_returns_per_stop < 1

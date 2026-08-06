@@ -86,6 +86,7 @@ package lidar_event_types_pkg is
     );
 
     subtype shot_index_t is unsigned(15 downto 0);
+    subtype face_frame_id_t is unsigned(31 downto 0);
 
     constant C_T0_TIMESTAMP_WIDTH : positive := 64;
     subtype t0_timestamp_t is unsigned(C_T0_TIMESTAMP_WIDTH - 1 downto 0);
@@ -97,6 +98,7 @@ package lidar_event_types_pkg is
     -- the presence of TDC data.
     type face_close_event_t is record
         valid            : std_logic;
+        face_frame_id    : face_frame_id_t;
         face_index       : face_index_t;
         direction        : direction_t;
         source_sim       : std_logic;
@@ -106,6 +108,7 @@ package lidar_event_types_pkg is
 
     constant C_FACE_CLOSE_EVENT_IDLE : face_close_event_t := (
         valid            => '0',
+        face_frame_id    => (others => '0'),
         face_index       => (others => '0'),
         direction        => DIRECTION_CW,
         source_sim       => '0',

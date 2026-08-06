@@ -18,6 +18,22 @@ package lidar_gpx_vdma_pkg is
     constant C_GPX_VDMA_FOOTER_BYTES     : positive := 32;
     constant C_GPX_VDMA_FOOTER_WORDS     : positive := 8;
 
+    constant C_GPX_FOOTER_W2_FACE_LO      : natural := 0;
+    constant C_GPX_FOOTER_W2_FACE_HI      : natural := 2;
+    constant C_GPX_FOOTER_W2_SLOPE_RISE   : natural := 3;
+    constant C_GPX_FOOTER_W2_DIRECTION_CCW: natural := 4;
+    constant C_GPX_FOOTER_W2_SOURCE_SIM   : natural := 5;
+    constant C_GPX_FOOTER_W2_WIDTH_LO     : natural := 6;
+    constant C_GPX_FOOTER_W2_WIDTH_HI     : natural := 7;
+
+    constant C_GPX_FOOTER_W6_FACE_FAULT       : natural := 16;
+    constant C_GPX_FOOTER_W6_COUNT_MISMATCH   : natural := 17;
+    constant C_GPX_FOOTER_W6_ANY_LINE_FAULT   : natural := 18;
+    constant C_GPX_FOOTER_W6_ANY_HOLE         : natural := 19;
+    constant C_GPX_FOOTER_W6_ANY_TIMEOUT      : natural := 20;
+    constant C_GPX_FOOTER_W6_ANY_ABORTED      : natural := 21;
+    constant C_GPX_FOOTER_W6_ALL_HOLE         : natural := 22;
+
     constant C_GPX_SHOT_META_VALID                : natural := 0;
     constant C_GPX_SHOT_META_HOLE                 : natural := 1;
     constant C_GPX_SHOT_META_DIRECTION_CCW        : natural := 2;
@@ -78,6 +94,40 @@ package lidar_gpx_vdma_pkg is
 
     subtype gpx_vdma_line_word_index_t is unsigned(8 downto 0);
     subtype gpx_vdma_line_word_count_t is unsigned(8 downto 0);
+    subtype gpx_vdma_geometry_value_t is unsigned(15 downto 0);
+    subtype gpx_vdma_width_code_t is std_logic_vector(1 downto 0);
+
+    -- Registered Face-boundary contract shared by the VDMA programmer and the
+    -- Footer formatter. Runtime geometry is calculated outside the data path.
+    type gpx_vdma_lane_profile_t is record
+        valid           : std_logic;
+        enabled         : std_logic;
+        slot_count      : gpx_frame_slot_t;
+        visible_returns : unsigned(2 downto 0);
+        cell_word_count : gpx_vdma_word_count_t;
+        planned_shots   : shot_index_t;
+        raw_line_words  : gpx_vdma_line_word_count_t;
+        hsize_bytes     : gpx_vdma_geometry_value_t;
+        hsize_words     : gpx_vdma_line_word_count_t;
+        footer_lines    : unsigned(1 downto 0);
+        vsize_lines     : gpx_vdma_geometry_value_t;
+        stride_bytes    : gpx_vdma_geometry_value_t;
+    end record gpx_vdma_lane_profile_t;
+
+    constant C_GPX_VDMA_LANE_PROFILE_IDLE : gpx_vdma_lane_profile_t := (
+        valid           => '0',
+        enabled         => '0',
+        slot_count      => (others => '0'),
+        visible_returns => (others => '0'),
+        cell_word_count => (others => '0'),
+        planned_shots   => (others => '0'),
+        raw_line_words  => (others => '0'),
+        hsize_bytes     => (others => '0'),
+        hsize_words     => (others => '0'),
+        footer_lines    => (others => '0'),
+        vsize_lines     => (others => '0'),
+        stride_bytes    => (others => '0')
+    );
 
     type gpx_vdma_shot_status_t is record
         data_valid   : std_logic;
@@ -95,6 +145,39 @@ package lidar_gpx_vdma_pkg is
         line_faulted => '0'
     );
 
+    type gpx_vdma_footer_context_t is record
+        frame_close        : gpx_frame_close_event_t;
+        slope              : gpx_slope_t;
+        output_width_code  : gpx_vdma_width_code_t;
+        slot_count         : gpx_frame_slot_t;
+        visible_returns    : unsigned(2 downto 0);
+        hsize_bytes        : gpx_vdma_geometry_value_t;
+        vsize_lines        : gpx_vdma_geometry_value_t;
+        completed_shots    : shot_index_t;
+        count_mismatch     : std_logic;
+        any_line_fault     : std_logic;
+        any_hole           : std_logic;
+        any_timeout        : std_logic;
+        any_aborted        : std_logic;
+    end record gpx_vdma_footer_context_t;
+
+    constant C_GPX_VDMA_FOOTER_CONTEXT_IDLE :
+        gpx_vdma_footer_context_t := (
+            frame_close       => C_GPX_FRAME_CLOSE_EVENT_IDLE,
+            slope             => GPX_SLOPE_FALL,
+            output_width_code => (others => '0'),
+            slot_count        => (others => '0'),
+            visible_returns   => (others => '0'),
+            hsize_bytes       => (others => '0'),
+            vsize_lines       => (others => '0'),
+            completed_shots   => (others => '0'),
+            count_mismatch    => '0',
+            any_line_fault    => '0',
+            any_hole          => '0',
+            any_timeout       => '0',
+            any_aborted       => '0'
+        );
+
     type gpx_vdma_line_word_kind_t is (
         GPX_VDMA_LINE_SHOT_METADATA,
         GPX_VDMA_LINE_CELL_DATA,
@@ -111,6 +194,7 @@ package lidar_gpx_vdma_pkg is
         line_word_count : gpx_vdma_line_word_count_t;
         line_start      : std_logic;
         line_end        : std_logic;
+        frame_end       : std_logic;
         first_column    : std_logic;
         last_column     : std_logic;
         gap_before      : shot_index_t;
@@ -130,6 +214,7 @@ package lidar_gpx_vdma_pkg is
             line_word_count => (others => '0'),
             line_start      => '0',
             line_end        => '0',
+            frame_end       => '0',
             first_column    => '0',
             last_column     => '0',
             gap_before      => (others => '0'),
@@ -210,6 +295,10 @@ package lidar_gpx_vdma_pkg is
         output_width : positive
     ) return positive;
 
+    function fn_gpx_vdma_output_width_code(
+        output_width : positive
+    ) return gpx_vdma_width_code_t;
+
     function fn_gpx_vdma_shot_raw_hsize_bytes(
         slot_count : natural;
         max_hits   : positive
@@ -286,6 +375,11 @@ package lidar_gpx_vdma_pkg is
         word_index   : natural
     ) return gpx_vdma_word_t;
 
+    function fn_gpx_vdma_footer_word(
+        context_value : gpx_vdma_footer_context_t;
+        word_index    : natural
+    ) return gpx_vdma_word_t;
+
 end package lidar_gpx_vdma_pkg;
 
 package body lidar_gpx_vdma_pkg is
@@ -346,6 +440,25 @@ package body lidar_gpx_vdma_pkg is
             severity failure;
         return output_width / 8;
     end function fn_gpx_vdma_beat_bytes;
+
+    function fn_gpx_vdma_output_width_code(
+        output_width : positive
+    ) return gpx_vdma_width_code_t is
+    begin
+        case output_width is
+            when 32 =>
+                return "00";
+            when 64 =>
+                return "01";
+            when 128 =>
+                return "10";
+            when others =>
+                assert false
+                    report "V2-B9-PKG-010 output width code is undefined"
+                    severity failure;
+                return "11";
+        end case;
+    end function fn_gpx_vdma_output_width_code;
 
     function fn_gpx_vdma_shot_raw_hsize_bytes(
         slot_count : natural;
@@ -668,5 +781,74 @@ package body lidar_gpx_vdma_pkg is
         end case;
         return result;
     end function fn_gpx_vdma_shot_metadata_word;
+
+    function fn_gpx_vdma_footer_word(
+        context_value : gpx_vdma_footer_context_t;
+        word_index    : natural
+    ) return gpx_vdma_word_t is
+        variable result : gpx_vdma_word_t := (others => '0');
+    begin
+        case word_index is
+            when 0 =>
+                result := C_GPX_VDMA_FOOTER_MAGIC;
+            when 1 =>
+                result := std_logic_vector(
+                    context_value.frame_close.face_frame_id);
+            when 2 =>
+                result(C_GPX_FOOTER_W2_FACE_HI downto
+                       C_GPX_FOOTER_W2_FACE_LO) := std_logic_vector(
+                    context_value.frame_close.face_index);
+                if context_value.slope = GPX_SLOPE_RISE then
+                    result(C_GPX_FOOTER_W2_SLOPE_RISE) := '1';
+                end if;
+                if context_value.frame_close.direction = DIRECTION_CCW then
+                    result(C_GPX_FOOTER_W2_DIRECTION_CCW) := '1';
+                end if;
+                result(C_GPX_FOOTER_W2_SOURCE_SIM) :=
+                    context_value.frame_close.source_sim;
+                result(C_GPX_FOOTER_W2_WIDTH_HI downto
+                       C_GPX_FOOTER_W2_WIDTH_LO) :=
+                    context_value.output_width_code;
+            when 3 =>
+                result(15 downto 0) := std_logic_vector(
+                    context_value.frame_close.active_version);
+            when 4 =>
+                result(15 downto 0) := std_logic_vector(
+                    context_value.frame_close.columns_per_face);
+                result(21 downto 16) := std_logic_vector(
+                    context_value.slot_count);
+                result(24 downto 22) := std_logic_vector(
+                    context_value.visible_returns);
+            when 5 =>
+                result(15 downto 0) := std_logic_vector(
+                    context_value.hsize_bytes);
+                result(31 downto 16) := std_logic_vector(
+                    context_value.vsize_lines);
+            when 6 =>
+                result(15 downto 0) := std_logic_vector(
+                    context_value.completed_shots);
+                result(C_GPX_FOOTER_W6_FACE_FAULT) :=
+                    context_value.frame_close.face_faulted;
+                result(C_GPX_FOOTER_W6_COUNT_MISMATCH) :=
+                    context_value.count_mismatch;
+                result(C_GPX_FOOTER_W6_ANY_LINE_FAULT) :=
+                    context_value.any_line_fault;
+                result(C_GPX_FOOTER_W6_ANY_HOLE) :=
+                    context_value.any_hole;
+                result(C_GPX_FOOTER_W6_ANY_TIMEOUT) :=
+                    context_value.any_timeout;
+                result(C_GPX_FOOTER_W6_ANY_ABORTED) :=
+                    context_value.any_aborted;
+                result(C_GPX_FOOTER_W6_ALL_HOLE) :=
+                    context_value.frame_close.all_hole;
+            when 7 =>
+                result := C_GPX_VDMA_FOOTER_COMMIT;
+            when others =>
+                assert false
+                    report "V2-B9-PKG-011 Face Footer word index out of range"
+                    severity failure;
+        end case;
+        return result;
+    end function fn_gpx_vdma_footer_word;
 
 end package body lidar_gpx_vdma_pkg;

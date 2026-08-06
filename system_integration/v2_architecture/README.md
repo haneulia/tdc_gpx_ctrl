@@ -12,10 +12,12 @@
 > result merge. H2B-2B proved the two-word indexed GPX image portal and
 > physical all-chip activation ACK. H3 proved the complete 32-physical-STOP /
 > 16-logical-APD, 7-Return B5 acquisition boundary under timeout, cap and
-> backpressure in both routine clock profiles. Stage 6 is in progress: I0 froze
-> the Hit/Cell/Frame oracle, I1 completed the B6 typed Hit decoder, I2 completed
-> width-independent B7 Cell collection, and I2A closed the registered B6/B7
-> ownership and timing optimization. B8 Frame lane assembly is next.
+> backpressure in both routine clock profiles. Stage 6 is closed: I0 froze the
+> Hit/Cell/Frame oracle, I1/I2/I2A close registered Hit/Cell ownership and I3/I4
+> close Frame-lane assembly plus the complete B5..B8 path. Stage 7 is in
+> progress. J3/J4 freeze PACKED17, J5/J6 close Shot/Hole serialization and
+> width packing, and J7/J8 close the sequential VDMA profile plus ordered Face
+> Footer. J9 DDR-versus-HTML Golden comparison is next.
 
 ## 1. Purpose
 
@@ -82,6 +84,13 @@ The redesign has four goals:
 | [V2_CHECKPOINT_I1_GPX_HIT_DECODER.md](V2_CHECKPOINT_I1_GPX_HIT_DECODER.md) | Registered B6 raw-to-Hit parser, topology diagnostics and route evidence |
 | [V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md](V2_CHECKPOINT_I2_GPX_CELL_COLLECTOR.md) | Width-independent B7 Return ownership, Cell storage, ordering, runtime Hit limit and route evidence |
 | [V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md](V2_CHECKPOINT_I2A_GPX_PIPELINE_OPTIMIZATION.md) | B6/B7 ownership cleanup, sequential metadata pipeline, linked 150/200 MHz timing and low-latency exceptions |
+| [V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md](V2_CHECKPOINT_I3_GPX_FRAME_LANE_ASSEMBLER.md) | Canonical Rise/Fall Frame-lane ordering, runtime topology and backpressure evidence |
+| [V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md](V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md) | Complete B5..B8 data path, Face-close ownership, Hole completion and asynchronous-profile evidence |
+| [V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md](V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md) | PACKED17 Cell ABI, Return policy and VDMA geometry functions |
+| [V2_CHECKPOINT_J5A_T0_SHOT_METADATA.md](V2_CHECKPOINT_J5A_T0_SHOT_METADATA.md) | TDC measurement start reference time (T0) and exact Shot Metadata stream |
+| [V2_CHECKPOINT_J5B_HOLE_LINES.md](V2_CHECKPOINT_J5B_HOLE_LINES.md) | Explicit leading, interior, trailing and all-Hole geometric Lines |
+| [V2_CHECKPOINT_J6_AXIS_WORD_PACKER.md](V2_CHECKPOINT_J6_AXIS_WORD_PACKER.md) | Sole 32/64/128-bit AXIS packer and final-Beat padding contract |
+| [V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md](V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md) | Sequential VDMA profile, fixed STRIDE, Face-boundary activation and ordered Footer |
 
 ## 4. Target Top-Level Shape
 

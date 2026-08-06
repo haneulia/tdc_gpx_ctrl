@@ -304,10 +304,12 @@ trailing and all-hole completion. Stage 7 / Checkpoint J is in progress. J0
 through J2 provide the original B9 oracle, serializer and lane-formatter
 baseline. J3 froze the revised PACKED17 Shot-Line/Face-Footer ABI and HTML
 Golden schema. J4 implemented the target geometry functions, exact Cell
-Metadata map, and Return-filter/physical-overflow ownership. J5A/J5B now close
-the T0/Shot Metadata stream and explicit geometric Hole Lines. J6 closes
-target-width AXIS packing. The only valid next step is **J7 32-byte Face Footer
-and fixed maximum STRIDE integration**.
+Metadata map, and Return-filter/physical-overflow ownership. J5A/J5B close the
+T0/Shot Metadata stream and explicit geometric Hole Lines. J6 closes
+target-width AXIS packing. J7/J8 now close the 32-byte Face Footer, fixed
+maximum STRIDE, sequential profile calculation and acknowledged Face-boundary
+activation. The only valid next step is **J9 DDR image versus HTML Golden
+Vector comparison**.
 Checkpoint J or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
 
@@ -493,8 +495,8 @@ Its current sub-step status is:
 | J5A | Complete | T0 capture, exact 16-byte Shot Metadata, and width-independent real-Shot line stream; `V2_CHECKPOINT_J5A_T0_SHOT_METADATA.md` |
 | J5B | Complete | Explicit leading/interior/trailing/all-Hole Line expansion; `V2_CHECKPOINT_J5B_HOLE_LINES.md` |
 | J6 | Complete | Target 32/64/128 packer with final-Beat-only padding; `V2_CHECKPOINT_J6_AXIS_WORD_PACKER.md` |
-| J7 | Pending | 32-byte Face Footer and fixed maximum STRIDE |
-| J8 | Pending | Face-boundary HSIZE/VSIZE reconfiguration handshake |
+| J7 | Complete | 32-byte Face Footer and fixed maximum STRIDE; `V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md` |
+| J8 | Complete | Sequential profile calculation and acknowledged Face-boundary HSIZE/VSIZE activation; `V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md` |
 | J9 | Pending | XSIM DDR image versus HTML Golden Vector, Word by Word |
 | J10 | Pending | Host PS H-Line decoder and Ethernet packet byte comparison |
 | J11 | Pending | Parent implementation, DMA/cache ownership and board Sign-off |
@@ -502,6 +504,8 @@ Its current sub-step status is:
 J2 remains useful as a registered transport and backpressure baseline, but its
 repeated 48-byte prefix is not the target ABI. J3/J4 replace that geometry with
 `16-byte Shot Metadata + continuous Cells + final-Beat padding`, followed by a
-32-byte Face Footer. J5A has closed the real-Shot Metadata/T0 path; J5B still
-owns explicit leading, interior, trailing and all-Hole Line expansion.
+32-byte Face Footer. J5A closes the real-Shot Metadata/T0 path; J5B closes
+explicit leading, interior, trailing and all-Hole Line expansion. J7/J8 append
+the ordered Footer and activate a precomputed VDMA profile only after the safe
+Face boundary and VDMA acknowledgement.
 Checkpoint J remains open through board evidence at J11.

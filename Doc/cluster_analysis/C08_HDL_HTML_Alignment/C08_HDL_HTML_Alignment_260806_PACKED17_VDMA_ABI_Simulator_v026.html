@@ -383,12 +383,21 @@
     }
 
     function footerWords(i, g) {
+      // Deterministic Golden context. Runtime hardware supplies these values
+      // from the accepted Face-close event; they are not VDMA geometry inputs.
+      const frameId = 1;
+      const activeConfigVersion = 1;
+      const directionCcw = 0;
+      const sourceSimulation = 0;
       const laneBit = g.lane === "rise" ? 1 : 0;
-      const word2 = (i.faceIndex & 7) | (laneBit << 3) | (widthCode(i.width) << 6);
+      const word2 = (i.faceIndex & 7) | (laneBit << 3) |
+        (directionCcw << 4) | (sourceSimulation << 5) |
+        (widthCode(i.width) << 6);
       const word4 = (i.plannedShots & 0xffff) | ((g.slots & 0x3f) << 16) | ((i.returns & 7) << 22);
-      return [0x47504631, 1, word2 >>> 0, 1, word4 >>> 0,
+      const word6 = i.plannedShots & 0xffff;
+      return [0x47504631, frameId, word2 >>> 0, activeConfigVersion, word4 >>> 0,
         ((g.vsize & 0xffff) << 16 | (g.hsize & 0xffff)) >>> 0,
-        i.plannedShots & 0xffff, 0x434f4d54];
+        word6, 0x434f4d54];
     }
 
     function renderMemory(g) {
@@ -442,6 +451,13 @@
       const min128 = laneGeometry({...defaults,width:128,present:[1,0,0,0],rise:[1,0,0,0],fall:[0,0,0,0],active:[1,0,0,0],buildMaxStops:1,activeStops:1,returns:1}, "rise");
       check("최소 32-bit HSIZE 24 B / Footer 2 Lines", min32.hsize === 24 && min32.footerLines === 2);
       check("최소 128-bit HSIZE 32 B / Footer 1 Line", min128.hsize === 32 && min128.footerLines === 1);
+      const defaultGeometry = laneGeometry(defaults, "rise");
+      const defaultFooter = footerWords(defaults, defaultGeometry);
+      check("Footer GPF1/COMT와 8 Word 고정", defaultFooter.length === 8 &&
+        defaultFooter[0] === 0x47504631 && defaultFooter[7] === 0x434f4d54);
+      check("Footer W2 Face/Slope/폭 비트맵", (defaultFooter[2] & 0xff) === 0x08);
+      check("Footer W5 HSIZE/VSIZE 일치", (defaultFooter[5] & 0xffff) === defaultGeometry.hsize &&
+        ((defaultFooter[5] >>> 16) & 0xffff) === defaultGeometry.vsize);
       const off = laneGeometry({...defaults,fallingEnable:false}, "rise");
       check("Fall OFF에서 모든 Active Chip이 Rise", off.slots === 32);
       check("고정 STRIDE가 모든 Runtime HSIZE 이상", [1,2,3,4,5,6,7].every(r => laneGeometry({...defaults,returns:r},"rise").hsize <= laneGeometry({...defaults,returns:r},"rise").stride));
@@ -522,6 +538,7 @@
         schema:"tdc-gpx-packed17-v1", generated_by:"C08-v026",
         output_width_bits:m.input.width, visible_returns:m.input.returns,
         planned_shots:m.input.plannedShots, active_stops_per_chip:m.input.activeStops,
+        footer_context:{frame_id:1,active_config_version:1,direction:"CW",source:"physical"},
         build_masks:{present:maskValue(m.input.present),rise:maskValue(m.input.rise),fall:maskValue(m.input.fall)},
         active_mask:maskValue(m.input.active), falling_enable:m.input.fallingEnable,
         rise:makeLane(m.rise), fall:makeLane(m.fall), validation_errors:m.failures

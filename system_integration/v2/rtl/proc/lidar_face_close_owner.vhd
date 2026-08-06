@@ -46,6 +46,8 @@ architecture rtl of lidar_face_close_owner is
     signal active_version_r  : unsigned(15 downto 0) := (others => '0');
 
     signal traversal_open_r     : std_logic := '0';
+    signal next_face_frame_id_r : face_frame_id_t := (others => '0');
+    signal traversal_frame_id_r : face_frame_id_t := (others => '0');
     signal traversal_face_r     : face_index_t := (others => '0');
     signal traversal_direction_r: direction_t := DIRECTION_CW;
     signal traversal_source_r   : std_logic := '0';
@@ -101,6 +103,8 @@ begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 traversal_open_r      <= '0';
+                next_face_frame_id_r  <= (others => '0');
+                traversal_frame_id_r  <= (others => '0');
                 traversal_face_r      <= (others => '0');
                 traversal_direction_r <= DIRECTION_CW;
                 traversal_source_r    <= '0';
@@ -136,6 +140,7 @@ begin
                        traversal_open_r = '1' then
                         close_v := C_FACE_CLOSE_EVENT_IDLE;
                         close_v.valid := '1';
+                        close_v.face_frame_id := traversal_frame_id_r;
                         close_v.face_index := traversal_face_r;
                         close_v.direction := traversal_direction_r;
                         close_v.source_sim := traversal_source_r;
@@ -167,6 +172,8 @@ begin
 
                         if context_valid_v then
                             traversal_open_r <= '1';
+                            traversal_frame_id_r <= next_face_frame_id_r;
+                            next_face_frame_id_r <= next_face_frame_id_r + 1;
                             traversal_face_r <= i_face_event.face_index;
                             traversal_direction_r <= i_face_event.direction;
                             traversal_source_r <= i_face_event.source_sim;

@@ -126,6 +126,7 @@ package lidar_gpx_data_pkg is
     -- from which the formatter could reconstruct its geometry.
     type gpx_frame_close_event_t is record
         valid            : std_logic;
+        face_frame_id    : face_frame_id_t;
         face_index       : face_index_t;
         direction        : direction_t;
         source_sim       : std_logic;
@@ -212,6 +213,7 @@ package lidar_gpx_data_pkg is
 
     constant C_GPX_FRAME_CLOSE_EVENT_IDLE : gpx_frame_close_event_t := (
         valid            => '0',
+        face_frame_id    => (others => '0'),
         face_index       => (others => '0'),
         direction        => DIRECTION_CW,
         source_sim       => '0',

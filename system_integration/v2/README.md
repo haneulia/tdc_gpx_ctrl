@@ -55,8 +55,10 @@ multiple clocks and is checked against this reference model.
   legacy lane-formatter baseline. J3 froze the PACKED17 target ABI and HTML
   Golden model, and J4 now owns the target geometry functions, exact Cell
   Metadata map and intentional-filter versus physical-overflow semantics.
-  The target Shot Metadata/Footer formatter and the full parent datapath
-  remain unmigrated;
+  J5A/J5B close T0/Shot Metadata and explicit Hole Lines, J6 closes the sole
+  32/64/128-bit AXIS packer, and J7/J8 close the ordered Face Footer plus
+  sequential, acknowledged Face-boundary VDMA profile activation. The DDR
+  Golden comparison, PS decoder, and full parent datapath remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
 ## Next Implementation Order
@@ -78,8 +80,9 @@ direct low-latency STOP path, and H2A through H3 now own the atomic event CDC
 and typed acquisition boundaries. Stage 6 I1 owns B6 raw parsing, I2 owns B7
 Return ordering and Hit-to-Cell collection, I2A proves their direct linked
 boundary, I3 owns width-neutral B8 Rise/Fall Frame-lane assembly, and I4 proves
-the complete B5..B8 production chain plus explicit Face-close ordering. The
-next implementation is Stage 7 / Checkpoint J, the B9 AXIS/VDMA formatter.
+the complete B5..B8 production chain plus explicit Face-close ordering. J7/J8
+now close the focused B9 geometry and Footer boundary. The next implementation
+is J9, the STRIDE-aware DDR image comparison against the HTML Golden Vector.
 
 Run the current package regression with:
 
@@ -320,3 +323,30 @@ exact Cell Metadata bit map, target HSIZE/VSIZE/STRIDE calculations for
 32/64/128-bit builds, visible Return counts 1 through 7, and the separation of
 intentional runtime filtering from an eighth physical Return overflow. See
 `system_integration/v2_architecture/V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md`.
+
+Run the target-width AXIS packer regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_axis_word_packer.ps1
+```
+
+The pass marker is `LIDAR_V2_GPX_AXIS_WORD_PACKER_PASS`. J6 proves canonical
+Word order, final-Beat-only zero padding, SOF/TLAST and output stability for
+150/200 MHz and 32/64/128-bit builds. See
+`system_integration/v2_architecture/V2_CHECKPOINT_J6_AXIS_WORD_PACKER.md`.
+
+Run the Face Footer and VDMA-profile regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_face_footer.ps1
+```
+
+The pass markers are `LIDAR_V2_GPX_FACE_FOOTER_PASS`,
+`LIDAR_V2_GPX_VDMA_PROFILE_MANAGER_PASS`, and
+`LIDAR_V2_GPX_FRAME_CLOSE_FORK_PASS`. J7/J8 verify one/two-Line Footer layout,
+fixed maximum STRIDE, safe Face-boundary activation, VDMA programming
+backpressure, abort preservation, and positive post-route timing for all six
+150/200 MHz by 32/64/128-bit profiles. See
+`system_integration/v2_architecture/V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md`.

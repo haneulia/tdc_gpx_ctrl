@@ -147,6 +147,7 @@ begin
             exit when close_event.valid = '1';
         end loop;
         assert close_event.valid = '1' and
+               close_event.face_frame_id = to_unsigned(0, 32) and
                close_event.face_index = to_unsigned(1, 3) and
                close_event.direction = DIRECTION_CCW and
                close_event.source_sim = '0' and
@@ -178,6 +179,7 @@ begin
             exit when close_event.valid = '1';
         end loop;
         assert close_event.valid = '1' and
+               close_event.face_frame_id = to_unsigned(1, 32) and
                close_event.face_index = to_unsigned(2, 3)
             report "V2-FCLOSE-TB all-hole traversal close missing"
             severity failure;
@@ -202,6 +204,7 @@ begin
             exit when close_event.valid = '1';
         end loop;
         assert close_event.valid = '1' and
+               close_event.face_frame_id = to_unsigned(2, 32) and
                close_event.face_index = to_unsigned(0, 3) and
                close_event.direction = DIRECTION_CW
             report "V2-FCLOSE-TB old Face close lost on direct transition"
@@ -220,6 +223,7 @@ begin
             exit when close_event.valid = '1';
         end loop;
         assert close_event.valid = '1' and
+               close_event.face_frame_id = to_unsigned(3, 32) and
                close_event.face_index = to_unsigned(1, 3) and
                close_event.direction = DIRECTION_CCW
             report "V2-FCLOSE-TB new Face close lost after direct transition"
