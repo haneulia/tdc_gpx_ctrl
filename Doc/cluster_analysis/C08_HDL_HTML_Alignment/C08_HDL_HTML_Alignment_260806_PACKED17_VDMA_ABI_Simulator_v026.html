@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>C08 PACKED17 VDMA ABI 검증기 v026</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18212f;
+      --muted: #657084;
+      --line: #d7dde6;
+      --panel: #ffffff;
+      --surface: #f4f6f9;
+      --blue: #2469c8;
+      --blue-soft: #e8f0fc;
+      --green: #137a52;
+      --green-soft: #e5f5ee;
+      --amber: #a65d00;
+      --amber-soft: #fff1d6;
+      --red: #bd3131;
+      --red-soft: #fdeaea;
+      --meta: #2563a6;
+      --cell: #138a64;
+      --footer: #7c4aa5;
+      --pad: #9aa3b1;
+      font-family: "Segoe UI", "Malgun Gothic", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--ink); }
+    button, input, select { font: inherit; letter-spacing: 0; }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 330px minmax(0, 1fr); }
+    aside { background: var(--panel); border-right: 1px solid var(--line); padding: 18px; overflow: auto; }
+    main { min-width: 0; padding: 18px 22px 32px; }
+    h1 { font-size: 21px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 0; }
+    h3 { font-size: 14px; margin: 0 0 10px; }
+    p { margin: 4px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .version { font-size: 11px; color: var(--muted); margin-bottom: 18px; }
+    fieldset { border: 0; border-top: 1px solid var(--line); margin: 0; padding: 15px 0 5px; }
+    legend { padding: 0 8px 0 0; font-size: 13px; font-weight: 700; }
+    .field { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 10px; align-items: center; margin: 9px 0; }
+    .field label { font-size: 12px; line-height: 1.3; }
+    input[type="number"], select { width: 100%; border: 1px solid #bdc6d3; border-radius: 5px; padding: 7px 8px; background: #fff; color: var(--ink); }
+    input:invalid { border-color: var(--red); background: var(--red-soft); }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0; font-size: 12px; }
+    .switch { position: relative; width: 38px; height: 22px; flex: 0 0 auto; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; border-radius: 11px; background: #aab3c0; cursor: pointer; }
+    .slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; border-radius: 50%; background: white; transition: transform .15s ease; }
+    .switch input:checked + .slider { background: var(--green); }
+    .switch input:checked + .slider::before { transform: translateX(16px); }
+    .mask-grid { display: grid; grid-template-columns: 76px repeat(4, 1fr); gap: 5px; align-items: center; font-size: 11px; }
+    .mask-grid .head { color: var(--muted); text-align: center; }
+    .mask-grid .row-name { font-weight: 600; }
+    .mask-grid label { display: grid; place-items: center; height: 28px; border: 1px solid var(--line); border-radius: 4px; background: #f8fafc; }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+    button { border: 1px solid #aeb9c8; border-radius: 5px; background: #fff; color: var(--ink); padding: 8px 10px; cursor: pointer; }
+    button.primary { border-color: var(--blue); background: var(--blue); color: #fff; }
+    button:hover { filter: brightness(.97); }
+    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+    .badge { display: inline-flex; align-items: center; min-height: 27px; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 800; }
+    .pass { color: var(--green); background: var(--green-soft); border: 1px solid #9bd1bb; }
+    .check { color: var(--red); background: var(--red-soft); border: 1px solid #e3aaaa; }
+    .metrics { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); border: 1px solid var(--line); background: var(--panel); margin-bottom: 14px; }
+    .metric { min-width: 0; padding: 13px 14px; border-right: 1px solid var(--line); }
+    .metric:last-child { border-right: 0; }
+    .metric span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+    .metric strong { font-size: 19px; font-weight: 750; white-space: nowrap; }
+    .band { background: var(--panel); border: 1px solid var(--line); margin-bottom: 14px; }
+    .band-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+    .band-body { padding: 14px; }
+    .flow { display: grid; grid-template-columns: 1fr 28px 1fr 28px 1fr 28px 1fr; align-items: stretch; }
+    .flow-node { display: grid; place-items: center; min-height: 58px; padding: 8px; border: 1px solid var(--line); background: #f9fafc; text-align: center; font-size: 12px; font-weight: 650; }
+    .flow-arrow { display: grid; place-items: center; color: var(--muted); font-size: 20px; }
+    .lane-tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+    .lane-tabs button { border: 0; border-right: 1px solid var(--line); border-radius: 0; padding: 5px 12px; }
+    .lane-tabs button:last-child { border-right: 0; }
+    .lane-tabs button.active { background: var(--blue-soft); color: var(--blue); font-weight: 700; }
+    .memory { display: grid; gap: 8px; margin-top: 12px; }
+    .line-map { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: center; }
+    .line-label { font-size: 11px; color: var(--muted); text-align: right; }
+    .bar { min-height: 38px; display: flex; border: 1px solid #8d99aa; overflow: hidden; background: #eef1f5; }
+    .segment { min-width: 2px; display: grid; place-items: center; padding: 5px 1px; color: white; font-size: 9px; font-weight: 700; text-align: center; overflow: hidden; }
+    .segment.meta { background: var(--meta); }
+    .segment.cell { background: var(--cell); border-left: 1px solid rgba(255,255,255,.45); }
+    .segment.footer { background: var(--footer); }
+    .segment.pad { background: var(--pad); }
+    .segment.reserve { color: #5c6675; background: #edf0f4; border-left: 1px dashed #8791a0; }
+    .formula { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
+    .formula div { border-left: 3px solid var(--blue); background: #f7f9fc; padding: 9px 10px; font-family: Consolas, monospace; font-size: 11px; }
+    .tables { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 9px; text-align: left; vertical-align: top; }
+    th { color: #4d586a; background: #f5f7fa; font-weight: 700; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    code { font-family: Consolas, monospace; font-size: 11px; }
+    .word-list { max-height: 350px; overflow: auto; border: 1px solid var(--line); }
+    .word-row { display: grid; grid-template-columns: 66px 96px minmax(0, 1fr); gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--line); font-family: Consolas, monospace; font-size: 11px; }
+    .word-row:last-child { border-bottom: 0; }
+    .word-row span:first-child { color: var(--muted); }
+    .status-list { display: grid; gap: 5px; }
+    .status-item { display: flex; justify-content: space-between; gap: 12px; padding: 7px 9px; background: #f8fafc; border-left: 3px solid var(--green); font-size: 11px; }
+    .status-item.fail { border-left-color: var(--red); background: var(--red-soft); }
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 290px minmax(0, 1fr); }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .metric { border-bottom: 1px solid var(--line); }
+      .tables { grid-template-columns: 1fr; }
+      .formula { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 760px) {
+      .app { display: block; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      main { padding: 14px; }
+      .flow { grid-template-columns: 1fr; gap: 5px; }
+      .flow-arrow { transform: rotate(90deg); }
+      .metrics, .formula { grid-template-columns: 1fr; }
+      .line-map { grid-template-columns: 1fr; }
+      .line-label { text-align: left; }
+      .segment.meta, .segment.cell { font-size: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <h1>PACKED17 VDMA ABI</h1>
+      <div class="version">C08 Target Contract Simulator v026</div>
+
+      <fieldset>
+        <legend>합성 프로파일</legend>
+        <div class="field"><label for="axisWidth">AXIS 출력 폭</label><select id="axisWidth"><option>32</option><option>64</option><option>128</option></select></div>
+        <div class="field"><label for="buildMaxStops">최대 STOP/Chip</label><input id="buildMaxStops" type="number" min="1" max="8" value="8"></div>
+        <div class="field"><label for="maxShots">최대 Shot/Face</label><input id="maxShots" type="number" min="1" max="65535" value="1800"></div>
+        <div class="mask-grid" id="maskGrid">
+          <div></div><div class="head">C0</div><div class="head">C1</div><div class="head">C2</div><div class="head">C3</div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Runtime Face 설정</legend>
+        <div class="toggle-row"><span>Falling 처리</span><label class="switch"><input id="fallingEnable" type="checkbox" checked><span class="slider"></span></label></div>
+        <div class="field"><label for="activeStops">활성 STOP/Chip</label><input id="activeStops" type="number" min="1" max="8" value="8"></div>
+        <div class="field"><label for="returns">전시 Return 수</label><input id="returns" type="number" min="1" max="7" value="7"></div>
+        <div class="field"><label for="plannedShots">계획 Shot/Face</label><input id="plannedShots" type="number" min="1" max="65535" value="1800"></div>
+        <div class="field"><label for="faceIndex">Face 번호</label><input id="faceIndex" type="number" min="0" max="4" value="0"></div>
+      </fieldset>
+
+      <div class="actions">
+        <button id="resetButton">기본값</button>
+        <button id="exportButton" class="primary">Golden JSON 저장</button>
+      </div>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <div><h2>VDMA Face Frame 구조 검증</h2><p>외부 GPX Drain과 Runtime Return 직렬화를 분리한 목표 ABI</p></div>
+        <span id="contractBadge" class="badge pass">PASS</span>
+      </div>
+
+      <section class="metrics">
+        <div class="metric"><span>선택 Lane HSIZE</span><strong id="metricHsize">0 B</strong></div>
+        <div class="metric"><span>VSIZE</span><strong id="metricVsize">0 Lines</strong></div>
+        <div class="metric"><span>고정 STRIDE</span><strong id="metricStride">0 B</strong></div>
+        <div class="metric"><span>Cell 크기</span><strong id="metricCell">0 B</strong></div>
+        <div class="metric"><span>Frame 예약 크기</span><strong id="metricBuffer">0 B</strong></div>
+      </section>
+
+      <section class="band">
+        <div class="band-head"><h3>데이터 소유권</h3></div>
+        <div class="band-body">
+          <div class="flow">
+            <div class="flow-node">TDC-GPX IFIFO<br>EF까지 전체 Drain</div><div class="flow-arrow">→</div>
+            <div class="flow-node">PACKED17 Cell<br>Return 1~7 선택</div><div class="flow-arrow">→</div>
+            <div class="flow-node">Shot Line<br>Metadata + Cells</div><div class="flow-arrow">→</div>
+            <div class="flow-node">Face Frame<br>Shot Lines + Footer</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="band-head">
+          <h3>DDR 형상</h3>
+          <div class="lane-tabs"><button id="riseTab" class="active">Rising</button><button id="fallTab">Falling</button></div>
+        </div>
+        <div class="band-body">
+          <div id="memoryMap" class="memory"></div>
+          <div class="formula">
+            <div id="formulaCell">CELL_BYTES</div>
+            <div id="formulaHsize">HSIZE</div>
+            <div id="formulaVsize">VSIZE</div>
+            <div id="formulaAddress">LINE_ADDRESS</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="tables">
+        <section class="band">
+          <div class="band-head"><h3>시간순 계산표</h3></div>
+          <div class="band-body" style="padding:0"><table><thead><tr><th>단계</th><th>계산</th><th class="num">결과</th></tr></thead><tbody id="calcRows"></tbody></table></div>
+        </section>
+        <section class="band">
+          <div class="band-head"><h3>내장 계약 검사</h3></div>
+          <div class="band-body"><div id="selfTests" class="status-list"></div></div>
+        </section>
+      </div>
+
+      <section class="band">
+        <div class="band-head"><h3>Golden Word 미리보기</h3><span id="previewLabel" class="badge pass">SHOT 0</span></div>
+        <div class="band-body"><div id="wordList" class="word-list"></div></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    "use strict";
+
+    const $ = id => document.getElementById(id);
+    const state = { lane: "rise" };
+    const defaults = {
+      width: 32, buildMaxStops: 8, maxShots: 1800, activeStops: 8,
+      returns: 7, plannedShots: 1800, faceIndex: 0, fallingEnable: true,
+      present: [1,1,1,1], rise: [1,1,0,0], fall: [0,0,1,1], active: [1,1,1,1]
+    };
+    const rows = [
+      ["Present", "present"], ["Rise 가능", "rise"],
+      ["Fall 가능", "fall"], ["Active", "active"]
+    ];
+
+    function buildMaskGrid() {
+      const grid = $("maskGrid");
+      rows.forEach(([label, key]) => {
+        const name = document.createElement("div");
+        name.className = "row-name";
+        name.textContent = label;
+        grid.appendChild(name);
+        for (let chip = 0; chip < 4; chip++) {
+          const holder = document.createElement("label");
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.id = `${key}${chip}`;
+          input.dataset.mask = key;
+          input.dataset.chip = String(chip);
+          input.addEventListener("change", render);
+          holder.appendChild(input);
+          grid.appendChild(holder);
+        }
+      });
+    }
+
+    const popcount = bits => bits.reduce((sum, bit) => sum + (bit ? 1 : 0), 0);
+    const andMask = (a, b) => a.map((bit, i) => bit && b[i] ? 1 : 0);
+    const zeroMask = () => [0,0,0,0];
+    const alignUp = (value, alignment) => Math.ceil(value / alignment) * alignment;
+    const cellWords = returns => Math.ceil(returns / 2) + 1;
+    const cellBytes = returns => cellWords(returns) * 4;
+    const widthCode = width => ({32:0,64:1,128:2})[width];
+    const maskValue = bits => bits.reduce((value, bit, index) => value | (bit << index), 0);
+    const hex32 = value => `0x${(Number(value) >>> 0).toString(16).padStart(8,"0").toUpperCase()}`;
+    const formatBytes = value => `${value.toLocaleString("ko-KR")} B`;
+
+    function readMask(key) {
+      return [0,1,2,3].map(chip => $(`${key}${chip}`).checked ? 1 : 0);
+    }
+
+    function readInputs() {
+      return {
+        width: Number($("axisWidth").value),
+        buildMaxStops: Number($("buildMaxStops").value),
+        maxShots: Number($("maxShots").value),
+        activeStops: Number($("activeStops").value),
+        returns: Number($("returns").value),
+        plannedShots: Number($("plannedShots").value),
+        faceIndex: Number($("faceIndex").value),
+        fallingEnable: $("fallingEnable").checked,
+        present: readMask("present"), rise: readMask("rise"),
+        fall: readMask("fall"), active: readMask("active")
+      };
+    }
+
+    function validate(i) {
+      const failures = [];
+      if (![32,64,128].includes(i.width)) failures.push("지원하지 않는 AXIS 폭");
+      if (popcount(i.present) < 1) failures.push("Present Chip이 없음");
+      if (i.activeStops < 1 || i.activeStops > i.buildMaxStops) failures.push("활성 STOP 수가 합성 한도를 벗어남");
+      if (i.returns < 1 || i.returns > 7) failures.push("Return 수가 1~7 범위를 벗어남");
+      if (i.plannedShots < 1 || i.plannedShots > i.maxShots) failures.push("계획 Shot 수가 Frame Buffer 한도를 벗어남");
+      for (let chip = 0; chip < 4; chip++) {
+        if (i.active[chip] && !i.present[chip]) failures.push(`C${chip} Active가 Present 밖에 있음`);
+        if (i.present[chip] && !i.rise[chip] && !i.fall[chip]) failures.push(`C${chip}에 Rise/Fall 능력이 없음`);
+      }
+      if (popcount(andMask(i.rise, i.present)) < popcount(andMask(i.fall, i.present))) {
+        failures.push("Rise 가능 Chip 수가 Fall 가능 Chip 수보다 작음");
+      }
+      if (popcount(andMask(i.active, i.present)) < 1) failures.push("활성 Chip이 없음");
+      return failures;
+    }
+
+    function laneGeometry(i, lane) {
+      const presentActive = andMask(i.active, i.present);
+      const runtimeRise = i.fallingEnable ? andMask(presentActive, i.rise) : presentActive;
+      const runtimeFall = i.fallingEnable ? andMask(presentActive, i.fall) : zeroMask();
+      const mask = lane === "rise" ? runtimeRise : runtimeFall;
+      const slots = popcount(mask) * i.activeStops;
+      const beatBytes = i.width / 8;
+      const rawHsize = slots === 0 ? 0 : 16 + slots * cellBytes(i.returns);
+      const hsize = slots === 0 ? 0 : alignUp(rawHsize, beatBytes);
+      const footerLines = hsize === 0 ? 0 : Math.ceil(32 / hsize);
+      const vsize = hsize === 0 ? 0 : i.plannedShots + footerLines;
+
+      const maxSlots = lane === "rise"
+        ? popcount(i.present) * i.buildMaxStops
+        : popcount(andMask(i.present, i.fall)) * i.buildMaxStops;
+      const maxRawHsize = maxSlots === 0 ? 0 : 16 + maxSlots * cellBytes(7);
+      const stride = maxSlots === 0 ? 0 : alignUp(maxRawHsize, beatBytes);
+      const maxFooterLines = stride === 0 ? 0 : Math.max(...[1,2,3,4,5,6,7].map(returnCount => {
+        const minRaw = 16 + cellBytes(returnCount);
+        return Math.ceil(32 / alignUp(minRaw, beatBytes));
+      }));
+      const maxVsize = stride === 0 ? 0 : i.maxShots + maxFooterLines;
+      return {
+        lane, mask, slots, beatBytes, rawHsize, hsize,
+        padding: hsize - rawHsize, footerLines, vsize,
+        maxSlots, maxRawHsize, stride, maxVsize,
+        bufferBytes: stride * maxVsize,
+        beats: hsize === 0 ? 0 : hsize / beatBytes
+      };
+    }
+
+    function model() {
+      const input = readInputs();
+      return { input, failures: validate(input), rise: laneGeometry(input, "rise"), fall: laneGeometry(input, "fall") };
+    }
+
+    function metadataWord({returnCount, slope, chip, stop, blank=false, error=false, dropped=false, overflow=false, faulted=false, timeout=0}) {
+      let msb = 0, valid = 0;
+      if (!blank) {
+        for (let r = 0; r < returnCount; r++) {
+          const hit = deterministicHit(chip, stop, r);
+          msb |= ((hit >>> 16) & 1) << r;
+          valid |= 1 << r;
+        }
+      }
+      let word = msb | (valid << 7) | ((blank ? 0 : returnCount) << 14);
+      word |= (slope === "rise" ? 1 : 0) << 17;
+      word |= (chip & 3) << 18;
+      word |= (stop & 7) << 20;
+      word |= (blank ? 1 : 0) << 23;
+      word |= (error ? 1 : 0) << 24;
+      word |= (dropped ? 1 : 0) << 25;
+      word |= (overflow ? 1 : 0) << 26;
+      word |= (faulted ? 1 : 0) << 27;
+      word |= (timeout & 7) << 28;
+      word |= 0x80000000;
+      return word >>> 0;
+    }
+
+    function deterministicHit(chip, stop, returnIndex) {
+      return (0x10000 | ((chip & 3) << 11) | ((stop & 7) << 8) | (returnIndex + 1)) & 0x1ffff;
+    }
+
+    function cellWordsFor(i, lane, chip, stop) {
+      const words = [];
+      for (let pair = 0; pair < Math.ceil(i.returns / 2); pair++) {
+        const r0 = pair * 2, r1 = r0 + 1;
+        const lo = deterministicHit(chip, stop, r0) & 0xffff;
+        const hi = r1 < i.returns ? deterministicHit(chip, stop, r1) & 0xffff : 0;
+        words.push((lo | (hi << 16)) >>> 0);
+      }
+      words.push(metadataWord({returnCount:i.returns, slope:lane, chip, stop}));
+      return words;
+    }
+
+    function shotWords(i, g) {
+      const words = [0x76543210, 0x00000001, ((0x0123 << 16) | 0) >>> 0, 0x00000001];
+      for (let chip = 0; chip < 4; chip++) {
+        if (!g.mask[chip]) continue;
+        for (let stop = 0; stop < i.activeStops; stop++) words.push(...cellWordsFor(i, g.lane, chip, stop));
+      }
+      while (words.length * 4 < g.hsize) words.push(0);
+      return words;
+    }
+
+    function footerWords(i, g) {
+      const laneBit = g.lane === "rise" ? 1 : 0;
+      const word2 = (i.faceIndex & 7) | (laneBit << 3) | (widthCode(i.width) << 6);
+      const word4 = (i.plannedShots & 0xffff) | ((g.slots & 0x3f) << 16) | ((i.returns & 7) << 22);
+      return [0x47504631, 1, word2 >>> 0, 1, word4 >>> 0,
+        ((g.vsize & 0xffff) << 16 | (g.hsize & 0xffff)) >>> 0,
+        i.plannedShots & 0xffff, 0x434f4d54];
+    }
+
+    function renderMemory(g) {
+      const map = $("memoryMap");
+      map.innerHTML = "";
+      if (g.hsize === 0) {
+        map.innerHTML = '<div class="status-item fail"><span>선택 Lane 비활성</span><strong>HSIZE 0</strong></div>';
+        return;
+      }
+      const addLine = (label, segments) => {
+        const row = document.createElement("div"); row.className = "line-map";
+        const text = document.createElement("div"); text.className = "line-label"; text.textContent = label;
+        const bar = document.createElement("div"); bar.className = "bar";
+        segments.forEach(segment => {
+          const el = document.createElement("div"); el.className = `segment ${segment.kind}`;
+          el.style.flex = `${Math.max(segment.bytes, .5)} 1 0`;
+          el.textContent = segment.label;
+          el.title = `${segment.label}: ${segment.bytes} B`;
+          bar.appendChild(el);
+        });
+        row.append(text, bar); map.appendChild(row);
+      };
+      const dataSegments = [{kind:"meta",bytes:16,label:"M"}];
+      for (let cell = 0; cell < Math.min(g.slots, 8); cell++) dataSegments.push({kind:"cell",bytes:cellBytes(readInputs().returns),label:`C${cell}`});
+      if (g.slots > 8) dataSegments.push({kind:"cell",bytes:(g.slots-8)*cellBytes(readInputs().returns),label:`... C${g.slots-1}`});
+      if (g.padding) dataSegments.push({kind:"pad",bytes:g.padding,label:`Pad ${g.padding} B`});
+      if (g.stride > g.hsize) dataSegments.push({kind:"reserve",bytes:g.stride-g.hsize,label:`예약 ${g.stride-g.hsize} B`});
+      addLine("Shot Line 0", dataSegments);
+      addLine(`Shot Line ${readInputs().plannedShots-1}`, dataSegments);
+      let footerLeft = 32;
+      for (let line = 0; line < g.footerLines; line++) {
+        const used = Math.min(footerLeft, g.hsize);
+        const segments = [{kind:"footer",bytes:used,label:"F"}];
+        if (g.hsize > used) segments.push({kind:"pad",bytes:g.hsize-used,label:`Pad ${g.hsize-used} B`});
+        if (g.stride > g.hsize) segments.push({kind:"reserve",bytes:g.stride-g.hsize,label:`예약 ${g.stride-g.hsize} B`});
+        addLine(`Footer ${line}`, segments); footerLeft -= used;
+      }
+    }
+
+    function selfTestResults() {
+      const tests = [];
+      const check = (name, pass) => tests.push({name, pass:Boolean(pass)});
+      check("Return별 Cell 8/8/12/12/16/16/20 B", [1,2,3,4,5,6,7].map(cellBytes).join() === "8,8,12,12,16,16,20");
+      [32,64,128].forEach(width => {
+        const i = {...defaults, width};
+        const g = laneGeometry(i, "rise");
+        check(`16 Cell Return7 ${width}-bit HSIZE 336 B`, g.slots === 16 && g.hsize === 336);
+        check(`${width}-bit Beat 수 ${336/(width/8)}`, g.beats === 336/(width/8));
+      });
+      const min32 = laneGeometry({...defaults,width:32,present:[1,0,0,0],rise:[1,0,0,0],fall:[0,0,0,0],active:[1,0,0,0],buildMaxStops:1,activeStops:1,returns:1}, "rise");
+      const min128 = laneGeometry({...defaults,width:128,present:[1,0,0,0],rise:[1,0,0,0],fall:[0,0,0,0],active:[1,0,0,0],buildMaxStops:1,activeStops:1,returns:1}, "rise");
+      check("최소 32-bit HSIZE 24 B / Footer 2 Lines", min32.hsize === 24 && min32.footerLines === 2);
+      check("최소 128-bit HSIZE 32 B / Footer 1 Line", min128.hsize === 32 && min128.footerLines === 1);
+      const off = laneGeometry({...defaults,fallingEnable:false}, "rise");
+      check("Fall OFF에서 모든 Active Chip이 Rise", off.slots === 32);
+      check("고정 STRIDE가 모든 Runtime HSIZE 이상", [1,2,3,4,5,6,7].every(r => laneGeometry({...defaults,returns:r},"rise").hsize <= laneGeometry({...defaults,returns:r},"rise").stride));
+      return tests;
+    }
+
+    function render() {
+      const m = model();
+      const g = state.lane === "rise" ? m.rise : m.fall;
+      $("activeStops").max = String(m.input.buildMaxStops);
+      $("plannedShots").max = String(m.input.maxShots);
+      $("contractBadge").textContent = m.failures.length ? "CHECK" : "PASS";
+      $("contractBadge").className = `badge ${m.failures.length ? "check" : "pass"}`;
+      $("metricHsize").textContent = formatBytes(g.hsize);
+      $("metricVsize").textContent = `${g.vsize.toLocaleString("ko-KR")} Lines`;
+      $("metricStride").textContent = formatBytes(g.stride);
+      $("metricCell").textContent = formatBytes(cellBytes(m.input.returns));
+      $("metricBuffer").textContent = formatBytes(g.bufferBytes);
+      $("formulaCell").textContent = `CELL = ${cellWords(m.input.returns)} words × 4 = ${cellBytes(m.input.returns)} B`;
+      $("formulaHsize").textContent = `HSIZE = A${g.beatBytes}(${g.rawHsize}) = ${g.hsize} B`;
+      $("formulaVsize").textContent = `VSIZE = ${m.input.plannedShots} + ${g.footerLines} = ${g.vsize}`;
+      $("formulaAddress").textContent = `ADDR[n] = BASE + n × ${g.stride}`;
+      renderMemory(g);
+
+      const calculation = [
+        ["D01", `${g.lane} runtime mask`, g.mask.map((v,i)=>v?`C${i}`:"").filter(Boolean).join(", ") || "OFF"],
+        ["D02", `Cell slots = ${popcount(g.mask)} chips × ${m.input.activeStops} stops`, g.slots],
+        ["D03", `Cell bytes = (ceil(${m.input.returns}/2)+1) × 4`, `${cellBytes(m.input.returns)} B`],
+        ["D04", `Raw Line = 16 + ${g.slots} × ${cellBytes(m.input.returns)}`, `${g.rawHsize} B`],
+        ["D05", `HSIZE = align${g.beatBytes}(${g.rawHsize})`, `${g.hsize} B`],
+        ["D06", `Footer Lines = ceil(32/${g.hsize || 1})`, g.footerLines],
+        ["D07", `VSIZE = ${m.input.plannedShots} + ${g.footerLines}`, g.vsize],
+        ["D08", `STRIDE = max Return7 / max slots ${g.maxSlots}`, `${g.stride} B`]
+      ];
+      $("calcRows").innerHTML = calculation.map(row => `<tr><td>${row[0]}</td><td>${row[1]}</td><td class="num">${row[2]}</td></tr>`).join("");
+
+      const tests = selfTestResults();
+      const allTests = tests.every(test => test.pass);
+      const messages = m.failures.map(name => ({name,pass:false}));
+      $("selfTests").innerHTML = [...messages,...tests].map(test => `<div class="status-item ${test.pass?"":"fail"}"><span>${test.name}</span><strong>${test.pass?"PASS":"CHECK"}</strong></div>`).join("");
+      if (!allTests && !m.failures.length) {
+        $("contractBadge").textContent = "CHECK"; $("contractBadge").className = "badge check";
+      }
+
+      const words = g.hsize ? shotWords(m.input,g) : [];
+      const footer = g.hsize ? footerWords(m.input,g) : [];
+      const preview = [
+        ...words.map((word,index)=>({where:`S0 W${index}`,word,note:index<4?"Shot Metadata":"Cell/Padding"})),
+        ...footer.map((word,index)=>({where:`F W${index}`,word,note:"Face Footer"}))
+      ];
+      $("wordList").innerHTML = preview.map(item => `<div class="word-row"><span>${item.where}</span><strong>${hex32(item.word)}</strong><span>${item.note}</span></div>`).join("") || '<div class="word-row"><span>OFF</span><strong>--</strong><span>비활성 Lane</span></div>';
+      $("previewLabel").textContent = `${g.lane.toUpperCase()} / ${m.input.width}-bit`;
+    }
+
+    function applyDefaults() {
+      $("axisWidth").value = String(defaults.width);
+      $("buildMaxStops").value = String(defaults.buildMaxStops);
+      $("maxShots").value = String(defaults.maxShots);
+      $("activeStops").value = String(defaults.activeStops);
+      $("returns").value = String(defaults.returns);
+      $("plannedShots").value = String(defaults.plannedShots);
+      $("faceIndex").value = String(defaults.faceIndex);
+      $("fallingEnable").checked = defaults.fallingEnable;
+      ["present","rise","fall","active"].forEach(key => defaults[key].forEach((value,chip) => $(`${key}${chip}`).checked = Boolean(value)));
+      state.lane = "rise"; $("riseTab").classList.add("active"); $("fallTab").classList.remove("active");
+      render();
+    }
+
+    function exportGolden() {
+      const m = model();
+      const makeLane = g => g.hsize === 0 ? {enabled:false} : {
+        enabled:true, mask:maskValue(g.mask), cell_slots:g.slots,
+        hsize_bytes:g.hsize, vsize_lines:g.vsize, stride_bytes:g.stride,
+        footer_lines:g.footerLines, sample_shot_words:shotWords(m.input,g).map(hex32),
+        footer_words:footerWords(m.input,g).map(hex32)
+      };
+      const data = {
+        schema:"tdc-gpx-packed17-v1", generated_by:"C08-v026",
+        output_width_bits:m.input.width, visible_returns:m.input.returns,
+        planned_shots:m.input.plannedShots, active_stops_per_chip:m.input.activeStops,
+        build_masks:{present:maskValue(m.input.present),rise:maskValue(m.input.rise),fall:maskValue(m.input.fall)},
+        active_mask:maskValue(m.input.active), falling_enable:m.input.fallingEnable,
+        rise:makeLane(m.rise), fall:makeLane(m.fall), validation_errors:m.failures
+      };
+      const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob); link.download = `packed17_golden_w${m.input.width}_r${m.input.returns}.json`;
+      link.click(); URL.revokeObjectURL(link.href);
+    }
+
+    buildMaskGrid();
+    document.querySelectorAll("input,select").forEach(el => el.addEventListener("input", render));
+    $("riseTab").addEventListener("click", () => { state.lane="rise"; $("riseTab").classList.add("active"); $("fallTab").classList.remove("active"); render(); });
+    $("fallTab").addEventListener("click", () => { state.lane="fall"; $("fallTab").classList.add("active"); $("riseTab").classList.remove("active"); render(); });
+    $("resetButton").addEventListener("click", applyDefaults);
+    $("exportButton").addEventListener("click", exportGolden);
+    applyDefaults();
+  </script>
+</body>
+</html>
