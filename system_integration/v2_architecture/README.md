@@ -17,7 +17,8 @@
 > close Frame-lane assembly plus the complete B5..B8 path. Stage 7 is in
 > progress. J3/J4 freeze PACKED17, J5/J6 close Shot/Hole serialization and
 > width packing, and J7/J8 close the sequential VDMA profile plus ordered Face
-> Footer. J9 DDR-versus-HTML Golden comparison is next.
+> Footer. J9 closes the STRIDE-aware DDR-versus-HTML Golden comparison. J10 PS
+> H-Line/Ethernet reference decoding is next.
 
 ## 1. Purpose
 
@@ -91,6 +92,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_J5B_HOLE_LINES.md](V2_CHECKPOINT_J5B_HOLE_LINES.md) | Explicit leading, interior, trailing and all-Hole geometric Lines |
 | [V2_CHECKPOINT_J6_AXIS_WORD_PACKER.md](V2_CHECKPOINT_J6_AXIS_WORD_PACKER.md) | Sole 32/64/128-bit AXIS packer and final-Beat padding contract |
 | [V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md](V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md) | Sequential VDMA profile, fixed STRIDE, Face-boundary activation and ordered Footer |
+| [V2_CHECKPOINT_J9_DDR_HTML_GOLDEN.md](V2_CHECKPOINT_J9_DDR_HTML_GOLDEN.md) | Executable HTML Golden model, STRIDE-aware DDR capture and every-Word comparison |
 
 ## 4. Target Top-Level Shape
 

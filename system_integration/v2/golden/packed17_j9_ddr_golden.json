@@ -1,0 +1,119 @@
+{
+  "schema": "tdc-gpx-packed17-ddr-golden-v1",
+  "generated_by": "C08-v026 buildJ9Golden",
+  "scenario": "one real Shot + one Hole Shot + ordered Face Footer",
+  "profiles": [
+    {
+      "output_width_bits": 32,
+      "geometry": {
+        "beat_bytes": 4,
+        "cell_slots": 1,
+        "visible_returns": 1,
+        "cell_words": 2,
+        "raw_hsize_bytes": 24,
+        "hsize_bytes": 24,
+        "stride_bytes": 36,
+        "planned_shots": 2,
+        "footer_lines": 2,
+        "vsize_lines": 4,
+        "frame_allocation_bytes": 144,
+        "reserve_fill_word": "0xA5A5A5A5"
+      },
+      "context": {
+        "face_frame_id": "0x11223344",
+        "face_index": 2,
+        "slope": "rise",
+        "direction": "CCW",
+        "source": "simulation",
+        "active_config_version": "0x1234"
+      },
+      "line_kinds": ["shot", "hole", "footer", "footer"],
+      "memory_words": [
+        "0x76543210", "0x00000001", "0x01230000", "0x0000008D",
+        "0x00000001", "0x80024081", "0xA5A5A5A5", "0xA5A5A5A5",
+        "0xA5A5A5A5", "0x00000000", "0x00000000", "0xFFFF0001",
+        "0x0000020E", "0x00000000", "0x00000000", "0xA5A5A5A5",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0x47504631", "0x11223344",
+        "0x0000003A", "0x00001234", "0x00410002", "0x00040018",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5", "0x00080002",
+        "0x434F4D54", "0x00000000", "0x00000000", "0x00000000",
+        "0x00000000", "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5"
+      ]
+    },
+    {
+      "output_width_bits": 64,
+      "geometry": {
+        "beat_bytes": 8,
+        "cell_slots": 1,
+        "visible_returns": 1,
+        "cell_words": 2,
+        "raw_hsize_bytes": 24,
+        "hsize_bytes": 24,
+        "stride_bytes": 40,
+        "planned_shots": 2,
+        "footer_lines": 2,
+        "vsize_lines": 4,
+        "frame_allocation_bytes": 160,
+        "reserve_fill_word": "0xA5A5A5A5"
+      },
+      "context": {
+        "face_frame_id": "0x11223344",
+        "face_index": 2,
+        "slope": "rise",
+        "direction": "CCW",
+        "source": "simulation",
+        "active_config_version": "0x1234"
+      },
+      "line_kinds": ["shot", "hole", "footer", "footer"],
+      "memory_words": [
+        "0x76543210", "0x00000001", "0x01230000", "0x0000008D",
+        "0x00000001", "0x80024081", "0xA5A5A5A5", "0xA5A5A5A5",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0x00000000", "0x00000000",
+        "0xFFFF0001", "0x0000020E", "0x00000000", "0x00000000",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5",
+        "0x47504631", "0x11223344", "0x0000007A", "0x00001234",
+        "0x00410002", "0x00040018", "0xA5A5A5A5", "0xA5A5A5A5",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0x00080002", "0x434F4D54",
+        "0x00000000", "0x00000000", "0x00000000", "0x00000000",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5"
+      ]
+    },
+    {
+      "output_width_bits": 128,
+      "geometry": {
+        "beat_bytes": 16,
+        "cell_slots": 1,
+        "visible_returns": 1,
+        "cell_words": 2,
+        "raw_hsize_bytes": 24,
+        "hsize_bytes": 32,
+        "stride_bytes": 48,
+        "planned_shots": 2,
+        "footer_lines": 1,
+        "vsize_lines": 3,
+        "frame_allocation_bytes": 144,
+        "reserve_fill_word": "0xA5A5A5A5"
+      },
+      "context": {
+        "face_frame_id": "0x11223344",
+        "face_index": 2,
+        "slope": "rise",
+        "direction": "CCW",
+        "source": "simulation",
+        "active_config_version": "0x1234"
+      },
+      "line_kinds": ["shot", "hole", "footer"],
+      "memory_words": [
+        "0x76543210", "0x00000001", "0x01230000", "0x0000008D",
+        "0x00000001", "0x80024081", "0x00000000", "0x00000000",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5",
+        "0x00000000", "0x00000000", "0xFFFF0001", "0x0000020E",
+        "0x00000000", "0x00000000", "0x00000000", "0x00000000",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5",
+        "0x47504631", "0x11223344", "0x000000BA", "0x00001234",
+        "0x00410002", "0x00030020", "0x00080002", "0x434F4D54",
+        "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5", "0xA5A5A5A5"
+      ]
+    }
+  ]
+}

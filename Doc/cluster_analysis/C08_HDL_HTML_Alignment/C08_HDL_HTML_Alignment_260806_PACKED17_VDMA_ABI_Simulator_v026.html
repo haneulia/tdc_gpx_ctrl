@@ -150,6 +150,7 @@
       <div class="actions">
         <button id="resetButton">기본값</button>
         <button id="exportButton" class="primary">Golden JSON 저장</button>
+        <button id="exportSignoffButton">J9 Sign-off 세트</button>
       </div>
     </aside>
 
@@ -382,22 +383,93 @@
       return words;
     }
 
-    function footerWords(i, g) {
-      // Deterministic Golden context. Runtime hardware supplies these values
-      // from the accepted Face-close event; they are not VDMA geometry inputs.
-      const frameId = 1;
-      const activeConfigVersion = 1;
-      const directionCcw = 0;
-      const sourceSimulation = 0;
+    function footerWords(i, g, context = {}) {
+      // Runtime hardware supplies these values from the accepted Face-close
+      // event; they are context, not VDMA geometry inputs.
+      const frameId = context.frameId ?? 1;
+      const activeConfigVersion = context.activeConfigVersion ?? 1;
+      const directionCcw = context.directionCcw ? 1 : 0;
+      const sourceSimulation = context.sourceSimulation ? 1 : 0;
+      const completedShots = context.completedShots ?? i.plannedShots;
+      const faultBits = ((context.faceFault ? 1 : 0) << 16) |
+        ((context.countMismatch ? 1 : 0) << 17) |
+        ((context.anyLineFault ? 1 : 0) << 18) |
+        ((context.anyHole ? 1 : 0) << 19) |
+        ((context.anyTimeout ? 1 : 0) << 20) |
+        ((context.anyAborted ? 1 : 0) << 21) |
+        ((context.allHole ? 1 : 0) << 22);
       const laneBit = g.lane === "rise" ? 1 : 0;
       const word2 = (i.faceIndex & 7) | (laneBit << 3) |
         (directionCcw << 4) | (sourceSimulation << 5) |
         (widthCode(i.width) << 6);
       const word4 = (i.plannedShots & 0xffff) | ((g.slots & 0x3f) << 16) | ((i.returns & 7) << 22);
-      const word6 = i.plannedShots & 0xffff;
+      const word6 = ((completedShots & 0xffff) | faultBits) >>> 0;
       return [0x47504631, frameId, word2 >>> 0, activeConfigVersion, word4 >>> 0,
         ((g.vsize & 0xffff) << 16 | (g.hsize & 0xffff)) >>> 0,
         word6, 0x434f4d54];
+    }
+
+    function buildJ9Golden(width) {
+      const i = {
+        ...defaults, width, buildMaxStops:1, maxShots:2,
+        activeStops:1, returns:1, plannedShots:2, faceIndex:2,
+        fallingEnable:false,
+        present:[1,0,0,0], rise:[1,0,0,0], fall:[0,0,0,0],
+        active:[1,0,0,0]
+      };
+      const g = laneGeometry(i, "rise");
+      const footerContext = {
+        frameId:0x11223344, activeConfigVersion:0x1234,
+        directionCcw:true, sourceSimulation:true,
+        completedShots:2, anyHole:true
+      };
+      const shot0 = [
+        0x76543210, 0x00000001, 0x01230000, 0x0000008d,
+        0x00000001, 0x80024081
+      ];
+      const shot1 = [
+        0x00000000, 0x00000000, 0xffff0001, 0x0000020e,
+        0x00000000, 0x00000000
+      ];
+      while (shot0.length * 4 < g.hsize) shot0.push(0);
+      while (shot1.length * 4 < g.hsize) shot1.push(0);
+
+      const footer = footerWords(i, g, footerContext);
+      const lines = [shot0, shot1];
+      let footerIndex = 0;
+      for (let lineIndex = 0; lineIndex < g.footerLines; lineIndex++) {
+        const line = [];
+        while (line.length * 4 < g.hsize) {
+          line.push(footerIndex < footer.length ? footer[footerIndex++] : 0);
+        }
+        lines.push(line);
+      }
+
+      const strideWords = g.stride / 4;
+      const memory = Array(strideWords * g.vsize).fill(0xa5a5a5a5);
+      lines.forEach((line, lineIndex) => line.forEach((word, wordIndex) => {
+        memory[lineIndex * strideWords + wordIndex] = word >>> 0;
+      }));
+
+      return {
+        output_width_bits:width,
+        geometry:{
+          beat_bytes:g.beatBytes, cell_slots:g.slots,
+          visible_returns:i.returns, cell_words:cellWords(i.returns),
+          raw_hsize_bytes:g.rawHsize, hsize_bytes:g.hsize,
+          stride_bytes:g.stride, planned_shots:i.plannedShots,
+          footer_lines:g.footerLines, vsize_lines:g.vsize,
+          frame_allocation_bytes:g.stride * g.vsize,
+          reserve_fill_word:"0xA5A5A5A5"
+        },
+        context:{
+          face_frame_id:"0x11223344", face_index:2, slope:"rise",
+          direction:"CCW", source:"simulation",
+          active_config_version:"0x1234"
+        },
+        line_kinds:["shot","hole", ...Array(g.footerLines).fill("footer")],
+        memory_words:memory.map(hex32)
+      };
     }
 
     function renderMemory(g) {
@@ -458,6 +530,12 @@
       check("Footer W2 Face/Slope/폭 비트맵", (defaultFooter[2] & 0xff) === 0x08);
       check("Footer W5 HSIZE/VSIZE 일치", (defaultFooter[5] & 0xffff) === defaultGeometry.hsize &&
         ((defaultFooter[5] >>> 16) & 0xffff) === defaultGeometry.vsize);
+      [32,64,128].forEach(width => {
+        const golden = buildJ9Golden(width);
+        check(`J9 ${width}-bit DDR 이미지 크기`, golden.memory_words.length * 4 ===
+          golden.geometry.frame_allocation_bytes);
+        check(`J9 ${width}-bit STRIDE 예약영역 보존`, golden.memory_words.includes("0xA5A5A5A5"));
+      });
       const off = laneGeometry({...defaults,fallingEnable:false}, "rise");
       check("Fall OFF에서 모든 Active Chip이 Rise", off.slots === 32);
       check("고정 STRIDE가 모든 Runtime HSIZE 이상", [1,2,3,4,5,6,7].every(r => laneGeometry({...defaults,returns:r},"rise").hsize <= laneGeometry({...defaults,returns:r},"rise").stride));
@@ -549,12 +627,27 @@
       link.click(); URL.revokeObjectURL(link.href);
     }
 
+    function exportJ9SignoffGolden() {
+      const data = {
+        schema:"tdc-gpx-packed17-ddr-golden-v1",
+        generated_by:"C08-v026 buildJ9Golden",
+        scenario:"one real Shot + one Hole Shot + ordered Face Footer",
+        profiles:[32,64,128].map(buildJ9Golden)
+      };
+      const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "packed17_j9_ddr_golden.json";
+      link.click(); URL.revokeObjectURL(link.href);
+    }
+
     buildMaskGrid();
     document.querySelectorAll("input,select").forEach(el => el.addEventListener("input", render));
     $("riseTab").addEventListener("click", () => { state.lane="rise"; $("riseTab").classList.add("active"); $("fallTab").classList.remove("active"); render(); });
     $("fallTab").addEventListener("click", () => { state.lane="fall"; $("fallTab").classList.add("active"); $("riseTab").classList.remove("active"); render(); });
     $("resetButton").addEventListener("click", applyDefaults);
     $("exportButton").addEventListener("click", exportGolden);
+    $("exportSignoffButton").addEventListener("click", exportJ9SignoffGolden);
     applyDefaults();
   </script>
 </body>

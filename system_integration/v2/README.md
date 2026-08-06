@@ -350,3 +350,16 @@ fixed maximum STRIDE, safe Face-boundary activation, VDMA programming
 backpressure, abort preservation, and positive post-route timing for all six
 150/200 MHz by 32/64/128-bit profiles. See
 `system_integration/v2_architecture/V2_CHECKPOINT_J7_J8_VDMA_PROFILE_FOOTER.md`.
+
+Run the DDR image versus HTML Golden regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_ddr_golden.ps1
+```
+
+The final marker is `LIDAR_V2_GPX_DDR_GOLDEN_PASS`. J9 executes the model in
+the C08 HTML, checks the frozen Golden JSON, captures a real Shot, a Hole Shot,
+and the ordered Footer through the RTL AXIS path, then compares every DDR Word
+and fixed-STRIDE reserve at 150/200 MHz for 32/64/128-bit builds. See
+`system_integration/v2_architecture/V2_CHECKPOINT_J9_DDR_HTML_GOLDEN.md`.
