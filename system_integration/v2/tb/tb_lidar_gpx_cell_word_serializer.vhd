@@ -80,8 +80,11 @@ architecture sim of tb_lidar_gpx_cell_word_serializer is
         end loop;
         result.cell.hit_dropped := '1' when blank = '0' and
             max_hits = 7 else '0';
+        result.cell.return_overflow := '1' when blank = '0' and
+            max_hits = 6 else '0';
         result.cell.error_fill := blank;
         result.cell.faulted := blank;
+        result.cell.timeout_cause := "101" when blank = '1' else "000";
         result.cell.shot_context.valid := '1';
         result.cell.shot_context.request.valid := '1';
         result.cell.shot_context.request.face_index := to_unsigned(
@@ -138,20 +141,25 @@ architecture sim of tb_lidar_gpx_cell_word_serializer is
             end if;
         else
             for index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
-                result(25 + index) := active(index);
-                if value.cell.slope = GPX_SLOPE_RISE then
-                    result(18 + index) := active(index);
-                end if;
                 if active(index) = '1' then
                     result(index) := value.cell.hits(index)(16);
                 end if;
+                result(7 + index) := active(index);
             end loop;
-            result(15 downto 12) := std_logic_vector(resize(
-                value.cell.hit_count, 4));
-            result(11) := value.cell.hit_dropped;
-            result(10) := value.cell.error_fill or value.slot_blank;
-            result(9 downto 8) := std_logic_vector(resize(
-                value.cell.chip_index, 2));
+            result(16 downto 14) := std_logic_vector(value.cell.hit_count);
+            result(17) := fn_bool_sl(
+                value.cell.slope = GPX_SLOPE_RISE);
+            result(19 downto 18) := std_logic_vector(
+                value.cell.chip_index);
+            result(22 downto 20) := std_logic_vector(
+                value.cell.stop_index);
+            result(23) := value.slot_blank;
+            result(24) := value.cell.error_fill;
+            result(25) := value.cell.hit_dropped;
+            result(26) := value.cell.return_overflow;
+            result(27) := value.cell.faulted or value.line_faulted;
+            result(30 downto 28) := value.cell.timeout_cause;
+            result(31) := '1';
         end if;
         return result;
     end function fn_expected_word;
@@ -271,6 +279,33 @@ begin
                fn_gpx_vdma_line_beats(16, 7, 64) = 46 and
                fn_gpx_vdma_line_beats(16, 7, 128) = 23
             report "V2-B9-J1-TB width beat ratio mismatch"
+            severity failure;
+
+        assert fn_gpx_vdma_shot_hsize_bytes(16, 7, 32) = 336 and
+               fn_gpx_vdma_shot_hsize_bytes(16, 7, 64) = 336 and
+               fn_gpx_vdma_shot_hsize_bytes(16, 7, 128) = 336 and
+               fn_gpx_vdma_shot_line_beats(16, 7, 32) = 84 and
+               fn_gpx_vdma_shot_line_beats(16, 7, 64) = 42 and
+               fn_gpx_vdma_shot_line_beats(16, 7, 128) = 21
+            report "V2-B9-J4-TB target Shot geometry mismatch"
+            severity failure;
+        assert fn_gpx_vdma_shot_hsize_bytes(1, 1, 32) = 24 and
+               fn_gpx_vdma_shot_hsize_bytes(1, 1, 64) = 24 and
+               fn_gpx_vdma_shot_hsize_bytes(1, 1, 128) = 32 and
+               fn_gpx_vdma_footer_lines(24) = 2 and
+               fn_gpx_vdma_footer_lines(32) = 1
+            report "V2-B9-J4-TB minimum geometry mismatch"
+            severity failure;
+        assert fn_gpx_vdma_stride_bytes(32, 7, 32) = 656 and
+               fn_gpx_vdma_stride_bytes(32, 7, 64) = 656 and
+               fn_gpx_vdma_stride_bytes(32, 7, 128) = 656 and
+               fn_gpx_vdma_vsize_lines(1800, 336) = 1801 and
+               fn_gpx_vdma_max_vsize_lines(1800, 32) = 1802 and
+               fn_gpx_vdma_max_vsize_lines(1800, 64) = 1802 and
+               fn_gpx_vdma_max_vsize_lines(1800, 128) = 1801 and
+               fn_gpx_vdma_frame_allocation_bytes(
+                   32, 7, 1800, 32) = 1_182_112
+            report "V2-B9-J4-TB allocation geometry mismatch"
             severity failure;
 
         for max_hits in 1 to C_MAX_RETURNS_PER_STOP loop

@@ -206,7 +206,8 @@ begin
             hits          : gpx_hit_value_array_t;
             hit_dropped   : std_logic;
             faulted       : std_logic;
-            stall_cycles  : natural := 0
+            stall_cycles  : natural := 0;
+            return_overflow : std_logic := '0'
         ) is
             variable held_value : gpx_cell_event_t;
         begin
@@ -222,6 +223,7 @@ begin
                    to_integer(cell_event.hit_count) = hit_count and
                    cell_event.hits = hits and
                    cell_event.hit_dropped = hit_dropped and
+                   cell_event.return_overflow = return_overflow and
                    cell_event.faulted = faulted
                 report "V2-B6B7-TB Cell data mismatch"
                 severity failure;
@@ -286,7 +288,7 @@ begin
                     expected_hits(1) := to_unsigned(16#10021#, 17);
                     expected_hits(2) := to_unsigned(16#10022#, 17);
                     expect_data(stop_value, slope_value, 3,
-                        expected_hits, '1', '1', 4);
+                        expected_hits, '0', '1', 4, '1');
                 elsif stop_value = 2 and slope_value = GPX_SLOPE_FALL then
                     expected_hits(0) := to_unsigned(16#00041#, 17);
                     expected_hits(1) := to_unsigned(16#00042#, 17);
@@ -306,11 +308,11 @@ begin
         assert collector_fault_sticky.context_mismatch = '0' and
                collector_fault_sticky.return_overflow = '1' and
                collector_fault_sticky.start_number_nonzero = '1' and
-               collector_fault_sticky.hit_capacity_drop = '1' and
+               collector_fault_sticky.hit_capacity_drop = '0' and
                collector_pulse_seen.context_mismatch = '0' and
                collector_pulse_seen.return_overflow = '1' and
                collector_pulse_seen.start_number_nonzero = '1' and
-               collector_pulse_seen.hit_capacity_drop = '1'
+               collector_pulse_seen.hit_capacity_drop = '0'
             report "V2-B6B7-TB B7 ownership diagnostics mismatch"
             severity failure;
 

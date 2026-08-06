@@ -86,6 +86,7 @@ package lidar_gpx_data_pkg is
         max_hits      : unsigned(2 downto 0);
         hits          : gpx_hit_value_array_t;
         hit_dropped   : std_logic;
+        return_overflow : std_logic;
         error_fill    : std_logic;
         faulted       : std_logic;
         timeout_cause : std_logic_vector(2 downto 0);
@@ -101,8 +102,8 @@ package lidar_gpx_data_pkg is
     end record gpx_cell_collector_faults_t;
 
     -- B8 emits one typed event per canonical Cell slot. The event describes
-    -- logical line ordering only: AXIS beat width, byte padding, the 48-byte
-    -- prefix and VDMA HSIZE/VSIZE remain formatter-owned concerns.
+    -- logical line ordering only. AXIS beat width, byte padding, Shot
+    -- Metadata and VDMA HSIZE/VSIZE remain formatter-owned concerns.
     subtype gpx_frame_slot_t is unsigned(5 downto 0);
 
     type gpx_frame_cell_event_t is record
@@ -179,6 +180,7 @@ package lidar_gpx_data_pkg is
         max_hits      => (others => '0'),
         hits          => (others => (others => '0')),
         hit_dropped   => '0',
+        return_overflow => '0',
         error_fill    => '0',
         faulted       => '0',
         timeout_cause => (others => '0'),

@@ -13,6 +13,32 @@ package lidar_gpx_vdma_pkg is
     constant C_GPX_VDMA_BLOCK_WIDTH      : positive := 128;
     constant C_GPX_VDMA_BLOCK_BYTES      : positive := 16;
     constant C_GPX_VDMA_WORDS_PER_BLOCK  : positive := 4;
+    constant C_GPX_VDMA_SHOT_META_BYTES  : positive := 16;
+    constant C_GPX_VDMA_SHOT_META_WORDS  : positive := 4;
+    constant C_GPX_VDMA_FOOTER_BYTES     : positive := 32;
+    constant C_GPX_VDMA_FOOTER_WORDS     : positive := 8;
+
+    constant C_GPX_CELL_META_HIT_MSB_LO  : natural := 0;
+    constant C_GPX_CELL_META_HIT_MSB_HI  : natural := 6;
+    constant C_GPX_CELL_META_VALID_LO    : natural := 7;
+    constant C_GPX_CELL_META_VALID_HI    : natural := 13;
+    constant C_GPX_CELL_META_COUNT_LO    : natural := 14;
+    constant C_GPX_CELL_META_COUNT_HI    : natural := 16;
+    constant C_GPX_CELL_META_SLOPE       : natural := 17;
+    constant C_GPX_CELL_META_CHIP_LO     : natural := 18;
+    constant C_GPX_CELL_META_CHIP_HI     : natural := 19;
+    constant C_GPX_CELL_META_STOP_LO     : natural := 20;
+    constant C_GPX_CELL_META_STOP_HI     : natural := 22;
+    constant C_GPX_CELL_META_BLANK       : natural := 23;
+    constant C_GPX_CELL_META_ERROR_FILL  : natural := 24;
+    constant C_GPX_CELL_META_HIT_DROPPED : natural := 25;
+    constant C_GPX_CELL_META_RETURN_OVERFLOW : natural := 26;
+    constant C_GPX_CELL_META_FAULTED     : natural := 27;
+    constant C_GPX_CELL_META_TIMEOUT_LO  : natural := 28;
+    constant C_GPX_CELL_META_TIMEOUT_HI  : natural := 30;
+    constant C_GPX_CELL_META_VALID       : natural := 31;
+
+    -- Legacy J2 prefix constants remain until the formatter migration in J5.
     constant C_GPX_VDMA_PREFIX_BYTES     : positive := 48;
     constant C_GPX_VDMA_PREFIX_WORDS     : positive := 12;
     constant C_GPX_VDMA_PREFIX_BLOCKS    : positive := 3;
@@ -28,6 +54,8 @@ package lidar_gpx_vdma_pkg is
         std_logic_vector(C_GPX_VDMA_WORD_WIDTH - 1 downto 0);
     subtype gpx_vdma_block_t is
         std_logic_vector(C_GPX_VDMA_BLOCK_WIDTH - 1 downto 0);
+    constant C_GPX_VDMA_FOOTER_MAGIC  : gpx_vdma_word_t := x"47504631";
+    constant C_GPX_VDMA_FOOTER_COMMIT : gpx_vdma_word_t := x"434F4D54";
     subtype gpx_vdma_word_index_t is unsigned(2 downto 0);
     subtype gpx_vdma_word_count_t is unsigned(2 downto 0);
     subtype gpx_vdma_block_count_t is unsigned(5 downto 0);
@@ -91,6 +119,59 @@ package lidar_gpx_vdma_pkg is
 
     function fn_gpx_vdma_align16(
         value : natural
+    ) return natural;
+
+    function fn_gpx_vdma_align(
+        value     : natural;
+        alignment : positive
+    ) return natural;
+
+    function fn_gpx_vdma_beat_bytes(
+        output_width : positive
+    ) return positive;
+
+    function fn_gpx_vdma_shot_raw_hsize_bytes(
+        slot_count : natural;
+        max_hits   : positive
+    ) return natural;
+
+    function fn_gpx_vdma_shot_hsize_bytes(
+        slot_count   : natural;
+        max_hits     : positive;
+        output_width : positive
+    ) return natural;
+
+    function fn_gpx_vdma_shot_line_beats(
+        slot_count   : natural;
+        max_hits     : positive;
+        output_width : positive
+    ) return natural;
+
+    function fn_gpx_vdma_footer_lines(
+        hsize_bytes : natural
+    ) return natural;
+
+    function fn_gpx_vdma_vsize_lines(
+        planned_shots : natural;
+        hsize_bytes   : natural
+    ) return natural;
+
+    function fn_gpx_vdma_stride_bytes(
+        max_slot_count : natural;
+        max_hits       : positive;
+        output_width   : positive
+    ) return natural;
+
+    function fn_gpx_vdma_max_vsize_lines(
+        max_planned_shots : natural;
+        output_width      : positive
+    ) return natural;
+
+    function fn_gpx_vdma_frame_allocation_bytes(
+        max_slot_count    : natural;
+        max_hits          : positive;
+        max_planned_shots : natural;
+        output_width      : positive
     ) return natural;
 
     function fn_gpx_vdma_payload_blocks(
@@ -161,6 +242,123 @@ package body lidar_gpx_vdma_pkg is
         return ((value + C_GPX_VDMA_BLOCK_BYTES - 1) /
             C_GPX_VDMA_BLOCK_BYTES) * C_GPX_VDMA_BLOCK_BYTES;
     end function fn_gpx_vdma_align16;
+
+    function fn_gpx_vdma_align(
+        value     : natural;
+        alignment : positive
+    ) return natural is
+    begin
+        return ((value + alignment - 1) / alignment) * alignment;
+    end function fn_gpx_vdma_align;
+
+    function fn_gpx_vdma_beat_bytes(
+        output_width : positive
+    ) return positive is
+    begin
+        assert output_width = 32 or output_width = 64 or output_width = 128
+            report "V2-B9-PKG-005 output width must be 32, 64, or 128"
+            severity failure;
+        return output_width / 8;
+    end function fn_gpx_vdma_beat_bytes;
+
+    function fn_gpx_vdma_shot_raw_hsize_bytes(
+        slot_count : natural;
+        max_hits   : positive
+    ) return natural is
+    begin
+        assert slot_count <= C_GPX_VDMA_MAX_LINE_SLOTS
+            report "V2-B9-PKG-006 slot_count exceeds one slope lane"
+            severity failure;
+        if slot_count = 0 then
+            return 0;
+        end if;
+        return C_GPX_VDMA_SHOT_META_BYTES +
+            slot_count * fn_gpx_vdma_cell_bytes(max_hits);
+    end function fn_gpx_vdma_shot_raw_hsize_bytes;
+
+    function fn_gpx_vdma_shot_hsize_bytes(
+        slot_count   : natural;
+        max_hits     : positive;
+        output_width : positive
+    ) return natural is
+        variable raw_hsize : natural;
+    begin
+        raw_hsize := fn_gpx_vdma_shot_raw_hsize_bytes(
+            slot_count, max_hits);
+        if raw_hsize = 0 then
+            return 0;
+        end if;
+        return fn_gpx_vdma_align(
+            raw_hsize, fn_gpx_vdma_beat_bytes(output_width));
+    end function fn_gpx_vdma_shot_hsize_bytes;
+
+    function fn_gpx_vdma_shot_line_beats(
+        slot_count   : natural;
+        max_hits     : positive;
+        output_width : positive
+    ) return natural is
+    begin
+        return fn_gpx_vdma_shot_hsize_bytes(
+            slot_count, max_hits, output_width) /
+            fn_gpx_vdma_beat_bytes(output_width);
+    end function fn_gpx_vdma_shot_line_beats;
+
+    function fn_gpx_vdma_footer_lines(
+        hsize_bytes : natural
+    ) return natural is
+    begin
+        if hsize_bytes = 0 then
+            return 0;
+        end if;
+        return (C_GPX_VDMA_FOOTER_BYTES + hsize_bytes - 1) /
+            hsize_bytes;
+    end function fn_gpx_vdma_footer_lines;
+
+    function fn_gpx_vdma_vsize_lines(
+        planned_shots : natural;
+        hsize_bytes   : natural
+    ) return natural is
+    begin
+        if hsize_bytes = 0 then
+            return 0;
+        end if;
+        return planned_shots + fn_gpx_vdma_footer_lines(hsize_bytes);
+    end function fn_gpx_vdma_vsize_lines;
+
+    function fn_gpx_vdma_stride_bytes(
+        max_slot_count : natural;
+        max_hits       : positive;
+        output_width   : positive
+    ) return natural is
+    begin
+        return fn_gpx_vdma_shot_hsize_bytes(
+            max_slot_count, max_hits, output_width);
+    end function fn_gpx_vdma_stride_bytes;
+
+    function fn_gpx_vdma_max_vsize_lines(
+        max_planned_shots : natural;
+        output_width      : positive
+    ) return natural is
+        variable minimum_hsize : natural;
+    begin
+        minimum_hsize := fn_gpx_vdma_shot_hsize_bytes(
+            1, 1, output_width);
+        return max_planned_shots +
+            fn_gpx_vdma_footer_lines(minimum_hsize);
+    end function fn_gpx_vdma_max_vsize_lines;
+
+    function fn_gpx_vdma_frame_allocation_bytes(
+        max_slot_count    : natural;
+        max_hits          : positive;
+        max_planned_shots : natural;
+        output_width      : positive
+    ) return natural is
+    begin
+        return fn_gpx_vdma_stride_bytes(
+            max_slot_count, max_hits, output_width) *
+            fn_gpx_vdma_max_vsize_lines(
+                max_planned_shots, output_width);
+    end function fn_gpx_vdma_frame_allocation_bytes;
 
     function fn_gpx_vdma_payload_blocks(
         slot_count : natural;
@@ -255,21 +453,37 @@ package body lidar_gpx_vdma_pkg is
             end if;
         else
             for index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
-                result(25 + index) := active(index);
-                if cell_event.cell.slope = GPX_SLOPE_RISE then
-                    result(18 + index) := active(index);
-                end if;
                 if active(index) = '1' then
-                    result(index) := cell_event.cell.hits(index)(16);
+                    result(C_GPX_CELL_META_HIT_MSB_LO + index) :=
+                        cell_event.cell.hits(index)(16);
                 end if;
+                result(C_GPX_CELL_META_VALID_LO + index) := active(index);
             end loop;
-            result(15 downto 12) := std_logic_vector(resize(
-                cell_event.cell.hit_count, 4));
-            result(11) := cell_event.cell.hit_dropped;
-            result(10) := cell_event.cell.error_fill or
-                cell_event.slot_blank;
-            result(9 downto 8) := std_logic_vector(resize(
-                cell_event.cell.chip_index, 2));
+            result(C_GPX_CELL_META_COUNT_HI downto
+                   C_GPX_CELL_META_COUNT_LO) := std_logic_vector(
+                cell_event.cell.hit_count);
+            if cell_event.cell.slope = GPX_SLOPE_RISE then
+                result(C_GPX_CELL_META_SLOPE) := '1';
+            end if;
+            result(C_GPX_CELL_META_CHIP_HI downto
+                   C_GPX_CELL_META_CHIP_LO) := std_logic_vector(
+                cell_event.cell.chip_index);
+            result(C_GPX_CELL_META_STOP_HI downto
+                   C_GPX_CELL_META_STOP_LO) := std_logic_vector(
+                cell_event.cell.stop_index);
+            result(C_GPX_CELL_META_BLANK) := cell_event.slot_blank;
+            result(C_GPX_CELL_META_ERROR_FILL) :=
+                cell_event.cell.error_fill;
+            result(C_GPX_CELL_META_HIT_DROPPED) :=
+                cell_event.cell.hit_dropped;
+            result(C_GPX_CELL_META_RETURN_OVERFLOW) :=
+                cell_event.cell.return_overflow;
+            result(C_GPX_CELL_META_FAULTED) :=
+                cell_event.cell.faulted or cell_event.line_faulted;
+            result(C_GPX_CELL_META_TIMEOUT_HI downto
+                   C_GPX_CELL_META_TIMEOUT_LO) :=
+                cell_event.cell.timeout_cause;
+            result(C_GPX_CELL_META_VALID) := '1';
         end if;
 
         return result;

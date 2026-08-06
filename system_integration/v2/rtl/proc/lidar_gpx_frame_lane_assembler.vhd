@@ -61,14 +61,15 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     constant C_HITS_PACKED_WIDTH : positive :=
         C_MAX_RETURNS_PER_STOP * C_GPX_HIT_WIDTH;
     constant C_CELL_WORD_WIDTH : positive :=
-        C_HITS_PACKED_WIDTH + 3 + 3 + 1 + 1 + 1 + 3 + 16;
+        C_HITS_PACKED_WIDTH + 3 + 3 + 1 + 1 + 1 + 1 + 3 + 16;
 
     constant C_HIT_COUNT_LO : natural := C_HITS_PACKED_WIDTH;
     constant C_HIT_COUNT_HI : natural := C_HIT_COUNT_LO + 2;
     constant C_MAX_HITS_LO  : natural := C_HIT_COUNT_HI + 1;
     constant C_MAX_HITS_HI  : natural := C_MAX_HITS_LO + 2;
     constant C_HIT_DROPPED  : natural := C_MAX_HITS_HI + 1;
-    constant C_ERROR_FILL   : natural := C_HIT_DROPPED + 1;
+    constant C_RETURN_OVERFLOW : natural := C_HIT_DROPPED + 1;
+    constant C_ERROR_FILL   : natural := C_RETURN_OVERFLOW + 1;
     constant C_FAULTED      : natural := C_ERROR_FILL + 1;
     constant C_TIMEOUT_LO   : natural := C_FAULTED + 1;
     constant C_TIMEOUT_HI   : natural := C_TIMEOUT_LO + 2;
@@ -141,7 +142,7 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     signal pending_write_fall_r : std_logic := '0';
 
     -- Keep separate address copies so one 5-bit source does not drive both
-    -- 147-bit distributed memories after placement.
+    -- 148-bit distributed memories after placement.
     attribute keep : string;
     attribute keep of pending_rise_address_r : signal is "true";
     attribute keep of pending_fall_address_r : signal is "true";
@@ -167,7 +168,7 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     signal rise_slot_count_r : natural range 0 to C_CELLS_PER_SLOPE := 0;
     signal fall_slot_count_r : natural range 0 to C_CELLS_PER_SLOPE := 0;
 
-    -- The packed 147-bit LUTRAM expands to many physical RAM32 primitives.
+    -- The packed 148-bit LUTRAM expands to many physical RAM32 primitives.
     -- Bound address fanout so synthesis may place local register replicas
     -- beside those RAM groups instead of routing one cursor across all of them.
     attribute max_fanout : integer;
@@ -263,6 +264,7 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
         result(C_MAX_HITS_HI downto C_MAX_HITS_LO) :=
             std_logic_vector(value.max_hits);
         result(C_HIT_DROPPED) := value.hit_dropped;
+        result(C_RETURN_OVERFLOW) := value.return_overflow;
         result(C_ERROR_FILL)  := value.error_fill;
         result(C_FAULTED)     := value.faulted;
         result(C_TIMEOUT_HI downto C_TIMEOUT_LO) := value.timeout_cause;
@@ -309,6 +311,7 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
         result.max_hits := unsigned(word_value(
             C_MAX_HITS_HI downto C_MAX_HITS_LO));
         result.hit_dropped := word_value(C_HIT_DROPPED);
+        result.return_overflow := word_value(C_RETURN_OVERFLOW);
         result.error_fill  := word_value(C_ERROR_FILL);
         result.faulted     := word_value(C_FAULTED);
         result.timeout_cause := word_value(

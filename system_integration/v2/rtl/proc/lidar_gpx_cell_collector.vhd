@@ -49,7 +49,8 @@ architecture rtl of lidar_gpx_cell_collector is
     constant C_META_COUNT_LO : natural := 0;
     constant C_META_COUNT_HI : natural := 2;
     constant C_META_DROPPED  : natural := 3;
-    constant C_META_ERROR    : natural := 4;
+    constant C_META_RETURN_OVERFLOW : natural := 4;
+    constant C_META_ERROR    : natural := 5;
 
     type collector_state_t is (
         S_COLLECT,
@@ -691,9 +692,10 @@ begin
                                             null;
                                     end case;
                                 else
-                                    meta_value(C_META_DROPPED) := '1';
-                                    fault_pulse_r.hit_capacity_drop <= '1';
-                                    fault_sticky_r.hit_capacity_drop <= '1';
+                                    -- Runtime max_hits intentionally filters
+                                    -- this Return after the physical IFIFO has
+                                    -- been drained. It is not data-loss fault.
+                                    null;
                                 end if;
 
                                 meta_value(
@@ -701,13 +703,11 @@ begin
                                     std_logic_vector(to_unsigned(
                                         seen_count + 1, 3));
                             else
-                                meta_value(C_META_DROPPED) := '1';
+                                meta_value(C_META_RETURN_OVERFLOW) := '1';
                                 meta_value(C_META_ERROR) := '1';
                                 shot_fault_r(pending_chip_r) <= '1';
                                 fault_pulse_r.return_overflow <= '1';
                                 fault_sticky_r.return_overflow <= '1';
-                                fault_pulse_r.hit_capacity_drop <= '1';
-                                fault_sticky_r.hit_capacity_drop <= '1';
                             end if;
 
                             cell_meta_r(address_value) <= meta_value;
@@ -733,6 +733,8 @@ begin
                                 visible_count, cell_event_r.hit_count'length);
                             cell_event_r.hit_dropped <=
                                 meta_read_r(C_META_DROPPED);
+                            cell_event_r.return_overflow <=
+                                meta_read_r(C_META_RETURN_OVERFLOW);
                             cell_error_read_r <= meta_read_r(C_META_ERROR);
 
                             if visible_count > 0 then
@@ -838,6 +840,7 @@ begin
                             cell_event_r.max_hits <= emit_max_hits_r;
                             cell_event_r.hits <= (others => (others => '0'));
                             cell_event_r.hit_dropped <= '0';
+                            cell_event_r.return_overflow <= '0';
                             cell_event_r.error_fill <= emit_error_fill_r;
                             cell_event_r.faulted <=
                                 emit_faulted_r or emit_error_fill_r;

@@ -51,7 +51,11 @@ multiple clocks and is checked against this reference model.
   Rise/Fall B8 Frame-lane assembly, including one-Chip and four-Chip all-dual
   slope operation. I4 now closes the integrated B5..B8 path, explicit
   Face-close ownership, trailing/all-hole completion and both routine
-  asynchronous clock profiles. The formatter and the full parent datapath
+  asynchronous clock profiles. Stage 7 J1/J2 established the serializer and
+  legacy lane-formatter baseline. J3 froze the PACKED17 target ABI and HTML
+  Golden model, and J4 now owns the target geometry functions, exact Cell
+  Metadata map and intentional-filter versus physical-overflow semantics.
+  The target Shot Metadata/Footer formatter and the full parent datapath
   remain unmigrated;
   the existence of their v1 cores does not mark those Stages complete.
 
@@ -302,3 +306,17 @@ requires non-negative WNS, three
 asynchronous FIFOs, 230 ASYNC_REG cells, zero latches, zero Critical CDC and
 zero blocking DRC categories. See
 `system_integration/v2_architecture/V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`.
+
+Run the target PACKED17 ABI package and Cell-word regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_cell_word_serializer.ps1 `
+  -SkipImplementation
+```
+
+The pass marker is `LIDAR_V2_GPX_CELL_WORD_SERIALIZER_PASS`. J4 verifies the
+exact Cell Metadata bit map, target HSIZE/VSIZE/STRIDE calculations for
+32/64/128-bit builds, visible Return counts 1 through 7, and the separation of
+intentional runtime filtering from an eighth physical Return overflow. See
+`system_integration/v2_architecture/V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md`.

@@ -203,7 +203,8 @@ begin
             hit_dropped   : std_logic := '0';
             error_fill    : std_logic := '0';
             faulted       : std_logic := '0';
-            stall_cycles  : natural := 0
+            stall_cycles  : natural := 0;
+            return_overflow : std_logic := '0'
         ) is
             variable held_value : gpx_cell_event_t;
         begin
@@ -219,6 +220,7 @@ begin
                    cell_event.slope = slope_value and
                    to_integer(cell_event.hit_count) = hit_count and
                    cell_event.hit_dropped = hit_dropped and
+                   cell_event.return_overflow = return_overflow and
                    cell_event.error_fill = error_fill and
                    cell_event.faulted = faulted
                 report "V2-B7-TB Cell metadata mismatch"
@@ -319,7 +321,7 @@ begin
                 expected_hits(1) := to_unsigned(16#00002#, 17);
                 expected_hits(2) := to_unsigned(16#10003#, 17);
                 expect_data(0, 0, GPX_SLOPE_RISE, 3,
-                    expected_hits, '1', '0', '0', 3);
+                    expected_hits, '0', '0', '0', 3);
                 expected_hits := (others => (others => '0'));
                 expect_data(0, 1, GPX_SLOPE_RISE, 0, expected_hits);
                 expected_hits(0) := to_unsigned(16#05555#, 17);
@@ -351,9 +353,9 @@ begin
                 expect_blank_range(2, GPX_SLOPE_FALL, 4, 7);
                 expect_control(GPX_CELL_DRAIN_DONE, 2);
 
-                assert fault_sticky.hit_capacity_drop = '1' and
-                       pulse_seen.hit_capacity_drop = '1'
-                    report "V2-B7-TB capacity drop diagnostic missing"
+                assert fault_sticky.hit_capacity_drop = '0' and
+                       pulse_seen.hit_capacity_drop = '0'
+                    report "V2-B7-TB intentional Return filter raised fault"
                     severity failure;
 
             when 1 =>
@@ -426,8 +428,16 @@ begin
                            slope_value = GPX_SLOPE_RISE then
                             expected_hits(0) := to_unsigned(16#10031#, 17);
                             expected_hits(1) := to_unsigned(16#00032#, 17);
-                            expect_data(0, stop_value, slope_value, 2,
-                                expected_hits, '1', '1', '1');
+                            expect_data(
+                                chip_index      => 0,
+                                stop_index      => stop_value,
+                                slope_value     => slope_value,
+                                hit_count       => 2,
+                                hits           => expected_hits,
+                                hit_dropped     => '0',
+                                error_fill      => '1',
+                                faulted         => '1',
+                                return_overflow => '1');
                         elsif stop_value = 1 and
                               slope_value = GPX_SLOPE_FALL then
                             expected_hits(0) := to_unsigned(16#10041#, 17);
@@ -445,11 +455,11 @@ begin
                 assert fault_sticky.context_mismatch = '1' and
                        fault_sticky.return_overflow = '1' and
                        fault_sticky.start_number_nonzero = '1' and
-                       fault_sticky.hit_capacity_drop = '1' and
+                       fault_sticky.hit_capacity_drop = '0' and
                        pulse_seen.context_mismatch = '1' and
                        pulse_seen.return_overflow = '1' and
                        pulse_seen.start_number_nonzero = '1' and
-                       pulse_seen.hit_capacity_drop = '1'
+                       pulse_seen.hit_capacity_drop = '0'
                     report "V2-B7-TB fault pulse/sticky summary mismatch"
                     severity failure;
 

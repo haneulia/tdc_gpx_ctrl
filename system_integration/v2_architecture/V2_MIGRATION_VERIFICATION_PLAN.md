@@ -281,7 +281,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 4 | G | Complete | `V2_CHECKPOINT_G_ECHO_FRONTEND.md`; sessions `260805_stage4_g_echo_final_v2_echo`, `260805_stage4_g_ch0_step_csr_v2_unified_csr` | Echo frontend |
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
-| 7 | J | In progress | `V2_STAGE7_J0_AXIS_VDMA_ORACLE.md`; `V2_CHECKPOINT_J1_GPX_CELL_WORD_SERIALIZER.md`; `V2_CHECKPOINT_J2_GPX_VDMA_LANE_FORMATTER.md` | AXIS/VDMA formatter |
+| 7 | J | In progress | J0-J4 complete; `V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md` | AXIS/VDMA formatter |
 | 8 | K | Pending | Integrated RTL/HTML evidence pending | Full RTL integration and HTML alignment |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
@@ -300,10 +300,12 @@ the B6..B8 oracle, I1 completed B6, I2 completed width-independent B7 Cell
 collection, I2A closed B6/B7 Return ownership plus sequential timing
 optimization, I3 completed canonical Rise/Fall B8 Frame-lane assembly, and I4
 closed the production B5..B8 chain plus explicit Face-close ownership for
-trailing and all-hole completion. Stage 7 / Checkpoint J is in progress: J0
-froze the B9 contract, J1 completed canonical Cell serialization and J2
-completed one-lane 32/64/128-bit line formatting. The only valid next step is
-**J3 dual-lane Face-close, hole and abort ownership**.
+trailing and all-hole completion. Stage 7 / Checkpoint J is in progress. J0
+through J2 provide the original B9 oracle, serializer and lane-formatter
+baseline. J3 froze the revised PACKED17 Shot-Line/Face-Footer ABI and HTML
+Golden schema. J4 implemented the target geometry functions, exact Cell
+Metadata map, and Return-filter/physical-overflow ownership. The only valid
+next step is **J5 Shot Metadata builder and width-independent line stream**.
 Checkpoint J or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
 
@@ -484,10 +486,17 @@ Its current sub-step status is:
 | J0 | Complete | `V2_STAGE7_J0_AXIS_VDMA_ORACLE.md` |
 | J1 | Complete | `V2_CHECKPOINT_J1_GPX_CELL_WORD_SERIALIZER.md`; session `260806_j1_cell_word_v2_v2_gpx_cell_word_serializer` |
 | J2 | Complete | `V2_CHECKPOINT_J2_GPX_VDMA_LANE_FORMATTER.md`; sessions `260806_j2_abort_ready_v2_gpx_vdma_lane_formatter`, `260806_j2_final_impl_v2_gpx_vdma_lane_formatter` |
-| J3 | Pending | Dual-lane holes, Face close and abort/recovery |
-| J4 | Pending | B5-B9 integration at 150/200 and 200/150 MHz |
+| J3 | Complete | `C08_HDL_HTML_Alignment_260806_PACKED17_VDMA_ABI_Contract_v041.md`; HTML v026 Golden model |
+| J4 | Complete | `V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md`; sessions `260806_j4_contract_r2_v2_gpx_cell_collector`, `260806_j4_contract_v2_gpx_cell_word_serializer` |
+| J5 | Pending | 16-byte Shot Metadata builder and width-independent line stream |
+| J6 | Pending | Target 32/64/128 packer with final-Beat-only padding |
+| J7 | Pending | 32-byte Face Footer and fixed maximum STRIDE |
+| J8 | Pending | Face-boundary HSIZE/VSIZE reconfiguration handshake |
+| J9 | Pending | XSIM DDR image versus HTML Golden Vector, Word by Word |
+| J10 | Pending | Host PS H-Line decoder and Ethernet packet byte comparison |
+| J11 | Pending | Parent implementation, DMA/cache ownership and board Sign-off |
 
-J2 uses registered `32-bit word -> 128-bit alignment block -> AXIS beat`
-boundaries. Wider output widths change only the number of AXIS beats; they do
-not change canonical line bytes. Checkpoint J remains open until J3 and J4
-also pass.
+J2 remains useful as a registered transport and backpressure baseline, but its
+repeated 48-byte prefix is not the target ABI. J3/J4 replace that geometry with
+`16-byte Shot Metadata + continuous Cells + final-Beat padding`, followed by a
+32-byte Face Footer. Checkpoint J remains open through board evidence at J11.
