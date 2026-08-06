@@ -304,6 +304,10 @@ begin
                       shot_start.request.shot_index = 7 and
                       shot_start.request.active_version = active_config.version,
                     "V2-LASER-P30 shot_start identity mismatch");
+                check(shot_start.t0_timestamp_valid = '1' and
+                      shot_start.t0_timestamp_ticks /= 0 and
+                      shot_start.t0_time_sync_valid = '0',
+                    "V2-LASER-P30 physical T0 timestamp mismatch");
             end if;
         end loop;
         check(start_samples = C_START_WIDTH and start_events = 1,
@@ -409,7 +413,10 @@ begin
         wait_clocks(1);
         check(start_tdc = '1' and shot_start.valid = '1' and
               shot_start.request.source_sim = '1' and
-              shot_start.request.shot_index = 11,
+              shot_start.request.shot_index = 11 and
+              shot_start.t0_timestamp_valid = '1' and
+              shot_start.t0_timestamp_ticks /= 0 and
+              shot_start.t0_time_sync_valid = '0',
             "V2-LASER-P33 simulation T0/identity mismatch");
         start_samples := 1;
         for index in 1 to C_RANGE_WINDOW loop

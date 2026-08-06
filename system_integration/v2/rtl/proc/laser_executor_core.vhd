@@ -27,6 +27,9 @@ entity laser_executor_core is
         i_shot_request           : in  shot_request_t;
         i_bridge_ready           : in  std_logic;
         i_t0_event               : in  std_logic;
+        i_timestamp_ticks        : in  t0_timestamp_t;
+        i_physical_t0_timestamp_ticks : in t0_timestamp_t;
+        i_physical_t0_timestamp_valid : in std_logic;
         i_physical_start_busy    : in  std_logic;
         i_fire_busy              : in  std_logic;
         i_sim_start_busy         : in  std_logic;
@@ -199,6 +202,10 @@ begin
                                 shot_start_r.valid <= '1';
                                 shot_start_r.request <= i_shot_request;
                                 shot_start_r.fire_to_t0_clks <= (others => '0');
+                                shot_start_r.t0_timestamp_ticks <=
+                                    i_timestamp_ticks;
+                                shot_start_r.t0_timestamp_valid <= '1';
+                                shot_start_r.t0_time_sync_valid <= '0';
                                 range_count_r <= i_target_range_clks;
                                 state_r <= EXEC_RANGE_WINDOW;
                             else
@@ -215,6 +222,11 @@ begin
                             shot_start_r.valid <= '1';
                             shot_start_r.request <= current_request_r;
                             shot_start_r.fire_to_t0_clks <= wait_value_v;
+                            shot_start_r.t0_timestamp_ticks <=
+                                i_physical_t0_timestamp_ticks;
+                            shot_start_r.t0_timestamp_valid <=
+                                i_physical_t0_timestamp_valid;
+                            shot_start_r.t0_time_sync_valid <= '0';
                             range_count_r <= target_range_r;
                             state_r <= EXEC_RANGE_WINDOW;
                         elsif i_physical_fire_enable /= '1' then
@@ -248,6 +260,10 @@ begin
                             shot_start_r.valid <= '1';
                             shot_start_r.request <= current_request_r;
                             shot_start_r.fire_to_t0_clks <= wait_value_v;
+                            shot_start_r.t0_timestamp_ticks <=
+                                i_timestamp_ticks;
+                            shot_start_r.t0_timestamp_valid <= '1';
+                            shot_start_r.t0_time_sync_valid <= '0';
                             range_count_r <= target_range_r;
                             state_r <= EXEC_RANGE_WINDOW;
                         end if;
@@ -258,6 +274,11 @@ begin
                             shot_start_r.valid <= '1';
                             shot_start_r.request <= current_request_r;
                             shot_start_r.fire_to_t0_clks <= fire_to_t0_count_r;
+                            shot_start_r.t0_timestamp_ticks <=
+                                i_physical_t0_timestamp_ticks;
+                            shot_start_r.t0_timestamp_valid <=
+                                i_physical_t0_timestamp_valid;
+                            shot_start_r.t0_time_sync_valid <= '0';
                             range_count_r <= target_range_r;
                             state_r <= EXEC_RANGE_WINDOW;
                         elsif resolve_count_r > 1 then
@@ -333,6 +354,11 @@ begin
                     assert not (shot_result_r.timeout = '1' and
                                 shot_result_r.aborted = '1')
                         report "V2-LASER-008 timeout and abort overlap"
+                        severity failure;
+                end if;
+                if shot_start_r.valid = '1' then
+                    assert shot_start_r.t0_timestamp_valid = '1'
+                        report "V2-LASER-010 Shot START without T0 timestamp"
                         severity failure;
                 end if;
             end if;

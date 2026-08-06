@@ -373,7 +373,7 @@
     }
 
     function shotWords(i, g) {
-      const words = [0x76543210, 0x00000001, ((0x0123 << 16) | 0) >>> 0, 0x00000001];
+      const words = [0x76543210, 0x00000001, ((0x0123 << 16) | 0) >>> 0, 0x00000081];
       for (let chip = 0; chip < 4; chip++) {
         if (!g.mask[chip]) continue;
         for (let stop = 0; stop < i.activeStops; stop++) words.push(...cellWordsFor(i, g.lane, chip, stop));

@@ -488,7 +488,8 @@ Its current sub-step status is:
 | J2 | Complete | `V2_CHECKPOINT_J2_GPX_VDMA_LANE_FORMATTER.md`; sessions `260806_j2_abort_ready_v2_gpx_vdma_lane_formatter`, `260806_j2_final_impl_v2_gpx_vdma_lane_formatter` |
 | J3 | Complete | `C08_HDL_HTML_Alignment_260806_PACKED17_VDMA_ABI_Contract_v041.md`; HTML v026 Golden model |
 | J4 | Complete | `V2_CHECKPOINT_J4_PACKED17_ABI_GEOMETRY.md`; sessions `260806_j4_contract_r2_v2_gpx_cell_collector`, `260806_j4_contract_v2_gpx_cell_word_serializer` |
-| J5 | Pending | 16-byte Shot Metadata builder and width-independent line stream |
+| J5A | Complete | T0 capture, exact 16-byte Shot Metadata, and width-independent real-Shot line stream; `V2_CHECKPOINT_J5A_T0_SHOT_METADATA.md` |
+| J5B | In progress | Explicit leading/interior/trailing/all-Hole Line expansion |
 | J6 | Pending | Target 32/64/128 packer with final-Beat-only padding |
 | J7 | Pending | 32-byte Face Footer and fixed maximum STRIDE |
 | J8 | Pending | Face-boundary HSIZE/VSIZE reconfiguration handshake |
@@ -499,4 +500,6 @@ Its current sub-step status is:
 J2 remains useful as a registered transport and backpressure baseline, but its
 repeated 48-byte prefix is not the target ABI. J3/J4 replace that geometry with
 `16-byte Shot Metadata + continuous Cells + final-Beat padding`, followed by a
-32-byte Face Footer. Checkpoint J remains open through board evidence at J11.
+32-byte Face Footer. J5A has closed the real-Shot Metadata/T0 path; J5B still
+owns explicit leading, interior, trailing and all-Hole Line expansion.
+Checkpoint J remains open through board evidence at J11.

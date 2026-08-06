@@ -2,6 +2,8 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+use work.lidar_event_types_pkg.all;
+
 -- Physical fire_done to TDC-GPX START boundary.
 --
 -- This is the deliberate low-latency exception in the Processing pipeline.
@@ -22,11 +24,14 @@ entity laser_fire_done_bridge is
         i_fire_done_raw          : in  std_logic;
         i_physical_arm           : in  std_logic;
         i_start_width_clks       : in  unsigned(31 downto 0);
+        i_timestamp_ticks        : in  t0_timestamp_t;
 
         o_fire_done_ready        : out std_logic;
         o_start_tdc              : out std_logic;
         o_start_busy             : out std_logic;
         o_t0_event               : out std_logic;
+        o_t0_timestamp_ticks     : out t0_timestamp_t;
+        o_t0_timestamp_valid     : out std_logic;
         o_unexpected_done_pulse  : out std_logic
     );
 end entity laser_fire_done_bridge;
@@ -50,6 +55,8 @@ architecture rtl of laser_fire_done_bridge is
     signal start_sync_r     : std_logic := '0';
     signal start_sync_d_r   : std_logic := '0';
     signal t0_event_c       : std_logic;
+    signal t0_timestamp_r   : t0_timestamp_t := (others => '0');
+    signal t0_timestamp_valid_r : std_logic := '0';
     signal unexpected_r     : std_logic := '0';
 
     attribute ASYNC_REG : string;
@@ -83,6 +90,8 @@ begin
     -- the lifecycle FSM timing cone.
     o_start_busy            <= hold_active_r;
     o_t0_event              <= t0_event_c;
+    o_t0_timestamp_ticks    <= t0_timestamp_r;
+    o_t0_timestamp_valid    <= t0_timestamp_valid_r;
     o_unexpected_done_pulse <= unexpected_r;
 
     p_raw_qualification : process (i_clk)
@@ -174,10 +183,23 @@ begin
                 start_meta_r   <= '0';
                 start_sync_r   <= '0';
                 start_sync_d_r <= '0';
+                t0_timestamp_r <= (others => '0');
+                t0_timestamp_valid_r <= '0';
             else
                 start_meta_r   <= start_active_c;
                 start_sync_r   <= start_meta_r;
                 start_sync_d_r <= start_sync_r;
+
+                -- START itself keeps the asynchronous low-latency path. The
+                -- timestamp is quantized to the first Processing-clock edge
+                -- that observes START, avoiding an unsafe 64-bit CDC latch.
+                if start_active_c = '1' and start_meta_r = '0' then
+                    t0_timestamp_r <= i_timestamp_ticks;
+                    t0_timestamp_valid_r <= '1';
+                elsif i_physical_arm = '0' and start_capture_r = '0' and
+                      hold_active_r = '0' then
+                    t0_timestamp_valid_r <= '0';
+                end if;
             end if;
         end if;
     end process p_start_synchronizer;

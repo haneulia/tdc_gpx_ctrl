@@ -109,12 +109,36 @@ The 16-byte Shot Metadata is four canonical words:
 |---:|---|
 | W0 | TDC measurement start reference time (T0) tick `[31:0]` |
 | W1 | T0 tick `[63:32]` |
-| W2 | Shot index `[15:0]`, encoder position `[31:16]` |
-| W3 | direction, simulation, valid, hole, timeout, abort, time-sync flags |
+| W2 | Shot index `[15:0]`, encoder position `[31:16]`; a Hole uses position `0xFFFF` |
+| W3 | Exact Shot status and context flags defined below |
 
-The timestamp is a 64-bit monotonic tick captured at the actual `start_tdc`
-event. The Active/Build Config publishes its tick frequency; PS converts ticks
-to nanoseconds and may correlate the local clock to PPS/PTP time.
+W3 is frozen as follows. All unlisted bits are reserved and zero.
+
+| Bit | Meaning |
+|---:|---|
+| `[0]` | Data valid; zero for a Hole Line |
+| `[1]` | Hole Line |
+| `[2]` | Direction is CCW |
+| `[3]` | Simulation source |
+| `[4]` | Shot timeout |
+| `[5]` | Shot aborted |
+| `[6]` | Line fault summary |
+| `[7]` | TDC measurement start reference time (T0) timestamp valid |
+| `[8]` | External time synchronization valid |
+| `[9]` | Last planned Shot in Face |
+| `[10]` | Position-source latency valid |
+| `[18:11]` | Position-source latency in Processing clocks |
+
+The timestamp is a 64-bit monotonic Processing-domain tick associated with the
+actual TDC measurement start reference event (T0). Physical `start_tdc` keeps
+its asynchronous low-latency path; the timestamp is sampled on the first
+Processing-clock edge that observes that event. It is therefore ordered and
+monotonic, but quantized to one Processing-clock period. Simulation T0 is
+captured directly on its registered Processing-clock event. Until an external
+PPS/PTP discipline source is implemented, external-time-sync-valid is zero.
+The Active/Build Config must publish the tick frequency so PS can convert local
+ticks to time. Hole Lines contain zero in W0/W1, invalid T0, and no fabricated
+encoder position.
 
 ## 6. Face Footer
 

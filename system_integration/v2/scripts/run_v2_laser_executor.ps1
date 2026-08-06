@@ -1,5 +1,7 @@
 param(
-    [string]$Stamp = (Get-Date -Format "yyMMddHHmmss")
+    [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
+    [switch]$SkipSimulation,
+    [switch]$SkipImplementation
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,8 +66,9 @@ $RunTcl = Join-Path $Work "run.tcl"
 @("run all", "quit") | Set-Content -Encoding ASCII -LiteralPath $RunTcl
 $CompileLog = Join-Path $Work "xvhdl.log"
 
-Push-Location $Work
-try {
+if (-not $SkipSimulation) {
+    Push-Location $Work
+    try {
     Invoke-Checked "$Vivado/xvhdl.bat" @(
         "--relax", "-prj", $Project, "-log", $CompileLog
     )
@@ -125,9 +128,10 @@ try {
             throw "${Mhz} MHz chain test did not report PASS"
         }
     }
-}
-finally {
-    Pop-Location
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 $ImplProfiles = @(
@@ -135,7 +139,8 @@ $ImplProfiles = @(
     [ordered]@{ name = "200mhz"; period_ns = "5.000" }
 )
 
-foreach ($Profile in $ImplProfiles) {
+if (-not $SkipImplementation) {
+  foreach ($Profile in $ImplProfiles) {
     $Name = $Profile.name
     $Tcl = Join-Path $Work "implement_${Name}.tcl"
     $Timing = Join-Path $Work "timing_${Name}.rpt"
@@ -229,6 +234,7 @@ foreach ($Profile in $ImplProfiles) {
     if ($CriticalCount -ne 0) {
         throw "$Name has $CriticalCount critical CDC paths"
     }
+  }
 }
 
 New-Item -ItemType Directory -Force -Path $Archive | Out-Null
@@ -244,7 +250,9 @@ $Manifest = foreach ($File in $SimFiles) {
 $Manifest | ConvertTo-Json -Depth 3 | Set-Content -Encoding ASCII `
     -LiteralPath (Join-Path $Archive "source_manifest.json")
 
-$Artifacts = @($CompileLog, $Project, $RunTcl)
+$Artifacts = @($CompileLog, $Project, $RunTcl) | Where-Object {
+    Test-Path -LiteralPath $_ -PathType Leaf
+}
 $Artifacts += Get-ChildItem -File -LiteralPath $Work | Where-Object {
     $_.Name -notmatch '\.backup\.log$' -and
     $_.Name -match '^(xelab|xsim).*\.log$|^implement.*\.tcl$|^(timing|utilization|cdc|drc).*\.rpt$|^metrics.*\.txt$|^vivado_.*\.log$'

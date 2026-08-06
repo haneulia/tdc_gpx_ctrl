@@ -10,7 +10,8 @@ package lidar_gpx_event_pkg is
 
     constant C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH : positive := 63;
     constant C_GPX_SHOT_START_PAYLOAD_WIDTH   : positive :=
-        C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH + 32;
+        C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH + 32 +
+        C_T0_TIMESTAMP_WIDTH + 2;
     constant C_GPX_SHOT_CONTEXT_WIDTH         : positive :=
         C_GPX_SHOT_START_PAYLOAD_WIDTH + 1;
 
@@ -174,11 +175,19 @@ package body lidar_gpx_event_pkg is
         value : shot_start_event_t
     ) return gpx_shot_start_payload_t is
         variable result : gpx_shot_start_payload_t := (others => '0');
+        variable index  : natural := C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH;
     begin
         result(C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH - 1 downto 0) :=
             fn_pack_shot_request(value.request);
-        result(result'high downto C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH) :=
+        result(index + value.fire_to_t0_clks'length - 1 downto index) :=
             std_logic_vector(value.fire_to_t0_clks);
+        index := index + value.fire_to_t0_clks'length;
+        result(index + value.t0_timestamp_ticks'length - 1 downto index) :=
+            std_logic_vector(value.t0_timestamp_ticks);
+        index := index + value.t0_timestamp_ticks'length;
+        result(index) := value.t0_timestamp_valid;
+        index := index + 1;
+        result(index) := value.t0_time_sync_valid;
         return result;
     end function fn_pack_shot_start;
 
@@ -186,11 +195,19 @@ package body lidar_gpx_event_pkg is
         value : gpx_shot_start_payload_t
     ) return shot_start_event_t is
         variable result : shot_start_event_t := C_SHOT_START_EVENT_IDLE;
+        variable index  : natural := C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH;
     begin
         result.request := fn_unpack_shot_request(
             value(C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH - 1 downto 0));
         result.fire_to_t0_clks := unsigned(
-            value(value'high downto C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH));
+            value(index + result.fire_to_t0_clks'length - 1 downto index));
+        index := index + result.fire_to_t0_clks'length;
+        result.t0_timestamp_ticks := unsigned(
+            value(index + result.t0_timestamp_ticks'length - 1 downto index));
+        index := index + result.t0_timestamp_ticks'length;
+        result.t0_timestamp_valid := value(index);
+        index := index + 1;
+        result.t0_time_sync_valid := value(index);
         return result;
     end function fn_unpack_shot_start;
 

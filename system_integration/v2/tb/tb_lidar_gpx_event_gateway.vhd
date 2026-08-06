@@ -87,6 +87,14 @@ architecture sim of tb_lidar_gpx_event_gateway is
             index + 16, result.request.active_version'length);
         result.fire_to_t0_clks := to_unsigned(
             index * 13 + 7, result.fire_to_t0_clks'length);
+        result.t0_timestamp_ticks := x"1234567800000000";
+        result.t0_timestamp_ticks := result.t0_timestamp_ticks +
+            to_unsigned(index * 257 + 19,
+                result.t0_timestamp_ticks'length);
+        result.t0_timestamp_valid := '1';
+        if index mod 5 = 0 then
+            result.t0_time_sync_valid := '1';
+        end if;
         return result;
     end function fn_make_shot;
 

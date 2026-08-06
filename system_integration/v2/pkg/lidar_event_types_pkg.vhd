@@ -87,6 +87,9 @@ package lidar_event_types_pkg is
 
     subtype shot_index_t is unsigned(15 downto 0);
 
+    constant C_T0_TIMESTAMP_WIDTH : positive := 64;
+    subtype t0_timestamp_t is unsigned(C_T0_TIMESTAMP_WIDTH - 1 downto 0);
+
     -- Processing-owned Face boundary. This event is emitted only for a Face
     -- traversal admitted by the scheduler and is held with ready/valid until
     -- the data pipeline accepts it. columns_per_face is the immutable geometry
@@ -145,15 +148,21 @@ package lidar_event_types_pkg is
     -- column, source mode and configuration version from being reconstructed
     -- by the TDC acquisition path.
     type shot_start_event_t is record
-        valid             : std_logic;
-        request           : shot_request_t;
-        fire_to_t0_clks   : unsigned(31 downto 0);
+        valid                  : std_logic;
+        request                : shot_request_t;
+        fire_to_t0_clks        : unsigned(31 downto 0);
+        t0_timestamp_ticks     : t0_timestamp_t;
+        t0_timestamp_valid     : std_logic;
+        t0_time_sync_valid     : std_logic;
     end record shot_start_event_t;
 
     constant C_SHOT_START_EVENT_IDLE : shot_start_event_t := (
-        valid           => '0',
-        request         => C_SHOT_REQUEST_IDLE,
-        fire_to_t0_clks => (others => '0')
+        valid              => '0',
+        request            => C_SHOT_REQUEST_IDLE,
+        fire_to_t0_clks    => (others => '0'),
+        t0_timestamp_ticks => (others => '0'),
+        t0_timestamp_valid => '0',
+        t0_time_sync_valid => '0'
     );
 
     -- A result is emitted once per accepted request. A normal result follows

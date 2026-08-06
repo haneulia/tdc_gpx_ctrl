@@ -66,8 +66,22 @@ architecture rtl of laser_executor is
     signal simulation_start_busy_c : std_logic;
     signal stop_busy_c           : std_logic;
     signal config_ready_c        : std_logic;
+    signal timestamp_ticks_r     : t0_timestamp_t := (others => '0');
+    signal physical_t0_timestamp_c : t0_timestamp_t;
+    signal physical_t0_timestamp_valid_c : std_logic;
 
 begin
+
+    p_timestamp : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                timestamp_ticks_r <= (others => '0');
+            else
+                timestamp_ticks_r <= timestamp_ticks_r + 1;
+            end if;
+        end if;
+    end process p_timestamp;
 
     config_ready_c <= '1' when i_active_valid = '1' and
         i_active_config.derived.fire_width_proc_clks /= 0 and
@@ -110,6 +124,10 @@ begin
             i_shot_request        => i_shot_request,
             i_bridge_ready        => bridge_ready_c,
             i_t0_event            => bridge_t0_event_c,
+            i_timestamp_ticks     => timestamp_ticks_r,
+            i_physical_t0_timestamp_ticks => physical_t0_timestamp_c,
+            i_physical_t0_timestamp_valid =>
+                physical_t0_timestamp_valid_c,
             i_physical_start_busy => physical_start_busy_c,
             i_fire_busy           => fire_busy_c,
             i_sim_start_busy      => simulation_start_busy_c,
@@ -138,10 +156,13 @@ begin
             i_physical_arm          => physical_arm_c,
             i_start_width_clks      =>
                 i_active_config.derived.start_width_proc_clks,
+            i_timestamp_ticks       => timestamp_ticks_r,
             o_fire_done_ready       => bridge_ready_c,
             o_start_tdc             => physical_start_c,
             o_start_busy            => physical_start_busy_c,
             o_t0_event              => bridge_t0_event_c,
+            o_t0_timestamp_ticks    => physical_t0_timestamp_c,
+            o_t0_timestamp_valid    => physical_t0_timestamp_valid_c,
             o_unexpected_done_pulse => unexpected_done_c
         );
 

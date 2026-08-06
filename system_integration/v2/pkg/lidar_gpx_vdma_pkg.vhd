@@ -18,6 +18,20 @@ package lidar_gpx_vdma_pkg is
     constant C_GPX_VDMA_FOOTER_BYTES     : positive := 32;
     constant C_GPX_VDMA_FOOTER_WORDS     : positive := 8;
 
+    constant C_GPX_SHOT_META_VALID                : natural := 0;
+    constant C_GPX_SHOT_META_HOLE                 : natural := 1;
+    constant C_GPX_SHOT_META_DIRECTION_CCW        : natural := 2;
+    constant C_GPX_SHOT_META_SOURCE_SIM           : natural := 3;
+    constant C_GPX_SHOT_META_TIMEOUT              : natural := 4;
+    constant C_GPX_SHOT_META_ABORTED              : natural := 5;
+    constant C_GPX_SHOT_META_LINE_FAULTED         : natural := 6;
+    constant C_GPX_SHOT_META_T0_VALID             : natural := 7;
+    constant C_GPX_SHOT_META_TIME_SYNC_VALID      : natural := 8;
+    constant C_GPX_SHOT_META_LAST_IN_FACE         : natural := 9;
+    constant C_GPX_SHOT_META_SOURCE_LATENCY_VALID : natural := 10;
+    constant C_GPX_SHOT_META_SOURCE_LATENCY_LO    : natural := 11;
+    constant C_GPX_SHOT_META_SOURCE_LATENCY_HI    : natural := 18;
+
     constant C_GPX_CELL_META_HIT_MSB_LO  : natural := 0;
     constant C_GPX_CELL_META_HIT_MSB_HI  : natural := 6;
     constant C_GPX_CELL_META_VALID_LO    : natural := 7;
@@ -59,6 +73,70 @@ package lidar_gpx_vdma_pkg is
     subtype gpx_vdma_word_index_t is unsigned(2 downto 0);
     subtype gpx_vdma_word_count_t is unsigned(2 downto 0);
     subtype gpx_vdma_block_count_t is unsigned(5 downto 0);
+
+    subtype gpx_vdma_line_word_index_t is unsigned(8 downto 0);
+    subtype gpx_vdma_line_word_count_t is unsigned(8 downto 0);
+
+    type gpx_vdma_shot_status_t is record
+        data_valid   : std_logic;
+        hole         : std_logic;
+        timeout      : std_logic;
+        aborted      : std_logic;
+        line_faulted : std_logic;
+    end record gpx_vdma_shot_status_t;
+
+    constant C_GPX_VDMA_SHOT_STATUS_CLEAR : gpx_vdma_shot_status_t := (
+        data_valid   => '0',
+        hole         => '0',
+        timeout      => '0',
+        aborted      => '0',
+        line_faulted => '0'
+    );
+
+    type gpx_vdma_line_word_kind_t is (
+        GPX_VDMA_LINE_SHOT_METADATA,
+        GPX_VDMA_LINE_CELL_DATA,
+        GPX_VDMA_LINE_FACE_FOOTER
+    );
+
+    -- Width-independent, canonical 32-bit stream. J6 is the sole owner of
+    -- combining these words into 32/64/128-bit AXIS beats and final padding.
+    type gpx_vdma_line_word_event_t is record
+        valid           : std_logic;
+        data            : gpx_vdma_word_t;
+        kind            : gpx_vdma_line_word_kind_t;
+        word_index      : gpx_vdma_line_word_index_t;
+        line_word_count : gpx_vdma_line_word_count_t;
+        line_start      : std_logic;
+        line_end        : std_logic;
+        first_column    : std_logic;
+        last_column     : std_logic;
+        gap_before      : shot_index_t;
+        slot_count      : gpx_frame_slot_t;
+        cell_word_count : gpx_vdma_word_count_t;
+        line_hole       : std_logic;
+        line_faulted    : std_logic;
+        shot_context    : shot_start_event_t;
+    end record gpx_vdma_line_word_event_t;
+
+    constant C_GPX_VDMA_LINE_WORD_EVENT_IDLE :
+        gpx_vdma_line_word_event_t := (
+            valid           => '0',
+            data            => (others => '0'),
+            kind            => GPX_VDMA_LINE_SHOT_METADATA,
+            word_index      => (others => '0'),
+            line_word_count => (others => '0'),
+            line_start      => '0',
+            line_end        => '0',
+            first_column    => '0',
+            last_column     => '0',
+            gap_before      => (others => '0'),
+            slot_count      => (others => '0'),
+            cell_word_count => (others => '0'),
+            line_hole       => '0',
+            line_faulted    => '0',
+            shot_context    => C_SHOT_START_EVENT_IDLE
+        );
 
     type gpx_vdma_prefix_blocks_t is array (
         0 to C_GPX_VDMA_PREFIX_BLOCKS - 1
@@ -199,6 +277,12 @@ package lidar_gpx_vdma_pkg is
         cell_event : gpx_frame_cell_event_t;
         word_index : natural
     ) return gpx_vdma_word_event_t;
+
+    function fn_gpx_vdma_shot_metadata_word(
+        shot_context : shot_start_event_t;
+        shot_status  : gpx_vdma_shot_status_t;
+        word_index   : natural
+    ) return gpx_vdma_word_t;
 
 end package lidar_gpx_vdma_pkg;
 
@@ -519,5 +603,56 @@ package body lidar_gpx_vdma_pkg is
         result.shot_context := cell_event.cell.shot_context;
         return result;
     end function fn_gpx_vdma_make_word_event;
+
+    function fn_gpx_vdma_shot_metadata_word(
+        shot_context : shot_start_event_t;
+        shot_status  : gpx_vdma_shot_status_t;
+        word_index   : natural
+    ) return gpx_vdma_word_t is
+        variable result : gpx_vdma_word_t := (others => '0');
+    begin
+        case word_index is
+            when 0 =>
+                result := std_logic_vector(
+                    shot_context.t0_timestamp_ticks(31 downto 0));
+            when 1 =>
+                result := std_logic_vector(
+                    shot_context.t0_timestamp_ticks(63 downto 32));
+            when 2 =>
+                result(15 downto 0) := std_logic_vector(
+                    shot_context.request.shot_index);
+                result(31 downto 16) := std_logic_vector(resize(
+                    shot_context.request.position, 16));
+            when 3 =>
+                result(C_GPX_SHOT_META_VALID) := shot_status.data_valid;
+                result(C_GPX_SHOT_META_HOLE) := shot_status.hole;
+                if shot_context.request.direction = DIRECTION_CCW then
+                    result(C_GPX_SHOT_META_DIRECTION_CCW) := '1';
+                end if;
+                result(C_GPX_SHOT_META_SOURCE_SIM) :=
+                    shot_context.request.source_sim;
+                result(C_GPX_SHOT_META_TIMEOUT) := shot_status.timeout;
+                result(C_GPX_SHOT_META_ABORTED) := shot_status.aborted;
+                result(C_GPX_SHOT_META_LINE_FAULTED) :=
+                    shot_status.line_faulted;
+                result(C_GPX_SHOT_META_T0_VALID) :=
+                    shot_context.t0_timestamp_valid;
+                result(C_GPX_SHOT_META_TIME_SYNC_VALID) :=
+                    shot_context.t0_time_sync_valid;
+                result(C_GPX_SHOT_META_LAST_IN_FACE) :=
+                    shot_context.request.last_in_face;
+                result(C_GPX_SHOT_META_SOURCE_LATENCY_VALID) :=
+                    shot_context.request.source_latency_valid;
+                result(C_GPX_SHOT_META_SOURCE_LATENCY_HI downto
+                       C_GPX_SHOT_META_SOURCE_LATENCY_LO) :=
+                    std_logic_vector(
+                        shot_context.request.source_latency_clks);
+            when others =>
+                assert false
+                    report "V2-B9-PKG-009 Shot Metadata word index out of range"
+                    severity failure;
+        end case;
+        return result;
+    end function fn_gpx_vdma_shot_metadata_word;
 
 end package body lidar_gpx_vdma_pkg;
