@@ -85,6 +85,8 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k03 is
     signal stop_tdc : std_logic;
     signal shot_start : std_logic;
     signal tdc_stop : std_logic_vector(31 downto 0);
+    signal pd_p : std_logic_vector(31 downto 0) := (others => '0');
+    signal pd_n : std_logic_vector(31 downto 0) := (others => '1');
     signal tdc_d : std_logic_vector(111 downto 0) := (others => 'Z');
     signal tdc_csn : std_logic_vector(3 downto 0);
     signal tdc_rdn : std_logic_vector(3 downto 0);
@@ -159,6 +161,8 @@ begin
             o_shot_start => shot_start,
             o_shot_face_index => open,
             o_n_faces => open,
+            i_pd_lvds_p => pd_p,
+            i_pd_lvds_n => pd_n,
             o_tdc_stop => tdc_stop,
             io_tdc_d => tdc_d,
             o_tdc_adr => open,
@@ -210,7 +214,7 @@ begin
                    stop_tdc = '0' and shot_start = '0' and
                    tdc_stop = x"00000000" and monitor_valid = '0' and
                    rise_axis_valid = '0' and fall_axis_valid = '0'
-                report "V2-K0-TOP-TB pre-K0-4 physical or AXIS output active"
+                report "V2-K0-TOP-TB inactive Processing/Echo output active"
                 severity failure;
         end if;
     end process p_fail_safe;

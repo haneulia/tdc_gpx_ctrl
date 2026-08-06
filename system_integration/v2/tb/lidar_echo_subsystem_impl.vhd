@@ -92,8 +92,10 @@ architecture rtl of lidar_echo_subsystem_impl is
 begin
 
     p_inputs : process (all)
-        variable source_v : lidar_runtime_config_t;
-        variable request_v : shot_request_t;
+        variable source_v      : lidar_runtime_config_t;
+        variable request_v     : shot_request_t;
+        variable shot_start_v  : shot_start_event_t;
+        variable shot_result_v : shot_result_t;
     begin
         source_v := fn_default_runtime_config(C_BUILD_CONFIG);
         source_v.echo.channel_0_delay_5ns :=
@@ -110,18 +112,15 @@ begin
             i_shot_result_valid;
         request_v.source_sim     := i_shot_source_sim;
         request_v.active_version := unsigned(i_active_version);
-        shot_start_c <= (
-            valid            => i_shot_start_valid,
-            request          => request_v,
-            fire_to_t0_clks  => (others => '0')
-        );
-        shot_result_c <= (
-            valid            => i_shot_result_valid,
-            timeout          => '0',
-            aborted          => '0',
-            request          => request_v,
-            fire_to_t0_clks  => (others => '0')
-        );
+        shot_start_v := C_SHOT_START_EVENT_IDLE;
+        shot_start_v.valid   := i_shot_start_valid;
+        shot_start_v.request := request_v;
+        shot_start_c <= shot_start_v;
+
+        shot_result_v := C_SHOT_RESULT_IDLE;
+        shot_result_v.valid   := i_shot_result_valid;
+        shot_result_v.request := request_v;
+        shot_result_c <= shot_result_v;
     end process p_inputs;
 
     o_diag_total_rise <= std_logic_vector(diagnostics_c.snapshot.total_rise);

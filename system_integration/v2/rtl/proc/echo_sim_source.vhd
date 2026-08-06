@@ -33,13 +33,20 @@ architecture rtl of echo_sim_source is
     constant C_ZERO_PENDING : std_logic_vector(
         C_NUM_CHANNELS - 1 downto 0) := (others => '0');
 
-    signal counter_r : echo_delay_clocks_array_t :=
-        C_ECHO_DELAY_CLOCKS_CLEAR;
+    signal elapsed_r : unsigned(31 downto 0) := (others => '0');
     signal pending_r : std_logic_vector(C_NUM_CHANNELS - 1 downto 0) :=
         (others => '0');
     signal pulse_r : std_logic_vector(C_NUM_CHANNELS - 1 downto 0) :=
         (others => '0');
     signal profile_not_ready_r : std_logic := '0';
+
+    function fn_sat_increment(value : unsigned) return unsigned is
+    begin
+        if value = (value'range => '1') then
+            return value;
+        end if;
+        return value + 1;
+    end function fn_sat_increment;
 
 begin
 
@@ -52,6 +59,10 @@ begin
     o_busy <= '1' when pending_r /= C_ZERO_PENDING or
         pulse_r /= C_ZERO_PENDING else '0';
 
+    -- Every synthetic channel uses the same Shot time origin. One elapsed
+    -- counter plus 32 target comparisons is therefore sufficient; independent
+    -- per-channel down-counters would duplicate state and create a long
+    -- load/decrement selection path without changing behavior.
     p_source : process (i_clk)
     begin
         if rising_edge(i_clk) then
@@ -60,14 +71,19 @@ begin
 
             if i_rst_n = '0' then
                 pending_r <= (others => '0');
+                elapsed_r <= (others => '0');
             elsif i_shot_result.valid = '1' then
                 pending_r <= (others => '0');
+                elapsed_r <= (others => '0');
             elsif i_shot_start.valid = '1' then
                 pending_r <= (others => '0');
+                -- The first pending cycle represents delay clock 1. Starting
+                -- at one keeps increment and channel comparison on separate
+                -- timing paths without changing any pulse timestamp.
+                elapsed_r <= to_unsigned(1, elapsed_r'length);
                 if i_shot_start.request.source_sim = '1' and
                    i_profile_ready = '1' then
                     for channel in 0 to C_NUM_CHANNELS - 1 loop
-                        counter_r(channel) <= i_active_clocks(channel);
                         if i_active_clocks(channel) /= 0 then
                             pending_r(channel) <= '1';
                         end if;
@@ -75,17 +91,18 @@ begin
                 elsif i_shot_start.request.source_sim = '1' then
                     profile_not_ready_r <= '1';
                 end if;
-            else
+            elsif pending_r /= C_ZERO_PENDING then
+                elapsed_r <= fn_sat_increment(elapsed_r);
                 for channel in 0 to C_NUM_CHANNELS - 1 loop
                     if pending_r(channel) = '1' then
-                        if counter_r(channel) = 1 then
+                        if i_active_clocks(channel) = elapsed_r then
                             pulse_r(channel)   <= '1';
                             pending_r(channel) <= '0';
-                        else
-                            counter_r(channel) <= counter_r(channel) - 1;
                         end if;
                     end if;
                 end loop;
+            else
+                elapsed_r <= (others => '0');
             end if;
         end if;
     end process p_source;

@@ -193,7 +193,7 @@ ACK 전에는 다음 Face를 시작하지 않는다.
 | K0-1 | top port, generic, record ownership 표 작성 | **완료**: 모든 신호 owner/consumer와 미구현 경계가 확정 |
 | K0-2 | 빈 top shell과 package compile order 생성 | **완료**: production compile order와 150/200, 200/150 MHz elaboration PASS |
 | K0-3 | 원자적 unified CSR/config/VDMA profile과 command CDC 연결 | **완료**: 80개 production 소스, 양 lane ACK barrier, active version/IRQ exact compare PASS |
-| K0-4 | Processing + Echo 연결 | fire/start/stop와 simulation exclusion 유지 |
+| K0-4 | Processing + Echo 연결 | **완료**: 물리/시뮬레이션 2 clock profile 기능·구현 PASS, fire/start/stop 상호배타 및 Echo 활성화 장벽 검증 |
 | K0-5 | GPX acquisition + B5..B8 연결 | raw28와 Hit17, 16 APD, Return7 identity |
 | K0-6 | Shot/Hole/T0 + Footer + width packer 연결 | J9 DDR Golden과 모든 Word 동일 |
 | K0-7 | Rise/Fall lane 및 VDMA profile ACK 연결 | dedicated, Rise-only, one-Chip dual-edge, all-dual PASS |

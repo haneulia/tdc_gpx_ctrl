@@ -13,11 +13,12 @@ package lidar_event_types_pkg is
 
     -- The physical value is counted from the first Processing-clock edge
     -- that samples a stable asynchronous pin value. The virtual value is
-    -- counted from the registered A/B/Z transition produced in this domain.
+    -- counted from the source A/B/Z transition through the common virtual
+    -- pipeline register and the registered position-event decoder.
     constant C_POSITION_PHYSICAL_LATENCY_CLKS : position_latency_t :=
         to_unsigned(4, C_POSITION_LATENCY_WIDTH);
     constant C_POSITION_VIRTUAL_LATENCY_CLKS : position_latency_t :=
-        to_unsigned(1, C_POSITION_LATENCY_WIDTH);
+        to_unsigned(2, C_POSITION_LATENCY_WIDTH);
 
     constant C_VIRTUAL_Z_FAULT_WIDTH     : positive := 2;
     constant C_VIRTUAL_Z_EARLY_OVER_BIT  : natural := 0;

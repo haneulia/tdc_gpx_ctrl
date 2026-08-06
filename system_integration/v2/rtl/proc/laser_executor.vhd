@@ -65,7 +65,19 @@ architecture rtl of laser_executor is
     signal fire_busy_c           : std_logic;
     signal simulation_start_busy_c : std_logic;
     signal stop_busy_c           : std_logic;
+    signal executor_busy_c       : std_logic;
     signal config_ready_c        : std_logic;
+    signal config_valid_r        : std_logic := '0';
+    signal timing_valid_r        : std_logic_vector(4 downto 0) :=
+        (others => '0');
+    signal active_version_r      : u16_t := (others => '0');
+    signal simulation_mode_r     : std_logic := '0';
+    signal fire_width_r          : u32_t := (others => '0');
+    signal fire_done_timeout_r   : u32_t := (others => '0');
+    signal target_range_r        : u32_t := (others => '0');
+    signal start_width_r         : u32_t := (others => '0');
+    signal stop_width_r          : u32_t := (others => '0');
+    signal simulation_delay_r    : u32_t := (others => '0');
     signal timestamp_ticks_r     : t0_timestamp_t := (others => '0');
     signal physical_t0_timestamp_c : t0_timestamp_t;
     signal physical_t0_timestamp_valid_c : std_logic;
@@ -83,12 +95,72 @@ begin
         end if;
     end process p_timestamp;
 
-    config_ready_c <= '1' when i_active_valid = '1' and
-        i_active_config.derived.fire_width_proc_clks /= 0 and
-        i_active_config.derived.fire_done_timeout_proc_clks /= 0 and
-        i_active_config.derived.target_range_proc_clks /= 0 and
-        i_active_config.derived.start_width_proc_clks /= 0 and
-        i_active_config.derived.stop_width_proc_clks /= 0 else '0';
+    -- Active Config is immutable while a Shot is in flight. Register only the
+    -- timing fields consumed by B3 every clock, keeping the wide configuration
+    -- mailbox out of the 200 MHz pulse-counter and lifecycle paths without an
+    -- executor-busy feedback path on the register enables.
+    p_config_snapshot : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_active_valid = '0' then
+                config_valid_r      <= '0';
+                timing_valid_r      <= (others => '0');
+                active_version_r    <= (others => '0');
+                simulation_mode_r   <= '0';
+                fire_width_r        <= (others => '0');
+                fire_done_timeout_r <= (others => '0');
+                target_range_r      <= (others => '0');
+                start_width_r       <= (others => '0');
+                stop_width_r        <= (others => '0');
+                simulation_delay_r  <= (others => '0');
+            else
+                config_valid_r <= '1';
+                if i_active_config.derived.fire_width_proc_clks /= 0 then
+                    timing_valid_r(0) <= '1';
+                else
+                    timing_valid_r(0) <= '0';
+                end if;
+                if i_active_config.derived.fire_done_timeout_proc_clks /= 0 then
+                    timing_valid_r(1) <= '1';
+                else
+                    timing_valid_r(1) <= '0';
+                end if;
+                if i_active_config.derived.target_range_proc_clks /= 0 then
+                    timing_valid_r(2) <= '1';
+                else
+                    timing_valid_r(2) <= '0';
+                end if;
+                if i_active_config.derived.start_width_proc_clks /= 0 then
+                    timing_valid_r(3) <= '1';
+                else
+                    timing_valid_r(3) <= '0';
+                end if;
+                if i_active_config.derived.stop_width_proc_clks /= 0 then
+                    timing_valid_r(4) <= '1';
+                else
+                    timing_valid_r(4) <= '0';
+                end if;
+                active_version_r <= i_active_config.version;
+                simulation_mode_r <=
+                    i_active_config.source.motor.simulation_mode;
+                fire_width_r <=
+                    i_active_config.derived.fire_width_proc_clks;
+                fire_done_timeout_r <=
+                    i_active_config.derived.fire_done_timeout_proc_clks;
+                target_range_r <=
+                    i_active_config.derived.target_range_proc_clks;
+                start_width_r <=
+                    i_active_config.derived.start_width_proc_clks;
+                stop_width_r <=
+                    i_active_config.derived.stop_width_proc_clks;
+                simulation_delay_r <=
+                    i_active_config.derived.simulation_start_delay_proc_clks;
+            end if;
+        end if;
+    end process p_config_snapshot;
+
+    config_ready_c <= '1' when config_valid_r = '1' and
+        timing_valid_r = "11111" else '0';
 
     o_request_accept  <= request_accept_c;
     o_request_drop    <= request_drop_c;
@@ -99,6 +171,7 @@ begin
     o_shot_result     <= shot_result_c;
     o_current_request <= current_request_c;
     o_physical_arm    <= physical_arm_c;
+    o_busy            <= executor_busy_c;
 
     u_core : entity work.laser_executor_core
         generic map (
@@ -108,15 +181,11 @@ begin
             i_clk                 => i_clk,
             i_rst_n               => i_rst_n,
             i_config_ready        => config_ready_c,
-            i_active_version      => i_active_config.version,
-            i_simulation_mode     =>
-                i_active_config.source.motor.simulation_mode,
-            i_fire_done_timeout_clks =>
-                i_active_config.derived.fire_done_timeout_proc_clks,
-            i_target_range_clks   =>
-                i_active_config.derived.target_range_proc_clks,
-            i_sim_start_delay_clks =>
-                i_active_config.derived.simulation_start_delay_proc_clks,
+            i_active_version      => active_version_r,
+            i_simulation_mode     => simulation_mode_r,
+            i_fire_done_timeout_clks => fire_done_timeout_r,
+            i_target_range_clks   => target_range_r,
+            i_sim_start_delay_clks => simulation_delay_r,
             i_physical_fire_enable =>
                 i_operation_state.physical_fire_enable,
             i_simulation_enable   =>
@@ -142,7 +211,7 @@ begin
             o_shot_start          => shot_start_c,
             o_shot_result         => shot_result_c,
             o_current_request     => current_request_c,
-            o_busy                => o_busy,
+            o_busy                => executor_busy_c,
             o_rearm_active        => o_rearm_active,
             o_fire_done_sync_clks => o_fire_done_sync_clks,
             o_rearm_margin_clks   => o_rearm_margin_clks
@@ -154,8 +223,7 @@ begin
             i_rst_n                 => i_rst_n,
             i_fire_done_raw         => i_fire_done_raw,
             i_physical_arm          => physical_arm_c,
-            i_start_width_clks      =>
-                i_active_config.derived.start_width_proc_clks,
+            i_start_width_clks      => start_width_r,
             i_timestamp_ticks       => timestamp_ticks_r,
             o_fire_done_ready       => bridge_ready_c,
             o_start_tdc             => physical_start_c,
@@ -175,12 +243,9 @@ begin
             i_fire_trigger         => fire_trigger_c,
             i_sim_start_trigger    => simulation_t0_c,
             i_stop_trigger         => stop_trigger_c,
-            i_fire_width_clks      =>
-                i_active_config.derived.fire_width_proc_clks,
-            i_start_width_clks     =>
-                i_active_config.derived.start_width_proc_clks,
-            i_stop_width_clks      =>
-                i_active_config.derived.stop_width_proc_clks,
+            i_fire_width_clks      => fire_width_r,
+            i_start_width_clks     => start_width_r,
+            i_stop_width_clks      => stop_width_r,
             o_fire_pulse           => fire_pulse_c,
             o_sim_start_pulse      => simulation_start_c,
             o_stop_pulse           => stop_tdc_c,

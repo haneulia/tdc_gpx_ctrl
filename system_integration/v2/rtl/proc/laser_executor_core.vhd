@@ -66,6 +66,8 @@ architecture rtl of laser_executor_core is
 
     constant C_FIRE_DONE_SYNC_CLKS : positive := 3;
     constant C_REARM_MARGIN_CLKS   : positive := 2;
+    constant C_REARM_POST_BUSY_CLKS : positive :=
+        C_REARM_MARGIN_CLKS - 1;
 
     function fn_sat_increment(value : unsigned) return unsigned is
     begin
@@ -98,6 +100,10 @@ architecture rtl of laser_executor_core is
     signal fire_trigger_c          : std_logic;
     signal simulation_t0_c         : std_logic;
     signal range_end_c             : std_logic;
+    signal physical_start_busy_r   : std_logic := '0';
+    signal fire_busy_r             : std_logic := '0';
+    signal simulation_start_busy_r : std_logic := '0';
+    signal stop_busy_r             : std_logic := '0';
 
 begin
 
@@ -143,6 +149,27 @@ begin
         C_FIRE_DONE_SYNC_CLKS, o_fire_done_sync_clks'length);
     o_rearm_margin_clks   <= to_unsigned(
         C_REARM_MARGIN_CLKS, o_rearm_margin_clks'length);
+
+    -- Busy status is observation feedback from separately registered pulse
+    -- owners. Pipeline it once before the lifecycle FSM so pulse-width counter
+    -- logic cannot become part of the 200 MHz state/control cone. The added
+    -- cycle only extends the conservative re-arm interval.
+    p_busy_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                physical_start_busy_r   <= '0';
+                fire_busy_r             <= '0';
+                simulation_start_busy_r <= '0';
+                stop_busy_r             <= '0';
+            else
+                physical_start_busy_r   <= i_physical_start_busy;
+                fire_busy_r             <= i_fire_busy;
+                simulation_start_busy_r <= i_sim_start_busy;
+                stop_busy_r             <= i_stop_busy;
+            end if;
+        end if;
+    end process p_busy_pipeline;
 
     p_executor : process (i_clk)
         variable wait_value_v : unsigned(31 downto 0);
@@ -313,9 +340,13 @@ begin
                         end if;
 
                     when EXEC_REARM =>
-                        if i_fire_busy = '1' or i_sim_start_busy = '1' or
-                           i_stop_busy = '1' or i_physical_start_busy = '1' then
-                            rearm_count_r <= C_REARM_MARGIN_CLKS;
+                        if fire_busy_r = '1' or
+                           simulation_start_busy_r = '1' or
+                           stop_busy_r = '1' or
+                           physical_start_busy_r = '1' then
+                            -- One clock of the published two-clock margin is
+                            -- already supplied by p_busy_pipeline.
+                            rearm_count_r <= C_REARM_POST_BUSY_CLKS;
                         elsif rearm_count_r > 1 then
                             rearm_count_r <= rearm_count_r - 1;
                         else

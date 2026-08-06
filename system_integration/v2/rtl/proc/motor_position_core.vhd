@@ -7,8 +7,9 @@ use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
 
 -- B0 Processing boundary. Physical encoder pins use explicit four-stage
--- synchronizers; the virtual source is already registered in this clock
--- domain. The selected source is decoded into one registered event record.
+-- synchronizers. Virtual A/B/Z use one common register boundary so the
+-- combinational Z qualification cannot extend into the position decoder.
+-- The selected source is decoded into one registered event record.
 entity motor_position_core is
     port (
         i_clk                       : in  std_logic;
@@ -94,6 +95,9 @@ architecture rtl of motor_position_core is
     signal virtual_a_c       : std_logic;
     signal virtual_b_c       : std_logic;
     signal virtual_z_c       : std_logic;
+    signal virtual_a_pipe_r  : std_logic := '0';
+    signal virtual_b_pipe_r  : std_logic := '0';
+    signal virtual_z_pipe_r  : std_logic := '0';
     signal virtual_z_fault_c : virtual_z_fault_t;
     signal virtual_enable_c  : std_logic;
     signal selected_a_c      : std_logic;
@@ -140,17 +144,17 @@ begin
     o_invalid_transition_sticky <= invalid_sticky_r;
     o_invalid_transition_count  <= invalid_count_r;
     o_source_switch             <= source_switch_r;
-    o_virtual_a                 <= virtual_a_c;
-    o_virtual_b                 <= virtual_b_c;
-    o_virtual_z                 <= virtual_z_c;
+    o_virtual_a                 <= virtual_a_pipe_r;
+    o_virtual_b                 <= virtual_b_pipe_r;
+    o_virtual_z                 <= virtual_z_pipe_r;
     o_virtual_z_fault           <= virtual_z_fault_c;
 
     virtual_enable_c <= i_enable and i_active_valid and simulation_mode_r;
-    selected_a_c <= virtual_a_c when simulation_mode_r = '1'
+    selected_a_c <= virtual_a_pipe_r when simulation_mode_r = '1'
         else phy_a_sync_r(3);
-    selected_b_c <= virtual_b_c when simulation_mode_r = '1'
+    selected_b_c <= virtual_b_pipe_r when simulation_mode_r = '1'
         else phy_b_sync_r(3);
-    selected_z_c <= virtual_z_c when simulation_mode_r = '1'
+    selected_z_c <= virtual_z_pipe_r when simulation_mode_r = '1'
         else phy_z_sync_r(3);
     invalid_c <= '1' when
         selected_a_c /= previous_a_r and
@@ -179,6 +183,21 @@ begin
             end if;
         end if;
     end process p_physical_sync;
+
+    p_virtual_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                virtual_a_pipe_r <= '0';
+                virtual_b_pipe_r <= '0';
+                virtual_z_pipe_r <= '0';
+            else
+                virtual_a_pipe_r <= virtual_a_c;
+                virtual_b_pipe_r <= virtual_b_c;
+                virtual_z_pipe_r <= virtual_z_c;
+            end if;
+        end if;
+    end process p_virtual_pipeline;
 
     u_virtual_source : entity work.motor_virtual_source
         port map (
@@ -270,9 +289,9 @@ begin
                         end if;
 
                         if i_active_config.source.motor.simulation_mode = '1' then
-                            previous_a_r <= virtual_a_c;
-                            previous_b_r <= virtual_b_c;
-                            previous_z_r <= virtual_z_c;
+                            previous_a_r <= virtual_a_pipe_r;
+                            previous_b_r <= virtual_b_pipe_r;
+                            previous_z_r <= virtual_z_pipe_r;
                         else
                             previous_a_r <= phy_a_sync_r(3);
                             previous_b_r <= phy_b_sync_r(3);

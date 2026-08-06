@@ -46,7 +46,8 @@ package lidar_processing_pkg is
 
     -- These are measured registered-path contracts, not configurable delay
     -- values. Physical latency starts at the first synchronizer sample edge;
-    -- virtual latency starts at the registered virtual A/B transition.
+    -- virtual latency starts at the virtual-source A/B/Z transition and
+    -- includes the common virtual-input pipeline register.
     constant C_B0_TO_EXECUTOR_ACCEPT_CLKS : processing_latency_t :=
         to_unsigned(4, processing_latency_t'length);
     constant C_PHYSICAL_SAMPLE_TO_FIRE_CLKS : processing_latency_t :=

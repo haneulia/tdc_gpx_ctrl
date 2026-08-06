@@ -22,6 +22,7 @@ entity lidar_csr_config_subsystem is
         i_csr_rst_n : in  std_logic;
         i_proc_clk  : in  std_logic;
         i_proc_rst_n : in std_logic;
+        i_proc_soft_reset : in std_logic := '0';
         i_tdc_clk   : in  std_logic;
         i_tdc_rst_n : in  std_logic;
 
@@ -222,6 +223,7 @@ begin
             o_csr_command_rejected  => w_operation_cdc_rejected,
             i_proc_clk              => i_proc_clk,
             i_proc_rst_n            => i_proc_rst_n,
+            i_proc_soft_reset       => i_proc_soft_reset,
             i_external_laser_permit => i_external_laser_permit,
             i_config_enable         => w_proc_enable,
             i_active_valid          => w_proc_active_valid,

@@ -39,6 +39,7 @@ architecture rtl of echo_delay_profile is
     type profile_state_t is (
         PROFILE_WAIT_CONFIG,
         PROFILE_BUILD,
+        PROFILE_FLUSH,
         PROFILE_READY
     );
 
@@ -48,6 +49,9 @@ architecture rtl of echo_delay_profile is
     signal build_index_r : natural range 0 to C_ECHO_MAX_CHANNELS - 1 := 0;
     signal tick_accumulator_r : echo_delay_ticks_t := (others => '0');
     signal channel_step_r : echo_delay_ticks_t := (others => '0');
+    signal converted_clocks_r : echo_delay_clocks_t := (others => '0');
+    signal write_index_r : natural range 0 to C_ECHO_MAX_CHANNELS - 1 := 0;
+    signal write_valid_r : std_logic := '0';
     signal active_clocks_r : echo_delay_clocks_array_t :=
         C_ECHO_DELAY_CLOCKS_CLEAR;
 
@@ -64,7 +68,8 @@ begin
     o_ready <= '1' when state_r = PROFILE_READY and
         i_active_valid = '1' and
         profile_version_r = i_active_config.version else '0';
-    o_busy <= '1' when state_r = PROFILE_BUILD else '0';
+    o_busy <= '1' when state_r = PROFILE_BUILD or
+        state_r = PROFILE_FLUSH else '0';
     o_profile_version <= profile_version_r;
     o_active_clocks <= active_clocks_r;
 
@@ -80,9 +85,13 @@ begin
                 build_index_r       <= 0;
                 tick_accumulator_r  <= (others => '0');
                 channel_step_r      <= (others => '0');
+                converted_clocks_r  <= (others => '0');
+                write_index_r       <= 0;
+                write_valid_r       <= '0';
                 active_clocks_r     <= C_ECHO_DELAY_CLOCKS_CLEAR;
             elsif i_active_valid = '0' then
                 state_r <= PROFILE_WAIT_CONFIG;
+                write_valid_r <= '0';
             elsif state_r = PROFILE_WAIT_CONFIG or
                   i_active_config.version /= target_version_r then
                 first_ticks_v := resize(
@@ -95,21 +104,32 @@ begin
                 build_index_r      <= 0;
                 tick_accumulator_r <= first_ticks_v;
                 channel_step_r     <= step_ticks_v;
+                write_valid_r      <= '0';
                 state_r            <= PROFILE_BUILD;
             elsif state_r = PROFILE_BUILD then
-                active_clocks_r(build_index_r) <=
-                    fn_echo_ticks_to_proc_clocks(
-                        tick_accumulator_r,
-                        G_BUILD_CONFIG.proc_clk_mhz);
+                if write_valid_r = '1' then
+                    active_clocks_r(write_index_r) <= converted_clocks_r;
+                end if;
+                converted_clocks_r <= fn_echo_ticks_to_proc_clocks(
+                    tick_accumulator_r,
+                    G_BUILD_CONFIG.proc_clk_mhz);
+                write_index_r <= build_index_r;
+                write_valid_r <= '1';
 
                 if build_index_r = C_NUM_CHANNELS - 1 then
-                    profile_version_r <= target_version_r;
-                    state_r           <= PROFILE_READY;
+                    state_r <= PROFILE_FLUSH;
                 else
                     build_index_r <= build_index_r + 1;
                     tick_accumulator_r <=
                         tick_accumulator_r + channel_step_r;
                 end if;
+            elsif state_r = PROFILE_FLUSH then
+                if write_valid_r = '1' then
+                    active_clocks_r(write_index_r) <= converted_clocks_r;
+                end if;
+                write_valid_r     <= '0';
+                profile_version_r <= target_version_r;
+                state_r           <= PROFILE_READY;
             end if;
         end if;
     end process p_profile;

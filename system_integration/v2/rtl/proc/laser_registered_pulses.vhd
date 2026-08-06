@@ -45,16 +45,12 @@ begin
     o_sim_start_busy  <= start_r;
     o_stop_busy       <= stop_r;
 
-    p_pulses : process (i_clk)
+    p_fire_pulse : process (i_clk)
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 fire_r        <= '0';
                 fire_count_r  <= (others => '0');
-                start_r       <= '0';
-                start_count_r <= (others => '0');
-                stop_r        <= '0';
-                stop_count_r  <= (others => '0');
             else
                 if fire_r = '1' then
                     if fire_count_r = 0 then
@@ -66,7 +62,17 @@ begin
                     fire_r       <= '1';
                     fire_count_r <= i_fire_width_clks - 1;
                 end if;
+            end if;
+        end if;
+    end process p_fire_pulse;
 
+    p_sim_start_pulse : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                start_r       <= '0';
+                start_count_r <= (others => '0');
+            else
                 if start_r = '1' then
                     if start_count_r = 0 then
                         start_r <= '0';
@@ -77,7 +83,17 @@ begin
                     start_r       <= '1';
                     start_count_r <= i_start_width_clks - 1;
                 end if;
+            end if;
+        end if;
+    end process p_sim_start_pulse;
 
+    p_stop_pulse : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                stop_r       <= '0';
+                stop_count_r <= (others => '0');
+            else
                 if stop_r = '1' then
                     if stop_count_r = 0 then
                         stop_r <= '0';
@@ -90,7 +106,7 @@ begin
                 end if;
             end if;
         end if;
-    end process p_pulses;
+    end process p_stop_pulse;
 
     p_contract : process (i_clk)
     begin

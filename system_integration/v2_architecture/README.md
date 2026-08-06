@@ -101,6 +101,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md](V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md) | Portable C PS decoder, HTML packet Golden, Cortex-A9 build and byte-comparison evidence |
 | [V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md](V2_STAGE8_K0_INTEGRATED_TOP_PLAN_KO.md) | Korean v2 top assembly order, parent readiness audit and K0/K1/L0 gates |
 | [V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md](V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md) | Atomic Rise/Fall VDMA activation, acknowledged system-command CDC and K0-3 evidence |
+| [V2_CHECKPOINT_K0_4_PROCESSING_ECHO_INTEGRATION_KO.md](V2_CHECKPOINT_K0_4_PROCESSING_ECHO_INTEGRATION_KO.md) | Processing/Echo production ownership, physical/simulation exclusion, timing optimization and K0-4 evidence |
 
 ## 4. Target Top-Level Shape
 

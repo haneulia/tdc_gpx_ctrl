@@ -76,6 +76,7 @@ system_integration/v2/rtl/proc/lidar_gpx_hole_line_expander.vhd
 system_integration/v2/rtl/proc/lidar_gpx_frame_close_fork.vhd
 system_integration/v2/rtl/proc/lidar_gpx_vdma_profile_manager.vhd
 system_integration/v2/rtl/proc/lidar_gpx_vdma_profile_transaction.vhd
+system_integration/v2/rtl/proc/lidar_processing_activation_barrier.vhd
 system_integration/v2/rtl/proc/lidar_gpx_face_footer_builder.vhd
 system_integration/v2/rtl/proc/lidar_gpx_axis_word_packer.vhd
 system_integration/v2/rtl/proc/lidar_gpx_vdma_lane_formatter.vhd

@@ -22,6 +22,7 @@ entity lidar_operation_subsystem is
 
         i_proc_clk                : in  std_logic;
         i_proc_rst_n              : in  std_logic;
+        i_proc_soft_reset         : in  std_logic := '0';
         i_external_laser_permit   : in  std_logic;
         i_config_enable           : in  std_logic;
         i_active_valid            : in  std_logic;
@@ -83,6 +84,7 @@ begin
         port map (
             i_clk                   => i_proc_clk,
             i_rst_n                 => i_proc_rst_n,
+            i_soft_reset            => i_proc_soft_reset,
             i_command_valid         => command_valid_proc,
             i_command               => command_proc,
             i_command_source_online => command_source_online_proc,

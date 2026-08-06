@@ -5,14 +5,14 @@ use ieee.numeric_std.all;
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
+use work.lidar_echo_pkg.all;
 use work.lidar_gpx_pkg.all;
 use work.lidar_gpx_vdma_pkg.all;
 use work.lidar_processing_pkg.all;
 
--- Stage 8 K0 integration boundary. Until K0 is complete this architecture
--- deliberately drives only fail-safe values and must not be packaged as the
--- release IP. Later K0 steps replace only the structural wiring below; the
--- public port and build-generic contract is frozen here.
+-- Stage 8 K0 integration boundary. Completed sub-stages use their production
+-- owners; not-yet-integrated physical/data boundaries remain fail-safe. This
+-- architecture must not be packaged as the release IP until all K0 gates pass.
 entity tdc_gpx_lidar_ctrl_v2_top is
     generic (
         G_CSR_CLK_MHZ      : positive range 50 to 200 := 100;
@@ -237,6 +237,17 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
     signal proc_activate_complete_c : std_logic;
     signal proc_activate_fault_c : std_logic;
 
+    signal operation_state_c : operation_state_t;
+    signal processing_pipeline_idle_c : std_logic;
+    signal processing_safe_c : std_logic;
+    signal shot_start_event_c : shot_start_event_t;
+    signal shot_result_event_c : shot_result_t;
+
+    signal echo_profile_ready_c : std_logic;
+    signal echo_profile_busy_c : std_logic;
+    signal echo_profile_version_c : u16_t;
+    signal echo_idle_c : std_logic;
+
     signal rise_active_profile_c : gpx_vdma_lane_profile_t;
     signal fall_active_profile_c : gpx_vdma_lane_profile_t;
 
@@ -264,6 +275,12 @@ begin
 
     assert false
         report "LIDAR_V2_TOP_K03_CONFIG_PASS proc_mhz=" &
+            integer'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
+            integer'image(G_TDC_CLK_MHZ)
+        severity note;
+
+    assert false
+        report "LIDAR_V2_TOP_K04_PROCESSING_ECHO_PASS proc_mhz=" &
             integer'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
             integer'image(G_TDC_CLK_MHZ)
         severity note;
@@ -302,8 +319,9 @@ begin
             s_axi_rresp => s_axi_csr_rresp,
             s_axi_rvalid => s_axi_csr_rvalid,
             s_axi_rready => s_axi_csr_rready,
-            i_proc_safe => '1',
+            i_proc_safe => processing_safe_c,
             i_tdc_safe => '1',
+            i_proc_soft_reset => proc_soft_reset_c,
             i_external_laser_permit => i_external_laser_permit,
             i_tdc_config_ready => '0',
             i_tdc_config_done => '0',
@@ -335,7 +353,7 @@ begin
             o_prepare_req => open,
             o_activate_req => open,
             o_release_req => open,
-            o_operation_state => open,
+            o_operation_state => operation_state_c,
             o_operation_command_accepted => open,
             o_operation_command_rejected => open,
             o_operation_permit_trip => open,
@@ -361,8 +379,87 @@ begin
             o_tdc_soft_reset => tdc_soft_reset_c
         );
 
-    u_vdma_profile_transaction :
-        entity work.lidar_gpx_vdma_profile_transaction
+    processing_safe_c <= processing_pipeline_idle_c and echo_idle_c;
+
+    u_processing : entity work.lidar_processing_subsystem
+        generic map (
+            G_BUILD_CONFIG => C_BUILD_CONFIG
+        )
+        port map (
+            i_clk => proc_aclk,
+            i_rst_n => proc_aresetn,
+            i_active_valid => proc_active_valid_c,
+            i_active_config => proc_active_config_c,
+            i_operation_state => operation_state_c,
+            i_enc_a => i_enc_a,
+            i_enc_b => i_enc_b,
+            i_enc_z => i_enc_z,
+            i_fire_done_raw => i_fire_done,
+            i_clear_diagnostics => proc_clear_status_c,
+            i_face_close_ready => '1',
+            o_face_close_event => open,
+            o_face_close_overflow_sticky => open,
+            m_mon_axis_tready => m_axis_monitor_tready,
+            m_mon_axis_tvalid => m_axis_monitor_tvalid,
+            m_mon_axis_tdata => m_axis_monitor_tdata,
+            m_mon_axis_tkeep => m_axis_monitor_tkeep,
+            m_mon_axis_tuser => m_axis_monitor_tuser,
+            m_mon_axis_tlast => m_axis_monitor_tlast,
+            o_fire_pulse => o_fire_pulse,
+            o_start_tdc => o_start_tdc,
+            o_stop_tdc => o_stop_tdc,
+            o_position_event => open,
+            o_face_event => open,
+            o_shot_request => open,
+            o_shot_start => shot_start_event_c,
+            o_shot_result => shot_result_event_c,
+            o_current_request => open,
+            o_current_position => open,
+            o_current_direction => open,
+            o_executor_ready => open,
+            o_request_accept => open,
+            o_request_drop => open,
+            o_executor_busy => open,
+            o_physical_arm => open,
+            o_rearm_active => open,
+            o_pipeline_idle => processing_pipeline_idle_c,
+            o_virtual_a => open,
+            o_virtual_b => open,
+            o_virtual_z => open,
+            o_b0_to_accept_clks => open,
+            o_physical_to_fire_clks => open,
+            o_virtual_to_accept_clks => open,
+            o_fire_done_sync_clks => open,
+            o_rearm_margin_clks => open,
+            o_diagnostics => open
+        );
+
+    u_echo : entity work.lidar_echo_subsystem
+        generic map (
+            G_BUILD_CONFIG => C_BUILD_CONFIG
+        )
+        port map (
+            i_clk => proc_aclk,
+            i_rst_n => proc_aresetn,
+            i_clear_diagnostics => proc_clear_status_c,
+            i_active_valid => proc_active_valid_c,
+            i_active_config => proc_active_config_c,
+            i_shot_start => shot_start_event_c,
+            i_shot_result => shot_result_event_c,
+            i_pd_lvds_p => i_pd_lvds_p,
+            i_pd_lvds_n => i_pd_lvds_n,
+            o_tdc_stop => o_tdc_stop,
+            o_simulation_active => open,
+            o_profile_ready => echo_profile_ready_c,
+            o_profile_busy => echo_profile_busy_c,
+            o_profile_version => echo_profile_version_c,
+            o_window_active => open,
+            o_idle => echo_idle_c,
+            o_diagnostics => open
+        );
+
+    u_processing_activation :
+        entity work.lidar_processing_activation_barrier
         generic map (
             G_BUILD_CONFIG => C_BUILD_CONFIG
         )
@@ -373,7 +470,10 @@ begin
             i_activate_start => proc_activate_start_c,
             i_active_valid => proc_active_valid_c,
             i_active_config => proc_active_config_c,
-            i_datapath_idle => '1',
+            i_datapath_idle => processing_pipeline_idle_c,
+            i_echo_profile_ready => echo_profile_ready_c,
+            i_echo_profile_busy => echo_profile_busy_c,
+            i_echo_profile_version => echo_profile_version_c,
             o_rise_cfg_valid => o_vdma_rise_cfg_valid,
             i_rise_cfg_ready => i_vdma_rise_cfg_ready,
             o_rise_cfg_enable => o_vdma_rise_cfg_enable,
@@ -393,15 +493,12 @@ begin
             o_busy => open
         );
 
-    -- K0-3 connects configuration and VDMA programming only. Physical laser,
-    -- Echo, GPX bus and payload streams remain fail-safe until K0-4..K0-7.
-    o_fire_pulse      <= '0';
-    o_start_tdc       <= '0';
-    o_stop_tdc        <= '0';
-    o_shot_start      <= '0';
-    o_shot_face_index <= (others => '0');
+    -- K0-4 transfers the Processing and Echo outputs to their production
+    -- owners. GPX bus and payload streams remain fail-safe until K0-5..K0-7.
+    o_shot_start <= shot_start_event_c.valid;
+    o_shot_face_index <= std_logic_vector(
+        shot_start_event_c.request.face_index);
     o_n_faces         <= std_logic_vector(to_unsigned(G_NUM_FACES, 3));
-    o_tdc_stop        <= (others => '0');
 
     io_tdc_d       <= (others => 'Z');
     o_tdc_adr      <= (others => '0');
@@ -412,12 +509,6 @@ begin
     o_tdc_stopdis  <= (others => '1');
     o_tdc_alutrigger <= (others => '0');
     o_tdc_puresn     <= (others => '1');
-
-    m_axis_monitor_tdata  <= (others => '0');
-    m_axis_monitor_tkeep  <= (others => '0');
-    m_axis_monitor_tuser  <= (others => '0');
-    m_axis_monitor_tvalid <= '0';
-    m_axis_monitor_tlast  <= '0';
 
     m_axis_rise_tdata  <= (others => '0');
     m_axis_rise_tkeep  <= (others => '0');

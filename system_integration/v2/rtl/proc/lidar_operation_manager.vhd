@@ -14,6 +14,7 @@ entity lidar_operation_manager is
     port (
         i_clk                   : in  std_logic;
         i_rst_n                 : in  std_logic;
+        i_soft_reset            : in  std_logic := '0';
         i_command_valid         : in  std_logic;
         i_command               : in  operation_command_t;
         i_command_source_online : in  std_logic;
@@ -126,10 +127,17 @@ begin
             command_rejected_r <= '0';
             permit_trip_r      <= '0';
 
+            if i_soft_reset = '1' then
+                running_r <= '0';
+                armed_r   <= '0';
+                if i_command_valid = '1' then
+                    command_rejected_r <= '1';
+                end if;
+
             -- Losing the active configuration is equivalent to a cold safe
             -- state. A normal atomic commit only lowers config_enable and
             -- therefore preserves RUN/ARM while the pipeline drains.
-            if i_command_source_online /= '1' or i_active_valid /= '1' then
+            elsif i_command_source_online /= '1' or i_active_valid /= '1' then
                 running_r <= '0';
                 armed_r   <= '0';
                 if i_command_valid = '1' then
