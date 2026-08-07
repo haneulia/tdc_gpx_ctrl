@@ -23,6 +23,7 @@ entity shot_scheduler is
         i_active_config             : in  lidar_active_config_t;
         i_face_event                : in  face_event_t;
         i_executor_ready            : in  std_logic;
+        i_acquisition_ready         : in  std_logic := '1';
         i_request_accept            : in  std_logic;
         i_request_drop              : in  std_logic;
         i_clear_diagnostics         : in  std_logic;
@@ -230,7 +231,15 @@ begin
                                 i_face_event, shot_interval_r, columns_r,
                                 face_mask_r, simulation_mode_r,
                                 active_version_r);
+                            -- 요청 광학각으로 정해진 후보 위치가 최우선
+                            -- 계약이다. 레이저 수명주기 또는 GPX Drain이
+                            -- 끝나지 않았거나 후단 backpressure가 GPX
+                            -- 수용 한계까지 전파됐으면 발사를 뒤로 미루지
+                            -- 않고 이 후보점을 건너뛰며 schedule overrun
+                            -- 오류를 남긴다. 그래야 실제 점 간 각도가
+                            -- 흐트러지지 않는다.
                             if context_valid_v and i_executor_ready = '1' and
+                               i_acquisition_ready = '1' and
                                inflight_v = '0' then
                                 request_v := fn_make_request(
                                     i_face_event, column_v, columns_r);

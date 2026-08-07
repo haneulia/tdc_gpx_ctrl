@@ -13,6 +13,14 @@ package lidar_build_pkg is
     -- 16 bit. Commit validation rejects larger derived TDC-clock windows so
     -- an accepted runtime value can never be truncated at the v1 boundary.
     constant C_GPX_CAPTURE_COUNTER_MAX_CLKS : positive := 65_535;
+    -- Board-proven TDC-GPX reference clock. Reg7.MTimer counts this 40 MHz
+    -- reference, so one MTimer tick is 25 ns = five common 5 ns CSR ticks.
+    -- This is a hardware contract, not another runtime setting.
+    constant C_GPX_REFERENCE_CLK_MHZ       : positive := 40;
+    constant C_GPX_REFERENCE_TICK_5NS      : positive := 5;
+    constant C_GPX_MTIMER_WIDTH            : positive := 13;
+    constant C_GPX_MTIMER_MAX              : positive :=
+        (2 ** C_GPX_MTIMER_WIDTH) - 1;
 
     subtype chip_mask_t is std_logic_vector(C_MAX_CHIPS - 1 downto 0);
     subtype face_mask_t is std_logic_vector(C_MAX_FACES - 1 downto 0);
@@ -84,6 +92,7 @@ package lidar_build_pkg is
         CFG_RUNTIME_MAX_HITS,
         CFG_RUNTIME_BUS_TIMING,
         CFG_RUNTIME_SOURCE_MODE,
+        CFG_RUNTIME_GPX_MTIMER_RANGE,
         CFG_INTERNAL_ARITHMETIC,
         CFG_TRANSACTION_BUSY,
         CFG_TRANSACTION_PREPARE_TIMEOUT,
@@ -275,6 +284,7 @@ package body lidar_build_pkg is
             when CFG_RUNTIME_MAX_HITS               => result := x"30";
             when CFG_RUNTIME_BUS_TIMING             => result := x"31";
             when CFG_RUNTIME_SOURCE_MODE            => result := x"32";
+            when CFG_RUNTIME_GPX_MTIMER_RANGE       => result := x"33";
             when CFG_INTERNAL_ARITHMETIC             => result := x"70";
             when CFG_TRANSACTION_BUSY                => result := x"71";
             when CFG_TRANSACTION_PREPARE_TIMEOUT     => result := x"72";

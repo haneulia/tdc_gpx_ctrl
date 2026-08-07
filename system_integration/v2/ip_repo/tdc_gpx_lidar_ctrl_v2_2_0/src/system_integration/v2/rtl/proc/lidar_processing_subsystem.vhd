@@ -28,6 +28,7 @@ entity lidar_processing_subsystem is
         i_enc_z              : in  std_logic;
         i_fire_done_raw      : in  std_logic;
         i_clear_diagnostics  : in  std_logic;
+        i_acquisition_ready  : in  std_logic := '1';
 
         i_face_close_ready   : in  std_logic := '1';
         o_face_close_event   : out face_close_event_t;
@@ -215,6 +216,7 @@ begin
             i_active_config           => i_active_config,
             i_face_event              => face_event_c,
             i_executor_ready          => executor_ready_c,
+            i_acquisition_ready       => i_acquisition_ready,
             i_request_accept          => request_accept_c,
             i_request_drop            => request_drop_c,
             i_clear_diagnostics       => i_clear_diagnostics,

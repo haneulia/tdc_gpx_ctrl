@@ -175,10 +175,13 @@ begin
               and derived_cfg.active_rise_mask = "0011"
               and derived_cfg.active_fall_mask = "1100",
             "V2-DERIVE-011 dedicated slope masks");
-        check(to_integer(derived_cfg.target_range_proc_clks) = 216,
-            "V2-DERIVE-012 288 fixed ticks to 150 MHz");
-        check(to_integer(derived_cfg.capture_window_tdc_clks) = 288,
-            "V2-DERIVE-013 288 fixed ticks to 200 MHz");
+        check(to_integer(derived_cfg.gpx_mtimer_ref_ticks) = 58
+              and to_integer(derived_cfg.effective_target_range_5ns) = 290,
+            "V2-DERIVE-012 CTL12 to Reg7.MTimer quantization");
+        check(to_integer(derived_cfg.target_range_proc_clks) = 218,
+            "V2-DERIVE-012A effective target window at 150 MHz");
+        check(to_integer(derived_cfg.capture_window_tdc_clks) = 290,
+            "V2-DERIVE-013 effective capture window at 200 MHz");
 
         -- Runtime validation failures are deterministic and non-overlapping.
         runtime_cfg := C_DEFAULT_RUNTIME_CONFIG;
@@ -269,7 +272,10 @@ begin
             CFG_RUNTIME_RANGE_WINDOW, "V2-CFG-015 zero target range window");
 
         runtime_cfg := C_DEFAULT_RUNTIME_CONFIG;
-        runtime_cfg.tdc.capture_adjust_5ns := to_signed(-289, 17);
+        -- CTL12=288 is rounded to the GPX 25 ns grid, so the effective
+        -- target window is 290 common 5 ns ticks.  Subtract all 290 ticks
+        -- to exercise the non-positive capture-window rejection boundary.
+        runtime_cfg.tdc.capture_adjust_5ns := to_signed(-290, 17);
         check_error(fn_validate_runtime_config(build_cfg, runtime_cfg),
             CFG_RUNTIME_CAPTURE_WINDOW,
             "V2-CFG-016 non-positive adjusted capture window");
@@ -304,22 +310,22 @@ begin
             "V2-CFG-021 explicit v1-compatible capture adjustment");
         build_cfg.tdc_clk_mhz := 100;
         derived_cfg := fn_derive_runtime_config(build_cfg, runtime_cfg);
-        check(to_integer(derived_cfg.capture_window_5ns) = 267
-              and to_integer(derived_cfg.capture_window_tdc_clks) = 134,
+        check(to_integer(derived_cfg.capture_window_5ns) = 269
+              and to_integer(derived_cfg.capture_window_tdc_clks) = 135,
             "V2-DERIVE-016 adjusted range and ceil conversion at 100 MHz");
 
         build_cfg := C_DEFAULT_BUILD_CONFIG;
         runtime_cfg := C_DEFAULT_RUNTIME_CONFIG;
         runtime_cfg.laser.fire_done_timeout_5ns_ticks := to_unsigned(1, 16);
         runtime_cfg.laser.target_range_window_5ns := to_unsigned(
-            C_GPX_CAPTURE_COUNTER_MAX_CLKS, 32);
+            C_GPX_MTIMER_MAX * C_GPX_REFERENCE_TICK_5NS, 32);
         check_error(fn_validate_runtime_config(build_cfg, runtime_cfg), CFG_OK,
-            "V2-CFG-021A exact GPX capture-counter maximum");
+            "V2-CFG-021A exact Reg7.MTimer maximum");
         runtime_cfg.laser.target_range_window_5ns := to_unsigned(
-            C_GPX_CAPTURE_COUNTER_MAX_CLKS + 1, 32);
+            C_GPX_MTIMER_MAX * C_GPX_REFERENCE_TICK_5NS + 1, 32);
         check_error(fn_validate_runtime_config(build_cfg, runtime_cfg),
-            CFG_RUNTIME_CAPTURE_WINDOW,
-            "V2-CFG-021B reject GPX capture-counter overflow");
+            CFG_RUNTIME_GPX_MTIMER_RANGE,
+            "V2-CFG-021B reject Reg7.MTimer overflow");
 
         -- Direction changes traversal, never the stored geometry or columns.
         build_cfg := C_DEFAULT_BUILD_CONFIG;

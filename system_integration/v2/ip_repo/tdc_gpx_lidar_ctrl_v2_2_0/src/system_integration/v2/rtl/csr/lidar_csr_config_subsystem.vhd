@@ -110,6 +110,7 @@ architecture rtl of lidar_csr_config_subsystem is
     signal w_recovery       : std_logic;
     signal w_active_valid   : std_logic;
     signal w_active         : lidar_active_config_t;
+    signal w_candidate      : lidar_active_config_t;
     signal w_proc_enable       : std_logic;
     signal w_proc_active_valid : std_logic;
     signal w_proc_active       : lidar_active_config_t;
@@ -124,6 +125,9 @@ architecture rtl of lidar_csr_config_subsystem is
     signal w_tdc_activate_start  : std_logic;
     signal w_tdc_activate_complete : std_logic;
     signal w_tdc_activate_fault    : std_logic;
+    signal w_prepare_req           : std_logic;
+    signal w_activate_req          : std_logic;
+    signal w_release_req           : std_logic;
 
     signal w_operation_command_valid : std_logic;
     signal w_operation_command       : operation_command_t;
@@ -154,6 +158,9 @@ begin
     o_tdc_config_apply <= w_tdc_config_apply;
     o_operation_state   <= w_operation_state_proc;
     o_operation_safe_to_prepare <= w_operation_safe;
+    o_prepare_req       <= w_prepare_req;
+    o_activate_req      <= w_activate_req;
+    o_release_req       <= w_release_req;
 
     u_csr : entity work.lidar_csr_bank
         generic map (
@@ -221,6 +228,8 @@ begin
             i_cfg_busy        => w_busy,
             i_cfg_done        => w_done,
             i_cfg_error       => w_error,
+            i_prepare         => w_prepare_req,
+            i_candidate       => w_candidate,
             i_shadow_image    => w_gpx_shadow_image,
             o_candidate_image => w_gpx_candidate_image,
             o_active_image    => w_gpx_active_image
@@ -285,6 +294,7 @@ begin
             o_recovery_required => w_recovery,
             o_active_valid     => w_active_valid,
             o_active           => w_active,
+            o_candidate        => w_candidate,
             o_proc_enable      => w_proc_enable,
             o_proc_active_valid => w_proc_active_valid,
             o_proc_active      => w_proc_active,
@@ -293,9 +303,9 @@ begin
             o_tdc_active       => w_tdc_active,
             o_proc_activate_start => o_proc_activate_start,
             o_tdc_activate_start => w_tdc_activate_start,
-            o_prepare_req      => o_prepare_req,
-            o_activate_req     => o_activate_req,
-            o_release_req      => o_release_req
+            o_prepare_req      => w_prepare_req,
+            o_activate_req     => w_activate_req,
+            o_release_req      => w_release_req
         );
 
     gen_tdc_external_apply : if G_TDC_DEFER_ACTIVATE_ACK generate

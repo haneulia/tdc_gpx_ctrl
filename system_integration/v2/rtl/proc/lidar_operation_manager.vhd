@@ -7,6 +7,12 @@ use work.lidar_event_types_pkg.all;
 
 -- Single Processing-domain owner of RUN/STOP, ARM/DISARM and laser permission.
 -- Configuration validity can gate operation but never creates operation state.
+--
+-- 운용 정책:
+--   STOP   : 모터/위치 처리와 레이저 발사를 모두 정지하고 ARM도 해제한다.
+--   DISARM : 모터/위치 처리는 유지하고 레이저 후보점과 fire_pulse만 막는다.
+-- GPX 레지스터를 운용 중 바꿀 때는 DISARM -> ARMED=0 확인 -> CTL21/22
+-- 수정 -> COMMIT 완료/GPX 설정 완료 확인 -> ARM 순서를 사용한다.
 entity lidar_operation_manager is
     generic (
         G_BUILD_CONFIG : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG
@@ -168,6 +174,9 @@ begin
                             command_accepted_r <= '1';
 
                         when OP_COMMAND_DISARM =>
+                            -- 레이저만 안전하게 끈다. running_r은 유지되므로
+                            -- Encoder 위치 추적을 잃지 않은 채 GPX 설정을
+                            -- 원자적으로 다시 적용할 수 있다.
                             armed_r            <= '0';
                             command_accepted_r <= '1';
 

@@ -45,7 +45,9 @@ show an active source value, but it does not become a second owner.
 | Face lower/upper bounds | Derived | commit calculator | Face tracker and XGUI readback | Modular center +/- common half-width |
 | Fire pulse width | Runtime source | Laser config | laser executor | Fixed 5 ns ticks converted once at gateway |
 | Fire-done timeout | Runtime source | Laser config | laser executor and fault manager | Fixed 5 ns ticks; validated against the shot timing policy |
-| Target range window | Runtime source | Range config | Laser executor and TDC acquisition | One 5 ns source shared by both domains |
+| Requested target round-trip window | Runtime source | `CTL12.TARGET_RANGE` | Commit calculator | One 5 ns source; the only software-owned range time |
+| Effective target round-trip window | Derived | Commit calculator | Laser executor and TDC acquisition | Requested value rounded up to the 25 ns GPX MTimer grid |
+| GPX Reg7.MTimer | Derived | Commit calculator | GPX active register image | `ceil(TARGET_RANGE/5)` at the fixed 40 MHz GPX reference; direct staging value is overridden |
 | GPX capture-window adjustment | Runtime calibration | TDC calibration | TDC acquisition | Optional signed board offset; never a second target range |
 | Requested optical shot interval | Runtime source | Scan config | commit calculator | Fixed-point angle or equivalent software ABI value |
 | Shot interval in states | Derived | commit calculator | shot scheduler | Rounded up, never rounded down |
@@ -104,6 +106,21 @@ them to the Processing clock without converting them into writable levels.
 The scheduler consumes `scheduler_enable`; the physical executor/final pin gate
 consumes `physical_fire_enable`. Neither block may reconstruct permission from
 `ACTIVE_VALID`, source mode or Face membership.
+
+### 2.3 Optical candidate-point priority
+
+The requested optical angle defines the only legal shot lattice. At every due
+point, the scheduler samples both the laser-executor ready state and the GPX
+acquisition ready state. If either is low, it advances the geometric column,
+emits no late replacement shot and records `schedule_overrun`. This keeps the
+point angle truthful: insufficient timing budget appears as a Hole/error rather
+than as a shot at the wrong angle.
+
+The live test covers the actual fire-done response, effective target
+round-trip window, re-arm interval, GPX Lane drain/merge and accumulated output
+backpressure. These quantities are not all predictable from configuration
+alone, especially with a physical motor, so COMMIT validates representable
+values while the candidate-point check closes the Runtime timing contract.
 
 ## 3. Derived Equations
 

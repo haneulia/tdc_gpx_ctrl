@@ -1,6 +1,9 @@
 library ieee;
 use ieee.std_logic_1164.all;
 
+library xpm;
+use xpm.vcomponents.all;
+
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
@@ -91,6 +94,8 @@ architecture rtl of lidar_gpx_acquisition_subsystem is
     signal shot_drop_r : std_logic := '0';
     signal tdc_shot_c : shot_start_event_t;
     signal tdc_shot_ready_c : std_logic;
+    signal tdc_shot_ready_sync_r : std_logic := '0';
+    signal shot_admission_ready_c : std_logic;
     signal shot_proc_reset_busy_c : std_logic;
     signal shot_tdc_reset_busy_c : std_logic;
 
@@ -123,7 +128,12 @@ begin
         severity failure;
 
     shot_ingress_ready_c <= not shot_pending_r.valid or shot_source_ready_c;
-    o_proc_shot_ready <= shot_ingress_ready_c;
+    -- 다음 레이저 후보점은 단순히 CDC FIFO가 비었는지만으로 허용하지
+    -- 않는다. 모든 활성 GPX Lane의 이전 Shot Drain과 merge가 끝나서
+    -- coordinator가 실제로 새 Shot을 받을 수 있을 때만 허용한다.
+    shot_admission_ready_c <= shot_ingress_ready_c and
+        tdc_shot_ready_sync_r and not proc_reset_busy_c and i_proc_rst_n;
+    o_proc_shot_ready <= shot_admission_ready_c;
     o_shot_drop_sticky <= shot_drop_r;
     o_stop_drop_sticky <= stop_drop_c;
     proc_reset_busy_c <= shot_proc_reset_busy_c or
@@ -132,6 +142,24 @@ begin
         stop_tdc_reset_busy_c or result_tdc_reset_busy_c;
     o_cdc_reset_busy <= proc_reset_busy_c;
     o_tdc_safe <= coordinator_safe_c and not tdc_reset_busy_c;
+
+    -- coordinator의 ready는 여러 GPX lane 상태를 AND한 TDC-domain 조합값이다.
+    -- source 입력 레지스터를 포함한 XPM 동기화기를 사용해 조합 글리치와
+    -- CDC-10을 함께 차단한다. 이 신호는 다음 후보점의 발사 허가에만 쓰며,
+    -- 이미 수락된 Shot의 FIFO 입력 경로를 다시 취소하지 않는다.
+    u_tdc_shot_ready_sync : xpm_cdc_single
+        generic map (
+            DEST_SYNC_FF   => 2,
+            INIT_SYNC_FF   => 1,
+            SIM_ASSERT_CHK => 1,
+            SRC_INPUT_REG  => 1
+        )
+        port map (
+            src_clk  => i_tdc_clk,
+            src_in   => tdc_shot_ready_c,
+            dest_clk => i_proc_clk,
+            dest_out => tdc_shot_ready_sync_r
+        );
 
     p_shot_ingress : process (i_proc_clk, i_proc_rst_n)
     begin

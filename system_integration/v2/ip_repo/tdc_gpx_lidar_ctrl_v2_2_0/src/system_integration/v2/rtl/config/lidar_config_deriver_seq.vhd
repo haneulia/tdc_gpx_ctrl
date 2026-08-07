@@ -18,7 +18,8 @@ entity lidar_config_deriver_seq is
         i_common_half_width  : in  position_t;
         i_fire_width_5ns     : in  u16_t;
         i_fire_timeout_5ns   : in  u16_t;
-        i_target_range_5ns   : in  u32_t;
+        i_gpx_mtimer_ref_ticks : in gpx_mtimer_t;
+        i_effective_target_range_5ns : in u32_t;
         i_start_width_5ns    : in  u16_t;
         i_stop_width_5ns     : in  u16_t;
         i_sim_start_delay_5ns : in u32_t;
@@ -154,6 +155,10 @@ begin
                         r_derived.face_angular_intervals <= v_intervals;
                         r_derived.present_chip_mask <=
                             fn_present_chip_mask(G_BUILD_CONFIG.num_chips);
+                        r_derived.gpx_mtimer_ref_ticks <=
+                            i_gpx_mtimer_ref_ticks;
+                        r_derived.effective_target_range_5ns <=
+                            i_effective_target_range_5ns;
                         r_derived.capture_window_5ns <= i_capture_window_5ns;
 
                         if i_falling_enable = '1' then
@@ -340,7 +345,10 @@ begin
                                 r_mul_right <= to_unsigned(
                                     G_BUILD_CONFIG.proc_clk_mhz, 16);
                             when TIME_TARGET_RANGE_PROC =>
-                                r_mul_left <= i_target_range_5ns;
+                                -- stop_tdc가 GPX Reg7.MTimer 종료보다 먼저
+                                -- 발생하지 않도록 물리 GPX에 기록하는 것과
+                                -- 같은 25 ns 올림 실효 왕복시간을 사용한다.
+                                r_mul_left <= i_effective_target_range_5ns;
                                 r_mul_right <= to_unsigned(
                                     G_BUILD_CONFIG.proc_clk_mhz, 16);
                             when TIME_START_WIDTH_PROC =>

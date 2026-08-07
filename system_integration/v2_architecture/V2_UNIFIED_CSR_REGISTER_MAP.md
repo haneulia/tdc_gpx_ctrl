@@ -76,7 +76,7 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 | `0x024` | FACE_CENTER_4 | R/W | `000032A0` | Face 4 center state |
 | `0x028` | FACE_PROFILE | R/W | `001F04B0` | 공통 half-width와 enable mask |
 | `0x02C` | LASER_FIRE_PROFILE | R/W | `0120000D` | fire width와 fire-done timeout |
-| `0x030` | TARGET_RANGE | R/W | `00000120` | target round-trip window |
+| `0x030` | TARGET_RANGE | R/W | `00000120` | 요청 목표 왕복시간, 5 ns 단위 |
 | `0x034` | TDC_PULSE_WIDTHS | R/W | `00050005` | START/STOP pulse width |
 | `0x038` | SIM_START_DELAY | R/W | `00000085` | simulation START delay |
 | `0x03C` | SHOT_INTERVAL | R/W | `0000C350` | 요청 optical shot interval |
@@ -185,7 +185,7 @@ inactive Face center word는 보존되지만 동작에는 사용되지 않는다
 |---|---:|---|---|
 | LASER_FIRE_PROFILE | 15:0 | 5 ns ticks | FIRE pulse width |
 | LASER_FIRE_PROFILE | 31:16 | 5 ns ticks | FIRE_DONE timeout |
-| TARGET_RANGE | 31:0 | 5 ns ticks | target round-trip/수신 window |
+| TARGET_RANGE | 31:0 | 5 ns ticks | 요청 목표 왕복시간/수신 window |
 | TDC_PULSE_WIDTHS | 15:0 | 5 ns ticks | START_TDC width |
 | TDC_PULSE_WIDTHS | 31:16 | 5 ns ticks | STOP_TDC width |
 | SIM_START_DELAY | 31:0 | 5 ns ticks | simulation START delay |
@@ -195,6 +195,20 @@ inactive Face center word는 보존되지만 동작에는 사용되지 않는다
 5 ns tick 값은 runtime source ABI이다. commit calculator가 build의
 `PROC_CLK_MHZ` 또는 `TDC_CLK_MHZ`에 맞춰 필요한 domain clock 수로 한 번만
 변환한다. `FIRE_DONE_TIMEOUT <= TARGET_RANGE`여야 한다.
+
+`TARGET_RANGE`는 software가 쓰는 유일한 목표 왕복시간 원본이다. 물리
+TDC-GPX의 `Reg7.MTimer[27:15]`는 40 MHz 기준, 즉 25 ns/tick이므로 COMMIT이
+다음 두 값을 자동 계산한다.
+
+```text
+Reg7.MTimer                     = ceil(TARGET_RANGE / 5)
+EFFECTIVE_TARGET_RANGE_5NS      = Reg7.MTimer * 5
+```
+
+레이저 `stop_tdc`, TDC capture window와 실제 GPX active image는 요청값보다
+작아질 수 없는 `EFFECTIVE_TARGET_RANGE_5NS`를 공통으로 사용한다. 기본값
+`TARGET_RANGE=288`은 요청 1,440 ns, `Reg7.MTimer=58`, 실효 1,450 ns이다.
+13-bit MTimer로 표현 가능한 최대 요청값은 `40,955` ticks, 즉 204.775 us다.
 
 ### 3.6 CTL16..CTL19 TDC-GPX
 
@@ -220,7 +234,8 @@ commit 시 `CFG_RUNTIME_BUS_TIMING`으로 거부된다. 짧지만 1..7 범위에
 `TDC_CAPTURE_ADJUST`는 17-bit two's-complement field이다. 음수도 상위
 reserved bit를 sign-extension하지 않고 `[16:0]`에만 기록한다.
 
-`TARGET_RANGE + TDC_CAPTURE_ADJUST`를 TDC clock 수로 올림 변환한 값은
+`EFFECTIVE_TARGET_RANGE_5NS + TDC_CAPTURE_ADJUST`를 TDC clock 수로 올림
+변환한 값은
 검증된 GPX acquisition watchdog 폭 때문에 65,535 clocks 이하여야 한다.
 그보다 큰 shadow 설정은 COMMIT에서 `CFG_RUNTIME_CAPTURE_WINDOW`로 거부되며,
 하위 16 bit로 잘라서 적용하지 않는다.
@@ -290,6 +305,11 @@ ACTIVATE ACK는 모든 build-time present GPX chip의 register programming 완�
 후에만 반환된다.
 따라서 software의 DONE은 단순 CDC 전달 완료가 아니라 물리 GPX image 적용
 완료를 뜻한다.
+
+`GPX_IMAGE_DATA`로 쓴 Reg7 word 중 MTimer 이외의 bit는 그대로 유지된다.
+다만 `Reg7.MTimer[27:15]`는 이중 시간 설정을 막기 위해 CTL12에서 파생한
+값으로 덮어쓴다. `VIEW_ACTIVE=1`로 읽는 Reg7은 software staging 원본이
+아니라 실제 적용된 MTimer를 포함한 effective image다.
 
 ## 4. STAT 레지스터
 
@@ -389,7 +409,7 @@ STAT3을 읽은 뒤 상태 전이를 확정한다.
 |  |  | 15 | Reserved |
 |  |  | 30:16 | UPPER, inclusive |
 |  |  | 31 | Reserved |
-| `0x0F8` | CAPTURE_TDC_CLKS | 31:0 | `(TARGET_RANGE+ADJUST)`의 TDC clock 변환값 |
+| `0x0F8` | CAPTURE_TDC_CLKS | 31:0 | `(EFFECTIVE_TARGET_RANGE_5NS+ADJUST)`의 TDC clock 변환값 |
 | `0x0FC` | DERIVED_MASKS | 3:0 | PRESENT_CHIP_MASK |
 |  |  | 7:4 | ACTIVE_RISE_MASK |
 |  |  | 11:8 | ACTIVE_FALL_MASK |
@@ -523,7 +543,8 @@ W1C한다. 원인이 high인 동안 IRQ_FLAG만 지우면 다시 pending 되는 
 | `30` | maximum Hits | `72` | PREPARE timeout |
 | `31` | GPX bus timing | `73` | gateway protocol |
 | `32` | physical/simulation source mode | `74` | ACTIVATE timeout |
-| `75` | RELEASE timeout | `76` | request-clear timeout |
+| `33` | GPX Reg7.MTimer 표현 범위 초과 | `75` | RELEASE timeout |
+| `76` | request-clear timeout |  |  |
 
 ## 7. 권장 software 순서
 
@@ -546,6 +567,22 @@ W1C한다. 원인이 high인 동안 IRQ_FLAG만 지우면 다시 pending 되는 
     확인한 뒤 CTL24를 읽는다.
 12. CTL0.CLEAR_STATUS로 원래 domain의 transaction/runtime sticky를 clear한다.
 13. IRQ_STATUS source가 0으로 내려온 뒤 IRQ_FLAG를 W1C한다.
+
+운용 중 GPX image 또는 목표 왕복시간을 바꿀 때는 다음 안전 절차를 사용한다.
+
+1. `CTL0.DISARM`을 W1S하고 `STAT3.ARMED=0`, `SCHEDULER_ENABLE=0`,
+   `PHYSICAL_FIRE_ENABLE=0`을 확인한다. RUN과 Encoder/Face 추적은 유지된다.
+2. CTL12와 CTL21/22 staging image를 수정한다. Reg7.MTimer를 별도로 맞추지
+   않는다.
+3. COMMIT 후 STAT2의 성공과 GPX active image readback을 확인한다.
+4. 외부 permit과 `COMMAND_READY=1`을 확인한 뒤 ARM을 다시 W1S한다.
+
+요청 광학각 후보점에서 레이저 실행기 또는 GPX 획득기가 준비되지 않으면
+발사를 늦추지 않고 해당 column을 Hole로 남긴다. 이 Runtime 시간 부족은
+indexed diagnostic `PROC_FLAGS(0x10)[5]`, `PROC_OVERRUN_COUNT(0x13)` 및 IRQ
+source 5 `PROCESSING_WARNING`으로 확인한다. IRQ 이름은 기존 ABI를 유지한
+것이며, 이 bit가 나타내는 `schedule_overrun`은 요청 광학각의 Shot 시간 계약
+오류이므로 단순 운용 안내로 무시하면 안 된다.
 
 운용 중 shadow write는 허용된다. 진행 중 transaction은 COMMIT 순간 snapshot을
 사용하고, 그 뒤의 write는 다음 transaction 후보로 남아 DIRTY가 유지된다.

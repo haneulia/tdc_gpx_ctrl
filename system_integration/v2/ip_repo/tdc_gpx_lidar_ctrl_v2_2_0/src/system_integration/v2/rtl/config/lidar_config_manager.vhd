@@ -145,6 +145,9 @@ begin
             case state_r is
                 when S_IDLE =>
                     if i_commit = '1' then
+                        -- COMMIT 시점의 Shadow 전체를 한 번만 캡처한다.
+                        -- 이후 소프트웨어가 CSR를 다시 써도 진행 중인
+                        -- GPX/Processing 설정에는 섞이지 않는다.
                         source_snapshot_r <= i_shadow;
                         calculator_start_r <= '1';
                         busy_r  <= '1';
@@ -172,6 +175,9 @@ begin
                     end if;
 
                 when S_STAGE_CANDIDATE =>
+                    -- Prepare 동안 scheduler_enable이 내려가고 기존 Shot이
+                    -- Drain될 때까지 기다린다. RUN/ARM 상태 자체는 보존되며
+                    -- 새 설정은 두 클럭 도메인이 함께 승인한 뒤만 활성화된다.
                     prepare_req_r   <= '1';
                     timeout_count_r <= 0;
                     state_r <= S_WAIT_PREPARE;

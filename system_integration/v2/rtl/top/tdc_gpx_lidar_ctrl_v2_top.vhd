@@ -237,6 +237,7 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
     signal stop_tdc_c : std_logic;
     signal shot_start_event_c : shot_start_event_t;
     signal shot_result_event_c : shot_result_t;
+    signal gpx_proc_shot_ready_c : std_logic;
     signal face_close_event_c : face_close_event_t;
     signal face_close_ready_c : std_logic;
     signal face_close_overflow_sticky_c : std_logic;
@@ -507,6 +508,7 @@ begin
             i_enc_z => i_enc_z,
             i_fire_done_raw => i_fire_done,
             i_clear_diagnostics => proc_clear_status_c,
+            i_acquisition_ready => gpx_proc_shot_ready_c,
             i_face_close_ready => face_close_ready_c,
             o_face_close_event => face_close_event_c,
             o_face_close_overflow_sticky =>
@@ -635,7 +637,7 @@ begin
             i_proc_active_valid => proc_active_valid_c,
             i_proc_active_config => proc_active_config_c,
             i_proc_shot => shot_start_event_c,
-            o_proc_shot_ready => open,
+            o_proc_shot_ready => gpx_proc_shot_ready_c,
             i_proc_stop_tdc => stop_tdc_c,
             i_face_close_event => face_close_event_c,
             o_face_close_ready => face_close_ready_c,

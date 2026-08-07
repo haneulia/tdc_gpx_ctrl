@@ -9,6 +9,9 @@ use work.lidar_event_types_pkg.all;
 -- Sequential owner of one accepted-shot lifecycle. Physical CDC and pulse
 -- stretching are explicit boundaries outside this core, so this FSM contains
 -- only request resolution, timeout, simulation delay, range and re-arm state.
+-- 실제 수신 기준 시점(T0)은 물리 모드의 fire_done 동기 이벤트 또는
+-- 시뮬레이션 모드의 동등한 시작 이벤트이다. start_tdc/Shot timestamp와
+-- 목표 왕복시간 카운트는 모두 이 실제 수신 기준 시점(T0)에서 시작한다.
 entity laser_executor_core is
     generic (
         G_BUILD_CONFIG : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG
@@ -342,6 +345,9 @@ begin
                         end if;
 
                     when EXEC_RANGE_WINDOW =>
+                        -- 이 값은 CTL12를 GPX Reg7.MTimer의 25 ns 단위로
+                        -- 올림한 동일 시간이다. 따라서 stop_tdc가 물리 GPX
+                        -- TimerFlag보다 먼저 발생하지 않는다.
                         if range_count_r > 1 then
                             range_count_r <= range_count_r - 1;
                         else

@@ -18,6 +18,7 @@ package lidar_config_types_pkg is
     subtype u32_t is unsigned(31 downto 0);
     subtype angle_udeg_t is unsigned(29 downto 0);
     subtype capture_adjust_t is signed(16 downto 0);
+    subtype gpx_mtimer_t is unsigned(C_GPX_MTIMER_WIDTH - 1 downto 0);
 
     type motor_config_source_t is record
         cpr                    : u16_t;
@@ -89,6 +90,8 @@ package lidar_config_types_pkg is
         present_chip_mask               : chip_mask_t;
         active_rise_mask                : chip_mask_t;
         active_fall_mask                : chip_mask_t;
+        gpx_mtimer_ref_ticks            : gpx_mtimer_t;
+        effective_target_range_5ns      : u32_t;
         fire_width_proc_clks             : u32_t;
         fire_done_timeout_proc_clks      : u32_t;
         target_range_proc_clks          : u32_t;

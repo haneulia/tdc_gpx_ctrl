@@ -45,6 +45,14 @@ package lidar_config_reference_pkg is
         clock_mhz : positive
     ) return u32_t;
 
+    function fn_gpx_mtimer_ref_ticks(
+        target_range_5ns : u32_t
+    ) return u32_t;
+
+    function fn_gpx_effective_target_range_5ns(
+        target_range_5ns : u32_t
+    ) return u32_t;
+
     function fn_validate_runtime_config(
         build_cfg   : lidar_build_config_t;
         runtime_cfg : lidar_runtime_config_t
@@ -146,6 +154,29 @@ package body lidar_config_reference_pkg is
         return quotient(31 downto 0);
     end function fn_ticks_to_clocks;
 
+    function fn_gpx_mtimer_ref_ticks(
+        target_range_5ns : u32_t
+    ) return u32_t is
+        variable quotient  : u32_t;
+        constant DIVISOR_C : u32_t := to_unsigned(
+            C_GPX_REFERENCE_TICK_5NS, 32);
+    begin
+        quotient := target_range_5ns / DIVISOR_C;
+        if target_range_5ns mod DIVISOR_C /= 0 then
+            quotient := quotient + 1;
+        end if;
+        return quotient;
+    end function fn_gpx_mtimer_ref_ticks;
+
+    function fn_gpx_effective_target_range_5ns(
+        target_range_5ns : u32_t
+    ) return u32_t is
+        variable mtimer : u32_t;
+    begin
+        mtimer := fn_gpx_mtimer_ref_ticks(target_range_5ns);
+        return shift_left(mtimer, 2) + mtimer;
+    end function fn_gpx_effective_target_range_5ns;
+
     function fn_circular_distance(
         left_value  : natural;
         right_value : natural;
@@ -170,8 +201,8 @@ package body lidar_config_reference_pkg is
         variable range_ext  : signed(33 downto 0);
         variable adjust_ext : signed(33 downto 0);
     begin
-        range_ext := signed(resize(
-            runtime_cfg.laser.target_range_window_5ns, 34));
+        range_ext := signed(resize(fn_gpx_effective_target_range_5ns(
+            runtime_cfg.laser.target_range_window_5ns), 34));
         adjust_ext := resize(runtime_cfg.tdc.capture_adjust_5ns, 34);
         return range_ext + adjust_ext;
     end function fn_capture_window_ext;
@@ -195,6 +226,7 @@ package body lidar_config_reference_pkg is
         variable capture_clock_product : unsigned(63 downto 0);
         variable effective_rise    : chip_mask_t;
         variable effective_fall    : chip_mask_t;
+        variable mtimer_ref_ticks  : u32_t;
     begin
         build_error := fn_validate_build_config(build_cfg);
         if build_error /= CFG_OK then
@@ -276,11 +308,20 @@ package body lidar_config_reference_pkg is
             return CFG_RUNTIME_FIRE_WIDTH;
         elsif runtime_cfg.laser.target_range_window_5ns = 0 then
             return CFG_RUNTIME_RANGE_WINDOW;
+        elsif runtime_cfg.laser.target_range_window_5ns > to_unsigned(
+              C_GPX_MTIMER_MAX * C_GPX_REFERENCE_TICK_5NS, 32) then
+            return CFG_RUNTIME_GPX_MTIMER_RANGE;
         elsif runtime_cfg.laser.fire_done_timeout_5ns_ticks = 0
               or resize(runtime_cfg.laser.fire_done_timeout_5ns_ticks, 32)
                  > runtime_cfg.laser.target_range_window_5ns then
             return CFG_RUNTIME_FIRE_TIMEOUT;
         end if;
+
+        mtimer_ref_ticks := fn_gpx_mtimer_ref_ticks(
+            runtime_cfg.laser.target_range_window_5ns);
+        assert mtimer_ref_ticks <= to_unsigned(C_GPX_MTIMER_MAX, 32)
+            report "V2-CFG-002 validated GPX MTimer exceeds Reg7 field"
+            severity failure;
 
         capture_window := fn_capture_window_ext(runtime_cfg);
         if capture_window <= 0
@@ -340,6 +381,8 @@ package body lidar_config_reference_pkg is
         variable shot_interval     : positive;
         variable angular_intervals : natural;
         variable capture_window    : signed(33 downto 0);
+        variable mtimer_ref_ticks  : u32_t;
+        variable effective_target : u32_t;
     begin
         validation_error := fn_validate_runtime_config(build_cfg, runtime_cfg);
         assert validation_error = CFG_OK
@@ -353,6 +396,10 @@ package body lidar_config_reference_pkg is
         shot_interval := fn_shot_interval_states(
             runtime_cfg.laser.optical_shot_interval_udeg, total_states);
         capture_window := fn_capture_window_ext(runtime_cfg);
+        mtimer_ref_ticks := fn_gpx_mtimer_ref_ticks(
+            runtime_cfg.laser.target_range_window_5ns);
+        effective_target := fn_gpx_effective_target_range_5ns(
+            runtime_cfg.laser.target_range_window_5ns);
 
         result.total_states := to_unsigned(total_states, 16);
         result.virtual_ticks_hi := runtime_cfg.motor.virtual_ticks_lo + 1;
@@ -394,6 +441,10 @@ package body lidar_config_reference_pkg is
             result.active_fall_mask := (others => '0');
         end if;
 
+        result.gpx_mtimer_ref_ticks := mtimer_ref_ticks(
+            C_GPX_MTIMER_WIDTH - 1 downto 0);
+        result.effective_target_range_5ns := effective_target;
+
         result.fire_width_proc_clks := fn_ticks_to_clocks(resize(
             runtime_cfg.laser.fire_width_5ns_ticks, 32),
             build_cfg.proc_clk_mhz);
@@ -401,7 +452,7 @@ package body lidar_config_reference_pkg is
             runtime_cfg.laser.fire_done_timeout_5ns_ticks, 32),
             build_cfg.proc_clk_mhz);
         result.target_range_proc_clks := fn_ticks_to_clocks(
-            runtime_cfg.laser.target_range_window_5ns,
+            effective_target,
             build_cfg.proc_clk_mhz);
         result.start_width_proc_clks := fn_ticks_to_clocks(resize(
             runtime_cfg.laser.start_width_5ns_ticks, 32),

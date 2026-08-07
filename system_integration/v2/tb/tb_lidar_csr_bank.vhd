@@ -574,7 +574,9 @@ begin
         axi_read(fn_stat_byte_offset(C_STAT_DERIVED_GEOMETRY), x"00013840");
         axi_read(fn_stat_byte_offset(C_STAT_DERIVED_FACE), x"09600961");
         axi_read(fn_stat_byte_offset(C_STAT_FACE_BOUNDS_0), x"0A5000F0");
-        axi_read(fn_stat_byte_offset(C_STAT_CAPTURE_TDC_CLKS), x"00000120");
+        -- CTL12=288 common 5 ns ticks is rounded up to Reg7.MTimer=58
+        -- 25 ns ticks, so the effective GPX capture window is 290 ticks.
+        axi_read(fn_stat_byte_offset(C_STAT_CAPTURE_TDC_CLKS), x"00000122");
         axi_read(fn_stat_byte_offset(C_STAT_DERIVED_MASKS), x"00020C3F");
 
         pulse_reject;

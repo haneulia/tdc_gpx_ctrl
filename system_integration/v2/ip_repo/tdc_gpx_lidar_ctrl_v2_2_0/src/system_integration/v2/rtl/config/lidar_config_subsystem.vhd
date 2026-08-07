@@ -35,6 +35,7 @@ entity lidar_config_subsystem is
         o_recovery_required : out std_logic;
         o_active_valid     : out std_logic;
         o_active           : out lidar_active_config_t;
+        o_candidate        : out lidar_active_config_t;
         o_proc_enable      : out std_logic;
         o_proc_active_valid : out std_logic;
         o_proc_active      : out lidar_active_config_t;
@@ -69,6 +70,7 @@ begin
     o_prepare_req  <= prepare_req;
     o_activate_req <= activate_req;
     o_release_req  <= release_req;
+    o_candidate    <= candidate;
 
     u_manager : entity work.lidar_config_manager
         generic map (

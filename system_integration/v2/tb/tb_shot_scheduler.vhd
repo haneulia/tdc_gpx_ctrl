@@ -71,6 +71,7 @@ architecture sim of tb_shot_scheduler is
     signal active_config : lidar_active_config_t := C_BASE_CONFIG;
     signal face_event    : face_event_t := C_FACE_EVENT_IDLE;
     signal executor_ready: std_logic := '1';
+    signal acquisition_ready : std_logic := '1';
     signal request_accept: std_logic := '0';
     signal request_drop  : std_logic := '0';
     signal clear_diag    : std_logic := '0';
@@ -96,6 +97,7 @@ begin
             i_active_config           => active_config,
             i_face_event              => face_event,
             i_executor_ready          => executor_ready,
+            i_acquisition_ready       => acquisition_ready,
             i_request_accept          => request_accept,
             i_request_drop            => request_drop,
             i_clear_diagnostics       => clear_diag,
@@ -141,6 +143,7 @@ begin
             active_valid   <= '0';
             face_event     <= C_FACE_EVENT_IDLE;
             executor_ready <= '1';
+            acquisition_ready <= '1';
             request_accept <= '0';
             request_drop   <= '0';
             clear_diag     <= '0';
@@ -423,6 +426,26 @@ begin
             "V2-SCHED-P25 post-boundary entry");
         resolve_request(true, "V2-SCHED-P25 post-boundary entry");
         report "V2-SCHED-P25 boundary block preserves ARM quarantine PASS"
+            severity note;
+
+        -- P26: requested optical-angle points also require end-to-end GPX
+        -- admission. A busy GPX Drain creates an explicit hole/error and can
+        -- never move the physical fire to a later off-grid position.
+        reset_dut;
+        config_v := fn_test_config(210, 2, 2);
+        load_config(config_v);
+        acquisition_ready <= '0';
+        apply_face(110, 0, DIRECTION_CW, '1', '1', '0', '0', '1',
+            false, 0, '0', true, "V2-SCHED-P26 GPX busy col0");
+        acquisition_ready <= '1';
+        apply_face(111, 0, DIRECTION_CW, '1', '0', '0', '0', '1',
+            false, 0, '0', false, "V2-SCHED-P26 no late retry");
+        apply_face(112, 0, DIRECTION_CW, '1', '0', '0', '0', '1',
+            true, 1, '1', false, "V2-SCHED-P26 GPX ready col1");
+        resolve_request(true, "V2-SCHED-P26 GPX ready col1");
+        check(overrun_sticky = '1' and overrun_count = 1,
+            "V2-SCHED-P26 GPX admission error diagnostics mismatch");
+        report "V2-SCHED-P26 GPX-ready angle-priority PASS"
             severity note;
 
         report "LIDAR_V2_SHOT_SCHEDULER_PASS proc_mhz=" &

@@ -70,6 +70,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_D_CONFIG_MANAGER.md](V2_CHECKPOINT_D_CONFIG_MANAGER.md) | Atomic commit manager, domain gateway, timeout, reset and CDC verification |
 | [V2_CHECKPOINT_E_UNIFIED_CSR.md](V2_CHECKPOINT_E_UNIFIED_CSR.md) | Unified CSR, active readback, IRQ and dual-clock implementation result |
 | [V2_UNIFIED_CSR_REGISTER_MAP.md](V2_UNIFIED_CSR_REGISTER_MAP.md) | Korean bit-level CTL/STAT/IRQ software ABI and defaults |
+| [V2_RUNTIME_GPX_RECONFIG_SHOT_TIMING_CLOSURE_KO.md](V2_RUNTIME_GPX_RECONFIG_SHOT_TIMING_CLOSURE_KO.md) | DISARM 기반 Runtime GPX 재설정, Reg7.MTimer 단일 원본 및 광학 후보점 hard-deadline 검증 |
 | [V2_STAGE3_F0_PROCESSING_ORACLE.md](V2_STAGE3_F0_PROCESSING_ORACLE.md) | Frozen B0..B3 event, safety and latency comparison contract for Checkpoint F |
 | [V2_CHECKPOINT_F1_MOTOR_POSITION.md](V2_CHECKPOINT_F1_MOTOR_POSITION.md) | B0 motor position, virtual source, latency and 150/200 MHz route result |
 | [V2_CHECKPOINT_F2_FACE_TRACKER.md](V2_CHECKPOINT_F2_FACE_TRACKER.md) | B1 Face membership, traversal, 1..5-Face and 150/200 MHz route result |

@@ -93,6 +93,7 @@ begin
             o_recovery_required => recovery_required,
             o_active_valid      => active_valid,
             o_active            => active_cfg,
+            o_candidate         => open,
             o_proc_enable       => proc_enable,
             o_proc_active_valid => proc_active_valid,
             o_proc_active       => proc_active,

@@ -122,12 +122,14 @@ begin
         run_case("V2-CALC-001 default", C_DEFAULT_RUNTIME_CONFIG, CFG_OK);
         check(to_integer(s_derived.fire_width_proc_clks) = 10
               and to_integer(s_derived.fire_done_timeout_proc_clks) = 216
-              and to_integer(s_derived.target_range_proc_clks) = 216
+              and to_integer(s_derived.gpx_mtimer_ref_ticks) = 58
+              and to_integer(s_derived.effective_target_range_5ns) = 290
+              and to_integer(s_derived.target_range_proc_clks) = 218
               and to_integer(s_derived.start_width_proc_clks) = 4
               and to_integer(s_derived.stop_width_proc_clks) = 4
               and to_integer(
                   s_derived.simulation_start_delay_proc_clks) = 100
-              and to_integer(s_derived.capture_window_tdc_clks) = 288
+              and to_integer(s_derived.capture_window_tdc_clks) = 290
               and s_derived.scan_timeout_tdc_clks = 0,
             "V2-CALC-001 complete 5 ns time conversion");
 
@@ -137,30 +139,39 @@ begin
         run_case("V2-CALC-002 ceil and signed calibration", v_cfg, CFG_OK);
         check(to_integer(s_derived.shot_interval_states) = 2
               and to_integer(s_derived.columns_per_face) = 1200
-              and to_integer(s_derived.capture_window_5ns) = 267,
+              and to_integer(s_derived.capture_window_5ns) = 269,
             "V2-CALC-002 derived edge values");
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
         v_cfg.laser.target_range_window_5ns := to_unsigned(289, 32);
         v_cfg.tdc.scan_timeout_5ns := to_unsigned(289, 32);
         run_case("V2-CALC-003 fractional clock ceil", v_cfg, CFG_OK);
-        check(to_integer(s_derived.target_range_proc_clks) = 217
-              and to_integer(s_derived.capture_window_tdc_clks) = 289
+        check(to_integer(s_derived.gpx_mtimer_ref_ticks) = 58
+              and to_integer(s_derived.effective_target_range_5ns) = 290
+              and to_integer(s_derived.target_range_proc_clks) = 218
+              and to_integer(s_derived.capture_window_tdc_clks) = 290
               and to_integer(s_derived.scan_timeout_tdc_clks) = 289,
             "V2-CALC-003 150/200 MHz conversion");
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
         v_cfg.laser.fire_done_timeout_5ns_ticks := to_unsigned(1, 16);
         v_cfg.laser.target_range_window_5ns := to_unsigned(
-            C_GPX_CAPTURE_COUNTER_MAX_CLKS, 32);
-        run_case("V2-CALC-004 capture counter maximum", v_cfg, CFG_OK);
+            C_GPX_MTIMER_MAX * C_GPX_REFERENCE_TICK_5NS, 32);
+        run_case("V2-CALC-004 GPX MTimer maximum", v_cfg, CFG_OK);
         check(to_integer(s_derived.capture_window_tdc_clks)
-              = C_GPX_CAPTURE_COUNTER_MAX_CLKS,
-            "V2-CALC-004 exact 16-bit GPX capture boundary");
+              = C_GPX_MTIMER_MAX * C_GPX_REFERENCE_TICK_5NS
+              and to_integer(s_derived.gpx_mtimer_ref_ticks)
+              = C_GPX_MTIMER_MAX,
+            "V2-CALC-004 exact 13-bit GPX MTimer boundary");
 
         v_cfg.laser.target_range_window_5ns := to_unsigned(
-            C_GPX_CAPTURE_COUNTER_MAX_CLKS + 1, 32);
-        run_case("V2-CALC-004A capture counter overflow", v_cfg,
+            C_GPX_MTIMER_MAX * C_GPX_REFERENCE_TICK_5NS + 1, 32);
+        run_case("V2-CALC-004A GPX MTimer overflow", v_cfg,
+            CFG_RUNTIME_GPX_MTIMER_RANGE);
+
+        v_cfg := C_DEFAULT_RUNTIME_CONFIG;
+        v_cfg.tdc.capture_adjust_5ns := to_signed(65_246, 17);
+        run_case("V2-CALC-004B capture counter overflow", v_cfg,
             CFG_RUNTIME_CAPTURE_WINDOW);
 
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
@@ -248,7 +259,7 @@ begin
         v_cfg := C_DEFAULT_RUNTIME_CONFIG;
         v_cfg.laser.fire_done_timeout_5ns_ticks := to_unsigned(1, 16);
         v_cfg.laser.target_range_window_5ns := to_unsigned(1, 32);
-        v_cfg.tdc.capture_adjust_5ns := to_signed(-2, 17);
+        v_cfg.tdc.capture_adjust_5ns := to_signed(-6, 17);
         run_case("V2-CALC-114 capture underflow", v_cfg,
             CFG_RUNTIME_CAPTURE_WINDOW);
 

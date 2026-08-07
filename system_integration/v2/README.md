@@ -27,6 +27,26 @@ unchanged and is used as the observable-behavior reference during migration.
 does not call it. The sequential commit calculator derives the same values over
 multiple clocks and is checked against this reference model.
 
+## Runtime Timing And Safe GPX Reconfiguration
+
+- `CTL12.TARGET_RANGE` is the sole software-owned target round-trip time in
+  common 5 ns ticks.
+- GPX `Reg7.MTimer` is derived as `ceil(TARGET_RANGE/5)` because the physical
+  GPX reference is 40 MHz, then the Laser and GPX paths both use the resulting
+  25 ns-grid effective time. A direct staged MTimer value is intentionally
+  overridden.
+- Runtime GPX changes use `DISARM -> verify laser gates off -> edit shadow/image
+  -> COMMIT -> verify active image -> ARM`. DISARM preserves RUN and Encoder/
+  Face tracking.
+- The requested optical-angle lattice has priority over delayed firing. If the
+  Laser lifecycle or GPX acquisition is not ready at a due point, the scheduler
+  leaves a Hole and records `schedule_overrun`; it never fires later at the
+  wrong angle.
+
+The Korean operational details, exact status bits and error codes are in
+`ip_package/PRODUCT_GUIDE_KO.md` and
+`../v2_architecture/V2_UNIFIED_CSR_REGISTER_MAP.md`.
+
 ## Current Status
 
 - The authoritative Stage/Checkpoint mapping is Section 5 of

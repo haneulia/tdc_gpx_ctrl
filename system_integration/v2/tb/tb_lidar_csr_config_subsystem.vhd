@@ -11,7 +11,9 @@ use work.lidar_config_reference_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
 use work.lidar_gpx_pkg.all;
+use work.lidar_gpx_image_pkg.all;
 use work.lidar_status_pkg.all;
+use work.tdc_gpx_cfg_pkg.all;
 
 entity tb_lidar_csr_config_subsystem is
     generic (
@@ -36,6 +38,20 @@ architecture sim of tb_lidar_csr_config_subsystem is
         result.tdc_clk_mhz  := G_TDC_CLK_MHZ;
         return result;
     end function fn_build_profile;
+
+    function fn_expected_reg7(
+        target_range_5ns : natural
+    ) return std_logic_vector is
+        variable result : std_logic_vector(31 downto 0) :=
+            C_GPX_REGISTER_IMAGE_DEFAULT(7);
+        variable mtimer : u32_t;
+    begin
+        mtimer := fn_gpx_mtimer_ref_ticks(
+            to_unsigned(target_range_5ns, 32));
+        result(c_REG7_MTIMER_HI downto c_REG7_MTIMER_LO) :=
+            std_logic_vector(mtimer(C_GPX_MTIMER_WIDTH - 1 downto 0));
+        return result;
+    end function fn_expected_reg7;
 
     constant C_BUILD_CONFIG : lidar_build_config_t := fn_build_profile;
 
@@ -105,6 +121,8 @@ architecture sim of tb_lidar_csr_config_subsystem is
     signal tdc_apply_count : natural := 0;
     signal last_applied_reg5 : std_logic_vector(31 downto 0) :=
         (others => '0');
+    signal last_applied_reg7 : std_logic_vector(31 downto 0) :=
+        (others => '0');
 
 begin
 
@@ -154,6 +172,7 @@ begin
                 tdc_apply_delay <= 0;
                 tdc_apply_count <= 0;
                 last_applied_reg5 <= (others => '0');
+                last_applied_reg7 <= (others => '0');
             else
                 tdc_config_done <= '0';
                 if tdc_config_apply = '1' then
@@ -167,6 +186,7 @@ begin
                     tdc_apply_delay <= 7;
                     tdc_apply_count <= tdc_apply_count + 1;
                     last_applied_reg5 <= tdc_register_image(5);
+                    last_applied_reg7 <= tdc_register_image(7);
                 elsif tdc_apply_pending = '1' then
                     assert tdc_enable = '0'
                         report "V2-CSR-INT TDC enabled while GPX apply pending"
@@ -383,6 +403,25 @@ begin
                 severity failure;
         end procedure wait_done;
 
+        procedure wait_operation_state(
+            constant expected_running : std_logic;
+            constant expected_armed   : std_logic;
+            constant case_name        : string
+        ) is
+            variable cycles : natural := 0;
+        begin
+            loop
+                wait until rising_edge(proc_clk);
+                wait for 1 ps;
+                cycles := cycles + 1;
+                exit when operation_state.running = expected_running and
+                    operation_state.armed = expected_armed;
+                assert cycles < C_MAX_WAIT_CLKS
+                    report case_name & ": operation-state timeout"
+                    severity failure;
+            end loop;
+        end procedure wait_operation_state;
+
         procedure check_active(
             constant expected_source  : lidar_runtime_config_t;
             constant expected_version : natural
@@ -429,9 +468,29 @@ begin
         assert tdc_apply_count = 1 and last_applied_reg5 = x"001ABCDE"
             report "V2-CSR-INT first GPX image apply mismatch"
             severity failure;
+        assert last_applied_reg7 = fn_expected_reg7(288)
+            report "V2-CSR-INT Reg7.MTimer was not derived from CTL12"
+            severity failure;
         axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000105");
         axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"001ABCDE");
+        axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000107");
+        axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA),
+            fn_expected_reg7(288));
         axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000005");
+
+        -- 권장 운용 절차의 앞부분을 실제 CSR 명령으로 검증한다. DISARM은
+        -- RUN/Encoder 추적을 유지하면서 scheduler/fire만 닫아야 한다.
+        command(C_CMD_RUN_BIT);
+        wait_operation_state('1', '0', "V2-CSR-INT runtime RUN");
+        command(C_CMD_ARM_BIT);
+        wait_operation_state('1', '1', "V2-CSR-INT runtime ARM");
+        command(C_CMD_DISARM_BIT);
+        wait_operation_state('1', '0', "V2-CSR-INT runtime DISARM");
+        assert operation_state.scheduler_enable = '0' and
+               operation_state.physical_fire_enable = '0' and
+               operation_state.simulation_enable = '0'
+            report "V2-CSR-INT DISARM left a shot/fire path enabled"
+            severity failure;
 
         command(C_CMD_CLEAR_STATUS_BIT);
         axi_write(fn_ctl_byte_offset(C_CTL_SHOT_INTERVAL), x"000186A0");
@@ -455,6 +514,22 @@ begin
         assert tdc_apply_count = 2 and last_applied_reg5 = x"001ABCDE"
             report "V2-CSR-INT in-flight GPX image snapshot changed"
             severity failure;
+        assert operation_state.running = '1' and
+               operation_state.armed = '0' and
+               operation_state.scheduler_enable = '0'
+            report "V2-CSR-INT GPX commit changed DISARM/RUN policy"
+            severity failure;
+
+        -- GPX 적용 성공을 확인한 뒤 ARM하면 기존 RUN 상태에서 Shot 허가가
+        -- 복구된다. 이후 테스트는 레이저가 꺼진 상태로 계속한다.
+        command(C_CMD_ARM_BIT);
+        wait_operation_state('1', '1', "V2-CSR-INT post-GPX ARM");
+        assert operation_state.simulation_enable = '1' and
+               operation_state.physical_fire_enable = '0'
+            report "V2-CSR-INT post-GPX ARM selected the wrong source path"
+            severity failure;
+        command(C_CMD_DISARM_BIT);
+        wait_operation_state('1', '0', "V2-CSR-INT post-GPX DISARM");
         axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000105");
         axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), x"001ABCDE");
         axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), x"00000005");

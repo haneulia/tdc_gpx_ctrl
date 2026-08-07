@@ -73,6 +73,8 @@ architecture rtl of lidar_echo_subsystem_impl is
         present_chip_mask               => (others => '0'),
         active_rise_mask                => (others => '0'),
         active_fall_mask                => (others => '0'),
+        gpx_mtimer_ref_ticks            => (others => '0'),
+        effective_target_range_5ns      => (others => '0'),
         fire_width_proc_clks            => (others => '0'),
         fire_done_timeout_proc_clks     => (others => '0'),
         target_range_proc_clks          => (others => '0'),

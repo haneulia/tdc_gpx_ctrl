@@ -40,10 +40,15 @@ architecture rtl of lidar_commit_calculator is
     signal w_validator_error   : lidar_cfg_error_t;
     signal w_total_states      : u16_t;
     signal w_angle_product     : unsigned(63 downto 0);
+    signal w_gpx_mtimer_ref_ticks : gpx_mtimer_t;
+    signal w_effective_target_range : u32_t;
     signal w_capture_window    : u32_t;
     signal w_val_mul_start     : std_logic;
     signal w_val_mul_left      : u32_t;
     signal w_val_mul_right     : u16_t;
+    signal w_val_div_start     : std_logic;
+    signal w_val_div_numerator : unsigned(63 downto 0);
+    signal w_val_div_denominator : u32_t;
 
     signal w_deriver_done      : std_logic;
     signal w_deriver_fault     : std_logic;
@@ -61,6 +66,9 @@ architecture rtl of lidar_commit_calculator is
     signal w_mul_done    : std_logic;
     signal w_mul_product : unsigned(63 downto 0);
 
+    signal w_div_start     : std_logic;
+    signal w_div_numerator : unsigned(63 downto 0);
+    signal w_div_denominator : u32_t;
     signal w_div_done      : std_logic;
     signal w_div_zero      : std_logic;
     signal w_div_quotient  : unsigned(63 downto 0);
@@ -81,6 +89,13 @@ begin
         else w_der_mul_left;
     w_mul_right <= w_val_mul_right when r_phase = P_VALIDATE
         else w_der_mul_right;
+    w_div_start <= w_val_div_start when r_phase = P_VALIDATE
+        else w_der_div_start when r_phase = P_DERIVE
+        else '0';
+    w_div_numerator <= w_val_div_numerator when r_phase = P_VALIDATE
+        else w_der_div_numerator;
+    w_div_denominator <= w_val_div_denominator when r_phase = P_VALIDATE
+        else w_der_div_denominator;
 
     u_multiplier : entity work.lidar_u32_u16_multiplier_seq
         port map (
@@ -98,9 +113,9 @@ begin
         port map (
             i_clk         => i_clk,
             i_rst_n       => i_rst_n,
-            i_start       => w_der_div_start,
-            i_numerator   => w_der_div_numerator,
-            i_denominator => w_der_div_denominator,
+            i_start       => w_div_start,
+            i_numerator   => w_div_numerator,
+            i_denominator => w_div_denominator,
             o_busy        => open,
             o_done        => w_div_done,
             o_div_zero    => w_div_zero,
@@ -122,12 +137,21 @@ begin
             o_error              => w_validator_error,
             o_total_states       => w_total_states,
             o_angle_product      => w_angle_product,
+            o_gpx_mtimer_ref_ticks => w_gpx_mtimer_ref_ticks,
+            o_effective_target_range_5ns => w_effective_target_range,
             o_capture_window_5ns => w_capture_window,
             o_mul_start          => w_val_mul_start,
             o_mul_left           => w_val_mul_left,
             o_mul_right          => w_val_mul_right,
             i_mul_done           => w_mul_done,
-            i_mul_product        => w_mul_product
+            i_mul_product        => w_mul_product,
+            o_div_start          => w_val_div_start,
+            o_div_numerator      => w_val_div_numerator,
+            o_div_denominator    => w_val_div_denominator,
+            i_div_done           => w_div_done,
+            i_div_zero           => w_div_zero,
+            i_div_quotient       => w_div_quotient,
+            i_div_remainder      => w_div_remainder
         );
 
     u_deriver : entity work.lidar_config_deriver_seq
@@ -144,7 +168,8 @@ begin
             i_fire_width_5ns     => r_source.laser.fire_width_5ns_ticks,
             i_fire_timeout_5ns   =>
                 r_source.laser.fire_done_timeout_5ns_ticks,
-            i_target_range_5ns   => r_source.laser.target_range_window_5ns,
+            i_gpx_mtimer_ref_ticks => w_gpx_mtimer_ref_ticks,
+            i_effective_target_range_5ns => w_effective_target_range,
             i_start_width_5ns    => r_source.laser.start_width_5ns_ticks,
             i_stop_width_5ns     => r_source.laser.stop_width_5ns_ticks,
             i_sim_start_delay_5ns =>

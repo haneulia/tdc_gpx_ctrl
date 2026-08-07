@@ -184,6 +184,9 @@ architecture rtl of lidar_gpx_acquisition_lane is
             result.bus_ticks := active.source.tdc.bus_ticks(2 downto 0);
             result.start_off1 := active.source.tdc.start_offset;
             result.falling_enable := active.source.tdc.falling_enable;
+            result.cfg_reg7(
+                c_REG7_MTIMER_HI downto c_REG7_MTIMER_LO) :=
+                std_logic_vector(active.derived.gpx_mtimer_ref_ticks);
         end if;
         return result;
     end function fn_legacy_config;
@@ -220,6 +223,11 @@ architecture rtl of lidar_gpx_acquisition_lane is
                 active.derived.active_fall_mask(G_CHIP_INDEX) = '1';
             result(5)(c_REG5_STARTOFF1_HI downto c_REG5_STARTOFF1_LO) :=
                 std_logic_vector(active.source.tdc.start_offset);
+            -- CTL12 목표 왕복시간을 40 MHz GPX 기준(25 ns/tick)으로
+            -- 올림 변환한 값이다. 레이저 stop_tdc와 Reg7.MTimer가 같은
+            -- 시간 원본을 사용하도록 Lane 경계에서도 한 번 더 보장한다.
+            result(7)(c_REG7_MTIMER_HI downto c_REG7_MTIMER_LO) :=
+                std_logic_vector(active.derived.gpx_mtimer_ref_ticks);
         end if;
 
         result(5)(c_REG5_MASTER_ALU_TRIG) := '1';
