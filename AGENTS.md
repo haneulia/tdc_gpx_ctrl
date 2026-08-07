@@ -24,6 +24,9 @@
    - `G_PHASE_TIMEOUT_US`: 통합 설정 PREPARE/ACTIVATE/RELEASE 단계 제한시간
 8. `측정 시작 기준시점 (T0)`은 물리 모드에서 동기화된 `fire_done`을 승인하고
    `start_tdc`를 발생시키는 사건으로 설명한다. 약어만 단독으로 먼저 쓰지 않는다.
-9. TDC-GPX `MTimer`와 `TARGET_RANGE_WINDOW_5NS`는 별도 설정원임을 명시한다.
-   둘의 일치가 RTL에서 자동 보장되는지, 소프트웨어 계약인지 항상 구분해서 보고한다.
-
+9. `레이저 목표 왕복시간 (TARGET_RANGE_WINDOW_5NS)`은 `CTL12`가 소유하는 유일한
+   Runtime 설정원이다. TDC-GPX `Reg7.MTimer`는 RTL이 40 MHz 기준 25 ns 단위로
+   올림 변환해 자동 파생하며, 별도 소프트웨어 설정값처럼 설명하지 않는다.
+10. 기존 IRQ ABI 이름 `PROCESSING_WARNING` 안의 `schedule_overrun`은 요청 광학각
+    후보점까지 처리가 끝나지 못한 Shot 시간 계약 오류다. 단순 안내 경고로 축소해
+    설명하지 않는다.
