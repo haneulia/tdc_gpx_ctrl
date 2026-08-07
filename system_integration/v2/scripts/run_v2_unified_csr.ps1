@@ -33,6 +33,7 @@ $SynthFiles = @(
     "$Hdl/tdc_gpx_cfg_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_image_pkg.vhd",
+    "$Hdl/system_integration/v2/pkg/lidar_status_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_csr_map_pkg.vhd",
     "$Hdl/../ip_repo/src/csr/axil_fsm_32.vhd",
     "$Hdl/../ip_repo/src/csr/axil_intr_32.vhd",

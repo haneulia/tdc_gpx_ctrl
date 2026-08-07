@@ -11,6 +11,7 @@ use work.lidar_gpx_image_pkg.all;
 use work.lidar_gpx_data_pkg.all;
 use work.lidar_gpx_vdma_pkg.all;
 use work.lidar_processing_pkg.all;
+use work.lidar_status_pkg.all;
 
 -- Stage 8 K0 integration boundary. Completed sub-stages use their production
 -- owners; not-yet-integrated physical/data boundaries remain fail-safe. This
@@ -214,6 +215,13 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
 
     signal csr_clear_status_c : std_logic;
     signal csr_soft_reset_c : std_logic;
+    signal diag_request_valid_c : std_logic;
+    signal diag_request_ready_c : std_logic;
+    signal diag_request_index_c : lidar_diag_index_t;
+    signal diag_response_valid_c : std_logic;
+    signal diag_response_ready_c : std_logic;
+    signal diag_response_c : lidar_diag_response_t;
+    signal runtime_irq_c : lidar_runtime_irq_t;
     signal system_command_ready_c : std_logic;
     signal system_command_rejected_c : std_logic;
     signal proc_clear_status_c : std_logic;
@@ -251,11 +259,19 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
     signal shot_result_event_c : shot_result_t;
     signal face_close_event_c : face_close_event_t;
     signal face_close_ready_c : std_logic;
+    signal face_close_overflow_sticky_c : std_logic;
+    signal processing_diagnostics_c : processing_diagnostics_t;
+    signal b0_to_accept_clks_c : processing_latency_t;
+    signal physical_to_fire_clks_c : processing_latency_t;
+    signal virtual_to_accept_clks_c : processing_latency_t;
+    signal fire_done_sync_clks_c : unsigned(15 downto 0);
+    signal rearm_margin_clks_c : unsigned(15 downto 0);
 
     signal echo_profile_ready_c : std_logic;
     signal echo_profile_busy_c : std_logic;
     signal echo_profile_version_c : u16_t;
     signal echo_idle_c : std_logic;
+    signal echo_diagnostics_c : echo_diagnostics_t;
 
     signal rise_active_profile_c : gpx_vdma_lane_profile_t;
     signal fall_active_profile_c : gpx_vdma_lane_profile_t;
@@ -273,6 +289,16 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
     signal gpx_frame_close_ready_c : std_logic;
     signal gpx_frame_output_done_c : std_logic;
     signal gpx_axis_idle_c : std_logic;
+    signal gpx_context_fault_sticky_c : std_logic;
+    signal gpx_active_mask_c : chip_mask_t;
+    signal gpx_terminal_mask_c : chip_mask_t;
+    signal gpx_tdc_status_c : gpx_lane_status_array_t;
+    signal gpx_tdc_faults_c : gpx_lane_faults_array_t;
+    signal gpx_shot_drop_sticky_c : std_logic;
+    signal gpx_stop_drop_sticky_c : std_logic;
+    signal gpx_hit_fault_sticky_c : gpx_hit_decoder_faults_t;
+    signal gpx_cell_fault_sticky_c : gpx_cell_collector_faults_t;
+    signal gpx_frame_fault_sticky_c : gpx_frame_assembler_faults_t;
 
     signal gpx_adr_c : gpx_bus_address_array_t;
     signal gpx_csn_c : chip_mask_t;
@@ -371,6 +397,13 @@ begin
             i_proc_activate_fault => proc_activate_fault_c,
             i_system_command_ready => system_command_ready_c,
             i_system_command_rejected => system_command_rejected_c,
+            i_runtime_irq => runtime_irq_c,
+            o_diag_request_valid => diag_request_valid_c,
+            i_diag_request_ready => diag_request_ready_c,
+            o_diag_request_index => diag_request_index_c,
+            i_diag_response_valid => diag_response_valid_c,
+            o_diag_response_ready => diag_response_ready_c,
+            i_diag_response => diag_response_c,
             o_irq => o_irq,
             o_clear_status => csr_clear_status_c,
             o_soft_reset_request => csr_soft_reset_c,
@@ -424,6 +457,61 @@ begin
         gpx_proc_idle_c and gpx_axis_idle_c and
         not gpx_cdc_reset_busy_c;
 
+    u_status_snapshot : entity work.lidar_status_snapshot_subsystem
+        generic map (
+            G_BUILD_CONFIG => C_BUILD_CONFIG
+        )
+        port map (
+            i_csr_clk => s_axi_csr_aclk,
+            i_csr_rst_n => s_axi_csr_aresetn,
+            i_csr_request_valid => diag_request_valid_c,
+            o_csr_request_ready => diag_request_ready_c,
+            i_csr_request_index => diag_request_index_c,
+            o_csr_response_valid => diag_response_valid_c,
+            i_csr_response_ready => diag_response_ready_c,
+            o_csr_response => diag_response_c,
+            i_proc_clk => proc_aclk,
+            i_proc_rst_n => proc_aresetn,
+            i_proc_clear_status => proc_clear_status_c,
+            i_processing_diagnostics => processing_diagnostics_c,
+            i_echo_diagnostics => echo_diagnostics_c,
+            i_face_close_overflow_sticky =>
+                face_close_overflow_sticky_c,
+            i_pipeline_idle => processing_pipeline_idle_c,
+            i_echo_idle => echo_idle_c,
+            i_gpx_proc_idle => gpx_proc_idle_c,
+            i_gpx_axis_idle => gpx_axis_idle_c,
+            i_echo_profile_ready => echo_profile_ready_c,
+            i_echo_profile_busy => echo_profile_busy_c,
+            i_echo_profile_version => echo_profile_version_c,
+            i_rise_profile => rise_active_profile_c,
+            i_fall_profile => fall_active_profile_c,
+            i_gpx_context_fault_sticky => gpx_context_fault_sticky_c,
+            i_gpx_shot_drop_sticky => gpx_shot_drop_sticky_c,
+            i_gpx_stop_drop_sticky => gpx_stop_drop_sticky_c,
+            i_gpx_cdc_reset_busy => gpx_cdc_reset_busy_c,
+            i_hit_fault_sticky => gpx_hit_fault_sticky_c,
+            i_cell_fault_sticky => gpx_cell_fault_sticky_c,
+            i_frame_fault_sticky => gpx_frame_fault_sticky_c,
+            i_b0_to_accept_clks => b0_to_accept_clks_c,
+            i_physical_to_fire_clks => physical_to_fire_clks_c,
+            i_virtual_to_accept_clks => virtual_to_accept_clks_c,
+            i_fire_done_sync_clks => fire_done_sync_clks_c,
+            i_rearm_margin_clks => rearm_margin_clks_c,
+            i_tdc_clk => i_tdc_clk,
+            i_tdc_rst_n => i_tdc_aresetn,
+            i_tdc_clear_status => tdc_clear_status_c,
+            i_active_mask => gpx_active_mask_c,
+            i_terminal_mask => gpx_terminal_mask_c,
+            i_lane_status => gpx_tdc_status_c,
+            i_lane_faults => gpx_tdc_faults_c,
+            i_tdc_safe => gpx_tdc_safe_c,
+            i_tdc_run_enable => tdc_run_enable_c,
+            i_tdc_active_valid => tdc_active_valid_c,
+            i_tdc_config_ready => tdc_config_ready_c,
+            o_runtime_irq => runtime_irq_c
+        );
+
     u_processing : entity work.lidar_processing_subsystem
         generic map (
             G_BUILD_CONFIG => C_BUILD_CONFIG
@@ -441,7 +529,8 @@ begin
             i_clear_diagnostics => proc_clear_status_c,
             i_face_close_ready => face_close_ready_c,
             o_face_close_event => face_close_event_c,
-            o_face_close_overflow_sticky => open,
+            o_face_close_overflow_sticky =>
+                face_close_overflow_sticky_c,
             m_mon_axis_tready => m_axis_monitor_tready,
             m_mon_axis_tvalid => m_axis_monitor_tvalid,
             m_mon_axis_tdata => m_axis_monitor_tdata,
@@ -469,12 +558,12 @@ begin
             o_virtual_a => open,
             o_virtual_b => open,
             o_virtual_z => open,
-            o_b0_to_accept_clks => open,
-            o_physical_to_fire_clks => open,
-            o_virtual_to_accept_clks => open,
-            o_fire_done_sync_clks => open,
-            o_rearm_margin_clks => open,
-            o_diagnostics => open
+            o_b0_to_accept_clks => b0_to_accept_clks_c,
+            o_physical_to_fire_clks => physical_to_fire_clks_c,
+            o_virtual_to_accept_clks => virtual_to_accept_clks_c,
+            o_fire_done_sync_clks => fire_done_sync_clks_c,
+            o_rearm_margin_clks => rearm_margin_clks_c,
+            o_diagnostics => processing_diagnostics_c
         );
 
     u_echo : entity work.lidar_echo_subsystem
@@ -498,7 +587,7 @@ begin
             o_profile_version => echo_profile_version_c,
             o_window_active => open,
             o_idle => echo_idle_c,
-            o_diagnostics => open
+            o_diagnostics => echo_diagnostics_c
         );
 
     u_processing_activation :
@@ -583,7 +672,7 @@ begin
             o_shot_done_context => open,
             o_proc_idle => gpx_proc_idle_c,
             o_outstanding_shots => open,
-            o_context_fault_sticky => open,
+            o_context_fault_sticky => gpx_context_fault_sticky_c,
             i_tdc_clk => i_tdc_clk,
             i_tdc_rst_n => i_tdc_aresetn,
             i_tdc_active_valid => tdc_active_valid_c,
@@ -616,18 +705,18 @@ begin
             o_stopdis => gpx_stopdis_c,
             o_alutrigger => gpx_alutrigger_c,
             o_puresn => gpx_puresn_c,
-            o_active_mask => open,
-            o_terminal_mask => open,
-            o_tdc_status => open,
-            o_tdc_faults => open,
-            o_shot_drop_sticky => open,
-            o_stop_drop_sticky => open,
+            o_active_mask => gpx_active_mask_c,
+            o_terminal_mask => gpx_terminal_mask_c,
+            o_tdc_status => gpx_tdc_status_c,
+            o_tdc_faults => gpx_tdc_faults_c,
+            o_shot_drop_sticky => gpx_shot_drop_sticky_c,
+            o_stop_drop_sticky => gpx_stop_drop_sticky_c,
             o_hit_fault_pulse => open,
-            o_hit_fault_sticky => open,
+            o_hit_fault_sticky => gpx_hit_fault_sticky_c,
             o_cell_fault_pulse => open,
-            o_cell_fault_sticky => open,
+            o_cell_fault_sticky => gpx_cell_fault_sticky_c,
             o_frame_fault_pulse => open,
-            o_frame_fault_sticky => open
+            o_frame_fault_sticky => gpx_frame_fault_sticky_c
         );
 
     u_gpx_axis_output : entity work.lidar_gpx_axis_output_subsystem

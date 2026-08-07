@@ -197,7 +197,7 @@ ACK 전에는 다음 Face를 시작하지 않는다.
 | K0-5 | GPX acquisition + B5..B8 연결 | **완료**: physical GPX pin/config/RUN, raw28/Hit17, 16 APD, Return7 identity와 CDC/구현 PASS |
 | K0-6 | Shot/Hole/T0 + Footer + width packer 연결 | **완료**: 2 clock profile x 3 폭 Top 기능, DDR/HTML 모든 Word, PS/Ethernet 모든 byte PASS |
 | K0-7 | Rise/Fall lane 및 VDMA profile ACK 연결 | **완료**: dedicated 2R/2F, one-Chip dual-edge, four-Chip all-dual 및 독립 Footer stall PASS |
-| K0-8 | status/IRQ 단일 owner 조립 | U/X 없는 exact nonzero/zero status 검사 |
+| K0-8 | status/IRQ 단일 owner 조립 | **완료**: CTL23/24 indexed snapshot, runtime IRQ 5종, 양 domain reset 복구 및 exact nonzero/zero PASS |
 | K0-9 | 합성/구현 | black box 0, latch 0, blocking DRC 0, WNS >= +0.1 ns |
 | K0-10 | 새 VLNV package | `tdc_gpx_lidar_ctrl_v2:2.0`, v1과 병존 |
 
@@ -272,11 +272,12 @@ triple buffering으로 DMA-owned, ready-for-CPU, CPU-owned 상태를 분리한�
 - K0-5: 완료. GPX 물리 bus/config/RUN과 B5-B8 Hit/Cell/Frame-lane 경로를 통합했다.
 - K0-6/K0-7: 완료. Rise/Fall AXIS 출력, Footer 완료, 32/64/128-bit 구현과
   DDR/HTML 및 PS/Ethernet L1 비교를 닫았다.
-- K0-8 이후: 미구현, 다음 작업.
+- K0-8: 완료. Processing/TDC native-domain snapshot과 IRQ source 5..9를 단일
+  CSR owner 아래에 조립했고, reset 중 요청은 ERROR로 끝낸 뒤 재동기화한다.
+- K0-9/K0-10: 64/128-bit 최종 구현 행렬과 새 VLNV package가 남았다.
 - K1: K0 이후.
 - L0: 현재 parent에 VDMA/HP/software가 없어 실행 불가.
 
-따라서 현재는 데이터 경로 L1 Sign-off까지 완료됐지만 통합 IP 또는 전체 시스템
-release Sign-off는 아니다. 다음 코드는 parent BD 수정이 아니라
-`tdc_gpx_lidar_ctrl_v2_top`의 모든 live/sticky status와 IRQ를 단일 owner 아래에
-조립하는 K0-8이다.
+따라서 현재는 데이터 경로와 통합 status/IRQ의 L1 Sign-off까지 완료됐지만
+통합 IP 또는 전체 시스템 release Sign-off는 아니다. 다음 단계는 최종 RTL의
+64/128-bit 구현을 반복하는 K0-9이며, 그 뒤에만 K0-10 package로 이동한다.

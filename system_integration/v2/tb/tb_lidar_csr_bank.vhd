@@ -9,6 +9,7 @@ use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
 use work.lidar_gpx_pkg.all;
 use work.lidar_gpx_image_pkg.all;
+use work.lidar_status_pkg.all;
 
 entity tb_lidar_csr_bank is
 end entity tb_lidar_csr_bank;
@@ -78,6 +79,13 @@ architecture sim of tb_lidar_csr_bank is
     signal operation_command_valid : std_logic;
     signal operation_command       : operation_command_t;
     signal irq          : std_logic;
+    signal runtime_irq  : lidar_runtime_irq_t := C_RUNTIME_IRQ_CLEAR;
+    signal diag_request_valid : std_logic;
+    signal diag_request_ready : std_logic := '1';
+    signal diag_request_index : lidar_diag_index_t;
+    signal diag_response_valid : std_logic := '0';
+    signal diag_response_ready : std_logic;
+    signal diag_response : lidar_diag_response_t := (others => '0');
 
     signal commit_count : natural := 0;
     signal clear_count  : natural := 0;
@@ -116,6 +124,32 @@ begin
             end if;
         end if;
     end process p_command_monitor;
+
+    p_diag_responder : process (clk)
+        variable v_data : lidar_diag_word_t;
+    begin
+        if rising_edge(clk) then
+            if rst_n = '0' then
+                diag_response_valid <= '0';
+                diag_response <= (others => '0');
+            else
+                if diag_response_valid = '1' and
+                        diag_response_ready = '1' then
+                    diag_response_valid <= '0';
+                end if;
+                if diag_request_valid = '1' and
+                        diag_request_ready = '1' then
+                    v_data := x"A50000" & diag_request_index;
+                    if diag_request_index = x"FF" then
+                        diag_response <= fn_pack_diag_response(v_data, '1');
+                    else
+                        diag_response <= fn_pack_diag_response(v_data, '0');
+                    end if;
+                    diag_response_valid <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_diag_responder;
 
     u_dut : entity work.lidar_csr_bank
         generic map (
@@ -156,6 +190,13 @@ begin
             i_operation_command_ready => operation_command_ready,
             i_operation_command_busy  => operation_command_busy,
             i_operation_command_rejected => operation_command_rejected,
+            i_runtime_irq          => runtime_irq,
+            o_diag_request_valid   => diag_request_valid,
+            i_diag_request_ready   => diag_request_ready,
+            o_diag_request_index   => diag_request_index,
+            i_diag_response_valid  => diag_response_valid,
+            o_diag_response_ready  => diag_response_ready,
+            i_diag_response        => diag_response,
             o_shadow             => shadow_cfg,
             o_gpx_image_shadow   => shadow_gpx_image,
             o_commit             => commit_pulse,
@@ -315,13 +356,41 @@ begin
         axi_read(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000000");
         axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00020E10");
         axi_read(fn_ctl_byte_offset(C_CTL_FACE_CENTER_0), x"000005A0");
-        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250204");
+        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250205");
         axi_read(fn_stat_byte_offset(C_STAT_BUILD_INFO), x"0C30C896");
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000100", 2);
         axi_read(fn_ctl_byte_offset(C_CTL_RESERVED_FIRST), x"00000000");
         assert shadow_cfg = fn_default_runtime_config(C_DEFAULT_BUILD_CONFIG)
             report "V2-CSR-BANK reset shadow mismatch"
             severity failure;
+
+        -- CTL23/24 provide one request/response transaction at a time. The
+        -- returned sequence increments only when a complete 33-bit response
+        -- is accepted, so DATA and ERROR always describe the selected index.
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00000000");
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), x"00000000");
+        axi_write(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00000110");
+        wait_cycles(5);
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00010210");
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), x"A5000010");
+
+        -- A second CAPTURE write cannot replace the selected index while the
+        -- first request is held by downstream backpressure.
+        diag_request_ready <= '0';
+        axi_write(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00000120");
+        wait_cycles(2);
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00010120");
+        axi_write(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00000121");
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00010120");
+        diag_request_ready <= '1';
+        wait_cycles(5);
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"00020220");
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), x"A5000020");
+
+        axi_write(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"000001FF");
+        wait_cycles(5);
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"000306FF");
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), x"A50000FF");
 
         -- CTL21/22 form one indexed GPX image portal. Selection never changes
         -- the image; DATA writes edit only the staging view.

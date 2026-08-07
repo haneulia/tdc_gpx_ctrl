@@ -18,8 +18,9 @@ Rise/Fall 스트림을 출력한다.
 6. cache 소유권 전환 후 PS H-Line 재구성과 HTML Ethernet Golden의 모든
    byte 비교.
 
-K0-8의 통합 status/IRQ 조립, K0-9의 그 변경까지 포함한 최종 구현 재검증,
-K0-10의 VLNV package 및 L0 실제 VDMA/HP/cache/board 검증은 아직 남아 있다.
+K0-8의 통합 status/IRQ 조립은 후속 체크포인트에서 완료됐다. K0-9의 최종
+6개 구현 재검증, K0-10의 VLNV package 및 L0 실제 VDMA/HP/cache/board 검증은
+아직 남아 있다.
 따라서 전체 제품 release Sign-off로 확대 해석하지 않는다.
 
 ## 2. 실제 데이터 흐름
@@ -224,7 +225,7 @@ PetaLinux의 실제 DMA cache API, HP-port buffer ownership, NIC driver와 Ether
 
 ## 11. 다음 단계
 
-다음 코드는 K0-8 통합 status/IRQ 단일 owner다. 새 진단 필드를 임의로 늘리기
-전에 기존 32 STAT/4 IRQ ABI에서 owner, clear, sticky, live/read-only 정책을
-전수 감사한다. K0-8 기능 회귀 후 K0-9의 6개 구현 조합을 다시 실행하고,
-마지막에 K0-10 VLNV package를 만든다.
+K0-8 통합 status/IRQ 단일 owner는
+`V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md`에서 완료됐다. 다음은
+K0-9의 6개 구현 조합을 다시 실행하고 마지막에 K0-10 VLNV package를 만드는
+순서다.

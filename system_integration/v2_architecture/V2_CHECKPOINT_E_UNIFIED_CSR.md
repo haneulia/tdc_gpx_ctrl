@@ -3,8 +3,9 @@
 ## 1. 판정
 
 Checkpoint E의 최초 ABI 2.3 범위는 **PASS**이다. Stage 5 H2B-2B에서 GPX
-image portal과 물리 적용 ACK를 추가해 현재 ABI는 2.4이며, 아래 8절에
-비회귀 결과를 덧붙인다.
+image portal과 물리 적용 ACK를 추가한 당시 ABI는 2.4이다. K0-8에서
+CTL23/24 runtime 진단 portal과 IRQ source 5..9를 추가한 현재 ABI 2.5는
+`V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md`에서 정의한다.
 
 - 32 CTL / 32 STAT / 4 IRQ ABI 구현
 - W1S command와 persistent shadow 분리

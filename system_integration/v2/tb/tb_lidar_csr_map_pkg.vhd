@@ -82,6 +82,9 @@ begin
         check(words(C_CTL_GPX_IMAGE_INDEX) = x"00000000" and
                 words(C_CTL_GPX_IMAGE_DATA) = x"00000000",
             "V2-CSR-MAP GPX portal leaked into runtime config words");
+        check(words(C_CTL_DIAG_INDEX) = x"00000000" and
+                words(C_CTL_DIAG_DATA) = x"00000000",
+            "V2-CSR-MAP diagnostic portal leaked into runtime config words");
         check(fn_ctl_word_encoding_valid(
                 C_CTL_GPX_IMAGE_INDEX, x"0000010F"),
             "V2-CSR-MAP legal GPX image selector rejected");
@@ -93,6 +96,13 @@ begin
               not fn_ctl_word_encoding_valid(
                 C_CTL_GPX_IMAGE_DATA, x"10000000"),
             "V2-CSR-MAP GPX 28-bit image guard mismatch");
+        check(fn_ctl_word_encoding_valid(
+                C_CTL_DIAG_INDEX, x"000001FF") and
+              not fn_ctl_word_encoding_valid(
+                C_CTL_DIAG_INDEX, x"00000200") and
+              not fn_ctl_word_encoding_valid(
+                C_CTL_DIAG_DATA, x"00000000"),
+            "V2-CSR-MAP diagnostic portal write guard mismatch");
         unpacked := fn_unpack_runtime_config(words);
         check(unpacked = runtime_cfg,
             "V2-CSR-MAP default round trip mismatch");

@@ -11,6 +11,7 @@ use work.lidar_config_reference_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
 use work.lidar_gpx_pkg.all;
+use work.lidar_status_pkg.all;
 
 entity tb_lidar_csr_config_subsystem is
     generic (
@@ -220,6 +221,13 @@ begin
             i_tdc_config_ready => tdc_config_ready,
             i_tdc_config_done  => tdc_config_done,
             i_tdc_config_fault => tdc_config_fault,
+            i_runtime_irq => C_RUNTIME_IRQ_CLEAR,
+            o_diag_request_valid => open,
+            i_diag_request_ready => '0',
+            o_diag_request_index => open,
+            i_diag_response_valid => '0',
+            o_diag_response_ready => open,
+            i_diag_response => (others => '0'),
             o_irq                => irq,
             o_clear_status       => clear_status,
             o_soft_reset_request => soft_reset,

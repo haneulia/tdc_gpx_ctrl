@@ -5,6 +5,7 @@ use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_gpx_pkg.all;
+use work.lidar_status_pkg.all;
 
 -- Checkpoint-E configuration boundary: AXI4-Lite CSR, atomic manager and both
 -- destination-domain gateways. Functional cores consume only the typed active
@@ -56,6 +57,15 @@ entity lidar_csr_config_subsystem is
         i_proc_activate_fault    : in std_logic := '0';
         i_system_command_ready    : in std_logic := '1';
         i_system_command_rejected : in std_logic := '0';
+        i_runtime_irq : in lidar_runtime_irq_t := C_RUNTIME_IRQ_CLEAR;
+
+        o_diag_request_valid : out std_logic;
+        i_diag_request_ready : in  std_logic := '0';
+        o_diag_request_index : out lidar_diag_index_t;
+        i_diag_response_valid : in  std_logic := '0';
+        o_diag_response_ready : out std_logic;
+        i_diag_response       : in  lidar_diag_response_t :=
+            (others => '0');
 
         o_irq                : out std_logic;
         o_clear_status       : out std_logic;
@@ -186,6 +196,13 @@ begin
             i_operation_command_rejected => w_operation_cdc_rejected,
             i_system_command_ready    => i_system_command_ready,
             i_system_command_rejected => i_system_command_rejected,
+            i_runtime_irq          => i_runtime_irq,
+            o_diag_request_valid   => o_diag_request_valid,
+            i_diag_request_ready   => i_diag_request_ready,
+            o_diag_request_index   => o_diag_request_index,
+            i_diag_response_valid  => i_diag_response_valid,
+            o_diag_response_ready  => o_diag_response_ready,
+            i_diag_response        => i_diag_response,
             o_shadow             => w_shadow,
             o_gpx_image_shadow   => w_gpx_shadow_image,
             o_commit             => w_commit,

@@ -13,6 +13,7 @@ system_integration/v2/pkg/lidar_gpx_event_pkg.vhd
 system_integration/v2/pkg/lidar_gpx_data_pkg.vhd
 system_integration/v2/pkg/lidar_gpx_vdma_pkg.vhd
 system_integration/v2/pkg/lidar_echo_pkg.vhd
+system_integration/v2/pkg/lidar_status_pkg.vhd
 system_integration/v2/pkg/lidar_csr_map_pkg.vhd
 ../ip_repo/src/csr/axil_fsm_32.vhd
 ../ip_repo/src/csr/axil_intr_32.vhd
@@ -24,6 +25,10 @@ tdc_gpx_chip_reg.vhd
 tdc_gpx_chip_ctrl.vhd
 system_integration/v2/rtl/common/lidar_stream_gateway.vhd
 system_integration/v2/rtl/common/lidar_system_command_cdc.vhd
+system_integration/v2/rtl/status/lidar_diag_snapshot_mailbox.vhd
+system_integration/v2/rtl/status/lidar_processing_status_source.vhd
+system_integration/v2/rtl/status/lidar_tdc_status_source.vhd
+system_integration/v2/rtl/status/lidar_status_snapshot_subsystem.vhd
 system_integration/v2/rtl/config/lidar_u32_u16_multiplier_seq.vhd
 system_integration/v2/rtl/config/lidar_u64_u32_divider_seq.vhd
 system_integration/v2/rtl/config/lidar_config_validator_seq.vhd

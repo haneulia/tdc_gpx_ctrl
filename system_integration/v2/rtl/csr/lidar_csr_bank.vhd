@@ -8,11 +8,13 @@ use work.lidar_event_types_pkg.all;
 use work.lidar_csr_map_pkg.all;
 use work.lidar_gpx_pkg.all;
 use work.lidar_gpx_image_pkg.all;
+use work.lidar_status_pkg.all;
 
 -- One AXI4-Lite owner for the v2 LiDAR configuration ABI.
 --
 -- CTL1..20 are shadow storage. CTL21/22 are an indexed 16-entry GPX image
--- portal. CTL0 is write-one-set command space and never stores a command
+-- portal, while CTL23/24 are the read-only runtime-diagnostic portal. CTL0 is
+-- write-one-set command space and never stores a command
 -- level. Active readback is sourced only from the atomic transaction owner,
 -- so software can distinguish edited and applied data.
 entity lidar_csr_bank is
@@ -58,6 +60,15 @@ entity lidar_csr_bank is
         i_operation_command_rejected : in std_logic;
         i_system_command_ready    : in std_logic := '1';
         i_system_command_rejected : in std_logic := '0';
+        i_runtime_irq : in lidar_runtime_irq_t := C_RUNTIME_IRQ_CLEAR;
+
+        o_diag_request_valid : out std_logic;
+        i_diag_request_ready : in  std_logic := '0';
+        o_diag_request_index : out lidar_diag_index_t;
+        i_diag_response_valid : in  std_logic := '0';
+        o_diag_response_ready : out std_logic;
+        i_diag_response       : in  lidar_diag_response_t :=
+            (others => '0');
 
         o_shadow            : out lidar_runtime_config_t;
         o_gpx_image_shadow  : out gpx_register_image_t;
@@ -83,6 +94,13 @@ architecture rtl of lidar_csr_bank is
     signal r_gpx_image_index : natural range 0 to
         C_GPX_REGISTER_COUNT - 1 := 0;
     signal r_gpx_image_view_active : std_logic := '0';
+    signal r_diag_index : lidar_diag_index_t := (others => '0');
+    signal r_diag_request_valid : std_logic := '0';
+    signal r_diag_busy  : std_logic := '0';
+    signal r_diag_valid : std_logic := '0';
+    signal r_diag_error : std_logic := '0';
+    signal r_diag_data  : lidar_diag_word_t := (others => '0');
+    signal r_diag_sequence : unsigned(15 downto 0) := (others => '0');
     signal w_status_words : csr_word_array_t;
 
     signal w_addr : std_logic_vector(8 downto 0);
@@ -141,6 +159,9 @@ begin
     o_soft_reset_request <= r_soft_reset_pulse;
     o_operation_command_valid <= r_operation_command_valid;
     o_operation_command       <= r_operation_command;
+    o_diag_request_valid <= r_diag_request_valid;
+    o_diag_request_index <= r_diag_index;
+    o_diag_response_ready <= r_diag_busy;
 
     w_word_addr <= to_integer(unsigned(w_addr(8 downto 2)));
     r_word_addr <= to_integer(unsigned(r_addr(8 downto 2)));
@@ -190,6 +211,16 @@ begin
     w_intr_sources(C_IRQ_COMMIT_REJECTED) <= i_cfg_commit_rejected;
     w_intr_sources(C_IRQ_RECOVERY_REQUIRED) <= i_cfg_recovery_required;
     w_intr_sources(C_IRQ_ACCESS_ERROR) <= r_access_error_event;
+    w_intr_sources(C_IRQ_PROCESSING_WARNING) <=
+        i_runtime_irq(C_RUNTIME_IRQ_PROCESSING_WARNING);
+    w_intr_sources(C_IRQ_LASER_TIMEOUT) <=
+        i_runtime_irq(C_RUNTIME_IRQ_LASER_TIMEOUT);
+    w_intr_sources(C_IRQ_ECHO_DIAGNOSTIC) <=
+        i_runtime_irq(C_RUNTIME_IRQ_ECHO_DIAGNOSTIC);
+    w_intr_sources(C_IRQ_GPX_TRANSPORT) <=
+        i_runtime_irq(C_RUNTIME_IRQ_GPX_TRANSPORT);
+    w_intr_sources(C_IRQ_GPX_DATA) <=
+        i_runtime_irq(C_RUNTIME_IRQ_GPX_DATA);
 
     u_interrupts : entity work.axil_intr_32
         generic map (
@@ -221,18 +252,27 @@ begin
         variable v_shadow_changed    : boolean;
         variable v_portal_control    : csr_word_t;
         variable v_image_word        : csr_word_t;
+        variable v_diag_control      : csr_word_t;
     begin
         if i_rst_n = '0' then
             r_shadow_words       <= C_DEFAULT_WORDS;
             r_gpx_image_staging  <= C_GPX_REGISTER_IMAGE_DEFAULT;
             r_gpx_image_index    <= 0;
             r_gpx_image_view_active <= '0';
+            r_diag_index         <= (others => '0');
+            r_diag_request_valid <= '0';
+            r_diag_busy          <= '0';
+            r_diag_valid         <= '0';
+            r_diag_error         <= '0';
+            r_diag_data          <= (others => '0');
+            r_diag_sequence      <= (others => '0');
             r_commit_pulse       <= '0';
             r_clear_pulse        <= '0';
             r_soft_reset_pulse   <= '0';
             r_operation_command_valid <= '0';
             r_operation_command <= OP_COMMAND_NONE;
             r_access_error_event <= '0';
+
             r_done_sticky        <= '0';
             r_success_sticky     <= '0';
             r_error_sticky       <= '0';
@@ -252,6 +292,26 @@ begin
             r_operation_command_valid <= '0';
             r_operation_command <= OP_COMMAND_NONE;
             r_access_error_event <= '0';
+
+            if r_diag_request_valid = '1' and
+                    i_diag_request_ready = '1' then
+                r_diag_request_valid <= '0';
+            end if;
+
+            if i_diag_response_valid = '1' and r_diag_busy = '1' then
+                r_diag_busy <= '0';
+                r_diag_valid <= '1';
+                r_diag_error <= i_diag_response(
+                    C_DIAG_RESPONSE_ERROR_BIT);
+                r_diag_data <= i_diag_response(
+                    C_DIAG_RESPONSE_DATA_HI downto
+                    C_DIAG_RESPONSE_DATA_LO);
+                r_diag_sequence <= r_diag_sequence + 1;
+                if i_diag_response(C_DIAG_RESPONSE_ERROR_BIT) = '1' then
+                    r_access_error_sticky <= '1';
+                    r_access_error_event <= '1';
+                end if;
+            end if;
 
             -- r_commit_pulse is observed here one clock after the AXI write,
             -- on the same edge where the manager accepts or rejects it.  This
@@ -299,6 +359,9 @@ begin
                         r_access_error_sticky <= '0';
                         r_last_error_code     <= x"00";
                         r_last_reject_code    <= x"00";
+                        r_diag_valid          <= '0';
+                        r_diag_error          <= '0';
+                        r_diag_data           <= (others => '0');
                     elsif v_effective_command(C_CMD_SOFT_RESET_BIT) = '1'
                           and i_system_command_ready /= '1' then
                         r_access_error_sticky <= '1';
@@ -319,6 +382,32 @@ begin
                         else
                             r_operation_command <= OP_COMMAND_DISARM;
                         end if;
+                    end if;
+                elsif w_word_addr >= C_CTL_MOTOR_PROFILE and
+                      w_word_addr <= C_CTL_ECHO_DELAY_PROFILE then
+                    -- Keep the common shadow-register path ahead of the two
+                    -- indexed portals. This removes unrelated portal decode
+                    -- levels from every ordinary configuration write.
+                    v_merged_word := r_shadow_words(w_word_addr);
+                    for byte_index in 0 to 3 loop
+                        if w_strb(byte_index) = '1' then
+                            v_merged_word(
+                                8 * byte_index + 7 downto 8 * byte_index) :=
+                                w_data(8 * byte_index + 7 downto
+                                    8 * byte_index);
+                        end if;
+                    end loop;
+                    v_write_valid := fn_ctl_word_encoding_valid(
+                        w_word_addr, v_merged_word);
+                    if v_write_valid then
+                        if v_merged_word /= r_shadow_words(w_word_addr) then
+                            r_shadow_words(w_word_addr) <= v_merged_word;
+                            r_shadow_revision <= r_shadow_revision + 1;
+                            v_shadow_changed := true;
+                        end if;
+                    else
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
                     end if;
                 elsif w_word_addr = C_CTL_GPX_IMAGE_INDEX then
                     v_portal_control := (others => '0');
@@ -380,29 +469,45 @@ begin
                             r_access_error_event  <= '1';
                         end if;
                     end if;
-                elsif w_word_addr >= 1
-                      and w_word_addr < C_CTL_RESERVED_FIRST then
-                    v_merged_word := r_shadow_words(w_word_addr);
-                    for byte_index in 0 to 3 loop
-                        if w_strb(byte_index) = '1' then
-                            v_merged_word(
-                                8 * byte_index + 7 downto 8 * byte_index) :=
-                                w_data(8 * byte_index + 7 downto
-                                    8 * byte_index);
-                        end if;
-                    end loop;
-                    v_write_valid := fn_ctl_word_encoding_valid(
-                        w_word_addr, v_merged_word);
-                    if v_write_valid then
-                        if v_merged_word /= r_shadow_words(w_word_addr) then
-                            r_shadow_words(w_word_addr) <= v_merged_word;
-                            r_shadow_revision <= r_shadow_revision + 1;
-                            v_shadow_changed := true;
-                        end if;
-                    else
+                elsif w_word_addr = C_CTL_DIAG_INDEX then
+                    if r_diag_busy = '1' then
+                        -- The selected index is the in-flight request payload;
+                        -- changing it under backpressure would violate the
+                        -- ready/valid contract.
                         r_access_error_sticky <= '1';
                         r_access_error_event  <= '1';
+                    else
+                        v_diag_control := (others => '0');
+                        v_diag_control(C_DIAG_INDEX_MSB downto
+                            C_DIAG_INDEX_LSB) := r_diag_index;
+                        for byte_index in 0 to 3 loop
+                            if w_strb(byte_index) = '1' then
+                                v_diag_control(
+                                    8 * byte_index + 7 downto
+                                    8 * byte_index) := w_data(
+                                        8 * byte_index + 7 downto
+                                        8 * byte_index);
+                            end if;
+                        end loop;
+                        if fn_ctl_word_encoding_valid(
+                                C_CTL_DIAG_INDEX, v_diag_control) then
+                            r_diag_index <= v_diag_control(
+                                C_DIAG_INDEX_MSB downto C_DIAG_INDEX_LSB);
+                            r_diag_valid <= '0';
+                            r_diag_error <= '0';
+                            r_diag_data <= (others => '0');
+                            if v_diag_control(C_DIAG_CAPTURE_BIT) = '1' then
+                                r_diag_request_valid <= '1';
+                                r_diag_busy <= '1';
+                            end if;
+                        else
+                            r_access_error_sticky <= '1';
+                            r_access_error_event  <= '1';
+                        end if;
                     end if;
+                elsif w_word_addr = C_CTL_DIAG_DATA then
+                    r_access_error_sticky <= '1';
+                    r_access_error_event  <= '1';
                 elsif w_word_addr = C_LIDAR_CTL_COUNT +
                         C_LIDAR_STAT_COUNT
                       or w_word_addr = C_LIDAR_CTL_COUNT +
@@ -605,6 +710,12 @@ begin
         r_gpx_image_staging,
         r_gpx_image_index,
         r_gpx_image_view_active,
+        r_diag_index,
+        r_diag_busy,
+        r_diag_valid,
+        r_diag_error,
+        r_diag_data,
+        r_diag_sequence,
         i_cfg_active_valid,
         i_cfg_active_gpx_image,
         w_status_words,
@@ -632,6 +743,17 @@ begin
                         w_read_data <= r_gpx_image_staging(
                             r_gpx_image_index);
                     end if;
+                elsif r_word_addr = C_CTL_DIAG_INDEX then
+                    w_read_data(C_DIAG_INDEX_MSB downto
+                        C_DIAG_INDEX_LSB) <= r_diag_index;
+                    w_read_data(C_DIAG_BUSY_BIT) <= r_diag_busy;
+                    w_read_data(C_DIAG_VALID_BIT) <= r_diag_valid;
+                    w_read_data(C_DIAG_ERROR_BIT) <= r_diag_error;
+                    w_read_data(C_DIAG_SEQUENCE_MSB downto
+                        C_DIAG_SEQUENCE_LSB) <= std_logic_vector(
+                            r_diag_sequence);
+                elsif r_word_addr = C_CTL_DIAG_DATA then
+                    w_read_data <= r_diag_data;
                 elsif r_word_addr /= C_CTL_COMMAND then
                     w_read_data <= r_shadow_words(r_word_addr);
                 end if;

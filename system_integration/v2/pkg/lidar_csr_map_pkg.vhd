@@ -4,11 +4,12 @@ use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
+use work.lidar_status_pkg.all;
 
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;
-    constant C_LIDAR_CSR_ABI_MINOR : natural := 4;
+    constant C_LIDAR_CSR_ABI_MINOR : natural := 5;
 
     constant C_LIDAR_CTL_COUNT  : positive := 32;
     constant C_LIDAR_STAT_COUNT : positive := 32;
@@ -40,13 +41,28 @@ package lidar_csr_map_pkg is
     constant C_CTL_ECHO_DELAY_PROFILE  : natural := 20;
     constant C_CTL_GPX_IMAGE_INDEX     : natural := 21;
     constant C_CTL_GPX_IMAGE_DATA      : natural := 22;
-    constant C_CTL_RESERVED_FIRST      : natural := 23;
+    constant C_CTL_DIAG_INDEX          : natural := 23;
+    constant C_CTL_DIAG_DATA           : natural := 24;
+    constant C_CTL_RESERVED_FIRST      : natural := 25;
     constant C_CTL_RESERVED_LAST       : natural := 31;
 
     constant C_GPX_IMAGE_INDEX_MSB       : natural := 3;
     constant C_GPX_IMAGE_INDEX_LSB       : natural := 0;
     constant C_GPX_IMAGE_VIEW_ACTIVE_BIT : natural := 8;
     constant C_GPX_IMAGE_INDEX_VALID_MASK : csr_word_t := x"0000010F";
+
+    -- CTL23 write: INDEX[7:0] plus CAPTURE W1S[8]. CTL23 read: the same
+    -- selected index, BUSY[8], VALID[9], ERROR[10], SEQUENCE[31:16]. CTL24 is
+    -- the last atomic 32-bit response and rejects every write.
+    constant C_DIAG_INDEX_MSB       : natural := 7;
+    constant C_DIAG_INDEX_LSB       : natural := 0;
+    constant C_DIAG_CAPTURE_BIT     : natural := 8;
+    constant C_DIAG_BUSY_BIT        : natural := 8;
+    constant C_DIAG_VALID_BIT       : natural := 9;
+    constant C_DIAG_ERROR_BIT       : natural := 10;
+    constant C_DIAG_SEQUENCE_MSB    : natural := 31;
+    constant C_DIAG_SEQUENCE_LSB    : natural := 16;
+    constant C_DIAG_INDEX_WRITE_VALID_MASK : csr_word_t := x"000001FF";
 
     constant C_CMD_COMMIT_BIT       : natural := 0;
     constant C_CMD_CLEAR_STATUS_BIT : natural := 1;
@@ -100,7 +116,12 @@ package lidar_csr_map_pkg is
     constant C_IRQ_COMMIT_REJECTED  : natural := 2;
     constant C_IRQ_RECOVERY_REQUIRED : natural := 3;
     constant C_IRQ_ACCESS_ERROR     : natural := 4;
-    constant C_LIDAR_IRQ_SOURCES    : positive := 5;
+    constant C_IRQ_PROCESSING_WARNING : natural := 5;
+    constant C_IRQ_LASER_TIMEOUT      : natural := 6;
+    constant C_IRQ_ECHO_DIAGNOSTIC    : natural := 7;
+    constant C_IRQ_GPX_TRANSPORT      : natural := 8;
+    constant C_IRQ_GPX_DATA           : natural := 9;
+    constant C_LIDAR_IRQ_SOURCES    : positive := 10;
 
     function fn_ctl_byte_offset(index : natural) return natural;
     function fn_stat_byte_offset(index : natural) return natural;
@@ -346,6 +367,11 @@ package body lidar_csr_map_pkg is
                 -- The external GPX bus is 28 bits. Reject rather than
                 -- silently truncating image data above bit 27.
                 return value(31 downto 28) = "0000";
+            when C_CTL_DIAG_INDEX =>
+                return (value and not C_DIAG_INDEX_WRITE_VALID_MASK) =
+                    zero_word;
+            when C_CTL_DIAG_DATA =>
+                return false;
             when others =>
                 return false;
         end case;

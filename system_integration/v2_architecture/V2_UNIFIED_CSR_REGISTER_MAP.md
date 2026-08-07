@@ -3,7 +3,7 @@
 ## 1. 적용 범위
 
 이 문서는 `lidar_csr_bank`의 AXI4-Lite software ABI를 정의한다. 주소는
-9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.4`이다.
+9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.5`이다.
 
 | 영역 | Word 수 | Byte 주소 | 용도 |
 |---|---:|---:|---|
@@ -24,6 +24,9 @@
 - CTL21/22는 16개 GPX register image를 위한 indexed portal이다. 16개 word를
   CSR 주소에 펼치지 않으므로 CTL/STAT/IRQ 주소 경계와 전체 CTL 수 32를
   유지한다. GPX staging image도 같은 COMMIT snapshot에 포함된다.
+- CTL23/24는 Processing/TDC runtime 상태를 위한 indexed read-only portal이다.
+  한 번에 한 page만 원래 clock domain에서 snapshot하며, 기존 STAT 주소와
+  CTL/STAT/IRQ 개수는 바꾸지 않는다.
 - reset 직후에는 합법적인 기본 shadow가 준비되지만 아직 active 값은
   없다. 따라서 `ACTIVE_VALID=0`, `SHADOW_DIRTY=1`이며 최초 `COMMIT`이
   필요하다.
@@ -396,6 +399,76 @@ STAT3을 읽은 뒤 상태 전이를 확정한다.
 Face bounds는 저장된 geometry이며 CW/CCW에 따라 다시 쓰지 않는다.
 CW/CCW는 어느 bound가 Entry/Exit인지와 traversal 방향만 바꾼다.
 
+### 4.6 CTL23/24 Runtime 진단 portal
+
+| 주소 | 이름 | 접근 | Reset | 의미 |
+|---:|---|---|---:|---|
+| `0x05C` | DIAG_INDEX | R/W1S | `0x00000000` | index 선택, snapshot 시작 및 완료 상태 |
+| `0x060` | DIAG_DATA | RO | `0x00000000` | 마지막으로 완료된 32-bit snapshot |
+
+`DIAG_INDEX` write bit:
+
+| Bit | 이름 | 의미 |
+|---:|---|---|
+| 7:0 | INDEX | 조회할 page 번호 |
+| 8 | CAPTURE | W1S, 선택한 page의 snapshot 요청 |
+| 31:9 | Reserved | 0만 허용 |
+
+`DIAG_INDEX` read bit:
+
+| Bit | 이름 | 의미 |
+|---:|---|---|
+| 7:0 | INDEX | 마지막 선택 page |
+| 8 | BUSY | 요청 또는 응답이 진행 중 |
+| 9 | VALID | DIAG_DATA가 마지막 요청의 완료 결과 |
+| 10 | ERROR | 미지원 index 또는 원격 domain reset |
+| 15:11 | Reserved | 0 |
+| 31:16 | SEQUENCE | 완료마다 modulo 65536 증가 |
+
+Software는 `INDEX | 0x100`을 쓴 뒤 `BUSY=0 && VALID=1`과 SEQUENCE 증가를
+확인하고 DIAG_DATA를 읽는다. BUSY 중 두 번째 요청은 기존 요청을 덮지 않으며
+ACCESS_ERROR로 기록된다. 한 page는 원자적이지만 여러 page를 순서대로 읽은
+결과가 모두 같은 순간의 snapshot이라는 보장은 없다.
+
+#### Processing/Echo page
+
+| Index | 이름 | Bit 의미 |
+|---:|---|---|
+| `0x10` | PROC_FLAGS | 0 invalid transition, 1 source switch, 3:2 virtual-Z fault, 4 Face overlap, 5 schedule overrun, 6 Face-close overflow, 7 monitor drop, 8 laser request drop, 9 fire_done timeout, 10 operation abort, 11 unexpected done, 12 pipeline idle, 13 Echo idle, 14 GPX Processing idle, 15 GPX AXIS idle, 16 Echo profile ready, 17 Echo profile busy, 18 Rise enabled, 19 Fall enabled, 20 GPX context fault, 21 Hit fault-any, 22 Cell fault-any, 23 Frame fault-any, 24 Shot CDC drop, 25 STOP CDC drop, 26 GPX CDC reset busy |
+| `0x11` | PROC_INVALID_COUNT | 31:0 invalid transition count |
+| `0x12` | PROC_FACE_OVERLAP_COUNT | 31:0 Face overlap count |
+| `0x13` | PROC_OVERRUN_COUNT | 31:0 schedule overrun count |
+| `0x14` | PROC_MON_DROP_COUNT | 31:0 monitor drop count |
+| `0x15` | LASER_REQ_DROP_COUNT | 31:0 laser request drop count |
+| `0x16` | LASER_TIMEOUT_COUNT | 31:0 fire_done timeout count |
+| `0x17` | LASER_ABORT_COUNT | 31:0 operation abort count |
+| `0x18` | LASER_UNEXPECTED_COUNT | 31:0 unexpected fire_done count |
+| `0x19` | PROC_LATENCY_CONTRACT | 7:0 B0-to-accept, 15:8 physical-to-fire, 23:16 virtual-to-accept, 27:24 fire_done synchronizer, 31:28 re-arm margin; 모두 Processing clocks |
+| `0x1A` | GPX_PROC_FAULTS | 0 context, 1 Chip index, 2 STOP index, 3 slope role, 4 Cell context, 5 Return overflow, 6 START number, 7 Hit capacity drop, 8 Frame context, 9 unexpected Cell, 10 duplicate Cell, 11 duplicate terminal, 12 missing Cell, 13 geometry, 14 column gap, 15 masked payload drop, 16 Face-close overflow, 17 Shot CDC drop, 18 STOP CDC drop |
+| `0x1B` | PROC_PROFILE_STATE | 0 Echo ready, 1 Echo busy, 2 Rise valid, 3 Rise enabled, 4 Fall valid, 5 Fall enabled, 6 pipeline idle, 7 GPX AXIS idle, 8 GPX CDC reset busy, 31:16 Echo profile version |
+| `0x1C` | RISE_GEOMETRY | 15:0 HSIZE bytes, 31:16 VSIZE lines |
+| `0x1D` | RISE_STRIDE | 15:0 STRIDE bytes, 18:16 visible Returns, 24:19 Cell slots, 25 valid, 26 enabled, 28:27 Footer lines |
+| `0x1E` | FALL_GEOMETRY | 15:0 HSIZE bytes, 31:16 VSIZE lines |
+| `0x1F` | FALL_STRIDE | Rise STRIDE와 같은 layout |
+| `0x20` | ECHO_FLAGS | 0 window active, 1 simulation active, 2 outside-window sticky, 3 overlap sticky, 4 profile-not-ready sticky, 5 snapshot valid, 6 timeout sticky, 7 aborted sticky |
+| `0x21..0x23` | ECHO_COUNTS | outside-window, overlap, profile-not-ready count |
+| `0x24` | ECHO_TOTALS | 15:0 total Rise, 31:16 total Fall |
+| `0x25` | ECHO_RISE_MASK | channel 31:0 Rise mask |
+| `0x26` | ECHO_FALL_MASK | channel 31:0 Fall mask |
+| `0x40..0x5F` | ECHO_CHANNEL_0..31 | 7:0 Rise count, 15:8 Fall count |
+
+#### TDC page
+
+| Index | 이름 | Bit 의미 |
+|---:|---|---|
+| `0x80` | TDC_SUMMARY | 3:0 active Chip mask, 7:4 terminal mask, 10 TDC safe, 12 run enable, 13 active valid, 14 config ready |
+| `0x84..0x87` | TDC_LANE_STATUS_0..3 | 0 initialized, 1 run active, 2 Shot outstanding, 3 controller busy, 4 bus busy, 5 response pending, 6 EF1, 7 EF2, 8 LF1, 9 LF2, 10 IRFLAG, 11 ERRFLAG, 14:12 effective bus ticks, 31:16 Chip Shot sequence |
+| `0x88..0x8B` | TDC_LANE_FAULT_0..3 | 0 drain timeout, 1 sequence, 2 response mismatch, 3 raw drop, 4 drain cap, 5 register overflow, 6 run timeout, 9:7 timeout cause, 10 init/config coalesced, 11 command collision, 12 bus fatal |
+
+합성된 Chip 수보다 큰 lane page는 0이다. 정의되지 않은 index는 `ERROR=1`,
+`DIAG_DATA=0`을 반환한다. 자세한 소유권과 reset 계약은
+`V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md`를 따른다.
+
 ## 5. IRQ 레지스터
 
 | 주소 | 이름 | 접근 | 의미 |
@@ -412,11 +485,20 @@ CW/CCW는 어느 bound가 Entry/Exit인지와 traversal 방향만 바꾼다.
 | 2 | COMMIT_REJECTED |
 | 3 | RECOVERY_REQUIRED rising edge |
 | 4 | CSR_ACCESS_ERROR |
-| 31:5 | 구현되지 않음, 0 |
+| 5 | PROCESSING_WARNING |
+| 6 | LASER_TIMEOUT |
+| 7 | ECHO_DIAGNOSTIC |
+| 8 | GPX_TRANSPORT |
+| 9 | GPX_DATA |
+| 31:10 | 구현되지 않음, 0 |
 
 pending flag는 enable이 0일 때도 event를 보존한다. manual mode의 IRQ는
 software가 IRQ_FLAG에 W1C할 때까지 high이고, 새 event와 W1C가 같은 clock에
 겹치면 event가 우선한다.
+
+Runtime source 5..9는 원래 domain의 sticky level이다. 따라서 먼저
+`CTL0.CLEAR_STATUS`를 보내고 IRQ_STATUS source가 0으로 내려온 뒤 IRQ_FLAG에
+W1C한다. 원인이 high인 동안 IRQ_FLAG만 지우면 다시 pending 되는 것이 정상이다.
 
 ## 6. 오류 코드
 
@@ -459,9 +541,11 @@ software가 IRQ_FLAG에 W1C할 때까지 high이고, 새 event와 W1C가 같은 
    CTL22를 읽는다. 이 값은 성공한 COMMIT의 image이다.
 9. 외부 permit과 STAT3.COMMAND_READY를 확인하고 CTL0.RUN을 W1S한다.
 10. 다시 COMMAND_READY를 확인한 뒤 CTL0.ARM을 W1S하고 RUNNING/ARMED 및
-   선택된 mode의 enable 상태를 확인한다.
-11. CTL0.CLEAR_STATUS로 transaction sticky를 clear한다.
-12. IRQ를 사용하면 별도로 IRQ_FLAG를 W1C한다.
+    선택된 mode의 enable 상태를 확인한다.
+11. 운용 진단은 CTL23에 `INDEX|CAPTURE`를 쓰고 BUSY/VALID/SEQUENCE를
+    확인한 뒤 CTL24를 읽는다.
+12. CTL0.CLEAR_STATUS로 원래 domain의 transaction/runtime sticky를 clear한다.
+13. IRQ_STATUS source가 0으로 내려온 뒤 IRQ_FLAG를 W1C한다.
 
 운용 중 shadow write는 허용된다. 진행 중 transaction은 COMMIT 순간 snapshot을
 사용하고, 그 뒤의 write는 다음 transaction 후보로 남아 DIRTY가 유지된다.

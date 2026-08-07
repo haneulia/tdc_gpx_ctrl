@@ -64,7 +64,8 @@ multiple clocks and is checked against this reference model.
   the synthesisable public Top shell, K0-3 closes atomic Rise/Fall VDMA
   profile activation plus acknowledged CSR system-command CDC, and K0-4
   through K0-7 connect Processing/Echo, physical GPX B5-B8 and the complete
-  dual-lane AXIS/VDMA output. The physical
+  dual-lane AXIS/VDMA output. K0-8 closes the CTL23/24 native-domain diagnostic
+  snapshot, runtime IRQ source 5..9 and remote-reset recovery. The physical
   parent VDMA/HP/cache path remains unmigrated; the existence of its v1 cores
   does not mark that Stage complete.
 
@@ -91,8 +92,9 @@ the complete B5..B8 production chain plus explicit Face-close ordering. J7/J8
 now close the focused B9 geometry and Footer boundary. J9 and J10 close the
 DDR image and host PS/Viewer comparison. K0-6/K0-7 now connect that formatter
 chain to the public Top and close the modeled DDR/HTML plus portable
-PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly is the next
-implementation. K1 closes the full RTL/HTML operating matrix
+  PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly is complete;
+  K0-9 final 64/128-bit implementation and K0-10 packaging are next. K1 closes
+  the full RTL/HTML operating matrix
 before L0 attaches the parent VDMA/HP-port and real cache/board measurement.
 
 Run the current package regression with:
@@ -436,3 +438,19 @@ The final markers are `LIDAR_V2_K06_AXIS_INTEGRATION_REGRESSION_PASS`,
 the two routine Processing/TDC profiles, 150/200 and 200/150 MHz, at all three
 32/64/128-bit output widths. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K0_6_AXIS_FRAME_OUTPUT_KO.md`.
+
+Run the K0-8 status/IRQ regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k08_status_irq.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_unified_csr.ps1
+```
+
+The final markers are `LIDAR_V2_K08_STATUS_IRQ_REGRESSION_PASS` and
+`LIDAR_V2_UNIFIED_CSR_PASS`. The focused test covers exact nonzero/zero page
+values, Processing/TDC reset-aborted reads, mailbox recovery, native source
+clear and subsequent IRQ W1C. See
+`system_integration/v2_architecture/V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md`.
