@@ -27,10 +27,8 @@ entity tdc_gpx_lidar_ctrl_v2_top is
         G_NUM_CHIPS        : positive range 1 to 4 := 4;
         G_STOPS_PER_CHIP   : positive range 1 to 8 := 8;
         G_MAX_RETURNS_PER_STOP : positive range 1 to 7 := 7;
-        G_RISE_CAPABILITY_MASK : std_logic_vector(
-            C_MAX_CHIPS - 1 downto 0) := "0011";
-        G_FALL_CAPABILITY_MASK : std_logic_vector(
-            C_MAX_CHIPS - 1 downto 0) := "1100";
+        G_RISE_CAPABILITY_MASK : std_logic_vector(3 downto 0) := "0011";
+        G_FALL_CAPABILITY_MASK : std_logic_vector(3 downto 0) := "1100";
         G_OUTPUT_WIDTH     : positive := 32;
         G_NUM_FACES        : positive range 1 to 5 := 5;
         G_ENABLE_ECHO_RECEIVER   : boolean := true;

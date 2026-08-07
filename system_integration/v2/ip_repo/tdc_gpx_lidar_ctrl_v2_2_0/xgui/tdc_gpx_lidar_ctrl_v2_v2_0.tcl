@@ -27,6 +27,11 @@ namespace eval ::tglcv2_xgui {
     return $bits
   }
 
+  proc vhdl_bit_string {value width label} {
+    set bits [normalize_bits $value $width $label]
+    return "\"$bits\""
+  }
+
   proc bits_to_integer {bits} {
     set value 0
     foreach bit [split $bits {}] {
@@ -287,7 +292,7 @@ foreach name {G_NUM_CHIPS G_RISE_CAPABILITY_MASK G_FALL_CAPABILITY_MASK} {
 foreach name {
   G_CSR_CLK_MHZ G_PROC_CLK_MHZ G_TDC_CLK_MHZ G_STREAM_CLK_MODE
   G_NUM_CHIPS G_STOPS_PER_CHIP G_MAX_RETURNS_PER_STOP
-  G_RISE_CAPABILITY_MASK G_FALL_CAPABILITY_MASK G_OUTPUT_WIDTH G_NUM_FACES
+  G_OUTPUT_WIDTH G_NUM_FACES
   G_ENABLE_ECHO_RECEIVER G_ENABLE_ECHO_SIMULATION G_OEN_MODE
   G_PHASE_TIMEOUT_US G_POWERUP_TIME_NS G_RECOVERY_TIME_NS
   G_ALU_PULSE_TIME_NS G_BUS_IDLE_STABLE_TIME_NS G_DRAIN_MARGIN_TIME_NS
@@ -297,5 +302,15 @@ foreach name {
   set body [format {
     set_property value [get_property value ${%s}] ${%s}
   } $user_arg $model_arg]
+  proc update_MODELPARAM_VALUE.$name [list $model_arg $user_arg] $body
+}
+
+foreach name {G_RISE_CAPABILITY_MASK G_FALL_CAPABILITY_MASK} {
+  set model_arg MODELPARAM_VALUE.$name
+  set user_arg PARAM_VALUE.$name
+  set body [format {
+    set_property value [::tglcv2_xgui::vhdl_bit_string \
+      [get_property value ${%s}] 4 {%s}] ${%s}
+  } $user_arg $name $model_arg]
   proc update_MODELPARAM_VALUE.$name [list $model_arg $user_arg] $body
 }

@@ -497,3 +497,15 @@ canonical sources, verifies v1/v2 catalog coexistence, exercises three
 Customize IP profiles and synthesizes the same profiles from package-local
 sources only. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md`.
+
+Create or re-verify the persistent Vivado GUI project with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k010_gui_project.ps1
+```
+
+The project contains three real IP Integrator Block Designs and their completed
+IP synthesis runs. Its final marker is
+`LIDAR_V2_K010_GUI_PROJECT_SIGNOFF_PASS`. See
+`system_integration/v2_architecture/V2_K010_GUI_PROJECT_GUIDE_KO.md`.

@@ -578,7 +578,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>afb13b21</spirit:value>
+            <spirit:value>a1eb76bb</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -594,7 +594,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>afb13b21</spirit:value>
+            <spirit:value>a1eb76bb</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -608,7 +608,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>71a96670</spirit:value>
+            <spirit:value>65315075</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -2088,12 +2088,12 @@
         <spirit:displayName>G Max Returns Per Stop</spirit:displayName>
         <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.G_MAX_RETURNS_PER_STOP" spirit:minimum="1" spirit:maximum="7" spirit:rangeType="long">7</spirit:value>
       </spirit:modelParameter>
-      <spirit:modelParameter spirit:dataType="std_logic_vector((C_MAX_CHIPS - 1) downto 0)">
+      <spirit:modelParameter spirit:dataType="std_logic_vector(3 downto 0)">
         <spirit:name>G_RISE_CAPABILITY_MASK</spirit:name>
         <spirit:displayName>G Rise Capability Mask</spirit:displayName>
         <spirit:value spirit:format="bitString" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.G_RISE_CAPABILITY_MASK" spirit:bitStringLength="4">&quot;0011&quot;</spirit:value>
       </spirit:modelParameter>
-      <spirit:modelParameter spirit:dataType="std_logic_vector((C_MAX_CHIPS - 1) downto 0)">
+      <spirit:modelParameter spirit:dataType="std_logic_vector(3 downto 0)">
         <spirit:name>G_FALL_CAPABILITY_MASK</spirit:name>
         <spirit:displayName>G Fall Capability Mask</spirit:displayName>
         <spirit:value spirit:format="bitString" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.G_FALL_CAPABILITY_MASK" spirit:bitStringLength="4">&quot;1100&quot;</spirit:value>
@@ -2579,7 +2579,7 @@
       <spirit:file>
         <spirit:name>src/system_integration/v2/rtl/top/tdc_gpx_lidar_ctrl_v2_top.vhd</spirit:name>
         <spirit:fileType>vhdlSource</spirit:fileType>
-        <spirit:userFileType>CHECKSUM_78726a77</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_5d3aac53</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
     <spirit:fileSet>
@@ -3186,15 +3186,15 @@
       <xilinx:vendorDisplayName>Victek Co., Ltd.</xilinx:vendorDisplayName>
       <xilinx:vendorURL>https://www.victek.co.kr</xilinx:vendorURL>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-07T09:59:36Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-07T11:53:09Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2.1</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="48ed89c2"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="183345d9"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="4ad1512b"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="3884955b"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="2ef16ed9"/>
-      <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="9d826d75"/>
+      <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="9f5a50b3"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="8ce6abe8"/>
     </xilinx:packagingInfo>
   </spirit:vendorExtensions>

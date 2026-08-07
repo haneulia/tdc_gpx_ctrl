@@ -11,6 +11,8 @@ Checkpoint K0-10은 **L1 IP Package Sign-off 완료**로 판정한다.
 - IP-XACT 무결성, interface clock/reset/IRQ 계약과 XGUI 의존성 검사 PASS;
 - 대표 Customize IP 설정 3개 PASS;
 - 동일 3개 설정을 package 내부 RTL만으로 OOC 합성하여 black box/latch 0 PASS;
+- 실제 IP Integrator Block Design과 생성 VHDL wrapper를 동일 3개 설정으로
+  합성하고 GUI 재개방 검증 PASS;
 - public Top shell의 routine clock profile `150/200 MHz`, `200/150 MHz` 재회귀 PASS.
 
 이 판정은 **재사용 가능한 v2 IP 산출물과 XGUI**에 대한 것이다. 실제 AXI VDMA,
@@ -26,6 +28,7 @@ Sign-off는 Stage L0에 남아 있다.
 | 최종 RTL을 IP-XACT로 package하고 원본과 byte 동기화 | K0-10/L1 | PASS |
 | XGUI 설정, 포트 enablement, clock/interface metadata | K0-10/L1 | PASS |
 | package 내부 source만 사용한 OOC 합성 | K0-10/L1 | PASS |
+| 실제 IPI BD 생성 wrapper와 IP별 OOC 합성 | K0-10/L1 | PASS |
 | 실제 VDMA가 HP port를 통해 기록한 DDR 대 Golden 비교 | L0 parent/board | 미검증 |
 | FreeRTOS/PetaLinux cache API 이후 실제 Ethernet 수신 비교 | L0 software/board | 미검증 |
 
@@ -101,6 +104,24 @@ Block Design에서 숨겨지고 simulation Echo option도 false로 고정된다.
 또 package source/manifest 변경 후 Top shell을 `150/200 MHz`, `200/150 MHz`로
 재검증하여 `LIDAR_V2_TOP_SHELL_REGRESSION_PASS`를 확인했다.
 
+### 5.3 실제 IP Integrator 및 GUI 프로젝트
+
+package-only OOC와 별도로 실제 IPI가 생성한 VHDL wrapper를 합성했다. 이 Gate에서
+다음 두 package 결함을 발견하고 수정했다.
+
+1. public generic 폭이 package 상수 `C_MAX_CHIPS`를 참조해, 생성 wrapper에는
+   package context가 없어 compile이 실패했다. public 폭을 `3 downto 0`으로
+   고정하고 component 검사에서 `C_MAX_CHIPS` 노출을 금지했다.
+2. XGUI의 `std_logic_vector` mask가 wrapper generic map에 `0011`로 기록됐다.
+   model-parameter callback이 VHDL bit string을 항상 `"0011"` 형태로 전달하도록
+   수정하고 정적 회귀를 추가했다.
+
+수정 후 세 BD validation과 합성 Run이 모두 완료됐고, 재개방 검증에서도 설정값,
+Echo port enablement, black box 0 및 latch 0을 다시 확인했다. GUI 프로젝트는
+다음 위치에서 직접 열 수 있다.
+
+`C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/.work/tdc_gpx_lidar_ctrl_v2_gui/tdc_gpx_lidar_ctrl_v2_gui.xpr`
+
 ## 6. 실행 및 증거
 
 재현 명령:
@@ -116,7 +137,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 최종 세션:
 
-`signoff_results/sessions/260807_185915_k010_ip_package`
+`signoff_results/sessions/260807_205247_k010_ip_package`
+
+GUI 재개방 검증 세션:
+
+`signoff_results/sessions/260807_211239_k010_gui_verify`
 
 Top shell 재회귀 세션:
 

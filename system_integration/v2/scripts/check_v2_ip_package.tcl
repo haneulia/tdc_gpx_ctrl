@@ -54,6 +54,9 @@ foreach entry $entries {
 }
 v2_require_file_equal $canonical_xgui $packaged_xgui {v2 XGUI}
 v2_require_file_equal $canonical_guide $packaged_guide {v2 Product Guide}
+if {[string first {C_MAX_CHIPS} [v2_read_binary $component]] >= 0} {
+    error {component.xml exposes unresolved C_MAX_CHIPS in a public HDL type}
+}
 puts {LIDAR_V2_K010_SOURCE_SYNC_PASS files=89 rtl=87 xgui=1 guide=1}
 
 # Avoid the damaged per-user Tcl Store on this workstation.
@@ -243,6 +246,10 @@ v2_require_one [ipx::get_files -of_objects $guide_group] {Product Guide file}
 puts {LIDAR_V2_K010_COMPONENT_CONTRACT_PASS}
 
 source $packaged_xgui
+if {[::tglcv2_xgui::vhdl_bit_string 0011 4 \
+        {Rising capability mask}] ne {"0011"}} {
+    error {XGUI did not convert the rising mask to a VHDL bit-string literal}
+}
 foreach {label command expected} [list \
     async_tdc_faster \
         {::tglcv2_xgui::validate_clock_contract 150 200 ASYNC} true \

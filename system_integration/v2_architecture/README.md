@@ -110,6 +110,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md](V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md) | Native-domain indexed status, runtime IRQ, reset recovery and single-owner assembly evidence |
 | [V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md](V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md) | Six-profile implementation timing plus final DDR/HTML and PS/Ethernet Golden evidence |
 | [V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md](V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md) | Self-contained v2 VLNV, XGUI/source synchronization, catalog coexistence and package-only OOC evidence |
+| [V2_K010_GUI_PROJECT_GUIDE_KO.md](V2_K010_GUI_PROJECT_GUIDE_KO.md) | Persistent Vivado Block Designs, completed synthesis Runs and GUI inspection procedure |
 
 ## 4. Target Top-Level Shape
 
