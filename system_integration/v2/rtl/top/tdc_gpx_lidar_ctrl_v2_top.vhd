@@ -268,6 +268,11 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
     signal gpx_rise_event_c : gpx_frame_cell_event_t;
     signal gpx_fall_event_c : gpx_frame_cell_event_t;
     signal gpx_frame_close_event_c : gpx_frame_close_event_t;
+    signal gpx_rise_ready_c : std_logic;
+    signal gpx_fall_ready_c : std_logic;
+    signal gpx_frame_close_ready_c : std_logic;
+    signal gpx_frame_output_done_c : std_logic;
+    signal gpx_axis_idle_c : std_logic;
 
     signal gpx_adr_c : gpx_bus_address_array_t;
     signal gpx_csn_c : chip_mask_t;
@@ -416,7 +421,8 @@ begin
         );
 
     processing_safe_c <= processing_pipeline_idle_c and echo_idle_c and
-        gpx_proc_idle_c and not gpx_cdc_reset_busy_c;
+        gpx_proc_idle_c and gpx_axis_idle_c and
+        not gpx_cdc_reset_busy_c;
 
     u_processing : entity work.lidar_processing_subsystem
         generic map (
@@ -508,7 +514,8 @@ begin
             i_active_valid => proc_active_valid_c,
             i_active_config => proc_active_config_c,
             i_datapath_idle => processing_pipeline_idle_c and
-                gpx_proc_idle_c and not gpx_cdc_reset_busy_c,
+                gpx_proc_idle_c and gpx_axis_idle_c and
+                not gpx_cdc_reset_busy_c,
             i_echo_profile_ready => echo_profile_ready_c,
             i_echo_profile_busy => echo_profile_busy_c,
             i_echo_profile_version => echo_profile_version_c,
@@ -564,11 +571,12 @@ begin
             i_face_close_event => face_close_event_c,
             o_face_close_ready => face_close_ready_c,
             o_rise_event => gpx_rise_event_c,
-            i_rise_ready => '1',
+            i_rise_ready => gpx_rise_ready_c,
             o_fall_event => gpx_fall_event_c,
-            i_fall_ready => '1',
+            i_fall_ready => gpx_fall_ready_c,
             o_frame_close_event => gpx_frame_close_event_c,
-            i_frame_close_ready => '1',
+            i_frame_close_ready => gpx_frame_close_ready_c,
+            i_frame_output_done => gpx_frame_output_done_c,
             o_rise_line_done => open,
             o_fall_line_done => open,
             o_shot_done => open,
@@ -622,6 +630,44 @@ begin
             o_frame_fault_sticky => open
         );
 
+    u_gpx_axis_output : entity work.lidar_gpx_axis_output_subsystem
+        generic map (
+            G_BUILD_CONFIG => C_BUILD_CONFIG
+        )
+        port map (
+            i_clk => proc_aclk,
+            i_rst_n => proc_aresetn,
+            i_abort => proc_soft_reset_c,
+            i_rise_active_profile => rise_active_profile_c,
+            i_fall_active_profile => fall_active_profile_c,
+            i_rise_event => gpx_rise_event_c,
+            o_rise_ready => gpx_rise_ready_c,
+            i_fall_event => gpx_fall_event_c,
+            o_fall_ready => gpx_fall_ready_c,
+            i_frame_close_event => gpx_frame_close_event_c,
+            o_frame_close_ready => gpx_frame_close_ready_c,
+            o_frame_output_done => gpx_frame_output_done_c,
+            o_rise_tdata => m_axis_rise_tdata,
+            o_rise_tkeep => m_axis_rise_tkeep,
+            o_rise_tstrb => m_axis_rise_tstrb,
+            o_rise_tuser => m_axis_rise_tuser,
+            o_rise_tvalid => m_axis_rise_tvalid,
+            o_rise_tlast => m_axis_rise_tlast,
+            i_rise_tready => m_axis_rise_tready,
+            o_fall_tdata => m_axis_fall_tdata,
+            o_fall_tkeep => m_axis_fall_tkeep,
+            o_fall_tstrb => m_axis_fall_tstrb,
+            o_fall_tuser => m_axis_fall_tuser,
+            o_fall_tvalid => m_axis_fall_tvalid,
+            o_fall_tlast => m_axis_fall_tlast,
+            i_fall_tready => m_axis_fall_tready,
+            o_rise_line_done => open,
+            o_fall_line_done => open,
+            o_rise_frame_done => open,
+            o_fall_frame_done => open,
+            o_idle => gpx_axis_idle_c
+        );
+
     gen_gpx_active_pins : for index in 0 to G_NUM_CHIPS - 1 generate
         constant C_DATA_LO : natural := index * 28;
         constant C_DATA_HI : natural := (index + 1) * 28 - 1;
@@ -651,9 +697,8 @@ begin
         gpx_errflag_c(index) <= '0';
     end generate gen_gpx_unused_pins;
 
-    -- K0-5 transfers GPX bus and B5-B8 ownership to production blocks. The
-    -- canonical Cell/close streams are drained locally until K0-6/K0-7 add
-    -- the width-independent Line/Footer and external AXIS owners.
+    -- K0-6 transfers canonical B8 Cells through Shot/Hole/T0/Footer assembly
+    -- and the sole width-generic packer to the external Rise/Fall AXIS ports.
     o_shot_start <= shot_start_event_c.valid;
     o_shot_face_index <= std_logic_vector(
         shot_start_event_c.request.face_index);
@@ -667,18 +712,5 @@ begin
     o_tdc_stopdis <= gpx_stopdis_c(G_NUM_CHIPS - 1 downto 0);
     o_tdc_alutrigger <= gpx_alutrigger_c(G_NUM_CHIPS - 1 downto 0);
     o_tdc_puresn <= gpx_puresn_c(G_NUM_CHIPS - 1 downto 0);
-
-    m_axis_rise_tdata  <= (others => '0');
-    m_axis_rise_tkeep  <= (others => '0');
-    m_axis_rise_tstrb  <= (others => '0');
-    m_axis_rise_tuser  <= (others => '0');
-    m_axis_rise_tvalid <= '0';
-    m_axis_rise_tlast  <= '0';
-    m_axis_fall_tdata  <= (others => '0');
-    m_axis_fall_tkeep  <= (others => '0');
-    m_axis_fall_tstrb  <= (others => '0');
-    m_axis_fall_tuser  <= (others => '0');
-    m_axis_fall_tvalid <= '0';
-    m_axis_fall_tlast  <= '0';
 
 end architecture rtl;

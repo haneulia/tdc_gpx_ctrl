@@ -81,7 +81,7 @@ try {
         )
 
         $UnitText = Get-Content -Raw -LiteralPath $UnitSimLog
-        foreach ($Scenario in "P20", "P21", "P22", "P23", "P24") {
+        foreach ($Scenario in "P20", "P21", "P22", "P23", "P24", "P25") {
             if ($UnitText -notmatch "V2-SCHED-$Scenario.*PASS") {
                 throw "${Mhz} MHz unit test did not pass $Scenario"
             }

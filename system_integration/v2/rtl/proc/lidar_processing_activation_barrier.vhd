@@ -63,6 +63,7 @@ architecture rtl of lidar_processing_activation_barrier is
     signal vdma_done_r : std_logic := '0';
     signal complete_r : std_logic := '0';
     signal fault_r : std_logic := '0';
+    signal datapath_idle_r : std_logic := '0';
 
 begin
 
@@ -85,7 +86,7 @@ begin
             i_activate_start => vdma_start_r,
             i_active_valid => i_active_valid,
             i_active_config => i_active_config,
-            i_datapath_idle => i_datapath_idle,
+            i_datapath_idle => datapath_idle_r,
             o_rise_cfg_valid => o_rise_cfg_valid,
             i_rise_cfg_ready => i_rise_cfg_ready,
             o_rise_cfg_enable => o_rise_cfg_enable,
@@ -119,12 +120,20 @@ begin
                 state_r <= ST_IDLE;
                 expected_version_r <= (others => '0');
                 vdma_done_r <= '0';
+                datapath_idle_r <= '0';
             elsif i_activate_start = '1' and state_r /= ST_IDLE then
+                datapath_idle_r <= i_datapath_idle;
                 vdma_abort_r <= '1';
                 fault_r <= '1';
                 state_r <= ST_IDLE;
                 vdma_done_r <= '0';
             else
+                -- Configuration prepare has already stopped new Shot traffic.
+                -- Register the wide datapath-idle reduction before it fans out
+                -- to both VDMA profile FSMs; assertion is conservatively
+                -- delayed by one clock while deassertion is protocol-forbidden
+                -- during an activation transaction.
+                datapath_idle_r <= i_datapath_idle;
                 case state_r is
                     when ST_IDLE =>
                         vdma_done_r <= '0';
@@ -170,5 +179,19 @@ begin
             end if;
         end if;
     end process p_barrier;
+
+    -- synthesis translate_off
+    p_idle_contract : process (i_clk)
+    begin
+        if rising_edge(i_clk) and i_rst_n = '1' and i_abort = '0' then
+            if state_r = ST_WAIT_DEPENDENCIES and
+               datapath_idle_r = '1' then
+                assert i_datapath_idle = '1'
+                    report "V2-K0-PROC-ACT-002 datapath restarted during activation"
+                    severity failure;
+            end if;
+        end if;
+    end process p_idle_contract;
+    -- synthesis translate_on
 
 end architecture rtl;

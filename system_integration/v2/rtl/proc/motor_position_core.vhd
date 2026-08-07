@@ -256,7 +256,6 @@ begin
 
     p_decode : process (i_clk)
         variable event_v    : position_event_t;
-        variable new_max_v  : position_t;
         variable next_pos_v : position_t;
         variable cw_v       : boolean;
     begin
@@ -277,15 +276,14 @@ begin
 
                 if i_enable = '0' or i_active_valid = '0' then
                     if i_active_valid = '1' then
-                        if i_active_config.derived.total_states <= 1 then
-                            new_max_v := (others => '0');
-                        else
-                            new_max_v := resize(
-                                i_active_config.derived.total_states - 1,
-                                new_max_v'length);
-                        end if;
-                        if position_r > new_max_v then
-                            position_r <= new_max_v;
+                        -- p_config owns the only total_states-to-count_max
+                        -- conversion. Wait until that snapshot carries the
+                        -- presented version, then clamp from the registered
+                        -- bound instead of rebuilding a wide subtract/compare
+                        -- cone in the position decoder.
+                        if active_version_r = i_active_config.version and
+                           position_r > count_max_r then
+                            position_r <= count_max_r;
                         end if;
 
                         if i_active_config.source.motor.simulation_mode = '1' then

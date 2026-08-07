@@ -119,7 +119,10 @@ architecture rtl of lidar_gpx_vdma_profile_manager is
         ST_IDLE,
         ST_COUNT_CHIPS,
         ST_ACCUMULATE_CELLS,
-        ST_FINALIZE,
+        ST_ALIGN_LINE,
+        ST_CLASSIFY_FOOTER,
+        ST_CALC_VSIZE,
+        ST_COMMIT_PROFILE,
         ST_WAIT_ACTIVATE,
         ST_PROGRAM
     );
@@ -139,6 +142,11 @@ architecture rtl of lidar_gpx_vdma_profile_manager is
         C_GPX_VDMA_MAX_LINE_SLOTS := 0;
     signal raw_line_words_r : gpx_vdma_line_word_count_t :=
         (others => '0');
+    signal aligned_line_words_r : gpx_vdma_line_word_count_t :=
+        (others => '0');
+    signal footer_lines_r : unsigned(1 downto 0) := (others => '0');
+    signal vsize_lines_r : gpx_vdma_geometry_value_t := (others => '0');
+    signal geometry_invalid_r : std_logic := '0';
 
     signal pending_profile_r : gpx_vdma_lane_profile_t :=
         C_GPX_VDMA_LANE_PROFILE_IDLE;
@@ -174,8 +182,6 @@ begin
     p_profile : process (i_clk)
         variable next_slot_count_v : natural range 0 to
             C_GPX_VDMA_MAX_LINE_SLOTS;
-        variable aligned_words_v : gpx_vdma_line_word_count_t;
-        variable footer_lines_v : unsigned(1 downto 0);
         variable vsize_ext_v : unsigned(16 downto 0);
         variable profile_v : gpx_vdma_lane_profile_t;
     begin
@@ -193,6 +199,10 @@ begin
                 slot_count_r <= 0;
                 slots_remaining_r <= 0;
                 raw_line_words_r <= (others => '0');
+                aligned_line_words_r <= (others => '0');
+                footer_lines_r <= (others => '0');
+                vsize_lines_r <= (others => '0');
+                geometry_invalid_r <= '0';
                 pending_profile_r <= C_GPX_VDMA_LANE_PROFILE_IDLE;
                 active_profile_r <= C_GPX_VDMA_LANE_PROFILE_IDLE;
             elsif i_abort = '1' then
@@ -202,6 +212,10 @@ begin
                 slot_count_r <= 0;
                 slots_remaining_r <= 0;
                 raw_line_words_r <= (others => '0');
+                aligned_line_words_r <= (others => '0');
+                footer_lines_r <= (others => '0');
+                vsize_lines_r <= (others => '0');
+                geometry_invalid_r <= '0';
             else
                 case state_r is
                     when ST_IDLE =>
@@ -259,7 +273,7 @@ begin
 
                     when ST_ACCUMULATE_CELLS =>
                         if slots_remaining_r = 0 then
-                            state_r <= ST_FINALIZE;
+                            state_r <= ST_ALIGN_LINE;
                         else
                             raw_line_words_r <= raw_line_words_r +
                                 resize(cell_words_r,
@@ -267,18 +281,39 @@ begin
                             slots_remaining_r <= slots_remaining_r - 1;
                         end if;
 
-                    when ST_FINALIZE =>
-                        aligned_words_v := fn_align_words(raw_line_words_r);
-                        if aligned_words_v >= C_GPX_VDMA_FOOTER_WORDS then
-                            footer_lines_v := to_unsigned(1, 2);
+                    -- Geometry is intentionally staged. It is calculated only
+                    -- before Face activation, so these clocks do not reduce
+                    -- Cell/AXIS throughput and keep arithmetic off one long
+                    -- 200 MHz profile-to-profile path.
+                    when ST_ALIGN_LINE =>
+                        aligned_line_words_r <=
+                            fn_align_words(raw_line_words_r);
+                        state_r <= ST_CLASSIFY_FOOTER;
+
+                    when ST_CLASSIFY_FOOTER =>
+                        if aligned_line_words_r >=
+                           C_GPX_VDMA_FOOTER_WORDS then
+                            footer_lines_r <= to_unsigned(1, 2);
                         else
-                            footer_lines_v := to_unsigned(2, 2);
+                            footer_lines_r <= to_unsigned(2, 2);
                         end if;
+                        state_r <= ST_CALC_VSIZE;
+
+                    when ST_CALC_VSIZE =>
                         vsize_ext_v := resize(request_shots_r, 17) +
-                            resize(footer_lines_v, 17);
+                            resize(footer_lines_r, 17);
+                        vsize_lines_r <= vsize_ext_v(15 downto 0);
 
                         if vsize_ext_v(16) = '1' or
                            slot_count_r > C_MAX_SLOT_COUNT then
+                            geometry_invalid_r <= '1';
+                        else
+                            geometry_invalid_r <= '0';
+                        end if;
+                        state_r <= ST_COMMIT_PROFILE;
+
+                    when ST_COMMIT_PROFILE =>
+                        if geometry_invalid_r = '1' then
                             request_rejected_r <= '1';
                             pending_profile_r <=
                                 C_GPX_VDMA_LANE_PROFILE_IDLE;
@@ -293,12 +328,12 @@ begin
                             profile_v.cell_word_count := cell_words_r;
                             profile_v.planned_shots := request_shots_r;
                             profile_v.raw_line_words := raw_line_words_r;
-                            profile_v.hsize_words := aligned_words_v;
+                            profile_v.hsize_words := aligned_line_words_r;
                             profile_v.hsize_bytes := shift_left(
-                                resize(aligned_words_v,
+                                resize(aligned_line_words_r,
                                     profile_v.hsize_bytes'length), 2);
-                            profile_v.footer_lines := footer_lines_v;
-                            profile_v.vsize_lines := vsize_ext_v(15 downto 0);
+                            profile_v.footer_lines := footer_lines_r;
+                            profile_v.vsize_lines := vsize_lines_r;
                             profile_v.stride_bytes := to_unsigned(
                                 C_STRIDE_BYTES,
                                 profile_v.stride_bytes'length);

@@ -63,6 +63,9 @@ architecture rtl of lidar_gpx_hole_line_expander is
     signal hole_remaining_r : shot_index_t := (others => '0');
     signal hole_word_index_r : gpx_vdma_line_word_index_t :=
         (others => '0');
+    signal hole_penultimate_word_index_r : gpx_vdma_line_word_index_t :=
+        (others => '0');
+    signal hole_word_last_r : std_logic := '0';
     signal hole_line_word_count_r : gpx_vdma_line_word_count_t :=
         (others => '0');
     signal hole_slot_count_r : gpx_frame_slot_t := (others => '0');
@@ -129,6 +132,7 @@ architecture rtl of lidar_gpx_hole_line_expander is
         last_index      : shot_index_t;
         word_index      : gpx_vdma_line_word_index_t;
         line_word_count : gpx_vdma_line_word_count_t;
+        word_last       : std_logic;
         slot_count      : gpx_frame_slot_t;
         cell_word_count : gpx_vdma_word_count_t;
         line_faulted    : std_logic
@@ -163,9 +167,7 @@ architecture rtl of lidar_gpx_hole_line_expander is
         if word_index = 0 then
             result.line_start := '1';
         end if;
-        if word_index + 1 = line_word_count then
-            result.line_end := '1';
-        end if;
+        result.line_end := word_last;
         if shot_index = 0 then
             result.first_column := '1';
         end if;
@@ -185,12 +187,15 @@ begin
     line_output_ready_c <= '1' when line_word_r.valid = '0' or
         i_line_word_ready = '1' else '0';
 
-    o_real_line_word_ready <= '1' when i_rst_n = '1' and i_abort = '0' and
+    -- Reset/abort are consumed synchronously by p_expand. READY depends only
+    -- on registered occupancy/state so the command reset cannot cross this
+    -- formatter combinationally.
+    o_real_line_word_ready <= '1' when
         ((state_r = ST_IDLE and i_frame_close_event.valid = '0') or
          (state_r = ST_REAL_WORDS and line_output_ready_c = '1')) else '0';
 
-    o_frame_close_ready <= '1' when i_rst_n = '1' and i_abort = '0' and
-        state_r = ST_IDLE and i_real_line_word.valid = '0' else '0';
+    o_frame_close_ready <= '1' when state_r = ST_IDLE and
+        i_real_line_word.valid = '0' else '0';
 
     o_line_word <= line_word_r;
     o_frame_close_event <= frame_close_r;
@@ -215,6 +220,8 @@ begin
                 hole_last_index_r <= (others => '0');
                 hole_remaining_r <= (others => '0');
                 hole_word_index_r <= (others => '0');
+                hole_penultimate_word_index_r <= (others => '0');
+                hole_word_last_r <= '0';
                 hole_line_word_count_r <= (others => '0');
                 hole_slot_count_r <= (others => '0');
                 hole_cell_word_count_r <= (others => '0');
@@ -255,6 +262,13 @@ begin
                                 hole_last_index_r <= (others => '1');
                                 hole_remaining_r <= first_v.gap_before;
                                 hole_word_index_r <= (others => '0');
+                                hole_penultimate_word_index_r <=
+                                    first_v.line_word_count - 2;
+                                if first_v.line_word_count = 1 then
+                                    hole_word_last_r <= '1';
+                                else
+                                    hole_word_last_r <= '0';
+                                end if;
                                 hole_line_word_count_r <=
                                     first_v.line_word_count;
                                 hole_slot_count_r <= first_v.slot_count;
@@ -292,6 +306,13 @@ begin
                                     close_v.columns_per_face - 1;
                                 hole_remaining_r <= close_v.trailing_gap;
                                 hole_word_index_r <= (others => '0');
+                                hole_penultimate_word_index_r <=
+                                    line_count_v - 2;
+                                if line_count_v = 1 then
+                                    hole_word_last_r <= '1';
+                                else
+                                    hole_word_last_r <= '0';
+                                end if;
                                 hole_line_word_count_r <= line_count_v;
                                 hole_slot_count_r <= i_active_slot_count;
                                 hole_cell_word_count_r <=
@@ -313,11 +334,11 @@ begin
                                 hole_last_index_r,
                                 hole_word_index_r,
                                 hole_line_word_count_r,
+                                hole_word_last_r,
                                 hole_slot_count_r,
                                 hole_cell_word_count_r,
                                 hole_faulted_r);
-                            if hole_word_index_r + 1 =
-                               hole_line_word_count_r then
+                            if hole_word_last_r = '1' then
                                 hole_word_index_r <= (others => '0');
                                 if hole_remaining_r = 1 then
                                     state_r <= ST_HOLE_LAST_WAIT;
@@ -326,9 +347,20 @@ begin
                                         hole_remaining_r - 1;
                                     hole_shot_index_r <=
                                         hole_shot_index_r + 1;
+                                    if hole_line_word_count_r = 1 then
+                                        hole_word_last_r <= '1';
+                                    else
+                                        hole_word_last_r <= '0';
+                                    end if;
                                 end if;
                             else
                                 hole_word_index_r <= hole_word_index_r + 1;
+                                if hole_word_index_r =
+                                   hole_penultimate_word_index_r then
+                                    hole_word_last_r <= '1';
+                                else
+                                    hole_word_last_r <= '0';
+                                end if;
                             end if;
                         end if;
 

@@ -72,8 +72,10 @@ begin
     output_ready_c <= '1' when axis_valid_r = '0' or
         i_m_axis_tready = '1' else '0';
 
-    o_line_word_ready <= '1' when i_rst_n = '1' and i_abort = '0' and
-        output_ready_c = '1' else '0';
+    -- AXIS READY may remain asserted during synchronous reset/abort. The
+    -- priority reset branch clears VALID and ignores that cycle's transfer;
+    -- omitting reset from READY breaks the reverse formatter timing cone.
+    o_line_word_ready <= output_ready_c;
 
     o_m_axis_tdata <= axis_data_r;
     o_m_axis_tkeep <= (others => '1');

@@ -385,9 +385,9 @@ begin
         check(operation_state.physical_fire_enable = '1' and
               operation_state.simulation_enable = '0',
             "V2-PROC-P50 physical gate mismatch");
-        check(to_integer(b0_to_accept_clks) = 4 and
-              to_integer(physical_to_fire_clks) = 8 and
-              to_integer(virtual_to_accept_clks) = 5 and
+        check(to_integer(b0_to_accept_clks) = 5 and
+              to_integer(physical_to_fire_clks) = 9 and
+              to_integer(virtual_to_accept_clks) = 7 and
               to_integer(fire_done_sync_clks) = 3 and
               to_integer(rearm_margin_clks) = 2,
             "V2-PROC-P50 read-only latency contract mismatch");
@@ -524,9 +524,12 @@ begin
             check(wait_count_v < 80,
                 "V2-PROC-P53 simulation request timeout");
         end loop;
+        -- o_virtual_a/b expose the output of the common one-clock virtual
+        -- pipeline. The public latency contract starts one stage earlier at
+        -- the internal virtual-source transition.
         check(virtual_changes_v >= 4 and
               proc_cycle - virtual_change_cycle_v =
-                  to_integer(virtual_to_accept_clks),
+                  to_integer(virtual_to_accept_clks) - 1,
             "V2-PROC-P53 virtual transition-to-accept latency mismatch");
         check(current_request.position = 4 and
               current_request.source_sim = '1' and

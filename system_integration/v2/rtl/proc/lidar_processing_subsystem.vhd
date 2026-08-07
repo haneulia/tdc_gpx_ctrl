@@ -209,8 +209,8 @@ begin
             i_clk                     => i_clk,
             i_rst_n                   => i_rst_n,
             i_enable                  =>
-                i_operation_state.scheduler_enable and
-                not face_close_block_c,
+                i_operation_state.scheduler_enable,
+            i_boundary_block          => face_close_block_c,
             i_active_valid            => i_active_valid,
             i_active_config           => i_active_config,
             i_face_event              => face_event_c,

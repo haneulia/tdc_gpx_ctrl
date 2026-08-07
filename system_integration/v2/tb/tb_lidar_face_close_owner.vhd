@@ -74,6 +74,7 @@ architecture sim of tb_lidar_face_close_owner is
     signal scheduler_block : std_logic;
     signal idle : std_logic;
     signal overflow_sticky : std_logic;
+    signal clear_diagnostics : std_logic := '0';
 
 begin
 
@@ -91,7 +92,7 @@ begin
             i_active_config => active_config,
             i_face_event => face_event,
             i_executor_ready => executor_ready,
-            i_clear_diagnostics => '0',
+            i_clear_diagnostics => clear_diagnostics,
             o_close_event => close_event,
             i_close_ready => close_ready,
             o_scheduler_block => scheduler_block,
@@ -189,8 +190,8 @@ begin
         wait_clocks(1);
 
         -- A zero-gap Face change reports exit and enter together. The old
-        -- close must be ordered first while the new traversal context remains
-        -- available for its later close.
+        -- close is ordered first and the overlapping new traversal is skipped
+        -- so a pending output cannot create an endless all-hole Face chain.
         pulse_face(fn_face_event(0, '1', '0', DIRECTION_CW, '0'));
         face_event <= fn_face_event(1, '1', '1', DIRECTION_CCW, '0');
         wait for 1 ps;
@@ -213,10 +214,12 @@ begin
         wait_clocks(1);
         close_ready <= '0';
         wait_clocks(1);
-        assert scheduler_block = '0' and idle = '0'
-            report "V2-FCLOSE-TB new traversal was not retained"
+        assert scheduler_block = '0' and idle = '1' and
+               overflow_sticky = '1'
+            report "V2-FCLOSE-TB busy-boundary traversal was not skipped"
             severity failure;
 
+        pulse_face(fn_face_event(1, '1', '0', DIRECTION_CCW, '0'));
         pulse_face(fn_face_event(1, '0', '1', DIRECTION_CCW, '0'));
         for timeout in 0 to 8 loop
             wait_clocks(1);
@@ -226,15 +229,22 @@ begin
                close_event.face_frame_id = to_unsigned(3, 32) and
                close_event.face_index = to_unsigned(1, 3) and
                close_event.direction = DIRECTION_CCW
-            report "V2-FCLOSE-TB new Face close lost after direct transition"
+            report "V2-FCLOSE-TB recovery Face close missing"
             severity failure;
         close_ready <= '1';
         wait_clocks(1);
         close_ready <= '0';
         wait_clocks(1);
 
-        assert overflow_sticky = '0' and idle = '1'
-            report "V2-FCLOSE-TB unexpected owner diagnostic"
+        assert overflow_sticky = '1' and idle = '1'
+            report "V2-FCLOSE-TB overload diagnostic missing"
+            severity failure;
+        clear_diagnostics <= '1';
+        wait_clocks(1);
+        clear_diagnostics <= '0';
+        wait_clocks(1);
+        assert overflow_sticky = '0'
+            report "V2-FCLOSE-TB overload diagnostic did not clear"
             severity failure;
         report "LIDAR_V2_FACE_CLOSE_OWNER_PASS" severity note;
         done <= true;

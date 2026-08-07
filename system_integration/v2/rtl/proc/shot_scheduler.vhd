@@ -18,6 +18,7 @@ entity shot_scheduler is
         i_clk                       : in  std_logic;
         i_rst_n                     : in  std_logic;
         i_enable                    : in  std_logic;
+        i_boundary_block            : in  std_logic := '0';
         i_active_valid              : in  std_logic;
         i_active_config             : in  lidar_active_config_t;
         i_face_event                : in  face_event_t;
@@ -194,6 +195,14 @@ begin
                     session_v    := '0';
                     countdown_v  := (others => '0');
                     column_v     := (others => '0');
+                elsif i_boundary_block = '1' then
+                    -- Face-close serialization is not a new ARM session.
+                    -- Drop the interrupted angular session but preserve the
+                    -- one-time ARM quarantine age so the next clean Face can
+                    -- be admitted immediately.
+                    session_v   := '0';
+                    countdown_v := (others => '0');
+                    column_v    := (others => '0');
                 elsif i_face_event.valid = '1' then
                     if i_face_event.inside /= '1' then
                         session_v   := '0';

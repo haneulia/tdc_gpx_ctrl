@@ -43,26 +43,25 @@ architecture rtl of lidar_gpx_shot_line_builder is
         C_GPX_VDMA_SHOT_META_WORDS - 1 := 0;
     signal line_word_count_r : gpx_vdma_line_word_count_t :=
         (others => '0');
+    signal cell_global_word_index_r : gpx_vdma_line_word_index_t :=
+        to_unsigned(C_GPX_VDMA_SHOT_META_WORDS,
+            gpx_vdma_line_word_index_t'length);
     signal line_word_r : gpx_vdma_line_word_event_t :=
         C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
     signal output_ready_c : std_logic;
 
     function fn_line_word_from_cell(
         value           : gpx_vdma_word_event_t;
-        line_word_count : gpx_vdma_line_word_count_t
+        line_word_count : gpx_vdma_line_word_count_t;
+        global_index    : gpx_vdma_line_word_index_t
     ) return gpx_vdma_line_word_event_t is
         variable result : gpx_vdma_line_word_event_t :=
             C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
-        variable global_index : natural;
     begin
-        global_index := C_GPX_VDMA_SHOT_META_WORDS +
-            to_integer(value.slot_index) * to_integer(value.word_count) +
-            to_integer(value.word_index);
         result.valid           := '1';
         result.data            := value.data;
         result.kind            := GPX_VDMA_LINE_CELL_DATA;
-        result.word_index      := to_unsigned(
-            global_index, result.word_index'length);
+        result.word_index      := global_index;
         result.line_word_count := line_word_count;
         result.line_end        := value.line_end;
         result.first_column    := value.first_column;
@@ -79,7 +78,10 @@ begin
     output_ready_c <= '1' when line_word_r.valid = '0' or
         i_line_word_ready = '1' else '0';
 
-    o_cell_word_ready <= '1' when i_abort = '0' and
+    -- Abort is a synchronous state transition in this clock domain. Keeping
+    -- it out of READY prevents the reset command from becoming a reverse
+    -- combinational path through every downstream formatter stage.
+    o_cell_word_ready <= '1' when
         (state_r = ST_IDLE or
          (state_r = ST_CELLS and output_ready_c = '1')) else '0';
     o_line_word <= line_word_r;
@@ -97,6 +99,9 @@ begin
                 shot_status_r <= C_GPX_VDMA_SHOT_STATUS_CLEAR;
                 metadata_index_r <= 0;
                 line_word_count_r <= (others => '0');
+                cell_global_word_index_r <= to_unsigned(
+                    C_GPX_VDMA_SHOT_META_WORDS,
+                    cell_global_word_index_r'length);
                 line_word_r <= C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
             else
                 if line_word_r.valid = '1' and i_line_word_ready = '1' then
@@ -113,6 +118,9 @@ begin
                                 to_integer(i_cell_word.word_count);
                             line_word_count_r <= to_unsigned(
                                 total_words, line_word_count_r'length);
+                            cell_global_word_index_r <= to_unsigned(
+                                C_GPX_VDMA_SHOT_META_WORDS,
+                                cell_global_word_index_r'length);
                             shot_status_r <= C_GPX_VDMA_SHOT_STATUS_CLEAR;
                             shot_status_r.data_valid <= '1';
                             shot_status_r.line_faulted <=
@@ -165,10 +173,13 @@ begin
                     when ST_FIRST_CELL =>
                         if output_ready_c = '1' then
                             line_word_r <= fn_line_word_from_cell(
-                                first_cell_word_r, line_word_count_r);
+                                first_cell_word_r, line_word_count_r,
+                                cell_global_word_index_r);
                             if first_cell_word_r.line_end = '1' then
                                 state_r <= ST_DRAIN_LAST;
                             else
+                                cell_global_word_index_r <=
+                                    cell_global_word_index_r + 1;
                                 state_r <= ST_CELLS;
                             end if;
                         end if;
@@ -177,9 +188,13 @@ begin
                         if i_cell_word.valid = '1' and
                            o_cell_word_ready = '1' then
                             line_word_r <= fn_line_word_from_cell(
-                                i_cell_word, line_word_count_r);
+                                i_cell_word, line_word_count_r,
+                                cell_global_word_index_r);
                             if i_cell_word.line_end = '1' then
                                 state_r <= ST_DRAIN_LAST;
+                            else
+                                cell_global_word_index_r <=
+                                    cell_global_word_index_r + 1;
                             end if;
                         end if;
 

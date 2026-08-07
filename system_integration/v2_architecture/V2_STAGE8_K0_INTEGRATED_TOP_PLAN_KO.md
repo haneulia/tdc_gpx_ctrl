@@ -195,16 +195,16 @@ ACK 전에는 다음 Face를 시작하지 않는다.
 | K0-3 | 원자적 unified CSR/config/VDMA profile과 command CDC 연결 | **완료**: 80개 production 소스, 양 lane ACK barrier, active version/IRQ exact compare PASS |
 | K0-4 | Processing + Echo 연결 | **완료**: 물리/시뮬레이션 2 clock profile 기능·구현 PASS, fire/start/stop 상호배타 및 Echo 활성화 장벽 검증 |
 | K0-5 | GPX acquisition + B5..B8 연결 | **완료**: physical GPX pin/config/RUN, raw28/Hit17, 16 APD, Return7 identity와 CDC/구현 PASS |
-| K0-6 | Shot/Hole/T0 + Footer + width packer 연결 | J9 DDR Golden과 모든 Word 동일 |
-| K0-7 | Rise/Fall lane 및 VDMA profile ACK 연결 | dedicated, Rise-only, one-Chip dual-edge, all-dual PASS |
+| K0-6 | Shot/Hole/T0 + Footer + width packer 연결 | **완료**: 2 clock profile x 3 폭 Top 기능, DDR/HTML 모든 Word, PS/Ethernet 모든 byte PASS |
+| K0-7 | Rise/Fall lane 및 VDMA profile ACK 연결 | **완료**: dedicated 2R/2F, one-Chip dual-edge, four-Chip all-dual 및 독립 Footer stall PASS |
 | K0-8 | status/IRQ 단일 owner 조립 | U/X 없는 exact nonzero/zero status 검사 |
-| K0-9 | 합성/구현 | black box 0, latch 0, blocking DRC 0, WNS >= 0 |
+| K0-9 | 합성/구현 | black box 0, latch 0, blocking DRC 0, WNS >= +0.1 ns |
 | K0-10 | 새 VLNV package | `tdc_gpx_lidar_ctrl_v2:2.0`, v1과 병존 |
 
-K0의 routine functional profile은 기존 정책대로 Processing/TDC
-`150/200 MHz`와 `200/150 MHz`이다. Clock-domain 구조가 완성되는 K0 release
-gate에서는 추가로 같은 물리 clock의 `150/150 MHz`와 극단 비동기 `50/200`,
-`200/50 MHz`를 한 번 실행한다.
+K0의 functional/implementation 회귀 profile은 사용자 정책대로 Processing/TDC
+`150/200 MHz`와 `200/150 MHz` 두 조합만 사용한다. 이전의 SYNC/극단 비동기
+전용 감사 결과는 CDC 구조 근거로 보존하되 이후 통합 회귀 매트릭스에는 반복해서
+추가하지 않는다.
 
 ## 6. K1 전체 RTL/HTML 정렬
 
@@ -270,10 +270,13 @@ triple buffering으로 DMA-owned, ready-for-CPU, CPU-owned 상태를 분리한�
   `CLEAR_STATUS`/`SOFT_RESET`은 acknowledged CDC로 두 목적지에 전달된다.
 - K0-4: 완료. Processing/Echo 및 설정 활성화 장벽을 통합했다.
 - K0-5: 완료. GPX 물리 bus/config/RUN과 B5-B8 Hit/Cell/Frame-lane 경로를 통합했다.
-- K0-6 이후: 미구현, 다음 작업.
+- K0-6/K0-7: 완료. Rise/Fall AXIS 출력, Footer 완료, 32/64/128-bit 구현과
+  DDR/HTML 및 PS/Ethernet L1 비교를 닫았다.
+- K0-8 이후: 미구현, 다음 작업.
 - K1: K0 이후.
 - L0: 현재 parent에 VDMA/HP/software가 없어 실행 불가.
 
-따라서 현재는 통합 IP 또는 전체 시스템 release Sign-off가 아니다. 다음 코드
-작업은 parent BD 수정이 아니라 `tdc_gpx_lidar_ctrl_v2_top`에 Shot/Hole/T0,
-PACKED17 Cell, Face Footer와 단일 폭 packer를 연결하는 K0-6이다.
+따라서 현재는 데이터 경로 L1 Sign-off까지 완료됐지만 통합 IP 또는 전체 시스템
+release Sign-off는 아니다. 다음 코드는 parent BD 수정이 아니라
+`tdc_gpx_lidar_ctrl_v2_top`의 모든 live/sticky status와 IRQ를 단일 owner 아래에
+조립하는 K0-8이다.

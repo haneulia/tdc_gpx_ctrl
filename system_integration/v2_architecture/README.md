@@ -19,9 +19,11 @@
 > width packing, and J7/J8 close the sequential VDMA profile plus ordered Face
 > Footer. J9 closes the STRIDE-aware DDR-versus-HTML Golden comparison, and
 > J10 closes the portable PS H-Line/Ethernet byte comparison. K0-2 establishes
-> the synthesisable v2 public Top shell and K0-3 closes atomic Rise/Fall VDMA
-> activation plus acknowledged system-command CDC. Remaining K0 integration
-> and K1 full RTL/HTML alignment come before L0 parent
+> the synthesisable v2 public Top shell, K0-3 closes atomic Rise/Fall VDMA
+> activation plus acknowledged system-command CDC, and K0-4 through K0-7
+> connect Processing/Echo, physical GPX B5-B8 and the complete dual-lane
+> AXIS/VDMA output. Remaining K0 status/package integration and K1 full
+> RTL/HTML alignment come before L0 parent
 > VDMA/HP/cache and board evidence.
 
 ## 1. Purpose
@@ -103,6 +105,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md](V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md) | Atomic Rise/Fall VDMA activation, acknowledged system-command CDC and K0-3 evidence |
 | [V2_CHECKPOINT_K0_4_PROCESSING_ECHO_INTEGRATION_KO.md](V2_CHECKPOINT_K0_4_PROCESSING_ECHO_INTEGRATION_KO.md) | Processing/Echo production ownership, physical/simulation exclusion, timing optimization and K0-4 evidence |
 | [V2_CHECKPOINT_K0_5_GPX_B5_B8_INTEGRATION_KO.md](V2_CHECKPOINT_K0_5_GPX_B5_B8_INTEGRATION_KO.md) | Physical GPX bus/config/RUN, B5-B8 Hit/Cell/Frame-lane identity, CDC/timing optimization and K0-5 evidence |
+| [V2_CHECKPOINT_K0_6_AXIS_FRAME_OUTPUT_KO.md](V2_CHECKPOINT_K0_6_AXIS_FRAME_OUTPUT_KO.md) | Dual-lane Shot/Hole/T0/Footer/AXIS integration, 32/64/128-bit implementation, DDR/HTML and PS/Ethernet L1 sign-off evidence |
 
 ## 4. Target Top-Level Shape
 

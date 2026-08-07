@@ -144,23 +144,27 @@ simulation mode에서는 물리 `fire_pulse`와 physical arm이 모두 비활성
 
 | 값 | 시작 | 끝 | Processing clocks |
 |---|---|---|---:|
-| B0-to-executor accept | `position_event.valid` | matching request accept | 4 |
-| Physical sample-to-fire | 비동기 핀의 안정값을 첫 FF가 샘플한 edge | physical `fire_pulse` 상승 | 8 |
-| Virtual transition-to-accept | 등록 virtual A/B 변화 edge | matching request accept | 5 |
+| B0-to-executor accept | `position_event.valid` | matching request accept | 5 |
+| Physical sample-to-fire | 비동기 핀의 안정값을 첫 FF가 샘플한 edge | physical `fire_pulse` 상승 | 9 |
+| Virtual source-to-accept | 내부 virtual source A/B/Z 전이 | matching request accept | 7 |
 
-물리 8 clocks는 B0 physical 4 clocks와 B0-to-accept/fire 4 clocks의 합이다.
+물리 9 clocks는 B0 physical 4 clocks와 B0-to-accept/fire 5 clocks의 합이다.
 비동기 핀의 실제 전이부터 첫 Processing sample까지의 0..1 clock 위상 구간은
-포함하지 않는다. Virtual 5 clocks도 simulation START까지의 값이 아니다.
+포함하지 않는다. Virtual 7 clocks도 simulation START까지의 값이 아니다.
 simulation START에는 accept 이후 사용자가 설정한 simulation delay가 별도로
 적용된다.
 
 F5는 이 값을 다음 출력으로 고정한다.
 
 ```text
-o_b0_to_accept_clks       = 4
-o_physical_to_fire_clks   = 8
-o_virtual_to_accept_clks  = 5
+o_b0_to_accept_clks       = 5
+o_physical_to_fire_clks   = 9
+o_virtual_to_accept_clks  = 7
 ```
+
+`o_virtual_a/b/z`는 공통 1-clock 입력 경계를 지난 관찰 신호다. 따라서 이
+관찰 포트의 전이부터 accept까지 직접 재면 6 clocks이며, 위 7 clocks는 그
+앞단의 내부 Virtual source 전이부터 계산한 전체 계약이다.
 
 ## 8. Processing Monitor AXIS ABI
 
@@ -244,17 +248,17 @@ safe point가 올라오는 것을 검증한다. 전체 LiDAR commit safe point�
 
 | ID | 핵심 자극 | 닫힌 계약 | 결과 |
 |---|---|---|---|
-| P50 | physical pin -> B0..B3 -> async `fire_done` | 8-clock fire latency, shot identity, immediate START, normal result | PASS |
+| P50 | physical pin -> B0..B3 -> async `fire_done` | 9-clock fire latency, shot identity, immediate START, normal result | PASS |
 | P51 | monitor beat 장기 stall 중 연속 Face event | AXIS stability, drop count, TREADY control 격리 | PASS |
 | P52 | active shot 중 STOP, monitor는 계속 stall | shot drain 전 safe 금지, drain 후 local safe 허용 | PASS |
-| P53 | virtual source RUN/ARM | 5-clock accept, physical fire/arm 금지, simulation START/result | PASS |
+| P53 | virtual source RUN/ARM | 7-clock internal-source accept, physical fire/arm 금지, simulation START/result | PASS |
 
 두 profile 모두 동일한 P50..P53을 통과했다.
 
 | Processing | TDC response model | 기능 | WNS | Latch | ASYNC_REG | Critical CDC |
 |---:|---:|---|---:|---:|---:|---:|
-| 150 MHz | 200 MHz | PASS | `+0.858 ns` | 0 | 16 | 0 |
-| 200 MHz | 150 MHz | PASS | `+0.331 ns` | 0 | 16 | 0 |
+| 150 MHz | 200 MHz | PASS | `+0.385 ns` | 0 | 16 | 0 |
+| 200 MHz | 150 MHz | PASS | `+0.196 ns` | 0 | 16 | 0 |
 
 TDC model clock은 Processing clock에 대해 731 ps 위상 offset을 두었다. 이는
 raw `fire_done`의 고정 위상 가정을 제거하기 위한 시험 조건이다.
@@ -278,17 +282,18 @@ raw `fire_done`의 고정 위상 가정을 제거하기 위한 시험 조건이�
 
 | Resource | Count |
 |---|---:|
-| LUT | 2064 |
-| FF | 1740 |
+| LUT | 2160 |
+| FF | 2589 |
 | LUTRAM/SRL | 0 |
 | BRAM/DSP | 0 |
 
-200 MHz 최악 경로는 B2 `grid_countdown_r`의 reload/reset 판정이며 4 LUT,
-data-path delay `4.009 ns`, route 비중 약 76.3%다. 물리 START capture에서
-executor core로 되먹임되던 조합 busy는 F5 검토 중 제거했다.
+200 MHz 최악 경로는 virtual source의 등록 threshold에서 accumulator까지이며
+8 logic level, data-path delay `4.761 ns`, route 비중 약 53.7%다. B2/B3 request
+ingress를 등록해 이전 scheduler/executor 경로를 제거했고, 물리 START capture에서
+executor core로 되먹임되던 조합 busy도 F5 검토 중 제거했다.
 `o_start_busy`는 START의 무지연 출력에는 관여하지 않고 이후 re-arm 상태에서만
 소비되므로 등록 owner인 `hold_active_r`로 구동한다. F4 무회귀 결과는
-150 MHz `+1.477 ns`, 200 MHz `+0.422 ns`이며 P30..P36과 raw endpoint 감사가
+150 MHz `+1.353 ns`, 200 MHz `+0.107 ns`이며 P30..P36과 raw endpoint 감사가
 모두 다시 통과했다.
 
 ## 13. 재현 증거
@@ -296,13 +301,13 @@ executor core로 되먹임되던 조합 busy는 F5 검토 중 제거했다.
 F4 무회귀 세션:
 
 ```text
-signoff_results/sessions/260804_f4_busy_opt_v2_laser_executor
+signoff_results/sessions/260807_k06_laser_terminal_flag_v2_laser_executor
 ```
 
 F5 최종 세션:
 
 ```text
-signoff_results/sessions/260804_f5_busy_opt_v2_processing_subsystem
+signoff_results/sessions/260807_k06_processing_margin_pipe_v2_processing_subsystem
 ```
 
 재현 명령:
@@ -312,7 +317,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/v2/scripts/run_v2_processing_subsystem.ps1
 ```
 
-최종 세션은 20개 simulation/synthesis source의 SHA-256 manifest를 포함하며,
+최종 세션은 21개 simulation/synthesis source의 SHA-256 manifest를 포함하며,
 문서 작성 직전 현재 source와 mismatch가 0임을 확인했다. 일시 work directory는
 PASS archive를 만든 뒤 안전한 root 확인 후 자동 삭제한다.
 

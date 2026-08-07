@@ -160,9 +160,9 @@ The fixed measured path contracts are:
 
 | Metric | Start edge | End edge | Processing clocks |
 |---|---|---|---:|
-| B0-to-executor accept | `position_event.valid` | matching request accept | 4 |
-| Physical sample-to-fire | first FF sample of a stable asynchronous pin | physical `fire_pulse` rising | 8 |
-| Virtual transition-to-accept | registered virtual A/B transition | matching request accept | 5 |
+| B0-to-executor accept | `position_event.valid` | matching request accept | 5 |
+| Physical sample-to-fire | first FF sample of a stable asynchronous pin | physical `fire_pulse` rising | 9 |
+| Virtual source-to-accept | internal virtual-source A/B/Z transition | matching request accept | 7 |
 
 The physical asynchronous phase before the first sample is not included. The
 virtual value ends at accept and therefore excludes the configured simulation
@@ -258,9 +258,9 @@ and the observed latency.
 | Metric | Start | End |
 |---|---|---|
 | Encoder-to-position | first FF sample of a stable physical A/B value | `position_event.valid`; F1 = 4 clocks |
-| Position-to-fire | `position_event.valid` | physical `fire_pulse` rising edge; F5 = 4 clocks |
-| Physical sample-to-fire | first FF sample of a stable physical A/B value | physical `fire_pulse` rising edge; F5 = 8 clocks |
-| Virtual transition-to-accept | registered virtual A/B transition | matching request accept; F5 = 5 clocks |
+| Position-to-fire | `position_event.valid` | physical `fire_pulse` rising edge; K0-6 = 5 clocks |
+| Physical sample-to-fire | first FF sample of a stable physical A/B value | physical `fire_pulse` rising edge; K0-6 = 9 clocks |
+| Virtual source-to-accept | internal virtual-source A/B/Z transition | matching request accept; K0-6 = 7 clocks |
 | Fire-to-done | physical `fire_pulse` | synchronized matching `fire_done` |
 | Fire-to-TDC | physical `fire_pulse` | `start_tdc` rising edge |
 | START-to-first-word | `start_tdc` | first accepted 28-bit GPX word |

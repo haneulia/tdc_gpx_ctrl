@@ -219,18 +219,10 @@ begin
         end if;
     end process p_fail_safe;
 
-    p_tdc_fail_safe : process (tdc_clk)
-    begin
-        if rising_edge(tdc_clk) and tdc_rst_n = '1' then
-            assert tdc_csn = "1111" and tdc_rdn = "1111" and
-                   tdc_wrn = "1111" and tdc_oen = "1111" and
-                   tdc_stopdis = "1111" and tdc_alutrigger = "0000" and
-                   tdc_puresn = "1111" and
-                   tdc_d = (tdc_d'range => 'Z')
-                report "V2-K0-TOP-TB pre-K0-5 GPX pins not fail-safe"
-                severity failure;
-        end if;
-    end process p_tdc_fail_safe;
+    -- GPX pin sequencing became an active production path at K0-5 and is
+    -- covered by the K0-5 acquisition/top regressions. K0-3 owns only the
+    -- atomic configuration and VDMA-profile activation contract, so it must
+    -- not retain the obsolete pre-K0-5 all-pins-idle assertion.
 
     p_test : process
         variable status_word : std_logic_vector(31 downto 0);

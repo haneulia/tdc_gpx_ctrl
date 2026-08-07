@@ -51,6 +51,11 @@ architecture rtl of laser_executor is
 
     signal request_accept_c      : std_logic;
     signal request_drop_c        : std_logic;
+    signal core_request_drop_c   : std_logic;
+    signal core_ready_c          : std_logic;
+    signal ingress_ready_c       : std_logic;
+    signal ingress_drop_r        : std_logic := '0';
+    signal request_pipe_r        : shot_request_t := C_SHOT_REQUEST_IDLE;
     signal fire_trigger_c        : std_logic;
     signal simulation_t0_c       : std_logic;
     signal stop_trigger_c        : std_logic;
@@ -78,6 +83,8 @@ architecture rtl of laser_executor is
     signal start_width_r         : u32_t := (others => '0');
     signal stop_width_r          : u32_t := (others => '0');
     signal simulation_delay_r    : u32_t := (others => '0');
+    signal physical_mode_enable_r : std_logic := '0';
+    signal simulation_mode_enable_r : std_logic := '0';
     signal timestamp_ticks_r     : t0_timestamp_t := (others => '0');
     signal physical_t0_timestamp_c : t0_timestamp_t;
     signal physical_t0_timestamp_valid_c : std_logic;
@@ -162,6 +169,60 @@ begin
     config_ready_c <= '1' when config_valid_r = '1' and
         timing_valid_r = "11111" else '0';
 
+    -- The scheduler request is registered once before the lifecycle core.
+    -- Besides making the B2/B3 ownership boundary explicit, this prevents the
+    -- wide request record and its 16-bit version check from sharing the
+    -- 200 MHz state/counter control cone. The raw fire_done bridge remains an
+    -- intentionally independent low-latency path.
+    ingress_ready_c <= core_ready_c and not request_pipe_r.valid;
+    request_drop_c <= core_request_drop_c or ingress_drop_r;
+
+    p_request_ingress : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                request_pipe_r <= C_SHOT_REQUEST_IDLE;
+                ingress_drop_r <= '0';
+            else
+                ingress_drop_r <= '0';
+
+                if request_pipe_r.valid = '1' and core_ready_c = '1' then
+                    request_pipe_r.valid <= '0';
+                end if;
+
+                if i_shot_request.valid = '1' then
+                    if ingress_ready_c = '1' then
+                        request_pipe_r <= i_shot_request;
+                        request_pipe_r.valid <= '1';
+                    else
+                        ingress_drop_r <= '1';
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_request_ingress;
+
+    -- Register the mode qualification consumed by the lifecycle core. RUN and
+    -- ARM changes occur outside an accepted Shot, so this one-clock assertion
+    -- latency does not change per-Shot timing. The final physical FIRE output
+    -- deliberately keeps the direct operation-state gate below: permit loss,
+    -- DISARM, or STOP can therefore suppress the pin without this latency.
+    p_operation_mode_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                physical_mode_enable_r <= '0';
+                simulation_mode_enable_r <= '0';
+            else
+                physical_mode_enable_r <=
+                    i_operation_state.physical_fire_enable;
+                simulation_mode_enable_r <=
+                    i_operation_state.simulation_enable;
+            end if;
+        end if;
+    end process p_operation_mode_pipeline;
+
+    o_executor_ready  <= ingress_ready_c;
     o_request_accept  <= request_accept_c;
     o_request_drop    <= request_drop_c;
     o_fire_pulse      <= fire_pulse_c;
@@ -171,7 +232,7 @@ begin
     o_shot_result     <= shot_result_c;
     o_current_request <= current_request_c;
     o_physical_arm    <= physical_arm_c;
-    o_busy            <= executor_busy_c;
+    o_busy            <= executor_busy_c or request_pipe_r.valid;
 
     u_core : entity work.laser_executor_core
         generic map (
@@ -186,11 +247,9 @@ begin
             i_fire_done_timeout_clks => fire_done_timeout_r,
             i_target_range_clks   => target_range_r,
             i_sim_start_delay_clks => simulation_delay_r,
-            i_physical_fire_enable =>
-                i_operation_state.physical_fire_enable,
-            i_simulation_enable   =>
-                i_operation_state.simulation_enable,
-            i_shot_request        => i_shot_request,
+            i_physical_fire_enable => physical_mode_enable_r,
+            i_simulation_enable   => simulation_mode_enable_r,
+            i_shot_request        => request_pipe_r,
             i_bridge_ready        => bridge_ready_c,
             i_t0_event            => bridge_t0_event_c,
             i_timestamp_ticks     => timestamp_ticks_r,
@@ -201,9 +260,9 @@ begin
             i_fire_busy           => fire_busy_c,
             i_sim_start_busy      => simulation_start_busy_c,
             i_stop_busy           => stop_busy_c,
-            o_executor_ready      => o_executor_ready,
+            o_executor_ready      => core_ready_c,
             o_request_accept      => request_accept_c,
-            o_request_drop        => request_drop_c,
+            o_request_drop        => core_request_drop_c,
             o_fire_trigger        => fire_trigger_c,
             o_sim_start_trigger   => simulation_t0_c,
             o_stop_trigger        => stop_trigger_c,

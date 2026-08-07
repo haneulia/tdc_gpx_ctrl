@@ -88,6 +88,7 @@ architecture rtl of laser_executor_core is
     signal fire_timeout_r      : unsigned(31 downto 0) := (others => '0');
     signal target_range_r      : unsigned(31 downto 0) := (others => '0');
     signal simulation_delay_r  : unsigned(31 downto 0) := (others => '0');
+    signal simulation_delay_last_r : std_logic := '0';
     signal range_count_r       : unsigned(31 downto 0) := (others => '0');
     signal fire_to_t0_count_r  : unsigned(31 downto 0) := (others => '0');
     signal fire_to_t0_value_r  : unsigned(31 downto 0) := (others => '0');
@@ -129,7 +130,7 @@ begin
          i_sim_start_delay_clks = 0) or
         (state_r = EXEC_WAIT_SIMULATION_T0 and
          i_simulation_enable = '1' and
-         simulation_delay_r <= 1) else '0';
+         simulation_delay_last_r = '1') else '0';
     range_end_c <= '1' when state_r = EXEC_RANGE_WINDOW and
         range_count_r <= 1 else '0';
 
@@ -186,6 +187,7 @@ begin
                 fire_timeout_r      <= (others => '0');
                 target_range_r      <= (others => '0');
                 simulation_delay_r  <= (others => '0');
+                simulation_delay_last_r <= '0';
                 range_count_r       <= (others => '0');
                 fire_to_t0_count_r  <= (others => '0');
                 fire_to_t0_value_r  <= (others => '0');
@@ -217,6 +219,11 @@ begin
                             fire_timeout_r     <= i_fire_done_timeout_clks;
                             target_range_r     <= i_target_range_clks;
                             simulation_delay_r <= i_sim_start_delay_clks;
+                            if i_sim_start_delay_clks <= 1 then
+                                simulation_delay_last_r <= '1';
+                            else
+                                simulation_delay_last_r <= '0';
+                            end if;
                             fire_to_t0_count_r <= (others => '0');
                             fire_to_t0_value_r <= (others => '0');
                             resolve_count_r    <= 0;
@@ -226,6 +233,7 @@ begin
                                 physical_arm_r <= '1';
                                 state_r <= EXEC_WAIT_PHYSICAL_T0;
                             elsif i_sim_start_delay_clks = 0 then
+                                simulation_delay_last_r <= '0';
                                 shot_start_r.valid <= '1';
                                 shot_start_r.request <= i_shot_request;
                                 shot_start_r.fire_to_t0_clks <= (others => '0');
@@ -272,6 +280,7 @@ begin
                         wait_value_v := fn_sat_increment(fire_to_t0_count_r);
                         fire_to_t0_count_r <= wait_value_v;
                         if i_simulation_enable /= '1' then
+                            simulation_delay_last_r <= '0';
                             shot_result_r.valid   <= '1';
                             shot_result_r.timeout <= '0';
                             shot_result_r.aborted <= '1';
@@ -279,10 +288,14 @@ begin
                             shot_result_r.fire_to_t0_clks <= wait_value_v;
                             rearm_count_r <= C_REARM_MARGIN_CLKS;
                             state_r <= EXEC_REARM;
-                        elsif simulation_delay_r > 1 then
+                        elsif simulation_delay_last_r = '0' then
                             simulation_delay_r <= simulation_delay_r - 1;
+                            if simulation_delay_r = 2 then
+                                simulation_delay_last_r <= '1';
+                            end if;
                         else
                             simulation_delay_r <= (others => '0');
+                            simulation_delay_last_r <= '0';
                             fire_to_t0_value_r <= wait_value_v;
                             shot_start_r.valid <= '1';
                             shot_start_r.request <= current_request_r;

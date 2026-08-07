@@ -49,6 +49,9 @@ entity lidar_gpx_b5_b8_subsystem is
         i_fall_ready : in  std_logic;
         o_frame_close_event : out gpx_frame_close_event_t;
         i_frame_close_ready : in  std_logic;
+        -- Completion of the final enabled-lane Footer Beat. Delivery and
+        -- output completion are separate so AXIS backpressure holds the Face.
+        i_frame_output_done : in std_logic := '1';
         o_rise_line_done : out std_logic;
         o_fall_line_done : out std_logic;
         o_shot_done      : out std_logic;
@@ -112,7 +115,9 @@ architecture rtl of lidar_gpx_b5_b8_subsystem is
         CLOSE_IDLE,
         CLOSE_SEND,
         CLOSE_WAIT_OUTPUT,
-        CLOSE_ACK
+        CLOSE_WAIT_FRAME_DONE,
+        CLOSE_ACK,
+        CLOSE_RELEASE
     );
 
     signal close_state_r : close_state_t := CLOSE_IDLE;
@@ -219,6 +224,11 @@ begin
                         when CLOSE_WAIT_OUTPUT =>
                             if frame_close_event_c.valid = '1' and
                                i_frame_close_ready = '1' then
+                                close_state_r <= CLOSE_WAIT_FRAME_DONE;
+                            end if;
+
+                        when CLOSE_WAIT_FRAME_DONE =>
+                            if i_frame_output_done = '1' then
                                 close_state_r <= CLOSE_ACK;
                             end if;
 
@@ -226,7 +236,16 @@ begin
                             if i_face_close_event.valid /= '1' then
                                 context_fault_r <= '1';
                             end if;
-                            close_state_r <= CLOSE_IDLE;
+                            close_state_r <= CLOSE_RELEASE;
+
+                        -- The upstream owner clears valid on the CLOSE_ACK
+                        -- handshake edge.  Wait for that registered release
+                        -- before admitting another close so the same held
+                        -- Face boundary cannot be sampled twice.
+                        when CLOSE_RELEASE =>
+                            if i_face_close_event.valid = '0' then
+                                close_state_r <= CLOSE_IDLE;
+                            end if;
                     end case;
                 end if;
             end if;
@@ -342,7 +361,8 @@ begin
                         report "V2-B5B8-003 GPX result without accepted Shot"
                         severity failure;
                 end if;
-                if close_state_r /= CLOSE_IDLE then
+                if close_state_r /= CLOSE_IDLE and
+                   close_state_r /= CLOSE_RELEASE then
                     assert i_face_close_event.valid = '1'
                         report "V2-B5B8-004 Face-close source withdrew valid"
                         severity failure;

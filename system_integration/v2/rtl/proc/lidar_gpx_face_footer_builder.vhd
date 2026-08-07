@@ -85,12 +85,16 @@ begin
     output_ready_c <= '1' when line_word_r.valid = '0' or
         i_line_word_ready = '1' else '0';
 
-    o_line_word_ready <= '1' when i_rst_n = '1' and i_abort = '0' and
-        state_r = ST_PASS and output_ready_c = '1' and
-        i_frame_close_event.valid = '0' else '0';
+    -- READY is derived from registered state only. The synchronous abort
+    -- branch discards any apparent same-cycle transfer in every connected
+    -- stage and therefore does not need a combinational READY qualifier.
+    -- A pending Face Close is held independently until the current Line input
+    -- drains, so Close VALID must not propagate backward through Line READY.
+    o_line_word_ready <= '1' when state_r = ST_PASS and
+        output_ready_c = '1' else '0';
 
-    o_frame_close_ready <= '1' when i_rst_n = '1' and i_abort = '0' and
-        state_r = ST_PASS and input_line_active_r = '0' and
+    o_frame_close_ready <= '1' when state_r = ST_PASS and
+        input_line_active_r = '0' and
         line_word_r.valid = '0' and i_line_word.valid = '0' and
         i_active_profile.valid = '1' and
         i_active_profile.enabled = '1' else '0';

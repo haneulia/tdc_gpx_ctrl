@@ -61,8 +61,10 @@ multiple clocks and is checked against this reference model.
   sequential, acknowledged Face-boundary VDMA profile activation. The DDR
   Golden comparison is closed by J9, and J10 closes the portable PS H-Line
   decoder, Viewer packet byte comparison and Cortex-A9 build. K0-2 establishes
-  the synthesisable public Top shell and K0-3 closes atomic Rise/Fall VDMA
-  profile activation plus acknowledged CSR system-command CDC. The physical
+  the synthesisable public Top shell, K0-3 closes atomic Rise/Fall VDMA
+  profile activation plus acknowledged CSR system-command CDC, and K0-4
+  through K0-7 connect Processing/Echo, physical GPX B5-B8 and the complete
+  dual-lane AXIS/VDMA output. The physical
   parent VDMA/HP/cache path remains unmigrated; the existence of its v1 cores
   does not mark that Stage complete.
 
@@ -87,8 +89,10 @@ Return ordering and Hit-to-Cell collection, I2A proves their direct linked
 boundary, I3 owns width-neutral B8 Rise/Fall Frame-lane assembly, and I4 proves
 the complete B5..B8 production chain plus explicit Face-close ordering. J7/J8
 now close the focused B9 geometry and Footer boundary. J9 and J10 close the
-DDR image and host PS/Viewer comparison. The next implementation is K0, the
-synthesisable v2 top assembly. K1 closes the full RTL/HTML operating matrix
+DDR image and host PS/Viewer comparison. K0-6/K0-7 now connect that formatter
+chain to the public Top and close the modeled DDR/HTML plus portable
+PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly is the next
+implementation. K1 closes the full RTL/HTML operating matrix
 before L0 attaches the parent VDMA/HP-port and real cache/board measurement.
 
 Run the current package regression with:
@@ -412,3 +416,23 @@ that Return-count changes update HSIZE while preserving fixed maximum STRIDE,
 and that `CLEAR_STATUS`/`SOFT_RESET` reach both destinations through an
 acknowledged CDC. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K0_3_CONFIG_VDMA_COMMAND_CDC_KO.md`.
+
+Run the K0-6/K0-7 Top output regressions with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k06_axis_integration.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k06_axis_dual_lane.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k06_top_implementation.ps1
+```
+
+The final markers are `LIDAR_V2_K06_AXIS_INTEGRATION_REGRESSION_PASS`,
+`LIDAR_V2_K06_AXIS_DUAL_LANE_REGRESSION_PASS`, and
+`LIDAR_V2_K06_TOP_IMPLEMENTATION_PASS`. The implementation matrix covers only
+the two routine Processing/TDC profiles, 150/200 and 200/150 MHz, at all three
+32/64/128-bit output widths. See
+`system_integration/v2_architecture/V2_CHECKPOINT_K0_6_AXIS_FRAME_OUTPUT_KO.md`.

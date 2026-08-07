@@ -66,6 +66,7 @@ architecture sim of tb_shot_scheduler is
     signal rst_n         : std_logic := '0';
     signal stop_clock    : boolean := false;
     signal enable        : std_logic := '0';
+    signal boundary_block: std_logic := '0';
     signal active_valid  : std_logic := '0';
     signal active_config : lidar_active_config_t := C_BASE_CONFIG;
     signal face_event    : face_event_t := C_FACE_EVENT_IDLE;
@@ -90,6 +91,7 @@ begin
             i_clk                     => clk,
             i_rst_n                   => rst_n,
             i_enable                  => enable,
+            i_boundary_block          => boundary_block,
             i_active_valid            => active_valid,
             i_active_config           => active_config,
             i_face_event              => face_event,
@@ -135,6 +137,7 @@ begin
         procedure reset_dut is
         begin
             enable         <= '0';
+            boundary_block <= '0';
             active_valid   <= '0';
             face_event     <= C_FACE_EVENT_IDLE;
             executor_ready <= '1';
@@ -405,6 +408,21 @@ begin
         check(overrun_sticky = '0' and overrun_count = 0,
             "V2-SCHED-P24 invalid context polluted overrun diagnostics");
         report "V2-SCHED-P24 operation/context fail-close PASS"
+            severity note;
+
+        -- P25: a Face-close boundary blocks the current angular session but
+        -- must not restart the ARM-only two-clock stale-event quarantine.
+        reset_dut;
+        config_v := fn_test_config(209, 1, 1);
+        load_config(config_v);
+        boundary_block <= '1';
+        wait_clocks(5);
+        boundary_block <= '0';
+        apply_face(100, 0, DIRECTION_CW, '1', '1', '0', '0', '1',
+            true, 0, '1', false,
+            "V2-SCHED-P25 post-boundary entry");
+        resolve_request(true, "V2-SCHED-P25 post-boundary entry");
+        report "V2-SCHED-P25 boundary block preserves ARM quarantine PASS"
             severity note;
 
         report "LIDAR_V2_SHOT_SCHEDULER_PASS proc_mhz=" &

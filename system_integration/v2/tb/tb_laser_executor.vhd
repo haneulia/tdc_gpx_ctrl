@@ -210,6 +210,7 @@ begin
             constant case_name   : in string
         ) is
             variable request_v : shot_request_t := C_SHOT_REQUEST_IDLE;
+            variable wait_count_v : natural := 0;
         begin
             request_v.valid                := '1';
             request_v.face_index           := to_unsigned(2, 3);
@@ -227,6 +228,13 @@ begin
             shot_request <= request_v;
             wait until rising_edge(clk);
             wait for 1 ps;
+            shot_request <= C_SHOT_REQUEST_IDLE;
+            while request_accept /= '1' and request_drop /= '1' loop
+                wait_clocks(1);
+                wait_count_v := wait_count_v + 1;
+                check(wait_count_v < 4,
+                    case_name & " request resolution timeout");
+            end loop;
             if expect_ok then
                 check(request_accept = '1' and request_drop = '0',
                     case_name & " request was not accepted");
@@ -237,7 +245,6 @@ begin
                 check(request_accept = '0' and request_drop = '1',
                     case_name & " request was not dropped");
             end if;
-            shot_request <= C_SHOT_REQUEST_IDLE;
         end procedure issue_request;
 
         procedure check_registered_width(

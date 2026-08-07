@@ -9,16 +9,19 @@ use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_config_reference_pkg.all;
 use work.lidar_csr_map_pkg.all;
+use work.lidar_gpx_vdma_pkg.all;
 use work.tdc_gpx_pkg.all;
 
-entity tb_tdc_gpx_lidar_ctrl_v2_k05 is
+entity tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     generic (
         G_PROC_CLK_MHZ : positive := 150;
-        G_TDC_CLK_MHZ  : positive := 200
+        G_TDC_CLK_MHZ  : positive := 200;
+        G_OUTPUT_WIDTH : positive := 32;
+        G_AXIS_STALL_CLKS : natural := 0
     );
-end entity tb_tdc_gpx_lidar_ctrl_v2_k05;
+end entity tb_tdc_gpx_lidar_ctrl_v2_axis_core;
 
-architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k05 is
+architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
 
     constant C_CHIPS : positive := 2;
     constant C_STOPS_PER_CHIP : positive := 8;
@@ -38,7 +41,7 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k05 is
         result.max_returns_per_stop := C_RETURNS_PER_STOP;
         result.rise_capability_mask := "0011";
         result.fall_capability_mask := "0000";
-        result.output_width := 32;
+        result.output_width := G_OUTPUT_WIDTH;
         result.num_faces := 1;
         result.enable_echo_receiver := true;
         result.enable_echo_simulation := true;
@@ -101,11 +104,36 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k05 is
         return result;
     end function fn_raw_word;
 
+    function fn_contains_word(
+        value       : std_logic_vector;
+        target_word : std_logic_vector(31 downto 0)
+    ) return boolean is
+    begin
+        for word_index in 0 to value'length / 32 - 1 loop
+            if value((word_index + 1) * 32 - 1 downto
+                     word_index * 32) = target_word then
+                return true;
+            end if;
+        end loop;
+        return false;
+    end function fn_contains_word;
+
     constant C_RUNTIME : lidar_runtime_config_t := fn_runtime_config;
     constant C_DERIVED : lidar_derived_config_t :=
         fn_derive_runtime_config(C_BUILD_CONFIG, C_RUNTIME);
     constant C_WORDS : csr_word_array_t :=
         fn_pack_runtime_config(C_RUNTIME);
+    constant C_RISE_SLOT_COUNT : positive :=
+        C_CHIPS * C_STOPS_PER_CHIP;
+    constant C_EXPECTED_HSIZE_BYTES : positive :=
+        fn_gpx_vdma_shot_hsize_bytes(
+            C_RISE_SLOT_COUNT, C_RETURNS_PER_STOP, G_OUTPUT_WIDTH);
+    constant C_EXPECTED_LINES : positive :=
+        to_integer(C_DERIVED.columns_per_face) +
+        fn_gpx_vdma_footer_lines(C_EXPECTED_HSIZE_BYTES);
+    constant C_EXPECTED_BEATS : positive := C_EXPECTED_LINES *
+        fn_gpx_vdma_shot_line_beats(
+            C_RISE_SLOT_COUNT, C_RETURNS_PER_STOP, G_OUTPUT_WIDTH);
     constant C_CSR_PERIOD : time := 10 ns;
     constant C_PROC_PERIOD : time := 1 us / G_PROC_CLK_MHZ;
     constant C_TDC_PERIOD : time := 1 us / G_TDC_CLK_MHZ;
@@ -184,6 +212,24 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k05 is
     signal rise_cfg_ready : std_logic := '0';
     signal fall_cfg_valid : std_logic;
     signal fall_cfg_ready : std_logic := '0';
+    signal rise_hsize_bytes : unsigned(15 downto 0);
+    signal rise_vsize_lines : unsigned(15 downto 0);
+    signal rise_stride_bytes : unsigned(15 downto 0);
+    signal rise_tdata : std_logic_vector(G_OUTPUT_WIDTH - 1 downto 0);
+    signal rise_tkeep : std_logic_vector(G_OUTPUT_WIDTH / 8 - 1 downto 0);
+    signal rise_tstrb : std_logic_vector(G_OUTPUT_WIDTH / 8 - 1 downto 0);
+    signal rise_tuser : std_logic_vector(0 downto 0);
+    signal rise_tvalid : std_logic;
+    signal rise_tlast : std_logic;
+    signal rise_tready : std_logic := '1';
+    signal fall_tvalid : std_logic;
+    signal rise_beat_count : natural := 0;
+    signal rise_line_count : natural := 0;
+    signal rise_sof_count : natural := 0;
+    signal rise_footer_magic_count : natural := 0;
+    signal rise_footer_commit_count : natural := 0;
+    signal rise_all_hole_footer_count : natural := 0;
+    signal axis_stall_injected : std_logic := '0';
     signal previous_shot_r : std_logic := '0';
     signal shot_count : natural := 0;
 
@@ -192,6 +238,43 @@ begin
     csr_clk <= not csr_clk after C_CSR_PERIOD / 2 when not done;
     proc_clk <= not proc_clk after C_PROC_PERIOD / 2 when not done;
     tdc_clk <= not tdc_clk after C_TDC_PERIOD / 2 when not done;
+
+    gen_no_axis_stall : if G_AXIS_STALL_CLKS = 0 generate
+    begin
+        rise_tready <= '1';
+        axis_stall_injected <= '0';
+    end generate gen_no_axis_stall;
+
+    gen_axis_stall : if G_AXIS_STALL_CLKS > 0 generate
+    begin
+        p_axis_stall : process (proc_clk)
+            variable remaining_v : natural := 0;
+        begin
+            if rising_edge(proc_clk) then
+                if proc_rst_n = '0' then
+                    rise_tready <= '1';
+                    axis_stall_injected <= '0';
+                    remaining_v := 0;
+                elsif remaining_v > 0 then
+                    rise_tready <= '0';
+                    remaining_v := remaining_v - 1;
+                    if remaining_v = 0 then
+                        rise_tready <= '1';
+                    end if;
+                else
+                    rise_tready <= '1';
+                    if axis_stall_injected = '0' and
+                       rise_tvalid = '1' and rise_tready = '1' and
+                       fn_contains_word(
+                           rise_tdata, C_GPX_VDMA_FOOTER_MAGIC) then
+                        axis_stall_injected <= '1';
+                        remaining_v := G_AXIS_STALL_CLKS;
+                        rise_tready <= '0';
+                    end if;
+                end if;
+            end if;
+        end process p_axis_stall;
+    end generate gen_axis_stall;
 
     gen_chip_pins : for index in 0 to C_CHIPS - 1 generate
         constant C_DATA_LO : natural := index * 28;
@@ -217,7 +300,7 @@ begin
             G_MAX_RETURNS_PER_STOP => C_RETURNS_PER_STOP,
             G_RISE_CAPABILITY_MASK => "0011",
             G_FALL_CAPABILITY_MASK => "0000",
-            G_OUTPUT_WIDTH => 32,
+            G_OUTPUT_WIDTH => G_OUTPUT_WIDTH,
             G_NUM_FACES => 1,
             G_ENABLE_ECHO_RECEIVER => true,
             G_ENABLE_ECHO_SIMULATION => true,
@@ -286,26 +369,26 @@ begin
             m_axis_monitor_tvalid => open,
             m_axis_monitor_tlast => open,
             m_axis_monitor_tready => '1',
-            m_axis_rise_tdata => open,
-            m_axis_rise_tkeep => open,
-            m_axis_rise_tstrb => open,
-            m_axis_rise_tuser => open,
-            m_axis_rise_tvalid => open,
-            m_axis_rise_tlast => open,
-            m_axis_rise_tready => '1',
+            m_axis_rise_tdata => rise_tdata,
+            m_axis_rise_tkeep => rise_tkeep,
+            m_axis_rise_tstrb => rise_tstrb,
+            m_axis_rise_tuser => rise_tuser,
+            m_axis_rise_tvalid => rise_tvalid,
+            m_axis_rise_tlast => rise_tlast,
+            m_axis_rise_tready => rise_tready,
             m_axis_fall_tdata => open,
             m_axis_fall_tkeep => open,
             m_axis_fall_tstrb => open,
             m_axis_fall_tuser => open,
-            m_axis_fall_tvalid => open,
+            m_axis_fall_tvalid => fall_tvalid,
             m_axis_fall_tlast => open,
             m_axis_fall_tready => '1',
             o_vdma_rise_cfg_valid => rise_cfg_valid,
             i_vdma_rise_cfg_ready => rise_cfg_ready,
             o_vdma_rise_cfg_enable => open,
-            o_vdma_rise_hsize_bytes => open,
-            o_vdma_rise_vsize_lines => open,
-            o_vdma_rise_stride_bytes => open,
+            o_vdma_rise_hsize_bytes => rise_hsize_bytes,
+            o_vdma_rise_vsize_lines => rise_vsize_lines,
+            o_vdma_rise_stride_bytes => rise_stride_bytes,
             o_vdma_fall_cfg_valid => fall_cfg_valid,
             i_vdma_fall_cfg_ready => fall_cfg_ready,
             o_vdma_fall_cfg_enable => open,
@@ -405,6 +488,111 @@ begin
             end if;
         end if;
     end process p_shot_observer;
+
+    p_axis_observer : process (proc_clk)
+        variable footer_active_v : boolean := false;
+        variable footer_word_index_v : natural range 0 to
+            C_GPX_VDMA_FOOTER_WORDS - 1 := 0;
+        variable word_v : std_logic_vector(31 downto 0);
+    begin
+        if rising_edge(proc_clk) then
+            if proc_rst_n = '0' then
+                rise_beat_count <= 0;
+                rise_line_count <= 0;
+                rise_sof_count <= 0;
+                rise_footer_magic_count <= 0;
+                rise_footer_commit_count <= 0;
+                rise_all_hole_footer_count <= 0;
+                footer_active_v := false;
+                footer_word_index_v := 0;
+            elsif rise_tvalid = '1' and rise_tready = '1' then
+                rise_beat_count <= rise_beat_count + 1;
+                assert rise_tkeep = (rise_tkeep'range => '1') and
+                       rise_tstrb = (rise_tstrb'range => '1')
+                    report "V2-K05-TOP Rise byte qualifier mismatch"
+                    severity failure;
+                if rise_tlast = '1' then
+                    rise_line_count <= rise_line_count + 1;
+                end if;
+                if rise_tuser(0) = '1' then
+                    rise_sof_count <= rise_sof_count + 1;
+                end if;
+                if fn_contains_word(
+                       rise_tdata, C_GPX_VDMA_FOOTER_MAGIC) then
+                    rise_footer_magic_count <= rise_footer_magic_count + 1;
+                end if;
+                if fn_contains_word(
+                       rise_tdata, C_GPX_VDMA_FOOTER_COMMIT) then
+                    rise_footer_commit_count <= rise_footer_commit_count + 1;
+                end if;
+                for word_index in 0 to G_OUTPUT_WIDTH / 32 - 1 loop
+                    word_v := rise_tdata(
+                        (word_index + 1) * 32 - 1 downto word_index * 32);
+                    if word_v = C_GPX_VDMA_FOOTER_MAGIC then
+                        footer_active_v := true;
+                        footer_word_index_v := 0;
+                    end if;
+                    if footer_active_v then
+                        if footer_word_index_v = 6 then
+                            if word_v(C_GPX_FOOTER_W6_ALL_HOLE) = '1' then
+                                rise_all_hole_footer_count <=
+                                    rise_all_hole_footer_count + 1;
+                            end if;
+                        end if;
+                        if footer_word_index_v =
+                           C_GPX_VDMA_FOOTER_WORDS - 1 then
+                            footer_active_v := false;
+                            footer_word_index_v := 0;
+                        else
+                            footer_word_index_v := footer_word_index_v + 1;
+                        end if;
+                    end if;
+                end loop;
+            end if;
+            if proc_rst_n = '1' then
+                assert fall_tvalid = '0'
+                    report "V2-K05-TOP disabled Fall lane asserted TVALID"
+                    severity failure;
+            end if;
+        end if;
+    end process p_axis_observer;
+
+    p_axis_hold_contract : process (proc_clk)
+        variable held_v : boolean := false;
+        variable held_data_v : std_logic_vector(
+            G_OUTPUT_WIDTH - 1 downto 0) := (others => '0');
+        variable held_keep_v : std_logic_vector(
+            G_OUTPUT_WIDTH / 8 - 1 downto 0) := (others => '0');
+        variable held_user_v : std_logic_vector(0 downto 0) :=
+            (others => '0');
+        variable held_last_v : std_logic := '0';
+    begin
+        if rising_edge(proc_clk) then
+            if proc_rst_n = '0' then
+                held_v := false;
+            else
+                if held_v then
+                    assert rise_tvalid = '1' and
+                           rise_tdata = held_data_v and
+                           rise_tkeep = held_keep_v and
+                           rise_tuser = held_user_v and
+                           rise_tlast = held_last_v
+                        report "V2-K06-TOP AXIS changed under backpressure"
+                        severity failure;
+                end if;
+                held_v := rise_tvalid = '1' and rise_tready = '0';
+                held_data_v := rise_tdata;
+                held_keep_v := rise_tkeep;
+                held_user_v := rise_tuser;
+                held_last_v := rise_tlast;
+                if rise_tvalid = '1' and rise_tready = '0' then
+                    assert shot_count = 1
+                        report "V2-K06-TOP next Shot preceded Footer acceptance"
+                        severity failure;
+                end if;
+            end if;
+        end if;
+    end process p_axis_hold_contract;
 
     p_test : process
         variable status_word : std_logic_vector(31 downto 0);
@@ -618,15 +806,96 @@ begin
             exit when shot_count >= 2;
         end loop;
         assert shot_count >= 2
-            report "V2-K05-TOP B5-B8/Face-close chain did not reopen"
+            report "V2-K05-TOP B5-B8/Face-close chain did not reopen; " &
+                "rise_beats=" & natural'image(rise_beat_count) &
+                " rise_lines=" & natural'image(rise_line_count) &
+                " rise_sof=" & natural'image(rise_sof_count) &
+                " footer_magic=" &
+                    natural'image(rise_footer_magic_count) &
+                " footer_commit=" &
+                    natural'image(rise_footer_commit_count) &
+                " all_hole=" &
+                    natural'image(rise_all_hole_footer_count) &
+                " rise_tvalid=" & std_logic'image(rise_tvalid) &
+                " fall_tvalid=" & std_logic'image(fall_tvalid) &
+                " hsize=" & integer'image(to_integer(rise_hsize_bytes)) &
+                " vsize=" & integer'image(to_integer(rise_vsize_lines)) &
+                " stride=" & integer'image(to_integer(rise_stride_bytes))
             severity failure;
+
+        assert rise_beat_count = C_EXPECTED_BEATS and
+               rise_line_count = C_EXPECTED_LINES and
+               rise_sof_count = 1 and
+               rise_footer_magic_count = 1 and
+               rise_footer_commit_count = 1 and
+               rise_all_hole_footer_count = 0
+            report "V2-K06-TOP AXIS frame contract mismatch; " &
+                "width=" & positive'image(G_OUTPUT_WIDTH) &
+                " beats=" & natural'image(rise_beat_count) &
+                "/" & positive'image(C_EXPECTED_BEATS) &
+                " lines=" & natural'image(rise_line_count) &
+                "/" & positive'image(C_EXPECTED_LINES) &
+                " sof=" & natural'image(rise_sof_count) &
+                " magic=" & natural'image(rise_footer_magic_count) &
+                " commit=" & natural'image(rise_footer_commit_count) &
+                " all_hole=" & natural'image(
+                    rise_all_hole_footer_count)
+            severity failure;
+        if G_AXIS_STALL_CLKS > 0 then
+            assert axis_stall_injected = '1'
+                report "V2-K06-TOP requested Footer stall was not injected"
+                severity failure;
+        end if;
 
         report "LIDAR_V2_TOP_K05_GPX_B5_B8_PASS proc_mhz=" &
             positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
             positive'image(G_TDC_CLK_MHZ) severity note;
+        report "LIDAR_V2_TOP_K06_AXIS_PASS proc_mhz=" &
+            positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
+            positive'image(G_TDC_CLK_MHZ) & " output_width=" &
+            positive'image(G_OUTPUT_WIDTH) & " stall_clks=" &
+            natural'image(G_AXIS_STALL_CLKS) severity note;
         done <= true;
         stop;
         wait;
     end process p_test;
 
+end architecture sim;
+
+entity tb_tdc_gpx_lidar_ctrl_v2_k05 is
+    generic (
+        G_PROC_CLK_MHZ : positive := 150;
+        G_TDC_CLK_MHZ  : positive := 200
+    );
+end entity tb_tdc_gpx_lidar_ctrl_v2_k05;
+
+architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k05 is
+begin
+    u_core : entity work.tb_tdc_gpx_lidar_ctrl_v2_axis_core
+        generic map (
+            G_PROC_CLK_MHZ => G_PROC_CLK_MHZ,
+            G_TDC_CLK_MHZ => G_TDC_CLK_MHZ,
+            G_OUTPUT_WIDTH => 32,
+            G_AXIS_STALL_CLKS => 0
+        );
+end architecture sim;
+
+entity tb_tdc_gpx_lidar_ctrl_v2_k06 is
+    generic (
+        G_PROC_CLK_MHZ : positive := 150;
+        G_TDC_CLK_MHZ  : positive := 200;
+        G_OUTPUT_WIDTH : positive := 32;
+        G_AXIS_STALL_CLKS : natural := 13
+    );
+end entity tb_tdc_gpx_lidar_ctrl_v2_k06;
+
+architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k06 is
+begin
+    u_core : entity work.tb_tdc_gpx_lidar_ctrl_v2_axis_core
+        generic map (
+            G_PROC_CLK_MHZ => G_PROC_CLK_MHZ,
+            G_TDC_CLK_MHZ => G_TDC_CLK_MHZ,
+            G_OUTPUT_WIDTH => G_OUTPUT_WIDTH,
+            G_AXIS_STALL_CLKS => G_AXIS_STALL_CLKS
+        );
 end architecture sim;

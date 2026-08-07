@@ -53,56 +53,42 @@ architecture sim of tb_lidar_gpx_ddr_golden is
         end case;
     end function fn_capture_file;
 
-    function fn_source_word(
-        line_index : natural;
-        word_index : natural
-    ) return gpx_vdma_line_word_event_t is
-        variable result : gpx_vdma_line_word_event_t :=
-            C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
+    function fn_cell_event return gpx_frame_cell_event_t is
+        variable result : gpx_frame_cell_event_t :=
+            C_GPX_FRAME_CELL_EVENT_IDLE;
     begin
         result.valid := '1';
-        if line_index = 0 then
-            case word_index is
-                when 0 => result.data := x"76543210";
-                when 1 => result.data := x"00000001";
-                when 2 => result.data := x"01230000";
-                when 3 => result.data := x"0000008D";
-                when 4 => result.data := x"00000001";
-                when 5 => result.data := x"80024081";
-                when others => null;
-            end case;
-        else
-            case word_index is
-                when 0 => result.data := x"00000000";
-                when 1 => result.data := x"00000000";
-                when 2 => result.data := x"FFFF0001";
-                when 3 => result.data := x"0000020E";
-                when 4 => result.data := x"00000000";
-                when 5 => result.data := x"00000000";
-                when others => null;
-            end case;
-        end if;
-
-        if word_index < C_GPX_VDMA_SHOT_META_WORDS then
-            result.kind := GPX_VDMA_LINE_SHOT_METADATA;
-        else
-            result.kind := GPX_VDMA_LINE_CELL_DATA;
-        end if;
-        result.word_index := to_unsigned(
-            word_index, result.word_index'length);
-        result.line_word_count := to_unsigned(
-            6, result.line_word_count'length);
-        result.line_start := '1' when word_index = 0 else '0';
-        result.line_end := '1' when word_index = 5 else '0';
-        result.first_column := '1' when line_index = 0 else '0';
-        result.last_column := '1' when line_index = 1 else '0';
+        result.cell.valid := '1';
+        result.cell.kind := GPX_CELL_DATA;
+        result.cell.chip_index := (others => '0');
+        result.cell.stop_index := (others => '0');
+        result.cell.slope := GPX_SLOPE_RISE;
+        result.cell.hit_count := to_unsigned(
+            1, result.cell.hit_count'length);
+        result.cell.max_hits := to_unsigned(
+            1, result.cell.max_hits'length);
+        result.cell.hits(0) := to_unsigned(
+            16#10001#, result.cell.hits(0)'length);
+        result.cell.shot_context.valid := '1';
+        result.cell.shot_context.request.valid := '1';
+        result.cell.shot_context.request.face_index := to_unsigned(
+            2, result.cell.shot_context.request.face_index'length);
+        result.cell.shot_context.request.position := to_unsigned(
+            16#0123#, result.cell.shot_context.request.position'length);
+        result.cell.shot_context.request.direction := DIRECTION_CCW;
+        result.cell.shot_context.request.shot_index := (others => '0');
+        result.cell.shot_context.request.source_sim := '1';
+        result.cell.shot_context.request.active_version := x"1234";
+        result.cell.shot_context.t0_timestamp_ticks :=
+            x"0000000176543210";
+        result.cell.shot_context.t0_timestamp_valid := '1';
+        result.slot_index := (others => '0');
         result.slot_count := to_unsigned(1, result.slot_count'length);
-        result.cell_word_count := to_unsigned(
-            2, result.cell_word_count'length);
-        result.line_hole := '1' when line_index = 1 else '0';
-        result.line_faulted := '0';
+        result.line_start := '1';
+        result.line_end := '1';
+        result.first_column := '1';
         return result;
-    end function fn_source_word;
+    end function fn_cell_event;
 
     function fn_close_event return gpx_frame_close_event_t is
         variable result : gpx_frame_close_event_t :=
@@ -116,6 +102,8 @@ architecture sim of tb_lidar_gpx_ddr_golden is
         result.active_version := x"1234";
         result.columns_per_face := to_unsigned(
             2, result.columns_per_face'length);
+        result.trailing_gap := to_unsigned(
+            1, result.trailing_gap'length);
         return result;
     end function fn_close_event;
 
@@ -161,16 +149,14 @@ architecture sim of tb_lidar_gpx_ddr_golden is
     signal pending_valid : std_logic;
     signal profile_busy : std_logic;
 
-    signal source_word : gpx_vdma_line_word_event_t :=
-        C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
-    signal source_ready : std_logic;
+    signal cell_event : gpx_frame_cell_event_t :=
+        C_GPX_FRAME_CELL_EVENT_IDLE;
+    signal cell_ready : std_logic;
     signal close_event : gpx_frame_close_event_t :=
         C_GPX_FRAME_CLOSE_EVENT_IDLE;
     signal close_ready : std_logic;
-    signal footer_word : gpx_vdma_line_word_event_t;
-    signal footer_ready : std_logic;
     signal footer_emitted : std_logic;
-    signal footer_idle : std_logic;
+    signal lane_idle : std_logic;
 
     signal tdata : std_logic_vector(G_OUTPUT_WIDTH - 1 downto 0);
     signal tkeep : std_logic_vector(G_OUTPUT_WIDTH / 8 - 1 downto 0);
@@ -181,7 +167,6 @@ architecture sim of tb_lidar_gpx_ddr_golden is
     signal tready : std_logic := '0';
     signal line_done : std_logic;
     signal frame_done : std_logic;
-    signal packer_idle : std_logic;
 
     signal memory_r : memory_t := (others => x"A5A5A5A5");
     signal capture_line_r : natural range 0 to C_VSIZE_LINES := 0;
@@ -193,7 +178,7 @@ architecture sim of tb_lidar_gpx_ddr_golden is
 begin
 
     clk <= not clk after C_CLK_PERIOD / 2;
-    datapath_idle <= footer_idle and packer_idle;
+    datapath_idle <= lane_idle;
 
     u_profile : entity work.lidar_gpx_vdma_profile_manager
         generic map (
@@ -225,7 +210,7 @@ begin
             o_busy              => profile_busy
         );
 
-    u_footer : entity work.lidar_gpx_face_footer_builder
+    u_lane : entity work.lidar_gpx_axis_lane_pipeline
         generic map (
             G_BUILD_CONFIG => C_BUILD_CONFIG,
             G_LANE_RISE    => true
@@ -235,29 +220,10 @@ begin
             i_rst_n                => rst_n,
             i_abort                => abort_run,
             i_active_profile       => active_profile,
-            i_line_word            => source_word,
-            o_line_word_ready      => source_ready,
+            i_cell_event           => cell_event,
+            o_cell_ready           => cell_ready,
             i_frame_close_event    => close_event,
             o_frame_close_ready    => close_ready,
-            o_line_word            => footer_word,
-            i_line_word_ready      => footer_ready,
-            o_active_hsize_bytes   => open,
-            o_active_vsize_lines   => open,
-            o_stride_bytes         => open,
-            o_footer_emitted       => footer_emitted,
-            o_idle                 => footer_idle
-        );
-
-    u_packer : entity work.lidar_gpx_axis_word_packer
-        generic map (
-            G_OUTPUT_WIDTH => G_OUTPUT_WIDTH
-        )
-        port map (
-            i_clk             => clk,
-            i_rst_n           => rst_n,
-            i_abort           => abort_run,
-            i_line_word       => footer_word,
-            o_line_word_ready => footer_ready,
             o_m_axis_tdata    => tdata,
             o_m_axis_tkeep    => tkeep,
             o_m_axis_tstrb    => tstrb,
@@ -267,7 +233,8 @@ begin
             i_m_axis_tready   => tready,
             o_line_done       => line_done,
             o_frame_done      => frame_done,
-            o_idle            => packer_idle
+            o_footer_emitted  => footer_emitted,
+            o_idle            => lane_idle
         );
 
     p_ready : process (clk)
@@ -341,20 +308,17 @@ begin
     end process p_capture;
 
     p_test : process
-        procedure send_word(
-            constant line_index : in natural;
-            constant word_index : in natural
-        ) is
+        procedure send_cell is
         begin
             wait until falling_edge(clk);
-            source_word <= fn_source_word(line_index, word_index);
+            cell_event <= fn_cell_event;
             loop
                 wait until rising_edge(clk);
-                exit when source_ready = '1';
+                exit when cell_ready = '1';
             end loop;
             wait until falling_edge(clk);
-            source_word <= C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
-        end procedure send_word;
+            cell_event <= C_GPX_FRAME_CELL_EVENT_IDLE;
+        end procedure send_cell;
 
         variable output_line : line;
     begin
@@ -409,11 +373,7 @@ begin
             report "V2-B9-J9-TB Active profile was not acknowledged"
             severity failure;
 
-        for line_index in 0 to 1 loop
-            for word_index in 0 to 5 loop
-                send_word(line_index, word_index);
-            end loop;
-        end loop;
+        send_cell;
 
         wait until falling_edge(clk);
         close_event <= fn_close_event;

@@ -35,8 +35,10 @@ architecture rtl of lidar_gpx_frame_close_fork is
 
 begin
 
-    o_close_ready <= '1' when i_rst_n = '1' and i_abort = '0' and
-        rise_event_r.valid = '0' and fall_event_r.valid = '0' else '0';
+    -- Abort is synchronous and has priority in p_fork; READY therefore only
+    -- describes registered slot availability.
+    o_close_ready <= '1' when rise_event_r.valid = '0' and
+        fall_event_r.valid = '0' else '0';
     o_rise_close_event <= rise_event_r;
     o_fall_close_event <= fall_event_r;
     o_idle <= '1' when rise_event_r.valid = '0' and

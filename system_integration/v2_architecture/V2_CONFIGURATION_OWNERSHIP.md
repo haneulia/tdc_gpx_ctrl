@@ -68,9 +68,9 @@ build generics:
 
 | Value | Fixed value | Meaning |
 |---|---:|---|
-| B0-to-executor accept | 4 Processing clocks | Registered `position_event` through B1/B2 to matching B3 accept |
-| Physical sample-to-fire | 8 Processing clocks | First stable-pin synchronizer sample to physical fire; excludes pre-sample asynchronous phase |
-| Virtual transition-to-accept | 5 Processing clocks | Registered virtual A/B transition to B3 accept; excludes configured simulation START delay |
+| B0-to-executor accept | 5 Processing clocks | Registered `position_event` through B1/B2 and the B3 request-ingress register to matching accept |
+| Physical sample-to-fire | 9 Processing clocks | First stable-pin synchronizer sample to physical fire; excludes pre-sample asynchronous phase |
+| Virtual source-to-accept | 7 Processing clocks | Internal virtual-source A/B/Z transition through the common input and B3 ingress pipelines; excludes configured simulation START delay |
 | Fire-done observation budget | 3 Processing clocks | Two synchronizer stages plus the consuming FSM edge; used to resolve a T0 captured at timeout/abort boundary |
 | Re-arm margin | 2 Processing clocks | Required quiet interval after every generated pulse is inactive |
 

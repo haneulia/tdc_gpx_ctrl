@@ -80,5 +80,7 @@ system_integration/v2/rtl/proc/lidar_gpx_vdma_profile_transaction.vhd
 system_integration/v2/rtl/proc/lidar_processing_activation_barrier.vhd
 system_integration/v2/rtl/proc/lidar_gpx_face_footer_builder.vhd
 system_integration/v2/rtl/proc/lidar_gpx_axis_word_packer.vhd
+system_integration/v2/rtl/proc/lidar_gpx_axis_lane_pipeline.vhd
+system_integration/v2/rtl/proc/lidar_gpx_axis_output_subsystem.vhd
 system_integration/v2/rtl/proc/lidar_gpx_vdma_lane_formatter.vhd
 system_integration/v2/rtl/top/tdc_gpx_lidar_ctrl_v2_top.vhd

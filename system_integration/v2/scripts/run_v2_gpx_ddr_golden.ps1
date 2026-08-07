@@ -106,8 +106,12 @@ $CommonFiles = @(
     "$Hdl/system_integration/v2/pkg/lidar_gpx_data_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_vdma_pkg.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_vdma_profile_manager.vhd",
+    "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_cell_word_serializer.vhd",
+    "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_shot_line_builder.vhd",
+    "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_hole_line_expander.vhd",
     "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_face_footer_builder.vhd",
-    "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_axis_word_packer.vhd"
+    "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_axis_word_packer.vhd",
+    "$Hdl/system_integration/v2/rtl/proc/lidar_gpx_axis_lane_pipeline.vhd"
 )
 $SimFiles = $CommonFiles + @(
     "$Hdl/system_integration/v2/tb/tb_lidar_gpx_ddr_golden.vhd"

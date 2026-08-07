@@ -97,6 +97,8 @@ begin
 
     p_owner : process (i_clk)
         variable face_number_v : natural range 0 to 7;
+        variable face_configured_v : boolean;
+        variable boundary_busy_v : boolean;
         variable context_valid_v : boolean;
         variable close_v : face_close_event_t;
     begin
@@ -155,20 +157,29 @@ begin
                         traversal_open_r <= '0';
                     end if;
 
-                    -- Keep the new traversal context even when the same event
-                    -- closes the previous Face. The scheduler remains blocked
-                    -- by the pending close, so the context can advance without
-                    -- allowing a new-Face Shot to overtake that close.
+                    -- A new Face is admitted only after the previous close has
+                    -- retired. Keeping a traversal open behind a pending close
+                    -- can form a permanent stream of all-hole Faces whenever
+                    -- output time exceeds one revolution. Skipping that Face
+                    -- is the bounded overload policy; the next clean boundary
+                    -- can recover without mixing two VDMA Frames.
                     if i_face_event.enter_event = '1' and
                        i_face_event.inside = '1' then
                         face_number_v := to_integer(i_face_event.face_index);
-                        context_valid_v :=
+                        face_configured_v :=
                             face_number_v < G_BUILD_CONFIG.num_faces and
                             face_mask_r(face_number_v) = '1' and
                             i_face_event.overlap = '0' and
                             i_face_event.active_version = active_version_r and
                             i_face_event.source_sim = simulation_mode_r and
                             columns_r /= 0;
+                        boundary_busy_v :=
+                            wait_event_r.valid = '1' or
+                            close_event_r.valid = '1' or
+                            (i_face_event.exit_event = '1' and
+                             traversal_open_r = '1');
+                        context_valid_v := face_configured_v and
+                            not boundary_busy_v;
 
                         if context_valid_v then
                             traversal_open_r <= '1';
@@ -179,6 +190,8 @@ begin
                             traversal_source_r <= i_face_event.source_sim;
                             traversal_version_r <= i_face_event.active_version;
                             traversal_columns_r <= columns_r;
+                        elsif face_configured_v and boundary_busy_v then
+                            overflow_sticky_r <= '1';
                         end if;
                     end if;
                 end if;

@@ -1,18 +1,27 @@
 param(
-    [string]$Stamp = (Get-Date -Format "yyMMddHHmmss")
+    [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
+    [int]$StallClks = 13,
+    [int]$WidthOnly = 0
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($StallClks -lt 1) {
+    throw "StallClks must be at least one"
+}
+if ($WidthOnly -ne 0 -and $WidthOnly -notin @(32, 64, 128)) {
+    throw "WidthOnly must be zero, 32, 64, or 128"
+}
 
 $Hdl = (Resolve-Path (Join-Path $PSScriptRoot "../../..")).Path
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin"
 $Glbl = (Resolve-Path -LiteralPath (
     "C:/AMDDesignTools/2025.2.1/Vivado/data/verilog/src/glbl.v")).Path
 $OrderFile = Join-Path $PSScriptRoot "v2_rtl_compile_order.txt"
-$WorkRoot = Join-Path $Hdl "tmp/v2_k03_integration"
+$WorkRoot = Join-Path $Hdl "tmp/v2_k06_axis_integration"
 $Work = Join-Path $WorkRoot $Stamp
 $Archive = Join-Path $Hdl (
-    "signoff_results/sessions/${Stamp}_v2_k03_integration")
+    "signoff_results/sessions/${Stamp}_v2_k06_axis_integration")
 
 function Invoke-Checked {
     param([string]$Exe, [string[]]$ArgList)
@@ -41,28 +50,27 @@ function Invoke-BatchChecked {
 
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 
-$SourceFiles = foreach ($Line in Get-Content -LiteralPath $OrderFile) {
+$ProductionSourceFiles = foreach ($Line in Get-Content -LiteralPath $OrderFile) {
     $Entry = $Line.Trim()
     if ($Entry.Length -gt 0 -and -not $Entry.StartsWith("#")) {
         (Resolve-Path -LiteralPath (Join-Path $Hdl $Entry)).Path
     }
 }
+$SourceFiles = @($ProductionSourceFiles)
 $SourceFiles += @(
     (Resolve-Path -LiteralPath (Join-Path $Hdl `
         "system_integration/v2/pkg/lidar_config_reference_pkg.vhd")).Path,
     (Resolve-Path -LiteralPath (Join-Path $Hdl `
-        "system_integration/v2/tb/tb_lidar_system_command_cdc.vhd")).Path,
-    (Resolve-Path -LiteralPath (Join-Path $Hdl `
-        "system_integration/v2/tb/tb_tdc_gpx_lidar_ctrl_v2_k03.vhd")).Path
+        "system_integration/v2/tb/tb_tdc_gpx_lidar_ctrl_v2_k05.vhd")).Path
 )
 
-$Project = Join-Path $Work "v2_k03_integration.prj"
-$VerilogProject = Join-Path $Work "v2_k03_integration_verilog.prj"
+$VhdlProject = Join-Path $Work "v2_k06_axis_integration_vhdl.prj"
+$VerilogProject = Join-Path $Work "v2_k06_axis_integration_verilog.prj"
 $ProjectLines = foreach ($File in $SourceFiles) {
     "vhdl2008 xil_defaultlib `"$($File.Replace('\', '/'))`""
 }
 $ProjectLines += "nosort"
-$ProjectLines | Set-Content -Encoding ASCII -LiteralPath $Project
+$ProjectLines | Set-Content -Encoding ASCII -LiteralPath $VhdlProject
 @(
     "verilog xil_defaultlib `"$($Glbl.Replace('\', '/'))`"",
     "nosort"
@@ -71,22 +79,11 @@ $ProjectLines | Set-Content -Encoding ASCII -LiteralPath $Project
 $RunTcl = Join-Path $Work "run.tcl"
 @("run all", "quit") | Set-Content -Encoding ASCII -LiteralPath $RunTcl
 
-$Profiles = @(
+$ClockProfiles = @(
     [ordered]@{ name = "proc150_tdc200"; proc = 150; tdc = 200 },
     [ordered]@{ name = "proc200_tdc150"; proc = 200; tdc = 150 }
 )
-$Tests = @(
-    [ordered]@{
-        name = "system_command_cdc"
-        unit = "tb_lidar_system_command_cdc"
-        marker = "LIDAR_V2_SYSTEM_COMMAND_CDC_PASS"
-    },
-    [ordered]@{
-        name = "top_k03"
-        unit = "tb_tdc_gpx_lidar_ctrl_v2_k03"
-        marker = "LIDAR_V2_TOP_K03_INTEGRATION_PASS"
-    }
-)
+$Widths = if ($WidthOnly -eq 0) { @(32, 64, 128) } else { @($WidthOnly) }
 
 Push-Location $Work
 try {
@@ -94,12 +91,12 @@ try {
         "--relax", "-prj", $VerilogProject,
         "-log", (Join-Path $Work "xvlog.log"))
     Invoke-Checked "$Vivado/xvhdl.bat" @(
-        "--2008", "--relax", "-prj", $Project,
+        "--2008", "--relax", "-prj", $VhdlProject,
         "-log", (Join-Path $Work "xvhdl.log"))
 
-    foreach ($Profile in $Profiles) {
-        foreach ($Test in $Tests) {
-            $Stem = "$($Test.name)_$($Profile.name)"
+    foreach ($Profile in $ClockProfiles) {
+        foreach ($Width in $Widths) {
+            $Stem = "top_k06_$($Profile.name)_w${Width}"
             $Snapshot = "${Stem}_${Stamp}_snap"
             $ElabLog = Join-Path $Work "xelab_${Stem}.log"
             $SimLog = Join-Path $Work "xsim_${Stem}.log"
@@ -108,7 +105,9 @@ try {
                 "--snapshot", $Snapshot,
                 "--generic_top", "G_PROC_CLK_MHZ=$($Profile.proc)",
                 "--generic_top", "G_TDC_CLK_MHZ=$($Profile.tdc)",
-                "xil_defaultlib.$($Test.unit)",
+                "--generic_top", "G_OUTPUT_WIDTH=$Width",
+                "--generic_top", "G_AXIS_STALL_CLKS=$StallClks",
+                "xil_defaultlib.tb_tdc_gpx_lidar_ctrl_v2_k06",
                 "xil_defaultlib.glbl",
                 "-log", $ElabLog)
             Invoke-Checked "$Vivado/xsim.bat" @(
@@ -116,8 +115,9 @@ try {
                 "-log", $SimLog.Replace('\', '/'))
 
             $Text = Get-Content -Raw -LiteralPath $SimLog
-            $Marker = "$($Test.marker) proc_mhz=$($Profile.proc) " +
-                "tdc_mhz=$($Profile.tdc)"
+            $Marker = "LIDAR_V2_TOP_K06_AXIS_PASS " +
+                "proc_mhz=$($Profile.proc) tdc_mhz=$($Profile.tdc) " +
+                "output_width=$Width stall_clks=$StallClks"
             if ($Text -notmatch [regex]::Escape($Marker)) {
                 throw "$Stem did not report its PASS marker"
             }
@@ -133,15 +133,21 @@ finally {
 
 New-Item -ItemType Directory -Force -Path $Archive | Out-Null
 $Scenario = [ordered]@{
-    checkpoint = "K0-3"
-    purpose = "atomic Rise/Fall VDMA activation and acknowledged system commands"
-    profiles = @("Processing 150 / TDC 200 MHz", "Processing 200 / TDC 150 MHz")
+    checkpoint = "K0-6"
+    purpose = "Top-level B8-to-AXIS width and Footer-backpressure closure"
+    clock_profiles = @(
+        "Processing 150 / TDC 200 MHz",
+        "Processing 200 / TDC 150 MHz"
+    )
+    output_widths = $Widths
+    footer_stall_clks = $StallClks
     checks = @(
-        "CLEAR_STATUS and SOFT_RESET exactly once per destination",
-        "busy and ambiguous command rejection",
-        "Rise/Fall VDMA ACK barrier before Active version release",
-        "Return 7 to 1 changes HSIZE while fixed maximum STRIDE is preserved",
-        "commit-success IRQ exact flag and W1C clear"
+        "exact accepted Beat, TLAST Line, SOF and Footer counts",
+        "full TKEEP/TSTRB for aligned 32/64/128-bit Lines",
+        "AXIS payload stability while TREADY is low",
+        "Face-close acknowledgement waits for final Footer Beat",
+        "overload Face skip and next clean Face recovery",
+        "disabled Fall lane remains quiescent"
     )
 }
 $Scenario | ConvertTo-Json -Depth 4 | Set-Content -Encoding ASCII `
@@ -173,5 +179,5 @@ if (-not $ResolvedWork.StartsWith($ResolvedRoot,
 }
 Remove-Item -LiteralPath $ResolvedWork -Recurse -Force
 
-Write-Output "LIDAR_V2_K03_INTEGRATION_REGRESSION_PASS"
+Write-Output "LIDAR_V2_K06_AXIS_INTEGRATION_REGRESSION_PASS"
 Write-Output "Result: $Archive"

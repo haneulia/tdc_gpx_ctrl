@@ -50,17 +50,17 @@ architecture rtl of tdc_gpx_skid_buffer is
     signal s_data0_r   : std_logic_vector(g_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_data1_r   : std_logic_vector(g_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_count_r   : natural range 0 to 2 := 0;
+    signal s_read_sel_r  : std_logic := '0';
+    signal s_write_sel_r : std_logic := '0';
     signal s_s_ready_r : std_logic := '1';
 
 begin
 
     o_s_ready <= s_s_ready_r;
-    o_m_data  <= s_data0_r;
+    o_m_data  <= s_data0_r when s_read_sel_r = '0' else s_data1_r;
     o_m_valid <= '1' when s_count_r /= 0 else '0';
 
     p_main : process(i_clk)
-        variable v_data0 : std_logic_vector(g_DATA_WIDTH - 1 downto 0);
-        variable v_data1 : std_logic_vector(g_DATA_WIDTH - 1 downto 0);
         variable v_count : natural range 0 to 2;
         variable v_push  : boolean;
         variable v_pop   : boolean;
@@ -70,35 +70,29 @@ begin
                 s_data0_r   <= (others => '0');
                 s_data1_r   <= (others => '0');
                 s_count_r   <= 0;
+                s_read_sel_r  <= '0';
+                s_write_sel_r <= '0';
                 s_s_ready_r <= '1';
             else
-                v_data0 := s_data0_r;
-                v_data1 := s_data1_r;
                 v_count := s_count_r;
                 v_push  := (i_s_valid = '1' and s_s_ready_r = '1');
                 v_pop   := (s_count_r /= 0 and i_m_ready = '1');
 
                 if v_pop then
-                    if v_count = 2 then
-                        v_data0 := s_data1_r;
-                    else
-                        v_data0 := (others => '0');
-                    end if;
-                    v_data1 := (others => '0');
+                    s_read_sel_r <= not s_read_sel_r;
                     v_count := v_count - 1;
                 end if;
 
                 if v_push then
-                    if v_count = 0 then
-                        v_data0 := i_s_data;
+                    if s_write_sel_r = '0' then
+                        s_data0_r <= i_s_data;
                     else
-                        v_data1 := i_s_data;
+                        s_data1_r <= i_s_data;
                     end if;
+                    s_write_sel_r <= not s_write_sel_r;
                     v_count := v_count + 1;
                 end if;
 
-                s_data0_r <= v_data0;
-                s_data1_r <= v_data1;
                 s_count_r <= v_count;
                 if v_count = 2 then
                     s_s_ready_r <= '0';
