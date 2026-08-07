@@ -1,6 +1,5 @@
 # Canonical production compile order, relative to the HDL repository root.
 # Testbenches and lidar_config_reference_pkg are intentionally excluded.
-px_utility_pkg.vhd
 tdc_gpx_pkg.vhd
 tdc_gpx_cfg_pkg.vhd
 system_integration/v2/pkg/lidar_build_pkg.vhd
@@ -87,5 +86,4 @@ system_integration/v2/rtl/proc/lidar_gpx_face_footer_builder.vhd
 system_integration/v2/rtl/proc/lidar_gpx_axis_word_packer.vhd
 system_integration/v2/rtl/proc/lidar_gpx_axis_lane_pipeline.vhd
 system_integration/v2/rtl/proc/lidar_gpx_axis_output_subsystem.vhd
-system_integration/v2/rtl/proc/lidar_gpx_vdma_lane_formatter.vhd
 system_integration/v2/rtl/top/tdc_gpx_lidar_ctrl_v2_top.vhd

@@ -282,7 +282,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
 | 7 | J | Complete | J0-J10; `V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` | AXIS/VDMA/PS formatter chain |
-| 8 | K | In progress | K0-1 through K0-9; `V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md` | Full RTL integration and HTML alignment |
+| 8 | K | In progress | K0-1 through K0-10; `V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md` | K0 integrated RTL/package complete; K1 full RTL/HTML alignment pending |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
@@ -311,16 +311,17 @@ maximum STRIDE, sequential profile calculation and acknowledged Face-boundary
 activation. J9 closes the STRIDE-aware DDR image comparison against the
 executable HTML Golden model. J10 now closes the portable C PS H-Line decoder,
 Viewer Ethernet byte comparison, ownership guards and Cortex-A9 build. This
-  closes Checkpoint J. Stage 8 K0-1 through K0-9 now establish the ownership
+  closes Checkpoint J. Stage 8 K0-1 through K0-10 now establish the ownership
 audit, synthesisable public Top shell, atomic Rise/Fall VDMA profile activation,
 acknowledged system-command CDC, Processing/Echo ownership, physical GPX
 acquisition, the complete B5..B8 Hit/Cell/Frame-lane path and the dual-lane
   Shot/Hole/T0/Footer/width-packer output, the CTL23/24 native-domain
   diagnostic snapshot plus runtime IRQ source 5..9, and the final six-profile
   implementation matrix. K0-9 also repeats the DDR/HTML Word comparison and
-  PS ownership/H-Line/Ethernet byte comparison against the frozen RTL. The only
-  valid next step is **K0-10 packaging**, followed by K1 full RTL/HTML
-  alignment. Parent VDMA/HP/cache is
+  PS ownership/H-Line/Ethernet byte comparison against the frozen RTL. K0-10
+  closes self-contained v2 packaging, XGUI dependencies, v1/v2 catalog
+  coexistence and package-source OOC synthesis. The only valid next step is
+  **K1 full RTL/HTML alignment**. Parent VDMA/HP/cache is
 Stage 9 L0 and must not begin against the current v1 parent IP.
 Checkpoint K or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
@@ -539,12 +540,13 @@ DMA/cache ownership and board release evidence.
 | K0-7 | Complete | Rise/Fall lane ownership, independent Footer stall and global completion; same K0-6 document |
 | K0-8 | Complete | Native-domain indexed status, runtime IRQ and reset recovery; `V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md` |
 | K0-9 | Complete | Six-profile final implementation and Golden recheck; `V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md` |
-| K0-10 | Pending | New VLNV packaging gate |
+| K0-10 | Complete | Self-contained v2 VLNV, source/XGUI sync, v1 coexistence and three packaged OOC profiles; `V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md` |
 
 K0-8 closes the complete control/status ABI at L1: every large status record
 remains in its owner domain and CTL23/24 transfers one atomic 32-bit page. It
 also closes runtime IRQ source 5..9 and destination-reset recovery. K0-9 closes
 the full 32/64/128-bit implementation matrix at both routine clock profiles,
 with minimum WNS `+0.103 ns`, and repeats both executable Golden comparisons.
-K0-10 packaging is the remaining K0 gate. The physical parent is still outside
-this Checkpoint.
+K0-10 closes the remaining K0 packaging gate. K0 is complete and K1 full
+RTL/HTML alignment is the active Stage 8 work. The physical parent is still
+outside this Checkpoint.

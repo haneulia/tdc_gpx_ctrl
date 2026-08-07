@@ -68,7 +68,7 @@ Rise/Fall lane, Footer 완료와 출력 Word 순서를 보존했다.
 - `260806_k09_final_w64_v2_k06_top_implementation`;
 - `260806_k09_final_w128_v2_k06_top_implementation`.
 
-네 세션의 89개 production source manifest는 SHA-256 기준 차이가 0개다.
+네 세션의 89개 K0-9 compile-manifest 항목은 SHA-256 기준 차이가 0개다.
 따라서 표의 6개 결과는 같은 최종 RTL에서 얻은 결과다.
 
 각 행의 DRC에는 `IOSTDTYPE-1`과 `UCIO-1` 두 분류가 남아 있다. 이는 독립
@@ -148,5 +148,5 @@ IBUFDS, LOC와 배선이 적용된 뒤 모든 profile에서 WNS를 다시 확인
 - package validation과 GUI smoke test;
 - K0-9 source manifest와 package source manifest 일치 확인.
 
-K0-10이 완료되기 전에는 K1 full RTL/HTML sweep이나 L0 parent 연결을 시작하지
-않는다.
+후속 K0-10은 `V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md`에서 완료되었다. 따라서
+다음 Gate는 K1 full RTL/HTML sweep이며, L0 parent 연결은 K1 이후에 수행한다.

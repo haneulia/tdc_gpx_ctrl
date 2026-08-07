@@ -68,7 +68,10 @@ multiple clocks and is checked against this reference model.
   snapshot, runtime IRQ source 5..9 and remote-reset recovery. K0-9 closes the
   six-profile 32/64/128-bit final implementation matrix with minimum WNS
   `+0.103 ns`, then repeats the DDR/HTML Word and PS H-Line/Ethernet byte
-  comparisons against that final RTL. The physical
+  comparisons against that final RTL. K0-10 packages the same implementation
+  as self-contained `tdc_gpx_lidar_ctrl_v2:2.0`, verifies its XGUI and proves
+  three representative package-only OOC configurations while retaining the
+  v1 catalog entry. The physical
   parent VDMA/HP/cache path remains unmigrated; the existence of its v1 cores
   does not mark that Stage complete.
 
@@ -95,9 +98,9 @@ the complete B5..B8 production chain plus explicit Face-close ordering. J7/J8
 now close the focused B9 geometry and Footer boundary. J9 and J10 close the
 DDR image and host PS/Viewer comparison. K0-6/K0-7 now connect that formatter
 chain to the public Top and close the modeled DDR/HTML plus portable
-  PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly and K0-9
-  final implementation are complete; K0-10 packaging is next. K1 closes
-  the full RTL/HTML operating matrix
+  PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly, K0-9
+  final implementation and K0-10 v2 packaging are complete. K1 closes the
+  full RTL/HTML operating matrix
 before L0 attaches the parent VDMA/HP-port and real cache/board measurement.
 
 Run the current package regression with:
@@ -480,3 +483,17 @@ latch, critical CDC and unexpected blocking DRC counts are zero. The modeled
 cache ownership test is not a substitute for the FreeRTOS/PetaLinux cache API,
 VDMA/HP-port or physical Ethernet board test. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md`.
+
+Run the K0-10 IP package Sign-off with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k010_ip_package.ps1
+```
+
+The final marker is `LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS`. The gate checks
+87 production RTL files plus XGUI and the Korean Product Guide against their
+canonical sources, verifies v1/v2 catalog coexistence, exercises three
+Customize IP profiles and synthesizes the same profiles from package-local
+sources only. See
+`system_integration/v2_architecture/V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md`.

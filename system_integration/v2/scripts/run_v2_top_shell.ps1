@@ -6,6 +6,8 @@ $ErrorActionPreference = "Stop"
 
 $Hdl = (Resolve-Path (Join-Path $PSScriptRoot "../../..")).Path
 $Vivado = "C:/AMDDesignTools/2025.2.1/Vivado/bin"
+$Glbl = (Resolve-Path `
+    "C:/AMDDesignTools/2025.2.1/Vivado/data/verilog/src/glbl.v").Path
 $OrderFile = Join-Path $PSScriptRoot "v2_rtl_compile_order.txt"
 $WorkRoot = Join-Path $Hdl "tmp/v2_top_shell"
 $Work = Join-Path $WorkRoot $Stamp
@@ -51,17 +53,25 @@ $SourceFiles = foreach ($Line in Get-Content -LiteralPath $OrderFile) {
 }
 
 $Project = Join-Path $Work "v2_top_shell.prj"
+$GlblProject = Join-Path $Work "glbl.prj"
 $ProjectLines = foreach ($File in $SourceFiles) {
     "vhdl2008 xil_defaultlib `"$($File.Replace('\', '/'))`""
 }
 $ProjectLines += "nosort"
 $ProjectLines | Set-Content -Encoding ASCII -LiteralPath $Project
+@(
+    "verilog xil_defaultlib `"$($Glbl.Replace('\', '/'))`"",
+    "nosort"
+) | Set-Content -Encoding ASCII -LiteralPath $GlblProject
 
 $RunTcl = Join-Path $Work "run.tcl"
 @("run 1 ns", "quit") | Set-Content -Encoding ASCII -LiteralPath $RunTcl
 
 Push-Location $Work
 try {
+    Invoke-Checked "$Vivado/xvlog.bat" @(
+        "--relax", "-prj", $GlblProject,
+        "-log", (Join-Path $Work "xvlog_glbl.log"))
     Invoke-Checked "$Vivado/xvhdl.bat" @(
         "--2008", "--relax", "-prj", $Project,
         "-log", (Join-Path $Work "xvhdl.log"))
@@ -81,6 +91,7 @@ try {
             "--generic_top", "G_PROC_CLK_MHZ=$($Profile.proc)",
             "--generic_top", "G_TDC_CLK_MHZ=$($Profile.tdc)",
             "xil_defaultlib.tdc_gpx_lidar_ctrl_v2_top",
+            "xil_defaultlib.glbl",
             "-log", $ElabLog)
         Invoke-Checked "$Vivado/xsim.bat" @(
             $Snapshot, "-tclbatch", $RunTcl.Replace('\', '/'),

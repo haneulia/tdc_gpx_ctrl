@@ -22,8 +22,9 @@
 > the synthesisable v2 public Top shell, K0-3 closes atomic Rise/Fall VDMA
 > activation plus acknowledged system-command CDC, and K0-4 through K0-7
 > connect Processing/Echo, physical GPX B5-B8 and the complete dual-lane
-> AXIS/VDMA output. Remaining K0 status/package integration and K1 full
-> RTL/HTML alignment come before L0 parent
+> AXIS/VDMA output. K0-8 closes status/IRQ ownership, K0-9 closes the final
+> implementation/Golden matrix and K0-10 closes the self-contained v2 package.
+> K1 full RTL/HTML alignment comes before L0 parent
 > VDMA/HP/cache and board evidence.
 
 ## 1. Purpose
@@ -106,6 +107,9 @@ The redesign has four goals:
 | [V2_CHECKPOINT_K0_4_PROCESSING_ECHO_INTEGRATION_KO.md](V2_CHECKPOINT_K0_4_PROCESSING_ECHO_INTEGRATION_KO.md) | Processing/Echo production ownership, physical/simulation exclusion, timing optimization and K0-4 evidence |
 | [V2_CHECKPOINT_K0_5_GPX_B5_B8_INTEGRATION_KO.md](V2_CHECKPOINT_K0_5_GPX_B5_B8_INTEGRATION_KO.md) | Physical GPX bus/config/RUN, B5-B8 Hit/Cell/Frame-lane identity, CDC/timing optimization and K0-5 evidence |
 | [V2_CHECKPOINT_K0_6_AXIS_FRAME_OUTPUT_KO.md](V2_CHECKPOINT_K0_6_AXIS_FRAME_OUTPUT_KO.md) | Dual-lane Shot/Hole/T0/Footer/AXIS integration, 32/64/128-bit implementation, DDR/HTML and PS/Ethernet L1 sign-off evidence |
+| [V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md](V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md) | Native-domain indexed status, runtime IRQ, reset recovery and single-owner assembly evidence |
+| [V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md](V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md) | Six-profile implementation timing plus final DDR/HTML and PS/Ethernet Golden evidence |
+| [V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md](V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md) | Self-contained v2 VLNV, XGUI/source synchronization, catalog coexistence and package-only OOC evidence |
 
 ## 4. Target Top-Level Shape
 
