@@ -198,7 +198,7 @@ ACK 전에는 다음 Face를 시작하지 않는다.
 | K0-6 | Shot/Hole/T0 + Footer + width packer 연결 | **완료**: 2 clock profile x 3 폭 Top 기능, DDR/HTML 모든 Word, PS/Ethernet 모든 byte PASS |
 | K0-7 | Rise/Fall lane 및 VDMA profile ACK 연결 | **완료**: dedicated 2R/2F, one-Chip dual-edge, four-Chip all-dual 및 독립 Footer stall PASS |
 | K0-8 | status/IRQ 단일 owner 조립 | **완료**: CTL23/24 indexed snapshot, runtime IRQ 5종, 양 domain reset 복구 및 exact nonzero/zero PASS |
-| K0-9 | 합성/구현 | black box 0, latch 0, blocking DRC 0, WNS >= +0.1 ns |
+| K0-9 | 합성/구현 | **완료**: 2 clock profile x 32/64/128-bit, black box/latch/critical CDC/unexpected blocking DRC 0, 최저 WNS +0.103 ns |
 | K0-10 | 새 VLNV package | `tdc_gpx_lidar_ctrl_v2:2.0`, v1과 병존 |
 
 K0의 functional/implementation 회귀 profile은 사용자 정책대로 Processing/TDC
@@ -274,10 +274,15 @@ triple buffering으로 DMA-owned, ready-for-CPU, CPU-owned 상태를 분리한�
   DDR/HTML 및 PS/Ethernet L1 비교를 닫았다.
 - K0-8: 완료. Processing/TDC native-domain snapshot과 IRQ source 5..9를 단일
   CSR owner 아래에 조립했고, reset 중 요청은 ERROR로 끝낸 뒤 재동기화한다.
-- K0-9/K0-10: 64/128-bit 최종 구현 행렬과 새 VLNV package가 남았다.
+- K0-9: 완료. 동일한 89개 production source로 6개 구현 profile을 닫았고,
+  최저 WNS는 `+0.103 ns`다. 최종 RTL의 DDR/HTML Word 비교와
+  PS cache 소유권/H-Line/Ethernet byte 비교도 다시 PASS했다. 상세 결과는
+  `V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md`를 따른다.
+- K0-10: 새 VLNV package가 남았다.
 - K1: K0 이후.
 - L0: 현재 parent에 VDMA/HP/software가 없어 실행 불가.
 
-따라서 현재는 데이터 경로와 통합 status/IRQ의 L1 Sign-off까지 완료됐지만
-통합 IP 또는 전체 시스템 release Sign-off는 아니다. 다음 단계는 최종 RTL의
-64/128-bit 구현을 반복하는 K0-9이며, 그 뒤에만 K0-10 package로 이동한다.
+따라서 현재는 데이터 경로, 통합 status/IRQ, 최종 OOC 구현 및 실행 가능한
+DDR/PS/Viewer Golden 비교까지 L1 Sign-off가 완료됐다. 통합 IP package 또는
+전체 시스템 release Sign-off는 아직 아니다. 다음 단계는 K0-10 신규 VLNV
+package이며, 그 뒤에 K1 full RTL/HTML sweep으로 이동한다.

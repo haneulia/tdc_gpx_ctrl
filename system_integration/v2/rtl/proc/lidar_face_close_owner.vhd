@@ -96,7 +96,6 @@ begin
     end process p_config;
 
     p_owner : process (i_clk)
-        variable face_number_v : natural range 0 to 7;
         variable face_configured_v : boolean;
         variable boundary_busy_v : boolean;
         variable context_valid_v : boolean;
@@ -165,14 +164,14 @@ begin
                     -- can recover without mixing two VDMA Frames.
                     if i_face_event.enter_event = '1' and
                        i_face_event.inside = '1' then
-                        face_number_v := to_integer(i_face_event.face_index);
-                        face_configured_v :=
-                            face_number_v < G_BUILD_CONFIG.num_faces and
-                            face_mask_r(face_number_v) = '1' and
-                            i_face_event.overlap = '0' and
-                            i_face_event.active_version = active_version_r and
-                            i_face_event.source_sim = simulation_mode_r and
-                            columns_r /= 0;
+                        -- B1 face_tracker already applies the build/runtime
+                        -- Face mask and emits only the immutable active
+                        -- version/source context. Repeating those wide
+                        -- comparisons here put a 16-bit equality chain on
+                        -- every traversal register CE. Keep overlap as the
+                        -- local admission decision and verify the upstream
+                        -- ownership contract in p_contract below.
+                        face_configured_v := i_face_event.overlap = '0';
                         boundary_busy_v :=
                             wait_event_r.valid = '1' or
                             close_event_r.valid = '1' or
@@ -200,6 +199,7 @@ begin
     end process p_owner;
 
     p_contract : process (i_clk)
+        variable face_number_v : natural range 0 to 7;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '1' and i_enable = '1' then
@@ -209,6 +209,28 @@ begin
                 if close_event_r.valid = '1' then
                     assert close_event_r.columns_per_face /= 0
                         report "V2-FCLOSE-003 zero-column close event"
+                        severity failure;
+                end if;
+                if i_face_event.valid = '1' and
+                   i_face_event.enter_event = '1' and
+                   i_face_event.inside = '1' then
+                    face_number_v := to_integer(i_face_event.face_index);
+                    assert face_number_v < G_BUILD_CONFIG.num_faces
+                        report "V2-FCLOSE-004 Face index outside build capacity"
+                        severity failure;
+                    if face_number_v < C_MAX_FACES then
+                        assert face_mask_r(face_number_v) = '1'
+                            report "V2-FCLOSE-005 B1 emitted a masked Face"
+                            severity failure;
+                    end if;
+                    assert i_face_event.active_version = active_version_r
+                        report "V2-FCLOSE-006 B1/config version mismatch"
+                        severity failure;
+                    assert i_face_event.source_sim = simulation_mode_r
+                        report "V2-FCLOSE-007 B1/config source mismatch"
+                        severity failure;
+                    assert columns_r /= 0
+                        report "V2-FCLOSE-008 zero-column active geometry"
                         severity failure;
                 end if;
             end if;

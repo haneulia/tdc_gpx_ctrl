@@ -25,6 +25,7 @@ entity laser_executor_core is
         i_physical_fire_enable   : in  std_logic;
         i_simulation_enable      : in  std_logic;
         i_shot_request           : in  shot_request_t;
+        i_request_context_valid  : in  std_logic;
         i_bridge_ready           : in  std_logic;
         i_t0_event               : in  std_logic;
         i_timestamp_ticks        : in  t0_timestamp_t;
@@ -120,9 +121,11 @@ begin
          i_bridge_ready = '1') else '0';
     executor_ready_c <= '1' when state_r = EXEC_IDLE and
         i_config_ready = '1' and mode_ready_c = '1' else '0';
-    request_context_valid_c <= '1' when i_shot_request.valid = '1' and
-        i_shot_request.active_version = i_active_version and
-        i_shot_request.source_sim = i_simulation_mode else '0';
+    -- The wrapper registers this qualification with the request. Keeping the
+    -- 16-bit version comparison outside the lifecycle core prevents it from
+    -- becoming the enable cone of every Shot-start/timestamp register.
+    request_context_valid_c <= i_shot_request.valid and
+        i_request_context_valid;
     request_accept_c <= executor_ready_c and request_context_valid_c;
     fire_trigger_c <= request_accept_c and not i_shot_request.source_sim;
     simulation_t0_c <= '1' when

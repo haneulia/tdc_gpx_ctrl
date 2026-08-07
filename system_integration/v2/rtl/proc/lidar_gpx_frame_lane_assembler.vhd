@@ -85,6 +85,8 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
 
     type assembler_state_t is (
         S_COLLECT,
+        S_FACE_CLOSE_GEOMETRY,
+        S_FACE_CLOSE_APPLY,
         S_EVENT_CHECK,
         S_SHOT_GEOMETRY,
         S_SHOT_BOUNDARY,
@@ -116,6 +118,10 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
 
     signal shot_active_r  : std_logic := '0';
     signal pending_event_r : gpx_cell_event_t := C_GPX_CELL_EVENT_IDLE;
+    signal pending_face_close_r : face_close_event_t :=
+        C_FACE_CLOSE_EVENT_IDLE;
+    signal pending_close_geometry_fault_r : std_logic := '0';
+    signal pending_close_gap_fault_r : std_logic := '0';
     signal pending_context_match_r : std_logic := '0';
     signal shot_context_r : shot_start_event_t := C_SHOT_START_EVENT_IDLE;
     signal shot_max_hits_r : unsigned(2 downto 0) := to_unsigned(1, 3);
@@ -204,6 +210,8 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
 
     attribute max_fanout of rise_read_address_r : signal is 16;
     attribute max_fanout of fall_read_address_r : signal is 16;
+    attribute max_fanout of rise_read_valid_r : signal is 16;
+    attribute max_fanout of fall_read_valid_r : signal is 16;
     attribute max_fanout of rise_read_present_r : signal is 16;
     attribute max_fanout of fall_read_present_r : signal is 16;
 
@@ -236,6 +244,10 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
     signal frame_close_event_r : gpx_frame_close_event_t :=
         C_GPX_FRAME_CLOSE_EVENT_IDLE;
     signal face_close_ready_c : std_logic;
+    signal rise_output_ready_c : std_logic;
+    signal fall_output_ready_c : std_logic;
+    signal rise_prefetch_ready_c : std_logic;
+    signal fall_prefetch_ready_c : std_logic;
 
     signal fault_pulse_r : gpx_frame_assembler_faults_t :=
         C_GPX_FRAME_ASSEMBLER_FAULTS_CLEAR;
@@ -438,6 +450,41 @@ begin
     o_fault_pulse  <= fault_pulse_r;
     o_fault_sticky <= fault_sticky_r;
 
+    rise_output_ready_c <= not rise_event_r.valid or i_rise_ready;
+    fall_output_ready_c <= not fall_event_r.valid or i_fall_ready;
+    rise_prefetch_ready_c <= not rise_prefetch_valid_r or
+        rise_output_ready_c;
+    fall_prefetch_ready_c <= not fall_prefetch_valid_r or
+        fall_output_ready_c;
+
+    -- Keep the wide LUTRAM payload capture outside the assembler state decode.
+    -- Only the registered read controls may enable or blank these registers;
+    -- abort/reset safety is owned by the corresponding prefetch-valid bit.
+    -- This prevents the one-hot state decode from becoming a high-fanout
+    -- synchronous clear across every packed Cell payload bit.
+    p_prefetch_payload : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if rise_prefetch_ready_c = '1' and rise_read_valid_r = '1' then
+                if rise_read_present_r = '1' then
+                    rise_prefetch_word_r <=
+                        rise_memory_r(rise_read_address_r);
+                else
+                    rise_prefetch_word_r <= (others => '0');
+                end if;
+            end if;
+
+            if fall_prefetch_ready_c = '1' and fall_read_valid_r = '1' then
+                if fall_read_present_r = '1' then
+                    fall_prefetch_word_r <=
+                        fall_memory_r(fall_read_address_r);
+                else
+                    fall_prefetch_word_r <= (others => '0');
+                end if;
+            end if;
+        end if;
+    end process p_prefetch_payload;
+
     p_assemble : process (i_clk)
         variable chip_index : natural range 0 to C_MAX_CHIPS - 1;
         variable stop_index : natural range 0 to C_MAX_STOPS_PER_CHIP - 1;
@@ -479,6 +526,9 @@ begin
                 fall_present_r <= (others => '0');
                 shot_active_r <= '0';
                 pending_event_r <= C_GPX_CELL_EVENT_IDLE;
+                pending_face_close_r <= C_FACE_CLOSE_EVENT_IDLE;
+                pending_close_geometry_fault_r <= '0';
+                pending_close_gap_fault_r <= '0';
                 pending_context_match_r <= '0';
                 shot_context_r <= C_SHOT_START_EVENT_IDLE;
                 shot_max_hits_r <= to_unsigned(1, 3);
@@ -548,6 +598,9 @@ begin
                     fall_present_r <= (others => '0');
                     shot_active_r <= '0';
                     pending_event_r <= C_GPX_CELL_EVENT_IDLE;
+                    pending_face_close_r <= C_FACE_CLOSE_EVENT_IDLE;
+                    pending_close_geometry_fault_r <= '0';
+                    pending_close_gap_fault_r <= '0';
                     pending_context_match_r <= '0';
                     shot_terminal_r <= (others => '0');
                     shot_faulted_r <= '0';
@@ -569,74 +622,94 @@ begin
                 elsif state_r = S_COLLECT then
                     if i_face_close_event.valid = '1' and
                        face_close_ready_c = '1' then
-                        close_v := C_GPX_FRAME_CLOSE_EVENT_IDLE;
-                        close_v.valid := '1';
-                        close_v.face_frame_id :=
-                            i_face_close_event.face_frame_id;
-                        close_v.face_index := i_face_close_event.face_index;
-                        close_v.direction := i_face_close_event.direction;
-                        close_v.source_sim := i_face_close_event.source_sim;
-                        close_v.active_version :=
-                            i_face_close_event.active_version;
-                        close_v.columns_per_face :=
-                            i_face_close_event.columns_per_face;
-                        trailing_gap_v := (others => '0');
-                        close_fault_v := false;
-
-                        if i_face_close_event.active_version /=
-                               i_active_version or
-                           i_face_close_event.columns_per_face /=
-                               i_columns_per_face or
-                           to_integer(i_face_close_event.face_index) >=
-                               G_BUILD_CONFIG.num_faces or
-                           i_face_close_event.columns_per_face = 0 then
-                            close_fault_v := true;
-                        end if;
-
-                        if history_valid_r = '0' then
-                            close_v.all_hole := '1';
-                            trailing_gap_v :=
-                                i_face_close_event.columns_per_face;
-                        elsif history_face_r =
-                                  i_face_close_event.face_index and
-                              history_direction_r =
-                                  i_face_close_event.direction and
-                              history_source_r =
-                                  i_face_close_event.source_sim and
-                              history_version_r =
-                                  i_face_close_event.active_version then
-                            if history_last_r = '1' then
-                                trailing_gap_v := (others => '0');
-                            elsif history_column_r <
-                                  i_face_close_event.columns_per_face then
-                                trailing_gap_v :=
-                                    i_face_close_event.columns_per_face -
-                                    history_column_r - 1;
-                            else
-                                close_fault_v := true;
-                            end if;
-                        else
-                            close_fault_v := true;
-                        end if;
-
-                        close_v.trailing_gap := trailing_gap_v;
-                        if close_fault_v then
-                            close_v.face_faulted := '1';
-                            fault_pulse_r.geometry_error <= '1';
-                            fault_sticky_r.geometry_error <= '1';
-                        end if;
-                        if trailing_gap_v /= 0 then
-                            fault_pulse_r.column_gap <= '1';
-                            fault_sticky_r.column_gap <= '1';
-                        end if;
-
-                        frame_close_event_r <= close_v;
-                        history_valid_r <= '0';
-                        history_last_r <= '0';
+                        pending_face_close_r <= i_face_close_event;
+                        pending_close_geometry_fault_r <= '0';
+                        pending_close_gap_fault_r <= '0';
+                        state_r <= S_FACE_CLOSE_GEOMETRY;
                     elsif i_cell_event.valid = '1' then
                         pending_event_r <= i_cell_event;
                         state_r <= S_EVENT_CHECK;
                     end if;
+
+                elsif state_r = S_FACE_CLOSE_GEOMETRY then
+                    close_v := C_GPX_FRAME_CLOSE_EVENT_IDLE;
+                    close_v.valid := '1';
+                    close_v.face_frame_id :=
+                        pending_face_close_r.face_frame_id;
+                    close_v.face_index := pending_face_close_r.face_index;
+                    close_v.direction := pending_face_close_r.direction;
+                    close_v.source_sim := pending_face_close_r.source_sim;
+                    close_v.active_version :=
+                        pending_face_close_r.active_version;
+                    close_v.columns_per_face :=
+                        pending_face_close_r.columns_per_face;
+                    trailing_gap_v := (others => '0');
+                    close_fault_v := false;
+
+                    if pending_face_close_r.active_version /=
+                           i_active_version or
+                       pending_face_close_r.columns_per_face /=
+                           i_columns_per_face or
+                       to_integer(pending_face_close_r.face_index) >=
+                           G_BUILD_CONFIG.num_faces or
+                       pending_face_close_r.columns_per_face = 0 then
+                        close_fault_v := true;
+                    end if;
+
+                    if history_valid_r = '0' then
+                        close_v.all_hole := '1';
+                        trailing_gap_v :=
+                            pending_face_close_r.columns_per_face;
+                    elsif history_face_r =
+                              pending_face_close_r.face_index and
+                          history_direction_r =
+                              pending_face_close_r.direction and
+                          history_source_r =
+                              pending_face_close_r.source_sim and
+                          history_version_r =
+                              pending_face_close_r.active_version then
+                        if history_last_r = '1' then
+                            trailing_gap_v := (others => '0');
+                        elsif history_column_r <
+                              pending_face_close_r.columns_per_face then
+                            trailing_gap_v :=
+                                pending_face_close_r.columns_per_face -
+                                history_column_r - 1;
+                        else
+                            close_fault_v := true;
+                        end if;
+                    else
+                        close_fault_v := true;
+                    end if;
+
+                    close_v.trailing_gap := trailing_gap_v;
+                    if close_fault_v then
+                        close_v.face_faulted := '1';
+                        pending_close_geometry_fault_r <= '1';
+                    end if;
+                    if trailing_gap_v /= 0 then
+                        pending_close_gap_fault_r <= '1';
+                    end if;
+
+                    frame_close_event_r <= close_v;
+                    state_r <= S_FACE_CLOSE_APPLY;
+
+                elsif state_r = S_FACE_CLOSE_APPLY then
+                    if pending_close_geometry_fault_r = '1' then
+                        fault_pulse_r.geometry_error <= '1';
+                        fault_sticky_r.geometry_error <= '1';
+                    end if;
+                    if pending_close_gap_fault_r = '1' then
+                        fault_pulse_r.column_gap <= '1';
+                        fault_sticky_r.column_gap <= '1';
+                    end if;
+
+                    pending_face_close_r <= C_FACE_CLOSE_EVENT_IDLE;
+                    pending_close_geometry_fault_r <= '0';
+                    pending_close_gap_fault_r <= '0';
+                    history_valid_r <= '0';
+                    history_last_r <= '0';
+                    state_r <= S_COLLECT;
 
                 elsif state_r = S_EVENT_CHECK then
                     pending_rise_address_r <= fn_cell_address(
@@ -938,14 +1011,10 @@ begin
                     fall_prefetch_valid_r <= '0';
                     state_r <= S_EMIT;
                 else
-                    rise_output_ready_v := rise_event_r.valid = '0' or
-                        i_rise_ready = '1';
-                    fall_output_ready_v := fall_event_r.valid = '0' or
-                        i_fall_ready = '1';
-                    rise_prefetch_ready_v := rise_prefetch_valid_r = '0' or
-                        rise_output_ready_v;
-                    fall_prefetch_ready_v := fall_prefetch_valid_r = '0' or
-                        fall_output_ready_v;
+                    rise_output_ready_v := rise_output_ready_c = '1';
+                    fall_output_ready_v := fall_output_ready_c = '1';
+                    rise_prefetch_ready_v := rise_prefetch_ready_c = '1';
+                    fall_prefetch_ready_v := fall_prefetch_ready_c = '1';
                     rise_read_ready_v := rise_read_valid_r = '0' or
                         rise_prefetch_ready_v;
                     fall_read_ready_v := fall_read_valid_r = '0' or
@@ -983,12 +1052,6 @@ begin
                     if rise_prefetch_ready_v then
                         if rise_read_valid_r = '1' then
                             rise_prefetch_present_r <= rise_read_present_r;
-                            if rise_read_present_r = '1' then
-                                rise_prefetch_word_r <=
-                                    rise_memory_r(rise_read_address_r);
-                            else
-                                rise_prefetch_word_r <= (others => '0');
-                            end if;
                             rise_prefetch_chip_r <= rise_read_chip_r;
                             rise_prefetch_stop_r <= rise_read_stop_r;
                             rise_prefetch_slot_r <= rise_read_slot_r;
@@ -1052,12 +1115,6 @@ begin
                     if fall_prefetch_ready_v then
                         if fall_read_valid_r = '1' then
                             fall_prefetch_present_r <= fall_read_present_r;
-                            if fall_read_present_r = '1' then
-                                fall_prefetch_word_r <=
-                                    fall_memory_r(fall_read_address_r);
-                            else
-                                fall_prefetch_word_r <= (others => '0');
-                            end if;
                             fall_prefetch_chip_r <= fall_read_chip_r;
                             fall_prefetch_stop_r <= fall_read_stop_r;
                             fall_prefetch_slot_r <= fall_read_slot_r;

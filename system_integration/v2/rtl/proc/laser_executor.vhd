@@ -56,6 +56,7 @@ architecture rtl of laser_executor is
     signal ingress_ready_c       : std_logic;
     signal ingress_drop_r        : std_logic := '0';
     signal request_pipe_r        : shot_request_t := C_SHOT_REQUEST_IDLE;
+    signal request_context_valid_pipe_r : std_logic := '0';
     signal fire_trigger_c        : std_logic;
     signal simulation_t0_c       : std_logic;
     signal stop_trigger_c        : std_logic;
@@ -182,18 +183,27 @@ begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
                 request_pipe_r <= C_SHOT_REQUEST_IDLE;
+                request_context_valid_pipe_r <= '0';
                 ingress_drop_r <= '0';
             else
                 ingress_drop_r <= '0';
 
                 if request_pipe_r.valid = '1' and core_ready_c = '1' then
                     request_pipe_r.valid <= '0';
+                    request_context_valid_pipe_r <= '0';
                 end if;
 
                 if i_shot_request.valid = '1' then
                     if ingress_ready_c = '1' then
                         request_pipe_r <= i_shot_request;
                         request_pipe_r.valid <= '1';
+                        if i_shot_request.active_version =
+                           active_version_r and
+                           i_shot_request.source_sim = simulation_mode_r then
+                            request_context_valid_pipe_r <= '1';
+                        else
+                            request_context_valid_pipe_r <= '0';
+                        end if;
                     else
                         ingress_drop_r <= '1';
                     end if;
@@ -250,6 +260,7 @@ begin
             i_physical_fire_enable => physical_mode_enable_r,
             i_simulation_enable   => simulation_mode_enable_r,
             i_shot_request        => request_pipe_r,
+            i_request_context_valid => request_context_valid_pipe_r,
             i_bridge_ready        => bridge_ready_c,
             i_t0_event            => bridge_t0_event_c,
             i_timestamp_ticks     => timestamp_ticks_r,
@@ -339,6 +350,13 @@ begin
                     assert current_request_c.source_sim = '0' and
                         i_operation_state.physical_fire_enable = '1'
                         report "V2-LASER-009 final fire gate contract failure"
+                        severity failure;
+                end if;
+                if request_pipe_r.valid = '1' and
+                   request_context_valid_pipe_r = '1' then
+                    assert request_pipe_r.active_version = active_version_r and
+                        request_pipe_r.source_sim = simulation_mode_r
+                        report "V2-LASER-011 registered request context mismatch"
                         severity failure;
                 end if;
             end if;

@@ -83,6 +83,13 @@ architecture rtl of echo_diagnostics is
     end function fn_event_popcount;
 
     signal window_active_r : std_logic := '0';
+    signal rise_event_stage_r : std_logic_vector(
+        C_NUM_CHANNELS - 1 downto 0) := (others => '0');
+    signal fall_event_stage_r : std_logic_vector(
+        C_NUM_CHANNELS - 1 downto 0) := (others => '0');
+    signal shot_result_stage_r : shot_result_t := C_SHOT_RESULT_IDLE;
+    signal snapshot_capture_stage_r : std_logic := '0';
+    signal profile_not_ready_stage_r : std_logic := '0';
     signal request_r : shot_request_t := C_SHOT_REQUEST_IDLE;
     signal rise_mask_r : echo_channel_mask_t := (others => '0');
     signal fall_mask_r : echo_channel_mask_t := (others => '0');
@@ -109,6 +116,13 @@ architecture rtl of echo_diagnostics is
         C_ECHO_SHOT_SNAPSHOT_CLEAR;
     signal snapshot_finalize_r : std_logic := '0';
 
+    -- snapshot_capture_stage_r has the same cycle alignment as the staged
+    -- Shot result, but owns only the wide snapshot register enables. Bounding
+    -- this register net lets implementation place local copies beside the
+    -- 32-channel count banks instead of routing one CE across all banks.
+    attribute max_fanout : integer;
+    attribute max_fanout of snapshot_capture_stage_r : signal is 48;
+
 begin
 
     o_window_active <= window_active_r;
@@ -121,11 +135,36 @@ begin
         overlap_pulse         => overlap_pulse_r,
         overlap_sticky        => overlap_sticky_r,
         overlap_count         => overlap_count_r,
-        profile_not_ready_pulse  => i_profile_not_ready,
+        profile_not_ready_pulse  => profile_not_ready_stage_r,
         profile_not_ready_sticky => profile_not_ready_sticky_r,
         profile_not_ready_count  => profile_not_ready_count_r,
         snapshot              => snapshot_r
     );
+
+    -- Diagnostics are intentionally one Processing clock behind the physical
+    -- STOP path. Register events and the closing Shot-result boundary so the
+    -- 32-channel popcount/counters never sit on the frontend synchronizer
+    -- route and a final Echo cannot cross that delayed closing boundary. Shot
+    -- start remains immediate so the externally observed window-open contract
+    -- is unchanged.
+    p_observation_input : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                rise_event_stage_r <= (others => '0');
+                fall_event_stage_r <= (others => '0');
+                shot_result_stage_r <= C_SHOT_RESULT_IDLE;
+                snapshot_capture_stage_r <= '0';
+                profile_not_ready_stage_r <= '0';
+            else
+                rise_event_stage_r <= i_rise_event;
+                fall_event_stage_r <= i_fall_event;
+                shot_result_stage_r <= i_shot_result;
+                snapshot_capture_stage_r <= i_shot_result.valid;
+                profile_not_ready_stage_r <= i_profile_not_ready;
+            end if;
+        end if;
+    end process p_observation_input;
 
     p_diagnostics : process (i_clk)
         variable rise_count_v : echo_count_array_t;
@@ -175,7 +214,7 @@ begin
                     profile_not_ready_count_r  <= (others => '0');
                 end if;
 
-                if i_profile_not_ready = '1' then
+                if profile_not_ready_stage_r = '1' then
                     profile_not_ready_sticky_r <= '1';
                     profile_not_ready_count_r <=
                         profile_not_ready_count_r + 1;
@@ -189,14 +228,14 @@ begin
                     resize(rise_increment_r, total_rise_r'length);
                 total_fall_v := total_fall_r +
                     resize(fall_increment_r, total_fall_r'length);
-                rise_events_v := fn_event_popcount(i_rise_event);
-                fall_events_v := fn_event_popcount(i_fall_event);
+                rise_events_v := fn_event_popcount(rise_event_stage_r);
+                fall_events_v := fn_event_popcount(fall_event_stage_r);
                 any_event_v  := '0';
                 rise_increment_r <= (others => '0');
                 fall_increment_r <= (others => '0');
 
                 for channel in 0 to C_NUM_CHANNELS - 1 loop
-                    if i_rise_event(channel) = '1' then
+                    if rise_event_stage_r(channel) = '1' then
                         any_event_v := '1';
                         if window_active_r = '1' then
                             rise_mask_v(channel) := '1';
@@ -206,7 +245,7 @@ begin
                             end if;
                         end if;
                     end if;
-                    if i_fall_event(channel) = '1' then
+                    if fall_event_stage_r(channel) = '1' then
                         any_event_v := '1';
                         if window_active_r = '1' then
                             fall_mask_v(channel) := '1';
@@ -255,19 +294,21 @@ begin
                     total_fall_r <= total_fall_v;
                 end if;
 
-                if i_shot_result.valid = '1' then
-                    snapshot_v := C_ECHO_SHOT_SNAPSHOT_CLEAR;
-                    snapshot_v.valid      := '1';
-                    snapshot_v.request    := request_r;
-                    snapshot_v.timeout    := i_shot_result.timeout;
-                    snapshot_v.aborted    := i_shot_result.aborted;
-                    snapshot_v.rise_mask  := rise_mask_v;
-                    snapshot_v.fall_mask  := fall_mask_v;
-                    snapshot_v.rise_count := rise_count_v;
-                    snapshot_v.fall_count := fall_count_v;
-                    snapshot_v.total_rise := (others => '0');
-                    snapshot_v.total_fall := (others => '0');
+                snapshot_v := C_ECHO_SHOT_SNAPSHOT_CLEAR;
+                snapshot_v.valid      := '1';
+                snapshot_v.request    := request_r;
+                snapshot_v.timeout    := shot_result_stage_r.timeout;
+                snapshot_v.aborted    := shot_result_stage_r.aborted;
+                snapshot_v.rise_mask  := rise_mask_v;
+                snapshot_v.fall_mask  := fall_mask_v;
+                snapshot_v.rise_count := rise_count_v;
+                snapshot_v.fall_count := fall_count_v;
+                snapshot_v.total_rise := (others => '0');
+                snapshot_v.total_fall := (others => '0');
+                if snapshot_capture_stage_r = '1' then
                     snapshot_pending_r  <= snapshot_v;
+                end if;
+                if shot_result_stage_r.valid = '1' then
                     snapshot_finalize_r <= '1';
                     window_active_r     <= '0';
                 end if;
@@ -288,14 +329,17 @@ begin
     p_contract : process (i_clk)
     begin
         if rising_edge(i_clk) then
-            if i_rst_n = '1' and i_shot_result.valid = '1' then
+            if i_rst_n = '1' and shot_result_stage_r.valid = '1' then
+                assert snapshot_capture_stage_r = '1'
+                    report "V2-ECHO-010 snapshot capture/result misalignment"
+                    severity failure;
                 assert window_active_r = '1' or
-                    i_shot_result.timeout = '1' or
-                    i_shot_result.aborted = '1'
+                    shot_result_stage_r.timeout = '1' or
+                    shot_result_stage_r.aborted = '1'
                     report "V2-ECHO-008 normal result without Echo window"
                     severity failure;
                 if window_active_r = '1' then
-                    assert i_shot_result.request = request_r
+                    assert shot_result_stage_r.request = request_r
                         report "V2-ECHO-009 Echo Shot identity mismatch"
                         severity failure;
                 end if;

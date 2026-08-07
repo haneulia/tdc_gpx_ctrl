@@ -155,8 +155,11 @@ begin
             shot_result <= result_value;
             wait until rising_edge(clk);
             shot_result <= C_SHOT_RESULT_IDLE;
-            wait until rising_edge(clk);
-            wait for 1 ps;
+            for wait_count in 1 to 4 loop
+                wait until rising_edge(clk);
+                wait for 1 ps;
+                exit when diagnostics.snapshot.valid = '1';
+            end loop;
         end procedure finish_shot;
 
         procedure pulse_all_channels is

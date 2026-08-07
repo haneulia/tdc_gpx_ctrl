@@ -36,6 +36,15 @@ architecture rtl of lidar_gpx_cell_word_serializer is
         C_GPX_VDMA_WORD_EVENT_IDLE;
     signal output_ready_c : std_logic;
     signal current_last_c : std_logic;
+    signal cell_ready_c : std_logic;
+    signal cell_accept_c : std_logic;
+
+    -- The zero-bubble accept condition enables the complete registered Cell
+    -- record. Bound its physical fanout so synthesis may replicate the final
+    -- handshake LUT beside local record slices instead of routing one CE net
+    -- across the full serializer payload.
+    attribute max_fanout : integer;
+    attribute max_fanout of cell_accept_c : signal is 24;
 
 begin
 
@@ -44,8 +53,10 @@ begin
     current_last_c <= '1' when cell_valid_r = '1' and
         word_index_r + 1 = word_count_r else '0';
 
-    o_cell_ready <= '1' when cell_valid_r = '0' or
+    cell_ready_c <= '1' when cell_valid_r = '0' or
         (output_ready_c = '1' and current_last_c = '1') else '0';
+    cell_accept_c <= i_cell_event.valid and cell_ready_c;
+    o_cell_ready <= cell_ready_c;
     o_word_event <= word_event_r;
     o_idle <= '1' when cell_valid_r = '0' and
         word_event_r.valid = '0' else '0';
@@ -75,7 +86,7 @@ begin
                     end if;
                 end if;
 
-                if i_cell_event.valid = '1' and o_cell_ready = '1' then
+                if cell_accept_c = '1' then
                     max_hits := fn_gpx_vdma_effective_max_hits(
                         i_cell_event.cell.max_hits);
                     cell_event_r <= i_cell_event;

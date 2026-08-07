@@ -74,6 +74,15 @@ architecture rtl of lidar_processing_status_source is
     signal irq_gpx_transport_r : std_logic := '0';
     signal irq_gpx_data_r : std_logic := '0';
 
+    -- Idle is a diagnostic observation, not a real-time control input. Sample
+    -- the four domains before building a response so the indexed portal sees
+    -- one coherent cycle and deep downstream-idle decode cannot extend into
+    -- the response register in the same 200 MHz cycle.
+    signal pipeline_idle_r : std_logic := '1';
+    signal echo_idle_r     : std_logic := '1';
+    signal gpx_proc_idle_r : std_logic := '1';
+    signal gpx_axis_idle_r : std_logic := '1';
+
 begin
 
     o_request_ready <= '1' when state_r = SOURCE_IDLE else '0';
@@ -110,7 +119,16 @@ begin
             irq_echo_r <= '0';
             irq_gpx_transport_r <= '0';
             irq_gpx_data_r <= '0';
+            pipeline_idle_r <= '1';
+            echo_idle_r <= '1';
+            gpx_proc_idle_r <= '1';
+            gpx_axis_idle_r <= '1';
         elsif rising_edge(i_clk) then
+            pipeline_idle_r <= i_pipeline_idle;
+            echo_idle_r <= i_echo_idle;
+            gpx_proc_idle_r <= i_gpx_proc_idle;
+            gpx_axis_idle_r <= i_gpx_axis_idle;
+
             v_hit_fault := i_hit_fault_sticky.chip_index_error or
                 i_hit_fault_sticky.stop_index_error or
                 i_hit_fault_sticky.slope_role_error;
@@ -222,10 +240,10 @@ begin
                                 operation_abort_sticky;
                             v_data(11) := i_processing_diagnostics.laser.
                                 unexpected_done_sticky;
-                            v_data(12) := i_pipeline_idle;
-                            v_data(13) := i_echo_idle;
-                            v_data(14) := i_gpx_proc_idle;
-                            v_data(15) := i_gpx_axis_idle;
+                            v_data(12) := pipeline_idle_r;
+                            v_data(13) := echo_idle_r;
+                            v_data(14) := gpx_proc_idle_r;
+                            v_data(15) := gpx_axis_idle_r;
                             v_data(16) := i_echo_profile_ready;
                             v_data(17) := i_echo_profile_busy;
                             v_data(18) := i_rise_profile.enabled;
@@ -320,8 +338,8 @@ begin
                             v_data(3) := i_rise_profile.enabled;
                             v_data(4) := i_fall_profile.valid;
                             v_data(5) := i_fall_profile.enabled;
-                            v_data(6) := i_pipeline_idle;
-                            v_data(7) := i_gpx_axis_idle;
+                            v_data(6) := pipeline_idle_r;
+                            v_data(7) := gpx_axis_idle_r;
                             v_data(8) := i_gpx_cdc_reset_busy;
                             v_data(31 downto 16) := std_logic_vector(
                                 i_echo_profile_version);

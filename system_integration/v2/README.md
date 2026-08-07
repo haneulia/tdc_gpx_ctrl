@@ -65,7 +65,10 @@ multiple clocks and is checked against this reference model.
   profile activation plus acknowledged CSR system-command CDC, and K0-4
   through K0-7 connect Processing/Echo, physical GPX B5-B8 and the complete
   dual-lane AXIS/VDMA output. K0-8 closes the CTL23/24 native-domain diagnostic
-  snapshot, runtime IRQ source 5..9 and remote-reset recovery. The physical
+  snapshot, runtime IRQ source 5..9 and remote-reset recovery. K0-9 closes the
+  six-profile 32/64/128-bit final implementation matrix with minimum WNS
+  `+0.103 ns`, then repeats the DDR/HTML Word and PS H-Line/Ethernet byte
+  comparisons against that final RTL. The physical
   parent VDMA/HP/cache path remains unmigrated; the existence of its v1 cores
   does not mark that Stage complete.
 
@@ -92,8 +95,8 @@ the complete B5..B8 production chain plus explicit Face-close ordering. J7/J8
 now close the focused B9 geometry and Footer boundary. J9 and J10 close the
 DDR image and host PS/Viewer comparison. K0-6/K0-7 now connect that formatter
 chain to the public Top and close the modeled DDR/HTML plus portable
-  PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly is complete;
-  K0-9 final 64/128-bit implementation and K0-10 packaging are next. K1 closes
+  PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly and K0-9
+  final implementation are complete; K0-10 packaging is next. K1 closes
   the full RTL/HTML operating matrix
 before L0 attaches the parent VDMA/HP-port and real cache/board measurement.
 
@@ -454,3 +457,26 @@ The final markers are `LIDAR_V2_K08_STATUS_IRQ_REGRESSION_PASS` and
 values, Processing/TDC reset-aborted reads, mailbox recovery, native source
 clear and subsequent IRQ W1C. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md`.
+
+Run the K0-9 final functional, implementation and executable Golden checks with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k06_axis_integration.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k06_top_implementation.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_ddr_golden.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_gpx_ps_hline.ps1
+```
+
+The K0-9 archive covers both routine Processing/TDC profiles and all three
+output widths. The minimum implementation WNS is `+0.103 ns`; black box,
+latch, critical CDC and unexpected blocking DRC counts are zero. The modeled
+cache ownership test is not a substitute for the FreeRTOS/PetaLinux cache API,
+VDMA/HP-port or physical Ethernet board test. See
+`system_integration/v2_architecture/V2_CHECKPOINT_K0_9_FINAL_IMPLEMENTATION_KO.md`.
