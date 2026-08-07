@@ -2,6 +2,10 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+-- 합성 전에 고정되는 Build 계약의 단일 소유자.
+-- 최대 물리 용량(C_MAX_*)과 실제 인스턴스 선택(lidar_build_config_t)을
+-- 구분한다. C_MAX_*는 타입 폭/배열 상한이고 G_BUILD_CONFIG의 필드는
+-- 이번 합성에서 실제 생성할 Chip, STOP, Return, Face, clock, AXIS 폭이다.
 package lidar_build_pkg is
 
     constant C_MAX_CHIPS           : positive := 4;
@@ -9,13 +13,11 @@ package lidar_build_pkg is
     constant C_MAX_RETURNS_PER_STOP : positive := 7;
     constant C_MAX_FACES           : positive := 5;
     constant C_POSITION_WIDTH      : positive := 15;
-    -- The proven GPX acquisition watchdog and per-shot capture budget are
-    -- 16 bit. Commit validation rejects larger derived TDC-clock windows so
-    -- an accepted runtime value can never be truncated at the v1 boundary.
+    -- 보드 검증 GPX acquisition watchdog와 Shot capture budget의 16-bit 상한.
+    -- COMMIT 검증이 더 큰 TDC-clock window를 거부하므로 승인값은 잘리지 않는다.
     constant C_GPX_CAPTURE_COUNTER_MAX_CLKS : positive := 65_535;
-    -- Board-proven TDC-GPX reference clock. Reg7.MTimer counts this 40 MHz
-    -- reference, so one MTimer tick is 25 ns = five common 5 ns CSR ticks.
-    -- This is a hardware contract, not another runtime setting.
+    -- 보드 검증 TDC-GPX 기준 clock. Reg7.MTimer는 40 MHz를 세므로
+    -- 1 tick=25 ns=공통 CSR 5 ns tick 5개다. Runtime 설정값이 아닌 물리 계약이다.
     constant C_GPX_REFERENCE_CLK_MHZ       : positive := 40;
     constant C_GPX_REFERENCE_TICK_5NS      : positive := 5;
     constant C_GPX_MTIMER_WIDTH            : positive := 13;
@@ -117,6 +119,8 @@ package lidar_build_pkg is
         enable_echo_simulation => false
     );
 
+    -- 아래 함수는 Generic 조합을 elaboration 전에 검증하고 enum/mask를
+    -- 실제 정수·bit 표현으로 바꾸는 Build 전용 helper다.
     function fn_is_legal_clock_mhz(value : natural) return boolean;
     function fn_is_legal_output_width(value : natural) return boolean;
     function fn_is_binary(value : std_logic_vector) return boolean;

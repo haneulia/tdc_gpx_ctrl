@@ -356,7 +356,7 @@ begin
         axi_read(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000000");
         axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00020E10");
         axi_read(fn_ctl_byte_offset(C_CTL_FACE_CENTER_0), x"000005A0");
-        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250205");
+        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250206");
         axi_read(fn_stat_byte_offset(C_STAT_BUILD_INFO), x"0C30C896");
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000100", 2);
         axi_read(fn_ctl_byte_offset(C_CTL_RESERVED_FIRST), x"00000000");
@@ -391,6 +391,39 @@ begin
         wait_cycles(5);
         axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"000306FF");
         axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), x"A50000FF");
+
+        -- 외부 GPX Register 읽기는 스케줄러를 DISARM한 뒤에만 허용한다.
+        -- 활성 스케줄러에서 요청하면 실제 진단 버스로 내보내지 않고 즉시
+        -- ERROR를 반환하므로 Shot 처리와 GPX Register bus가 충돌하지 않는다.
+        operation_status <= (
+            running              => '1',
+            armed                => '1',
+            external_permit      => '1',
+            config_ready         => '1',
+            processing_enable    => '1',
+            scheduler_enable     => '1',
+            physical_fire_enable => '1',
+            simulation_enable    => '0'
+        );
+        diag_request_ready <= '0';
+        wait_cycles(1);
+        axi_write(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"000001C0");
+        wait_cycles(2);
+        assert diag_request_valid = '0'
+            report "V2-CSR-BANK armed physical GPX read escaped to the bus"
+            severity failure;
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"000406C0");
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), x"00000000");
+
+        -- DISARM 상태에서는 Chip1 Register7 요청(index D7)이 일반 진단
+        -- ready/valid mailbox로 전달되어 원자적인 CTL24 결과를 만든다.
+        operation_status <= C_OPERATION_STATE_SAFE;
+        diag_request_ready <= '1';
+        wait_cycles(1);
+        axi_write(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"000001D7");
+        wait_cycles(5);
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), x"000502D7");
+        axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), x"A50000D7");
 
         -- CTL21/22 form one indexed GPX image portal. Selection never changes
         -- the image; DATA writes edit only the staging view.

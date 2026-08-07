@@ -275,6 +275,13 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
     signal gpx_terminal_mask_c : chip_mask_t;
     signal gpx_tdc_status_c : gpx_lane_status_array_t;
     signal gpx_tdc_faults_c : gpx_lane_faults_array_t;
+    signal gpx_register_service_pause_c : std_logic;
+    signal gpx_register_read_c : gpx_register_read_request_t :=
+        C_GPX_REGISTER_READ_REQUEST_IDLE;
+    signal gpx_register_read_ready_c : std_logic;
+    signal gpx_register_read_response_c : gpx_register_read_response_t :=
+        C_GPX_REGISTER_READ_RESPONSE_IDLE;
+    signal gpx_register_read_response_ready_c : std_logic;
     signal gpx_shot_drop_sticky_c : std_logic;
     signal gpx_stop_drop_sticky_c : std_logic;
     signal gpx_hit_fault_sticky_c : gpx_hit_decoder_faults_t;
@@ -490,6 +497,14 @@ begin
             i_tdc_run_enable => tdc_run_enable_c,
             i_tdc_active_valid => tdc_active_valid_c,
             i_tdc_config_ready => tdc_config_ready_c,
+            o_tdc_register_service_pause =>
+                gpx_register_service_pause_c,
+            o_tdc_register_read => gpx_register_read_c,
+            i_tdc_register_read_ready => gpx_register_read_ready_c,
+            i_tdc_register_read_response =>
+                gpx_register_read_response_c,
+            o_tdc_register_read_response_ready =>
+                gpx_register_read_response_ready_c,
             o_runtime_irq => runtime_irq_c
         );
 
@@ -617,7 +632,10 @@ begin
             o_tdc_run_enable => tdc_run_sync_c
         );
 
-    tdc_run_enable_c <= tdc_enable_c and tdc_run_sync_c;
+    -- 물리 Register 진단은 DISARM 상태에서 acquisition만 잠시 정지한다.
+    -- 완료 후 RUN 상태는 보존되며, ARM 전까지 새 Shot은 생성되지 않는다.
+    tdc_run_enable_c <= tdc_enable_c and tdc_run_sync_c and
+        not gpx_register_service_pause_c;
 
     u_gpx_b5_b8 : entity work.lidar_gpx_b5_b8_subsystem
         generic map (
@@ -669,6 +687,12 @@ begin
             i_tdc_clear_status => tdc_clear_status_c,
             o_tdc_safe => gpx_tdc_safe_c,
             o_tdc_shot_complete => open,
+            i_tdc_register_read => gpx_register_read_c,
+            o_tdc_register_read_ready => gpx_register_read_ready_c,
+            o_tdc_register_read_response =>
+                gpx_register_read_response_c,
+            i_tdc_register_read_response_ready =>
+                gpx_register_read_response_ready_c,
             o_cdc_reset_busy => gpx_cdc_reset_busy_c,
             o_adr => gpx_adr_c,
             o_csn => gpx_csn_c,

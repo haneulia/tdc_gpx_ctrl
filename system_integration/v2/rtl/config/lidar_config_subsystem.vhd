@@ -52,6 +52,10 @@ end entity lidar_config_subsystem;
 
 architecture rtl of lidar_config_subsystem is
 
+    -- 모두 CSR clock domain의 transaction 신호다. candidate는 COMMIT 순간
+    -- shadow를 검증/계산한 결과이며 prepare부터 release 종료까지 고정된다.
+    -- 각 domain gateway는 이 한 snapshot만 받아 Processing/TDC active version이
+    -- 서로 달라지는 부분 적용을 막는다.
     signal prepare_req   : std_logic;
     signal activate_req  : std_logic;
     signal release_req   : std_logic;

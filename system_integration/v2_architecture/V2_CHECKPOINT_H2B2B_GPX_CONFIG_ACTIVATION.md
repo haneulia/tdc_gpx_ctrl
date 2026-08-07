@@ -52,7 +52,9 @@ delay_5ns[n] = CHANNEL_0_DELAY + n * CHANNEL_STEP, n = 0..31
 ```
 
 채널별 32-entry CSR table은 만들지 않았다. GPX image도 16개 주소를 추가하지
-않고 INDEX/DATA 두 word만 사용했으므로 CTL23..31은 계속 reserved이다.
+않고 INDEX/DATA 두 word만 사용했다. H2B-2B 완료 당시 CTL23..31은 reserved였고,
+후속 K0-8 ABI 2.6에서 CTL23/24가 read-only 진단/물리 GPX read 포털로
+할당되었다. 현재 reserved 범위는 CTL25..31이다.
 
 ## 4. Echo build option 비회귀
 

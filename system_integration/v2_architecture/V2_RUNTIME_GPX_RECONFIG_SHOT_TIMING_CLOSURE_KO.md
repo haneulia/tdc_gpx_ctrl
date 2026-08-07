@@ -47,7 +47,7 @@ sequenceDiagram
     SW->>CSR: "CTL0.DISARM W1S"
     CSR->>OP: "DISARM event"
     OP-->>SW: "RUNNING=1, ARMED=0, fire gates=0"
-    SW->>CSR: "CTL12 and CTL21/22 staging writes"
+    SW->>CSR: "CTL12; 필요할 때만 CTL21/22 staging writes"
     SW->>CSR: "CTL0.COMMIT W1S"
     CFG->>CFG: "wait Processing/TDC safe point"
     CFG->>GPX: "effective register image apply"
@@ -60,6 +60,16 @@ sequenceDiagram
 `DISARM`은 RUN과 Encoder/Face 위치 추적을 유지하면서 scheduler,
 `fire_pulse`, simulation Shot 허가를 모두 닫는다. COMMIT도 설정 전환 중
 scheduler를 일시 차단하지만, 물리 레이저 안전 절차는 DISARM을 먼저 사용한다.
+
+목표 왕복시간만 바꾸는 경우 CTL21/22는 수정하지 않는다. CTL12만 쓰면
+COMMIT이 Reg7.MTimer를 자동 계산한다. CTL21/22는 MTimer 이외의 GPX Register
+bit를 바꾸거나 승인된 설정 이미지를 볼 때만 사용한다.
+
+COMMIT 뒤 실제 Chip 상태까지 확인하려면 CTL23에 `11CCAAAA | 0x100`을 쓴다.
+`CC`는 Chip, `AAAA`는 Register 주소다. 예를 들어 Chip 1 Reg7은 `0x1D7`을
+쓴다. 완료 후 CTL24의 `[31:28]`은 요청 주소, `[27:0]`은 실제 물리 readback이다.
+이 서비스는 acquisition을 자동 pause/resume하지만 scheduler는 DISARM 상태를
+유지한다.
 
 ## 4. 요청 광학각 후보점의 hard deadline
 
@@ -78,9 +88,13 @@ gpx_acquisition_ready
   + 누적된 후단 backpressure가 수용 한계를 막지 않음
 ```
 
-어느 하나라도 준비되지 않으면 해당 column을 Hole로 남기고
+어느 하나라도 준비되지 않으면 해당 column을 **결측 Shot 열(Hole)**로 남기고
 `schedule_overrun`을 기록한다. 준비될 때까지 기다린 뒤 다른 각도에서 늦게
 발사하지 않는다.
+
+결측 Shot 열(Hole)은 요청 각도 격자에는 있어야 하지만 그 순간 실제 Shot을
+측정하지 못한 column이다. DDR에는 실제 Shot Line과 같은 HSIZE의 빈 Line과
+Hole metadata를 기록하므로 뒤의 정상 H-Line 번호가 앞으로 이동하지 않는다.
 
 Cell 조립, AXIS 및 DDR 전송은 처리량을 확보하기 위한 파이프라인이므로 매 Shot
 전에 전체가 idle일 필요는 없다. 다만 평균 처리량이 부족해 backpressure가
@@ -97,7 +111,8 @@ ready 상태가 정확하다.
 |---|---|
 | 레이저 OFF 확인 | `STAT3.ARMED[17]=0`, `SCHEDULER_ENABLE[21]=0`, `PHYSICAL_FIRE_ENABLE[22]=0`, `SIMULATION_ENABLE[23]=0` |
 | GPX COMMIT 완료 | `STAT2.BUSY[0]=0`, `DONE_STICKY[1]=1`, `SUCCESS_STICKY[2]=1`, `ERROR_STICKY[3]=0` |
-| 실제 Reg7 확인 | `CTL21.VIEW_ACTIVE=1`, index 7 선택 후 CTL22 읽기 |
+| 승인된 Reg7 설정 이미지 확인 | `CTL21.VIEW_ACTIVE=1`, index 7 선택 후 CTL22 읽기 |
+| 실제 외부 Chip Reg7 확인 | DISARM 후 CTL23=`0x100 | 0xC0 | (Chip<<4) | 7`; CTL24=`{7, read_data[27:0]}` |
 | 후보점 시간 부족 | 진단 index `0x10`의 bit 5 `schedule_overrun` |
 | 누적 누락 후보점 | 진단 index `0x13`의 32-bit count |
 | 시간 계약 오류 IRQ | IRQ source 5 `PROCESSING_WARNING` (기존 ABI 이름 유지) |

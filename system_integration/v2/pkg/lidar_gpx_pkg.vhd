@@ -4,6 +4,10 @@ use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
 
+-- 외부 TDC-GPX Chip bus와 acquisition lane의 타입/용량 계약.
+-- 물리 bus는 주소 4 bit, 데이터 28 bit이고 최대 배열 크기는 Build 패키지의
+-- C_MAX_CHIPS를 따른다. runtime Return 수는 출력 가시성만 바꾸며 물리 IFIFO
+-- drain 용량과 FIFO sizing 상한은 합성 topology에서 계산한다.
 package lidar_gpx_pkg is
 
     constant C_GPX_BUS_DATA_WIDTH : positive := 28;
@@ -29,6 +33,25 @@ package lidar_gpx_pkg is
         std_logic_vector(C_GPX_BUS_DATA_WIDTH - 1 downto 0);
     subtype gpx_bus_address_t is
         std_logic_vector(C_GPX_BUS_ADDR_WIDTH - 1 downto 0);
+
+    -- 외부 TDC-GPX 물리 레지스터 읽기 서비스 계약.
+    -- request.valid/ready 한 번이 정확히 한 Chip의 한 Register 읽기를
+    -- 의미한다. response는 소비될 때까지 valid와 payload를 유지하므로
+    -- 진단 경로의 backpressure가 1-clock read pulse를 잃게 하지 않는다.
+    subtype gpx_chip_select_t is unsigned(1 downto 0);
+    type gpx_register_read_request_t is record
+        valid   : std_logic;
+        chip    : gpx_chip_select_t;
+        address : gpx_bus_address_t;
+    end record gpx_register_read_request_t;
+
+    type gpx_register_read_response_t is record
+        valid     : std_logic;
+        error     : std_logic;
+        chip      : gpx_chip_select_t;
+        address   : gpx_bus_address_t;
+        read_data : gpx_bus_data_t;
+    end record gpx_register_read_response_t;
 
     type gpx_bus_timing_t is record
         clock_div : unsigned(5 downto 0);
@@ -107,6 +130,10 @@ package lidar_gpx_pkg is
         gpx_lane_status_t;
     type gpx_lane_faults_array_t is array (0 to C_MAX_CHIPS - 1) of
         gpx_lane_faults_t;
+    type gpx_register_read_request_array_t is array (
+        0 to C_MAX_CHIPS - 1) of gpx_register_read_request_t;
+    type gpx_register_read_response_array_t is array (
+        0 to C_MAX_CHIPS - 1) of gpx_register_read_response_t;
 
     constant C_GPX_BUS_TIMING_DEFAULT : gpx_bus_timing_t := (
         clock_div => to_unsigned(2, 6),
@@ -128,6 +155,22 @@ package lidar_gpx_pkg is
         address   => (others => '0'),
         read_data => (others => '0')
     );
+
+    constant C_GPX_REGISTER_READ_REQUEST_IDLE :
+        gpx_register_read_request_t := (
+            valid   => '0',
+            chip    => (others => '0'),
+            address => (others => '0')
+        );
+
+    constant C_GPX_REGISTER_READ_RESPONSE_IDLE :
+        gpx_register_read_response_t := (
+            valid     => '0',
+            error     => '0',
+            chip      => (others => '0'),
+            address   => (others => '0'),
+            read_data => (others => '0')
+        );
 
     constant C_GPX_PIN_STATUS_RESET : gpx_pin_status_t := (
         ef1     => '1',

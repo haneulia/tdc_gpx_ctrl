@@ -4,7 +4,8 @@
 
 Checkpoint E의 최초 ABI 2.3 범위는 **PASS**이다. Stage 5 H2B-2B에서 GPX
 image portal과 물리 적용 ACK를 추가한 당시 ABI는 2.4이다. K0-8에서
-CTL23/24 runtime 진단 portal과 IRQ source 5..9를 추가한 현재 ABI 2.5는
+CTL23/24 runtime 진단 portal, 실제 GPX Register read와 IRQ source 5..9를
+포함한 현재 ABI 2.6은
 `V2_CHECKPOINT_K0_8_STATUS_IRQ_SINGLE_OWNER_KO.md`에서 정의한다.
 
 - 32 CTL / 32 STAT / 4 IRQ ABI 구현
@@ -121,7 +122,9 @@ event pipeline 연결과 함께 수행한다.
   `CH0_DELAY + channel * STEP` 구조로 확정되었다. 채널별 32-word table은
   추가하지 않는다.
 - GPX image 16-entry indexed portal은 Stage 5 H2B-2B에서 CTL21/22 두 word로
-  완료되었다. CTL23..31은 계속 reserved이다.
+  완료되었다. 이 체크포인트 당시에는 CTL23..31이 reserved였지만, 후속 K0-8
+  ABI 2.6에서 CTL23/24가 read-only 진단/물리 GPX read 포털로 할당되었고
+  현재 reserved 범위는 CTL25..31이다.
 - 최종 IP-XACT/XGUI packaging과 parent PS7 implementation은 full v2 top 이후
   수행한다.
 

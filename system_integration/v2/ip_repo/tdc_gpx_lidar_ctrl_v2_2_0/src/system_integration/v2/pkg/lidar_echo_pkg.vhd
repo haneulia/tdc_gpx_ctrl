@@ -6,6 +6,9 @@ use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
 
+-- Echo receiver/simulation의 채널 번호, 지연 profile, Shot snapshot 및
+-- 진단 record 계약. 채널별 지연은 32개 CSR가 아니라 CH0 + n*STEP으로
+-- 전개하며, 모든 시간 source는 5 ns tick에서 Processing clocks로 변환한다.
 package lidar_echo_pkg is
 
     constant C_ECHO_MAX_CHANNELS : positive :=

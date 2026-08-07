@@ -34,18 +34,45 @@ entity lidar_tdc_status_source is
         i_active_valid   : in std_logic;
         i_config_ready   : in std_logic;
 
+        -- CTL23의 11CCAAAA 요청을 실제 GPX bus read로 변환한다. pause는
+        -- acquisition RUN만 잠시 내리며 Processing/CSR clock에는 쓰지 않는다.
+        o_register_service_pause : out std_logic;
+        o_register_read : out gpx_register_read_request_t;
+        i_register_read_ready : in std_logic := '0';
+        i_register_read_response : in gpx_register_read_response_t :=
+            C_GPX_REGISTER_READ_RESPONSE_IDLE;
+        o_register_read_response_ready : out std_logic;
+
         o_irq_gpx_transport : out std_logic
     );
 end entity lidar_tdc_status_source;
 
 architecture rtl of lidar_tdc_status_source is
 
-    type source_state_t is (SOURCE_IDLE, SOURCE_BUILD, SOURCE_RESPONSE);
+    constant C_REGISTER_SERVICE_TIMEOUT_CLKS : positive :=
+        work.tdc_gpx_pkg.fn_time_ns_to_clks_ceil(
+            C_GPX_REGISTER_SERVICE_TIMEOUT_NS,
+            G_BUILD_CONFIG.tdc_clk_mhz);
+
+    type source_state_t is (
+        SOURCE_IDLE,
+        SOURCE_BUILD,
+        SOURCE_REGISTER_WAIT_SAFE,
+        SOURCE_REGISTER_REQUEST,
+        SOURCE_REGISTER_RESPONSE,
+        SOURCE_RESPONSE
+    );
     type timeout_cause_array_t is array (0 to C_MAX_CHIPS - 1) of
         std_logic_vector(2 downto 0);
     signal state_r : source_state_t := SOURCE_IDLE;
     signal index_r : lidar_diag_index_t := (others => '0');
     signal response_r : lidar_diag_response_t := (others => '0');
+    signal register_request_c : gpx_register_read_request_t :=
+        C_GPX_REGISTER_READ_REQUEST_IDLE;
+    signal register_service_pause_r : std_logic := '0';
+    signal register_service_count_r : natural range 0 to
+        C_REGISTER_SERVICE_TIMEOUT_CLKS := 0;
+    signal register_service_error_seen_r : std_logic := '0';
 
     signal drain_timeout_seen_r : chip_mask_t := (others => '0');
     signal sequence_seen_r      : chip_mask_t := (others => '0');
@@ -60,6 +87,22 @@ begin
     o_response_valid <= '1' when state_r = SOURCE_RESPONSE else '0';
     o_response <= response_r;
     o_irq_gpx_transport <= irq_transport_r;
+    o_register_service_pause <= register_service_pause_r;
+    o_register_read <= register_request_c;
+    o_register_read_response_ready <= '1' when
+        state_r = SOURCE_REGISTER_RESPONSE else '0';
+
+    p_register_request : process (all)
+        variable result : gpx_register_read_request_t;
+    begin
+        result := C_GPX_REGISTER_READ_REQUEST_IDLE;
+        result.chip := fn_diag_gpx_register_chip(index_r);
+        result.address := fn_diag_gpx_register_address(index_r);
+        if state_r = SOURCE_REGISTER_REQUEST then
+            result.valid := '1';
+        end if;
+        register_request_c <= result;
+    end process p_register_request;
 
     p_source : process (i_clk, i_rst_n)
         variable v_index : natural;
@@ -72,6 +115,9 @@ begin
             state_r <= SOURCE_IDLE;
             index_r <= (others => '0');
             response_r <= (others => '0');
+            register_service_pause_r <= '0';
+            register_service_count_r <= 0;
+            register_service_error_seen_r <= '0';
             drain_timeout_seen_r <= (others => '0');
             sequence_seen_r <= (others => '0');
             run_timeout_seen_r <= (others => '0');
@@ -83,9 +129,10 @@ begin
                 sequence_seen_r <= (others => '0');
                 run_timeout_seen_r <= (others => '0');
                 run_timeout_cause_r <= (others => (others => '0'));
+                register_service_error_seen_r <= '0';
                 irq_transport_r <= '0';
             else
-                v_transport_fault := '0';
+                v_transport_fault := register_service_error_seen_r;
                 for lane in 0 to G_BUILD_CONFIG.num_chips - 1 loop
                     if i_lane_faults(lane).drain_timeout_pulse = '1' then
                         drain_timeout_seen_r(lane) <= '1';
@@ -122,7 +169,27 @@ begin
                 when SOURCE_IDLE =>
                     if i_request_valid = '1' then
                         index_r <= i_request_index;
-                        state_r <= SOURCE_BUILD;
+                        if fn_diag_is_gpx_register_read(i_request_index) then
+                            if to_integer(fn_diag_gpx_register_chip(
+                                    i_request_index)) <
+                                    G_BUILD_CONFIG.num_chips then
+                                -- DISARM 뒤 새 Shot이 없는 상태에서 GPX
+                                -- acquisition만 정지시키고 bus idle을 기다린다.
+                                register_service_pause_r <= '1';
+                                register_service_count_r <= 0;
+                                state_r <= SOURCE_REGISTER_WAIT_SAFE;
+                            else
+                                v_data := fn_pack_gpx_register_read_word(
+                                    fn_diag_gpx_register_address(
+                                        i_request_index),
+                                    (others => '0'));
+                                response_r <= fn_pack_diag_response(
+                                    v_data, '1');
+                                state_r <= SOURCE_RESPONSE;
+                            end if;
+                        else
+                            state_r <= SOURCE_BUILD;
+                        end if;
                     end if;
 
                 when SOURCE_BUILD =>
@@ -132,12 +199,21 @@ begin
 
                     case v_index is
                         when C_DIAG_TDC_SUMMARY =>
-                            v_data(3 downto 0) := i_active_mask;
-                            v_data(7 downto 4) := i_terminal_mask;
-                            v_data(10) := i_tdc_safe;
-                            v_data(12) := i_run_enable;
-                            v_data(13) := i_active_valid;
-                            v_data(14) := i_config_ready;
+                            v_data(C_TDC_SUMMARY_ACTIVE_MASK_MSB downto
+                                C_TDC_SUMMARY_ACTIVE_MASK_LSB) :=
+                                i_active_mask;
+                            v_data(C_TDC_SUMMARY_TERMINAL_MASK_MSB downto
+                                C_TDC_SUMMARY_TERMINAL_MASK_LSB) :=
+                                i_terminal_mask;
+                            v_data(C_TDC_SUMMARY_SAFE_BIT) := i_tdc_safe;
+                            v_data(C_TDC_SUMMARY_RUN_ENABLE_BIT) :=
+                                i_run_enable;
+                            v_data(C_TDC_SUMMARY_ACTIVE_VALID_BIT) :=
+                                i_active_valid;
+                            v_data(C_TDC_SUMMARY_CONFIG_READY_BIT) :=
+                                i_config_ready;
+                            v_data(C_TDC_SUMMARY_REGISTER_READ_ERROR_BIT) :=
+                                register_service_error_seen_r;
 
                         when C_DIAG_TDC_LANE_STATUS_0 to
                              C_DIAG_TDC_LANE_STATUS_3 =>
@@ -204,6 +280,78 @@ begin
 
                     response_r <= fn_pack_diag_response(v_data, v_error);
                     state_r <= SOURCE_RESPONSE;
+
+                when SOURCE_REGISTER_WAIT_SAFE =>
+                    if i_tdc_safe = '1' then
+                        register_service_count_r <= 0;
+                        state_r <= SOURCE_REGISTER_REQUEST;
+                    elsif register_service_count_r =
+                          C_REGISTER_SERVICE_TIMEOUT_CLKS - 1 then
+                        v_data := fn_pack_gpx_register_read_word(
+                            fn_diag_gpx_register_address(index_r),
+                            (others => '0'));
+                        response_r <= fn_pack_diag_response(v_data, '1');
+                        register_service_pause_r <= '0';
+                        register_service_error_seen_r <= '1';
+                        irq_transport_r <= '1';
+                        state_r <= SOURCE_RESPONSE;
+                    else
+                        register_service_count_r <=
+                            register_service_count_r + 1;
+                    end if;
+
+                when SOURCE_REGISTER_REQUEST =>
+                    if i_register_read_ready = '1' then
+                        register_service_count_r <= 0;
+                        state_r <= SOURCE_REGISTER_RESPONSE;
+                    elsif register_service_count_r =
+                          C_REGISTER_SERVICE_TIMEOUT_CLKS - 1 then
+                        v_data := fn_pack_gpx_register_read_word(
+                            fn_diag_gpx_register_address(index_r),
+                            (others => '0'));
+                        response_r <= fn_pack_diag_response(v_data, '1');
+                        register_service_pause_r <= '0';
+                        register_service_error_seen_r <= '1';
+                        irq_transport_r <= '1';
+                        state_r <= SOURCE_RESPONSE;
+                    else
+                        register_service_count_r <=
+                            register_service_count_r + 1;
+                    end if;
+
+                when SOURCE_REGISTER_RESPONSE =>
+                    if i_register_read_response.valid = '1' then
+                        v_error := i_register_read_response.error;
+                        if i_register_read_response.chip /=
+                               fn_diag_gpx_register_chip(index_r) or
+                           i_register_read_response.address /=
+                               fn_diag_gpx_register_address(index_r) then
+                            v_error := '1';
+                        end if;
+                        v_data := fn_pack_gpx_register_read_word(
+                            fn_diag_gpx_register_address(index_r),
+                            i_register_read_response.read_data);
+                        response_r <= fn_pack_diag_response(v_data, v_error);
+                        register_service_pause_r <= '0';
+                        if v_error = '1' then
+                            register_service_error_seen_r <= '1';
+                            irq_transport_r <= '1';
+                        end if;
+                        state_r <= SOURCE_RESPONSE;
+                    elsif register_service_count_r =
+                          C_REGISTER_SERVICE_TIMEOUT_CLKS - 1 then
+                        v_data := fn_pack_gpx_register_read_word(
+                            fn_diag_gpx_register_address(index_r),
+                            (others => '0'));
+                        response_r <= fn_pack_diag_response(v_data, '1');
+                        register_service_pause_r <= '0';
+                        register_service_error_seen_r <= '1';
+                        irq_transport_r <= '1';
+                        state_r <= SOURCE_RESPONSE;
+                    else
+                        register_service_count_r <=
+                            register_service_count_r + 1;
+                    end if;
 
                 when SOURCE_RESPONSE =>
                     if i_response_ready = '1' then

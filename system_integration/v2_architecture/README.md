@@ -1,5 +1,8 @@
 # TDC-GPX LiDAR Controller v2 Architecture
 
+코드 유지보수 시 패키지 소유권, 변수 단위, 공개 함수와 Raw28→DDR 데이터
+흐름은 `V2_RTL_MAINTENANCE_GUIDE_KO.md`를 먼저 확인한다.
+
 > Status: Checkpoints A through G are complete. The unified CSR bank,
 > sequential calculator and atomic Processing/TDC configuration gateways are
 > route-verified at 150/200 and 200/150 MHz. The integrated v2 functional

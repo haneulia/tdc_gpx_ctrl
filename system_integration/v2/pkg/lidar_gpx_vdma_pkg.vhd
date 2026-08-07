@@ -6,6 +6,11 @@ use work.lidar_build_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_gpx_data_pkg.all;
 
+-- DDR/VDMA에 기록하는 canonical ABI의 단일 정의점.
+-- 내부 의미 Word는 32 bit로 고정하되 AXIS beat는 합성된 32/64/128 bit에
+-- 맞춰 packing한다. HSIZE는 실제 Line byte 수를 beat 경계로 올림한 값,
+-- VSIZE는 Shot Line과 Footer Line 수, STRIDE는 runtime 최대 HSIZE를 안전하게
+-- 수용하는 고정 Frame-buffer 행 간격이다.
 package lidar_gpx_vdma_pkg is
 
     constant C_GPX_VDMA_WORD_WIDTH       : positive := 32;

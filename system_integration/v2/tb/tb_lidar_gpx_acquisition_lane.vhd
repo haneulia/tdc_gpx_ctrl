@@ -112,6 +112,11 @@ architecture sim of tb_lidar_gpx_acquisition_lane is
     signal config_done : std_logic;
     signal run_enable : std_logic := '0';
     signal safe : std_logic;
+    signal register_read : gpx_register_read_request_t :=
+        C_GPX_REGISTER_READ_REQUEST_IDLE;
+    signal register_read_ready : std_logic;
+    signal register_read_response : gpx_register_read_response_t;
+    signal register_read_response_ready : std_logic := '0';
 
     signal shot : shot_start_event_t := C_SHOT_START_EVENT_IDLE;
     signal shot_ready : std_logic;
@@ -187,6 +192,11 @@ begin
             i_force_reinit => '0',
             i_clear_status => '0',
             o_safe => safe,
+            i_register_read => register_read,
+            o_register_read_ready => register_read_ready,
+            o_register_read_response => register_read_response,
+            i_register_read_response_ready =>
+                register_read_response_ready,
             i_shot => shot,
             o_shot_ready => shot_ready,
             i_stop_tdc => stop_tdc,
@@ -250,7 +260,8 @@ begin
                     elsif adr = c_TDC_REG9_IFIFO2 then
                         chip_d_out <= fn_raw_word('1', fifo2_read_index);
                     else
-                        chip_d_out <= (others => '0');
+                        chip_d_out <= write_capture(
+                            to_integer(unsigned(adr)));
                     end if;
                 end if;
 
@@ -368,6 +379,7 @@ begin
         end procedure wait_until_high;
 
         variable held_event : gpx_raw_event_t;
+        variable held_register_response : gpx_register_read_response_t;
         variable updated_config : lidar_active_config_t;
     begin
         rst_n <= '0';
@@ -460,6 +472,35 @@ begin
                                 c_REG5_STARTOFF1_LO) =
                std_logic_vector(to_unsigned(77, 18))
             report "V2-GPX-LANE-TB StartOff1 image update mismatch"
+            severity failure;
+
+        -- 설정 image가 아니라 실제 외부 bus를 다시 읽는 maintenance 경로.
+        register_read <= (
+            valid   => '1',
+            chip    => to_unsigned(0, 2),
+            address => x"5");
+        wait until rising_edge(clk) and register_read_ready = '1';
+        wait for 1 ps;
+        register_read <= C_GPX_REGISTER_READ_REQUEST_IDLE;
+        wait_until_high(register_read_response.valid,
+            "V2-GPX-LANE-TB physical register read timeout");
+        held_register_response := register_read_response;
+        wait_clocks(3);
+        assert register_read_response = held_register_response
+            report "V2-GPX-LANE-TB register response changed under backpressure"
+            severity failure;
+        assert register_read_response.error = '0' and
+               register_read_response.chip = 0 and
+               register_read_response.address = x"5" and
+               register_read_response.read_data = write_capture(5)
+            report "V2-GPX-LANE-TB physical register result mismatch"
+            severity failure;
+        register_read_response_ready <= '1';
+        wait_clocks(1);
+        register_read_response_ready <= '0';
+        wait_clocks(1);
+        assert register_read_response.valid = '0'
+            report "V2-GPX-LANE-TB consumed register response stayed valid"
             severity failure;
 
         report "LIDAR_V2_GPX_ACQUISITION_LANE_PASS tdc_mhz=" &

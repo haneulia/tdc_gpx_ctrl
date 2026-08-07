@@ -43,6 +43,14 @@ entity lidar_gpx_acquisition_lane is
         i_clear_status     : in  std_logic := '0';
         o_safe             : out std_logic;
 
+        -- 외부 GPX Register의 실제 bus read 서비스. 설정 image readback과
+        -- 다르며, acquisition이 정지된 LANE_IDLE에서만 한 건씩 받는다.
+        i_register_read    : in  gpx_register_read_request_t :=
+            C_GPX_REGISTER_READ_REQUEST_IDLE;
+        o_register_read_ready : out std_logic;
+        o_register_read_response : out gpx_register_read_response_t;
+        i_register_read_response_ready : in std_logic := '1';
+
         i_shot             : in  shot_start_event_t;
         o_shot_ready       : out std_logic;
         i_stop_tdc         : in  std_logic;
@@ -96,6 +104,7 @@ architecture rtl of lidar_gpx_acquisition_lane is
         LANE_BOOT,
         LANE_IDLE,
         LANE_CONFIG_WAIT,
+        LANE_REGISTER_WAIT,
         LANE_START_WAIT,
         LANE_ARMED,
         LANE_SHOT,
@@ -111,7 +120,15 @@ architecture rtl of lidar_gpx_acquisition_lane is
     signal cmd_start_r : std_logic := '0';
     signal cmd_stop_r : std_logic := '0';
     signal cmd_cfg_write_r : std_logic := '0';
+    signal cmd_reg_read_r : std_logic := '0';
     signal shot_start_r : std_logic := '0';
+
+    signal register_address_r : gpx_bus_address_t := (others => '0');
+    signal register_read_data_c : gpx_bus_data_t := (others => '0');
+    signal register_read_valid_c : std_logic;
+    signal register_read_done_c : std_logic;
+    signal register_response_r : gpx_register_read_response_t :=
+        C_GPX_REGISTER_READ_RESPONSE_IDLE;
 
     signal shot_context_r : shot_start_event_t := C_SHOT_START_EVENT_IDLE;
     signal shot_seq_start_r : unsigned(15 downto 0) := (others => '0');
@@ -296,7 +313,13 @@ begin
                        controller_busy_c = '0' and
                        bus_busy_c = '0' and
                        bus_response_pending_c = '0' and
-                       raw_valid_c = '0' else '0';
+                       raw_valid_c = '0' and
+                       register_response_r.valid = '0' else '0';
+    o_register_read_ready <= '1' when state_r = LANE_IDLE and
+        i_run_enable = '0' and controller_busy_c = '0' and
+        bus_busy_c = '0' and bus_response_pending_c = '0' and
+        raw_valid_c = '0' and register_response_r.valid = '0' else '0';
+    o_register_read_response <= register_response_r;
     o_shot_ready <= '1' when state_r = LANE_ARMED and
                               i_active_valid = '1' and
                               i_run_enable = '1' else '0';
@@ -359,7 +382,10 @@ begin
                 cmd_start_r <= '0';
                 cmd_stop_r <= '0';
                 cmd_cfg_write_r <= '0';
+                cmd_reg_read_r <= '0';
                 shot_start_r <= '0';
+                register_address_r <= (others => '0');
+                register_response_r <= C_GPX_REGISTER_READ_RESPONSE_IDLE;
                 shot_context_r <= C_SHOT_START_EVENT_IDLE;
                 shot_seq_start_r <= (others => '0');
                 terminal_seen_r <= '0';
@@ -371,7 +397,14 @@ begin
                 cmd_start_r <= '0';
                 cmd_stop_r <= '0';
                 cmd_cfg_write_r <= '0';
+                cmd_reg_read_r <= '0';
                 shot_start_r <= '0';
+
+                if register_response_r.valid = '1' and
+                   i_register_read_response_ready = '1' then
+                    register_response_r <=
+                        C_GPX_REGISTER_READ_RESPONSE_IDLE;
+                end if;
 
                 terminal_now := raw_valid_c = '1' and
                     i_event_ready = '1' and raw_user_c(7) = '1' and
@@ -396,6 +429,14 @@ begin
                             cmd_cfg_write_r <= '1';
                             config_seen_busy_r <= '0';
                             state_r <= LANE_CONFIG_WAIT;
+                        elsif i_register_read.valid = '1' and
+                              o_register_read_ready = '1' then
+                            -- 요청 주소는 transaction 종료까지 고정한다.
+                            -- Chip 선택은 coordinator가 이 Lane을 고르는
+                            -- 데 사용하며 응답에는 다시 명시해 PS가 검증한다.
+                            register_address_r <= i_register_read.address;
+                            cmd_reg_read_r <= '1';
+                            state_r <= LANE_REGISTER_WAIT;
                         elsif i_run_enable = '1' and i_active_valid = '1' then
                             cmd_start_r <= '1';
                             state_r <= LANE_START_WAIT;
@@ -407,6 +448,25 @@ begin
                         elsif config_seen_busy_r = '1' then
                             config_done_r <= '1';
                             config_seen_busy_r <= '0';
+                            state_r <= LANE_IDLE;
+                        end if;
+
+                    when LANE_REGISTER_WAIT =>
+                        if register_read_done_c = '1' then
+                            register_response_r.valid <= '1';
+                            register_response_r.error <=
+                                not register_read_valid_c;
+                            register_response_r.chip <= to_unsigned(
+                                G_CHIP_INDEX,
+                                register_response_r.chip'length);
+                            register_response_r.address <= register_address_r;
+                            if register_read_valid_c = '1' then
+                                register_response_r.read_data <=
+                                    register_read_data_c;
+                            else
+                                register_response_r.read_data <=
+                                    (others => '0');
+                            end if;
                             state_r <= LANE_IDLE;
                         end if;
 
@@ -471,6 +531,8 @@ begin
                     state_r <= LANE_BOOT;
                     initialized_r <= '0';
                     shot_context_r <= C_SHOT_START_EVENT_IDLE;
+                    register_response_r <=
+                        C_GPX_REGISTER_READ_RESPONSE_IDLE;
                     terminal_seen_r <= '0';
                     sequence_advanced_r <= '0';
                     timeout_seen_r <= '0';
@@ -535,13 +597,13 @@ begin
             i_cmd_force_reinit => i_force_reinit,
             i_cmd_cfg_write => cmd_cfg_write_r,
             i_soft_clear => i_clear_status,
-            i_cmd_reg_read => '0',
+            i_cmd_reg_read => cmd_reg_read_r,
             i_cmd_reg_write => '0',
-            i_cmd_reg_addr => (others => '0'),
+            i_cmd_reg_addr => register_address_r,
             i_cmd_reg_wdata => (others => '0'),
-            o_cmd_reg_rdata => open,
-            o_cmd_reg_rvalid => open,
-            o_cmd_reg_done => open,
+            o_cmd_reg_rdata => register_read_data_c,
+            o_cmd_reg_rvalid => register_read_valid_c,
+            o_cmd_reg_done => register_read_done_c,
             i_shot_start => shot_start_r,
             i_max_range_tdc_clks => capture_window_c,
             i_stop_tdc => i_stop_tdc,

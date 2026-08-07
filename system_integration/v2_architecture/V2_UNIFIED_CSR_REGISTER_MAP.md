@@ -3,7 +3,7 @@
 ## 1. 적용 범위
 
 이 문서는 `lidar_csr_bank`의 AXI4-Lite software ABI를 정의한다. 주소는
-9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.5`이다.
+9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.6`이다.
 
 | 영역 | Word 수 | Byte 주소 | 용도 |
 |---|---:|---:|---|
@@ -87,7 +87,9 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 | `0x050` | ECHO_DELAY_PROFILE | R/W | `00000000` | CH0 지연과 채널 증가분 |
 | `0x054` | GPX_IMAGE_INDEX | R/W | `00000000` | GPX register index와 staging/active view 선택 |
 | `0x058` | GPX_IMAGE_DATA | R/W 또는 RO | `00000000` | 선택한 GPX image word; active view는 read-only |
-| `0x05C..0x07C` | RESERVED | RO-zero | `00000000` | 쓰면 access error |
+| `0x05C` | DIAG_INDEX | R/W1S | `00000000` | 진단 page 선택, capture 요청, 완료 상태 |
+| `0x060` | DIAG_DATA | RO | `00000000` | 진단 또는 실제 GPX read의 원자적 32-bit 결과 |
+| `0x064..0x07C` | RESERVED | RO-zero | `00000000` | 쓰면 access error |
 
 ### 3.2 CTL0 COMMAND
 
@@ -283,6 +285,12 @@ table, INDEX/DATA portal 또는 Echo 전용 APPLY command는 없다.
 
 CTL21은 포털 선택자이며 CTL22는 선택된 28-bit GPX register word이다.
 
+이 두 레지스터는 목표 왕복시간을 바꾸기 위해 항상 수정하는 레지스터가
+아니다. 목표 왕복시간만 바꾸면 `CTL12.TARGET_RANGE`만 수정한다. COMMIT이
+`Reg7.MTimer`를 자동 계산한다. CTL21/22가 필요한 경우는 HSDiv, RefClkDiv,
+interrupt route 등 MTimer 이외의 GPX 설정 bit를 바꾸거나, 마지막으로 승인한
+설정 이미지를 확인할 때다.
+
 | Register | Bit | 이름 | Reset | 의미 |
 |---|---:|---|---:|---|
 | CTL21 | 3:0 | GPX_IMAGE_INDEX | 0 | GPX register 0..15 선택 |
@@ -317,7 +325,7 @@ ACTIVATE ACK는 모든 build-time present GPX chip의 register programming 완�
 
 | Bit | 의미 | 기본 profile |
 |---:|---|---:|
-| 7:0 | ABI minor | 4 |
+| 7:0 | ABI minor | 6 |
 | 15:8 | ABI major | 2 |
 | 18:16 | NUM_FACES | 5 |
 | 21:19 | NUM_CHIPS | 4 |
@@ -327,7 +335,7 @@ ACTIVATE ACK는 모든 build-time present GPX chip의 register programming 완�
 | 30 | ECHO_SIMULATION_INCLUDED | 0 |
 | 31 | STREAM_CLOCK_SYNC | 0 |
 
-기본 profile 값은 `0x3E250204`이다.
+기본 profile 값은 `0x3E250206`이다.
 
 ### 4.2 STAT1 BUILD_INFO (`0x084`)
 
@@ -441,7 +449,7 @@ CW/CCW는 어느 bound가 Entry/Exit인지와 traversal 방향만 바꾼다.
 | 7:0 | INDEX | 마지막 선택 page |
 | 8 | BUSY | 요청 또는 응답이 진행 중 |
 | 9 | VALID | DIAG_DATA가 마지막 요청의 완료 결과 |
-| 10 | ERROR | 미지원 index 또는 원격 domain reset |
+| 10 | ERROR | 미지원 index, ordering 위반, 원격 reset, 물리 read timeout/응답 오류 |
 | 15:11 | Reserved | 0 |
 | 31:16 | SEQUENCE | 완료마다 modulo 65536 증가 |
 
@@ -449,6 +457,41 @@ Software는 `INDEX | 0x100`을 쓴 뒤 `BUSY=0 && VALID=1`과 SEQUENCE 증가를
 확인하고 DIAG_DATA를 읽는다. BUSY 중 두 번째 요청은 기존 요청을 덮지 않으며
 ACCESS_ERROR로 기록된다. 한 page는 원자적이지만 여러 page를 순서대로 읽은
 결과가 모두 같은 순간의 snapshot이라는 보장은 없다.
+
+#### 실제 외부 TDC-GPX Register read
+
+`0xC0..0xFF`는 설정 이미지가 아니라 PCB에 연결된 실제 TDC-GPX Chip에서
+Register를 읽는 maintenance page다. INDEX 형식은 다음과 같다.
+
+```text
+INDEX[7:0] = 11CCAAAA
+  CC   = Chip 번호 0..3
+  AAAA = TDC-GPX Register 주소 0..15
+```
+
+성공한 `DIAG_DATA`는 요청한 구조 그대로 한 Word다.
+
+```text
+31                 28 27                              0
++--------------------+--------------------------------+
+| 요청 Register 주소 | 실제 외부 GPX read data[27:0]  |
++--------------------+--------------------------------+
+```
+
+예를 들어 Chip 1의 Reg7은 INDEX `0xD7`이다. 결과 `0x71ABCDE0`은 주소가
+Reg7이고 실제 28-bit 값이 `0x1ABCDE0`임을 뜻한다.
+
+물리 read는 반드시 먼저 `DISARM`하여 `STAT3.SCHEDULER_ENABLE=0`을 확인한
+뒤 요청한다. 요청이 승인되면 RTL은 새 acquisition을 자동 pause하고 진행 중
+drain이 끝나 `TDC_SAFE=1`이 될 때까지 기다린다. 그 뒤 한 번의 bus read를
+수행하고 RUN acquisition을 복구하되 scheduler는 계속 DISARM 상태로 둔다.
+물리 read 중 COMMIT/RUN/ARM은 access error로 거부된다. 전체 서비스가
+10 ms 안에 끝나지 않거나 응답 Chip/주소가 다르면 `ERROR=1`,
+`TDC_SUMMARY[15]=1`, IRQ source 8 `GPX_TRANSPORT`가 설정된다.
+
+CTL21/22의 `VIEW_ACTIVE=1`은 마지막으로 승인해 쓰려고 한 **설정 이미지**다.
+반면 이 page는 외부 Chip pin을 통해 다시 읽은 **실제 물리 상태**다. Sign-off와
+고장 진단에서는 둘을 비교해야 한다.
 
 #### Processing/Echo page
 
@@ -481,7 +524,7 @@ ACCESS_ERROR로 기록된다. 한 page는 원자적이지만 여러 page를 순�
 
 | Index | 이름 | Bit 의미 |
 |---:|---|---|
-| `0x80` | TDC_SUMMARY | 3:0 active Chip mask, 7:4 terminal mask, 10 TDC safe, 12 run enable, 13 active valid, 14 config ready |
+| `0x80` | TDC_SUMMARY | 3:0 active Chip mask, 7:4 terminal mask, 10 TDC safe, 12 run enable, 13 active valid, 14 config ready, 15 physical-register-read error sticky |
 | `0x84..0x87` | TDC_LANE_STATUS_0..3 | 0 initialized, 1 run active, 2 Shot outstanding, 3 controller busy, 4 bus busy, 5 response pending, 6 EF1, 7 EF2, 8 LF1, 9 LF2, 10 IRFLAG, 11 ERRFLAG, 14:12 effective bus ticks, 31:16 Chip Shot sequence |
 | `0x88..0x8B` | TDC_LANE_FAULT_0..3 | 0 drain timeout, 1 sequence, 2 response mismatch, 3 raw drop, 4 drain cap, 5 register overflow, 6 run timeout, 9:7 timeout cause, 10 init/config coalesced, 11 command collision, 12 bus fatal |
 
@@ -498,27 +541,30 @@ ACCESS_ERROR로 기록된다. 한 page는 원자적이지만 여러 page를 순�
 | `0x108` | IRQ_FLAG | RO/W1C | pending event flag |
 | `0x10C` | IRQ_MODE | R/W | `0=manual level`, `1=automatic one-clock pulse` |
 
-| Source bit | Event |
-|---:|---|
-| 0 | COMMIT_SUCCESS |
-| 1 | COMMIT_ERROR |
-| 2 | COMMIT_REJECTED |
-| 3 | RECOVERY_REQUIRED rising edge |
-| 4 | CSR_ACCESS_ERROR |
-| 5 | PROCESSING_WARNING |
-| 6 | LASER_TIMEOUT |
-| 7 | ECHO_DIAGNOSTIC |
-| 8 | GPX_TRANSPORT |
-| 9 | GPX_DATA |
-| 31:10 | 구현되지 않음, 0 |
+| Bit | 이름 | 정확한 발생 조건 | 원인 확인 | 원인 제거/운용 조치 |
+|---:|---|---|---|---|
+| 0 | COMMIT_SUCCESS | COMMIT transaction이 `CFG_OK`로 완료된 1 CSR clock event | STAT2 `SUCCESS_STICKY`, active version | 완료 확인 후 IRQ_FLAG[0] W1C |
+| 1 | COMMIT_ERROR | 승인된 COMMIT이 validation/prepare/activate/release 오류로 완료 | STAT2 `LAST_ERROR_CODE` | 설정 수정 또는 reset 복구 후 IRQ_FLAG[1] W1C |
+| 2 | COMMIT_REJECTED | BUSY 등으로 새 COMMIT 요청 자체가 시작되지 못함 | STAT2 `LAST_REJECT_CODE` | 진행 transaction 종료 후 재요청, IRQ_FLAG[2] W1C |
+| 3 | RECOVERY_REQUIRED | 두 clock domain의 동일 active version을 보장할 수 없는 원자 적용 실패 | STAT2 bit 5 | `CLEAR_STATUS`가 아니라 coordinated reset으로 active authority 복구 후 W1C |
+| 4 | ACCESS_ERROR | 주소 정렬, reserved/write encoding, command ordering, 진단 portal 사용 오류 | STAT2 bit 7, CTL23 ERROR | software 순서/값 수정, 필요 시 CLEAR_STATUS 후 W1C |
+| 5 | PROCESSING_WARNING | 위치 전이, virtual Z, Face overlap, **Shot 일정 초과**, monitor drop, laser request drop/abort/unexpected done | 진단 `0x10..0x18` | 원인별 속도/각도/상태 조치 후 CLEAR_STATUS, source=0 확인, W1C |
+| 6 | LASER_TIMEOUT | fire_pulse 뒤 설정한 `FIRE_DONE_TIMEOUT` 안에 fire_done을 받지 못함 | 진단 `0x10[9]`, `0x16` | 레이저/배선/timeout 점검 후 CLEAR_STATUS, source=0 확인, W1C |
+| 7 | ECHO_DIAGNOSTIC | 수신 window 밖 Echo, overlap, profile 미준비, snapshot timeout/abort | 진단 `0x20..0x26`, `0x40..0x5F` | Echo timing/profile/입력 점검 후 CLEAR_STATUS, source=0 확인, W1C |
+| 8 | GPX_TRANSPORT | Shot/STOP CDC drop, IFIFO drain/sequence/controller/bus 오류, 실제 Register read 실패 | 진단 `0x10[24:26]`, `0x80[15]`, `0x88..0x8B` | GPX bus/clock/pin/timeout 점검 후 CLEAR_STATUS, source=0 확인, W1C |
+| 9 | GPX_DATA | Raw28→Hit17 해석, Return/Cell/Face-slot 순서·geometry 계약 위반 | 진단 `0x1A` | topology/Return/데이터 원인 수정 후 CLEAR_STATUS, source=0 확인, W1C |
+| 31:10 | 미구현 | 항상 0 | - | - |
 
 pending flag는 enable이 0일 때도 event를 보존한다. manual mode의 IRQ는
 software가 IRQ_FLAG에 W1C할 때까지 high이고, 새 event와 W1C가 같은 clock에
 겹치면 event가 우선한다.
 
-Runtime source 5..9는 원래 domain의 sticky level이다. 따라서 먼저
+Source 0..2와 4는 완료/거부 시점의 event를 pending으로 보존한다. Source 3과
+runtime source 5..9는 원인이 유지되는 level이다. 따라서 level source는 먼저
 `CTL0.CLEAR_STATUS`를 보내고 IRQ_STATUS source가 0으로 내려온 뒤 IRQ_FLAG에
-W1C한다. 원인이 high인 동안 IRQ_FLAG만 지우면 다시 pending 되는 것이 정상이다.
+W1C한다. 단, source 3 `RECOVERY_REQUIRED`는 CLEAR_STATUS로 지워지지 않으며
+coordinated reset이 필요하다. 원인이 high인 동안 IRQ_FLAG만 지우면 다시
+pending 되는 것이 정상이다.
 
 ## 6. 오류 코드
 
@@ -572,13 +618,17 @@ W1C한다. 원인이 high인 동안 IRQ_FLAG만 지우면 다시 pending 되는 
 
 1. `CTL0.DISARM`을 W1S하고 `STAT3.ARMED=0`, `SCHEDULER_ENABLE=0`,
    `PHYSICAL_FIRE_ENABLE=0`을 확인한다. RUN과 Encoder/Face 추적은 유지된다.
-2. CTL12와 CTL21/22 staging image를 수정한다. Reg7.MTimer를 별도로 맞추지
+2. 목표 왕복시간만 바꾸면 CTL12만 수정한다. MTimer 이외의 GPX bit도 바꿀
+   때만 CTL21/22 staging image를 추가 수정한다. Reg7.MTimer를 별도로 맞추지
    않는다.
 3. COMMIT 후 STAT2의 성공과 GPX active image readback을 확인한다.
 4. 외부 permit과 `COMMAND_READY=1`을 확인한 뒤 ARM을 다시 W1S한다.
 
 요청 광학각 후보점에서 레이저 실행기 또는 GPX 획득기가 준비되지 않으면
-발사를 늦추지 않고 해당 column을 Hole로 남긴다. 이 Runtime 시간 부족은
+발사를 늦추지 않고 해당 column을 **결측 Shot 열(Hole)**로 남긴다. Hole은
+요청 각도 격자에는 존재하지만 그 시점에 측정하지 못한 column이며, 후속
+H-Line 번호가 당겨지지 않도록 DDR에는 같은 HSIZE의 명시적 빈 Line으로
+기록된다. 이 Runtime 시간 부족은
 indexed diagnostic `PROC_FLAGS(0x10)[5]`, `PROC_OVERRUN_COUNT(0x13)` 및 IRQ
 source 5 `PROCESSING_WARNING`으로 확인한다. IRQ 이름은 기존 ABI를 유지한
 것이며, 이 bit가 나타내는 `schedule_overrun`은 요청 광학각의 Shot 시간 계약

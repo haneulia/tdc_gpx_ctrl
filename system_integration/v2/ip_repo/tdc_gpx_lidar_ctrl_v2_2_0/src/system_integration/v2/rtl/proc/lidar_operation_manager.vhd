@@ -11,8 +11,9 @@ use work.lidar_event_types_pkg.all;
 -- 운용 정책:
 --   STOP   : 모터/위치 처리와 레이저 발사를 모두 정지하고 ARM도 해제한다.
 --   DISARM : 모터/위치 처리는 유지하고 레이저 후보점과 fire_pulse만 막는다.
--- GPX 레지스터를 운용 중 바꿀 때는 DISARM -> ARMED=0 확인 -> CTL21/22
--- 수정 -> COMMIT 완료/GPX 설정 완료 확인 -> ARM 순서를 사용한다.
+-- 목표 왕복시간만 바꿀 때는 DISARM -> ARMED=0 확인 -> CTL12 수정 ->
+-- COMMIT 완료 -> ARM 순서를 사용한다. CTL21/22는 Reg7.MTimer가 아닌
+-- GPX Register bit까지 바꿀 때만 추가로 쓰는 16-entry 설정 이미지 포털이다.
 entity lidar_operation_manager is
     generic (
         G_BUILD_CONFIG : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG

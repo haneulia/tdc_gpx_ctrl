@@ -4,6 +4,10 @@ use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
 
+-- Runtime 설정의 source(PS가 쓰는 물리 의미)와 derived(승인 시 계산되는
+-- domain별 값)를 분리한다. *_5ns_ticks는 200 MHz clock 수가 아니라
+-- 주파수와 독립적인 5 ns 시간 단위이며, *_clks는 이름에 적힌 clock
+-- domain의 실제 cycle 수다.
 package lidar_config_types_pkg is
 
     constant C_MAX_CPR                 : positive := 8191;

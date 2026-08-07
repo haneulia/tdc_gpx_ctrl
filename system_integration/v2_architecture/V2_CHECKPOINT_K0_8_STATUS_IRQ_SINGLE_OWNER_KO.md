@@ -5,7 +5,8 @@
 K0-8은 **완료**이다. Processing, Echo, GPX 데이터 처리, TDC bus controller의
 상태를 각 원래 clock domain에서 보존하고, 통합 CSR에는 한 번에 한 개의
 32-bit 진단 Word만 전달한다. 기존 32 CTL / 32 STAT / 4 IRQ 주소 틀은 유지하고
-`CTL23/24`를 indexed 진단 portal로 사용한다. CSR ABI는 `2.5`이다.
+`CTL23/24`를 indexed 진단 portal로 사용한다. 실제 외부 GPX Register read
+서비스를 추가한 현재 CSR ABI는 `2.6`이다.
 
 다음 항목이 검증됐다.
 
@@ -33,6 +34,9 @@ flowchart LR
     PI --> SYNC["2-stage CSR synchronizers"]
     TI --> SYNC
     SYNC --> IRQ["IRQ source 5..9"]
+    PORTAL --> PR["11CCAAAA physical GPX read request"]
+    PR --> TS
+    TS --> T
 ```
 
 큰 진단 record는 CDC를 건너지 않는다. 요청 인덱스는 송신 register에 고정되고,
@@ -94,9 +98,15 @@ BUSY 중 두 번째 capture는 기존 요청을 덮지 않고 CSR access error�
 | `0x80` | TDC | active/terminal mask와 TDC run/config 상태 |
 | `0x84..0x87` | TDC | lane 0..3 live pin/controller/shot 상태 |
 | `0x88..0x8B` | TDC | lane 0..3 sticky transport fault와 timeout 원인 |
+| `0xC0..0xFF` | TDC/physical bus | `11CCAAAA`; Chip CC의 GPX Register AAAA 실제 readback |
 
 합성된 Chip 수보다 큰 lane page는 0을 반환한다. 정의되지 않은 index는
 `ERROR=1`을 반환하고 CSR access-error 상태와 IRQ source 4를 세운다.
+
+물리 read 결과는 `DIAG_DATA[31:28]=요청 주소`, `[27:0]=실제 GPX data`다.
+이 요청은 DISARM 상태에서만 허용되며 acquisition pause, TDC safe 대기,
+한 Register read, acquisition 복구를 RTL이 순서대로 수행한다. timeout 또는
+응답 Chip/주소 불일치는 `TDC_SUMMARY[15]`와 GPX_TRANSPORT IRQ에 남는다.
 
 ## 5. Runtime IRQ 계약
 
@@ -104,11 +114,11 @@ BUSY 중 두 번째 capture는 기존 요청을 덮지 않고 CSR access error�
 
 | Bit | Source | 대표 원인 |
 |---:|---|---|
-| 5 | PROCESSING_WARNING | state 전이, Face overlap, schedule, monitor, abort |
-| 6 | LASER_TIMEOUT | fire 명령 뒤 fire_done timeout |
+| 5 | PROCESSING_WARNING | 위치/Face/Shot 일정, monitor, laser lifecycle 계약 위반 |
+| 6 | LASER_TIMEOUT | fire 명령 뒤 fire_done timeout만 담당 |
 | 7 | ECHO_DIAGNOSTIC | window 밖, overlap, profile 미준비, snapshot timeout/abort |
-| 8 | GPX_TRANSPORT | event CDC drop, drain/sequence/bus/controller fault |
-| 9 | GPX_DATA | raw28/Hit17, Cell, Frame 조립 계약 위반 |
+| 8 | GPX_TRANSPORT | event CDC drop, drain/sequence/bus/controller/물리 read fault |
+| 9 | GPX_DATA | Raw28/Hit17, Return/Cell/Face 조립 의미 계약 위반 |
 
 runtime source는 원래 domain의 sticky level이다. IRQ pending을 안정적으로
 지우는 순서는 다음과 같다.
@@ -139,6 +149,9 @@ signoff_results/sessions/
 - Processing/TDC reset 중 요청 ERROR 종료와 정상 재조회;
 - CLEAR_STATUS가 두 목적지에 도달한 뒤 source level 하강;
 - runtime IRQ pending 보존과 후속 W1C.
+- scheduler-enabled 물리 read 거부와 bus 무접근;
+- DISARM 물리 Reg7 read의 `{주소[3:0], 실제 data[27:0]}` exact compare 및
+  acquisition 자동 pause/resume.
 
 ### 6.2 통합 CSR
 

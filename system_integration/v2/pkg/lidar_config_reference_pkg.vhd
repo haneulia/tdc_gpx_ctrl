@@ -5,59 +5,68 @@ use ieee.numeric_std.all;
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 
--- Reference oracle for configuration validation and derived-value arithmetic.
---
--- This package intentionally uses wide division to state the exact contract in
--- one readable place. It belongs to package tests and equivalence checking; it
--- must not be called from a production combinational or clocked datapath. The
--- synthesizable commit calculator implements the same contract sequentially.
+-- Runtime 설정 검증과 파생값 계산의 정확한 기준식(oracle)이다.
+-- 읽기 쉬운 수학 계약을 보존하기 위해 넓은 나눗셈을 의도적으로 사용한다.
+-- 따라서 package TB와 순차 계산기 등가성 검증에서만 사용하며 production
+-- datapath에서 직접 호출하지 않는다. 합성 회로는 같은 계산을
+-- lidar_config_validator_seq/lidar_config_deriver_seq에서 순차적으로 수행한다.
 package lidar_config_reference_pkg is
 
+    -- 엔코더 1회전의 decoded state 수: CPR x x1/x2/x4 배율.
     function fn_total_states(
         cpr         : u16_t;
         decode_mode : decode_mode_t
     ) return natural;
 
+    -- Face 중심에서 공통 half-width를 뺀 inclusive 하한. 0 경계를 순환한다.
     function fn_face_lower(
         center       : natural;
         half_width   : natural;
         total_states : positive
     ) return natural;
 
+    -- Face 중심에서 공통 half-width를 더한 inclusive 상한. 1회전 끝을 순환한다.
     function fn_face_upper(
         center       : natural;
         half_width   : natural;
         total_states : positive
     ) return natural;
 
+    -- 요청 광학 Shot 간격을 만족하는 최소 decoded state 수(올림).
     function fn_shot_interval_states(
         optical_interval_udeg : angle_udeg_t;
         total_states          : positive
     ) return positive;
 
+    -- inclusive Face 구간 안에 필요한 예상 Shot 열 수(올림).
     function fn_columns_per_face(
         angular_intervals : natural;
         shot_interval     : positive
     ) return natural;
 
+    -- 주파수 독립 5 ns tick을 지정 clock domain의 cycle 수로 올림 변환한다.
     function fn_ticks_to_clocks(
         ticks_5ns : u32_t;
         clock_mhz : positive
     ) return u32_t;
 
+    -- 요청 목표 왕복시간을 GPX Reg7.MTimer의 25 ns tick 수로 올림 변환한다.
     function fn_gpx_mtimer_ref_ticks(
         target_range_5ns : u32_t
     ) return u32_t;
 
+    -- MTimer 양자화 뒤 실제 적용되는 목표 왕복시간을 다시 5 ns 단위로 돌려준다.
     function fn_gpx_effective_target_range_5ns(
         target_range_5ns : u32_t
     ) return u32_t;
 
+    -- Build/Runtime 조합을 검사하고 최초 오류 하나를 반환한다.
     function fn_validate_runtime_config(
         build_cfg   : lidar_build_config_t;
         runtime_cfg : lidar_runtime_config_t
     ) return lidar_cfg_error_t;
 
+    -- 승인될 geometry, 시간, mask, VDMA 파생값을 하나의 record로 계산한다.
     function fn_derive_runtime_config(
         build_cfg   : lidar_build_config_t;
         runtime_cfg : lidar_runtime_config_t

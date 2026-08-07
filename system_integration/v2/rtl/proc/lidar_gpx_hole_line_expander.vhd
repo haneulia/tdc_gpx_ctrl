@@ -6,9 +6,11 @@ use work.lidar_event_types_pkg.all;
 use work.lidar_gpx_data_pkg.all;
 use work.lidar_gpx_vdma_pkg.all;
 
--- J5B preserves the geometric Shot lattice. B8 reports leading/interior holes
--- on the next real line and trailing/all-hole columns on Face close. This block
--- expands those counts into explicit, equal-size canonical 32-bit Hole Lines.
+-- 결측 Shot 열(Hole)은 요청 각도 격자에는 존재하지만 그 시점에 레이저/GPX가
+-- 준비되지 않아 실제 측정하지 못한 한 Shot column이다. 이 블록은 이후 실제
+-- Shot의 H-Line 번호가 앞으로 당겨지지 않도록 결측 위치마다 동일 HSIZE의
+-- 명시적 빈 Line을 만든다. leading/interior gap은 다음 실제 Line에서 받고,
+-- trailing/all-hole gap은 Face close에서 받아 canonical 32-bit Word로 확장한다.
 -- It does not own AXIS width, padding, Footer contents or VDMA reconfiguration.
 entity lidar_gpx_hole_line_expander is
     port (

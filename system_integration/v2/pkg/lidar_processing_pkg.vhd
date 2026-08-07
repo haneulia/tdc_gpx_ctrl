@@ -6,8 +6,9 @@ use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
 
--- Public contracts owned by the integrated Processing subsystem. The AXIS
--- stream is an observation copy of B1 and never participates in shot control.
+-- 통합 Processing subsystem이 소유하는 공개 계약. Monitor AXIS는 B1 위치
+-- 표본의 관찰 복사본이며 Shot/fire 제어에 참여하지 않는다. *_CLKS 상수는
+-- 실측된 Processing-clock latency이고 시간 지연을 추가하는 설정값이 아니다.
 package lidar_processing_pkg is
 
     constant C_PROCESSING_MONITOR_TDATA_WIDTH : positive := 64;

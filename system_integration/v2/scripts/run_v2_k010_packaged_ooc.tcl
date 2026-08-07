@@ -14,17 +14,22 @@ if {[llength $argv] > 0} {
 file mkdir $out_dir
 
 # Avoid the damaged per-user Tcl Store on this workstation before Vivado
-# initializes project commands used by the synthesis loop.
+# initializes project commands used by the synthesis loop.  Source the
+# installation copy directly: package require would invoke the damaged
+# per-user package resolver again before it can use the appended auto_path.
 set install_tcl_store [file normalize \
     [file join $::env(XILINX_VIVADO) data XilinxTclStore]]
-lappend auto_path [file join $install_tcl_store support appinit]
+set install_appinit [file join $install_tcl_store support appinit appinit.tcl]
+if {![file exists $install_appinit]} {
+    error "Vivado installation Tcl Store appinit is missing: $install_appinit"
+}
 foreach vendor_dir [glob -nocomplain -type d \
         [file join $install_tcl_store tclapp *]] {
     foreach app_dir [glob -nocomplain -type d [file join $vendor_dir *]] {
         lappend auto_path $app_dir
     }
 }
-package require ::tclapp::support::appinit 1.2
+source $install_appinit
 set_msg_config -id {Synth 8-5799} -limit 5
 set_msg_config -id {Constraints 18-5572} -limit 5
 

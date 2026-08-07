@@ -12,8 +12,10 @@ use work.lidar_status_pkg.all;
 
 -- One AXI4-Lite owner for the v2 LiDAR configuration ABI.
 --
--- CTL1..20 are shadow storage. CTL21/22 are an indexed 16-entry GPX image
--- portal, while CTL23/24 are the read-only runtime-diagnostic portal. CTL0 is
+-- CTL1..20 are shadow storage. CTL21/22 are an indexed 16-entry GPX setting
+-- image portal, while CTL23/24 are the read-only runtime-diagnostic portal.
+-- CTL23 INDEX=11CCAAAA additionally requests one actual physical GPX read;
+-- CTL24 then returns {requested_address[3:0], read_data[27:0]}. CTL0 is
 -- write-one-set command space and never stores a command
 -- level. Active readback is sourced only from the atomic transaction owner,
 -- so software can distinguish edited and applied data.
@@ -226,7 +228,7 @@ begin
         generic map (
             num_ctl_regs      => C_LIDAR_CTL_COUNT,
             num_stat_regs     => C_LIDAR_STAT_COUNT,
-            num_intr_regs     => C_LIDAR_IRQ_COUNT,
+            num_intr_regs     => C_LIDAR_IRQ_REGISTER_COUNT,
             num_interrupt_src => C_LIDAR_IRQ_SOURCES,
             num_data_bits     => 32
         )
@@ -344,6 +346,13 @@ begin
                         r_access_error_event  <= '1';
                     elsif v_command_count = 0 then
                         null;
+                    elsif v_effective_command(C_CMD_COMMIT_BIT) = '1' and
+                          r_diag_busy = '1' and
+                          fn_diag_is_gpx_register_read(r_diag_index) then
+                        -- GPX image 적용과 실제 Register read는 같은 물리
+                        -- bus를 사용한다. 둘을 겹치지 않고 다시 요청하게 한다.
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
                     elsif v_effective_command(C_CMD_COMMIT_BIT) = '1' then
                         r_commit_pulse <= '1';
                     elsif v_effective_command(C_CMD_CLEAR_STATUS_BIT) = '1'
@@ -368,6 +377,14 @@ begin
                         r_access_error_event  <= '1';
                     elsif v_effective_command(C_CMD_SOFT_RESET_BIT) = '1' then
                         r_soft_reset_pulse <= '1';
+                    elsif (v_effective_command(C_CMD_RUN_BIT) = '1' or
+                           v_effective_command(C_CMD_ARM_BIT) = '1') and
+                          r_diag_busy = '1' and
+                          fn_diag_is_gpx_register_read(r_diag_index) then
+                        -- 물리 read 완료 전 RUN/ARM을 허용하면 pause 해제와
+                        -- 동시에 새 Shot이 들어올 수 있으므로 명시적으로 거부한다.
+                        r_access_error_sticky <= '1';
+                        r_access_error_event  <= '1';
                     elsif i_operation_command_ready /= '1' then
                         r_access_error_sticky <= '1';
                         r_access_error_event  <= '1';
@@ -497,8 +514,30 @@ begin
                             r_diag_error <= '0';
                             r_diag_data <= (others => '0');
                             if v_diag_control(C_DIAG_CAPTURE_BIT) = '1' then
-                                r_diag_request_valid <= '1';
-                                r_diag_busy <= '1';
+                                if fn_diag_is_gpx_register_read(
+                                        v_diag_control(
+                                            C_DIAG_INDEX_MSB downto
+                                            C_DIAG_INDEX_LSB)) and
+                                   (i_operation_status.scheduler_enable = '1' or
+                                    i_cfg_busy = '1') then
+                                    -- DISARM 완료와 config transaction 종료를
+                                    -- 확인하지 않은 물리 read는 bus에 내보내지 않는다.
+                                    r_diag_valid <= '1';
+                                    r_diag_error <= '1';
+                                    r_diag_data <=
+                                        fn_pack_gpx_register_read_word(
+                                            fn_diag_gpx_register_address(
+                                                v_diag_control(
+                                                    C_DIAG_INDEX_MSB downto
+                                                    C_DIAG_INDEX_LSB)),
+                                            (others => '0'));
+                                    r_diag_sequence <= r_diag_sequence + 1;
+                                    r_access_error_sticky <= '1';
+                                    r_access_error_event <= '1';
+                                else
+                                    r_diag_request_valid <= '1';
+                                    r_diag_busy <= '1';
+                                end if;
                             end if;
                         else
                             r_access_error_sticky <= '1';

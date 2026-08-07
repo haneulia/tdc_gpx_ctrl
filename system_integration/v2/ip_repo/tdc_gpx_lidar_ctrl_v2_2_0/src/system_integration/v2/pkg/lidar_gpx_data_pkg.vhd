@@ -6,6 +6,9 @@ use work.lidar_build_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_gpx_event_pkg.all;
 
+-- 외부 GPX I-Mode Raw28을 Hit17, Cell, Face-slot event로 단계적으로
+-- 해석하는 의미 계약. 각 record의 *_faulted와 *_valid는 데이터 내용이며,
+-- ready/valid 전송 제어와 혼동하지 않는다.
 package lidar_gpx_data_pkg is
 
     -- TDC-GPX I-Mode raw-word fields. Keep these positions in one package so

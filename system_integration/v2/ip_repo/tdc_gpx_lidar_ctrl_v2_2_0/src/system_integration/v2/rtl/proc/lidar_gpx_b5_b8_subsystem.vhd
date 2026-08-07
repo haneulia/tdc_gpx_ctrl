@@ -74,6 +74,11 @@ entity lidar_gpx_b5_b8_subsystem is
         i_tdc_clear_status  : in  std_logic := '0';
         o_tdc_safe          : out std_logic;
         o_tdc_shot_complete : out std_logic;
+        i_tdc_register_read : in gpx_register_read_request_t :=
+            C_GPX_REGISTER_READ_REQUEST_IDLE;
+        o_tdc_register_read_ready : out std_logic;
+        o_tdc_register_read_response : out gpx_register_read_response_t;
+        i_tdc_register_read_response_ready : in std_logic := '1';
         o_cdc_reset_busy    : out std_logic;
 
         o_adr        : out gpx_bus_address_array_t;
@@ -289,6 +294,12 @@ begin
             i_tdc_clear_status  => i_tdc_clear_status,
             o_tdc_safe          => o_tdc_safe,
             o_tdc_shot_complete => o_tdc_shot_complete,
+            i_tdc_register_read => i_tdc_register_read,
+            o_tdc_register_read_ready => o_tdc_register_read_ready,
+            o_tdc_register_read_response =>
+                o_tdc_register_read_response,
+            i_tdc_register_read_response_ready =>
+                i_tdc_register_read_response_ready,
             o_cdc_reset_busy    => o_cdc_reset_busy,
             o_adr               => o_adr,
             o_csn               => o_csn,

@@ -60,17 +60,26 @@ Rise 활성 Chip 수는 Fall 활성 Chip 수보다 작을 수 없다.
 
 1. `CTL0.DISARM`을 W1S한다.
 2. `STAT3.ARMED=0`, `SCHEDULER_ENABLE=0`, `PHYSICAL_FIRE_ENABLE=0`을 확인한다.
-3. `CTL21/CTL22`로 GPX staging image를 수정하고 필요한 Runtime CSR도 쓴다.
+3. 목표 왕복시간만 바꾸면 `CTL12`만 쓴다. MTimer 이외의 GPX bit도 바꿀
+   때만 `CTL21/CTL22` staging image를 추가 수정한다.
 4. `CTL0.COMMIT`을 W1S한다. RTL이 진행 중인 Shot과 GPX Drain이 끝나는
    safe point를 기다린 뒤 Processing/TDC 설정을 원자적으로 전환한다.
 5. `STAT2.BUSY=0`, `DONE_STICKY=1`, `SUCCESS_STICKY=1`, `ERROR_STICKY=0`을
-   확인하고 `CTL21.VIEW_ACTIVE=1`로 실제 적용 image를 읽는다.
-6. 외부 레이저 permit과 `STAT3.COMMAND_READY=1`을 확인한 뒤 `CTL0.ARM`을
+   확인하고 `CTL21.VIEW_ACTIVE=1`로 승인된 effective image를 읽는다.
+6. 실제 외부 Chip까지 확인할 때는 CTL23의 `11CCAAAA` 물리 read를 사용하고
+   CTL24의 `{요청 주소[3:0], 실제 data[27:0]}`를 확인한다.
+7. 외부 레이저 permit과 `STAT3.COMMAND_READY=1`을 확인한 뒤 `CTL0.ARM`을
    W1S한다.
 
 `DISARM`은 RUN과 Encoder/Face 위치 추적을 유지하지만 새 Shot 후보와
 `fire_pulse`를 차단한다. COMMIT 자체도 설정 전환 중 scheduler를 닫지만,
 물리 레이저 안전성과 소프트웨어 절차의 명확성을 위해 먼저 DISARM한다.
+
+CTL21/22 active view는 마지막 성공 COMMIT의 설정 이미지이며 물리 bus
+readback이 아니다. 실제 read INDEX는 `0xC0 | (Chip<<4) | Register`이고,
+CAPTURE bit를 더해 CTL23에 쓴다. 예를 들어 Chip 1 Reg7은 `0x1D7`이다.
+물리 read 중 RTL은 acquisition만 자동 pause/resume하며 COMMIT/RUN/ARM은
+완료될 때까지 거부한다.
 
 ### 5.1 목표 왕복시간과 GPX Reg7.MTimer
 
@@ -101,7 +110,9 @@ CTL12에서 파생한 값으로 덮어쓴다. 기본 요청값 288 ticks는 1,44
 - GPX 획득기 준비: 이전 Shot의 활성 Lane Drain/merge 완료와 Shot CDC 수용 가능
 
 준비되지 않았다고 후보점을 지난 뒤 늦게 발사하지 않는다. 해당 column은
-의도적인 Hole로 남기고 `schedule_overrun`을 기록한다. 실제 모터 속도와
+결측 Shot 열(Hole)로 남기고 `schedule_overrun`을 기록한다. Hole은 요청
+각도 격자에는 있지만 그 시점에 측정하지 못한 column이며, 뒤 H-Line 번호가
+당겨지지 않도록 같은 HSIZE의 빈 Line으로 DDR에 기록한다. 실제 모터 속도와
 `fire_done`, GPX Drain 및 AXIS backpressure가 Runtime에 달라질 수 있으므로
 이 검사는 정적인 시간 추정 대신 후보점마다 실제 ready를 검사한다.
 
@@ -140,4 +151,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 통합 데이터 흐름, CSR bit map, PACKED17 ABI와 검증 근거는 저장소의
 `system_integration/v2_architecture` 문서를 기준으로 한다. 특히
 `V2_UNIFIED_CSR_REGISTER_MAP.md`, `V2_CLOCK_EVENT_DATA_CONTRACT.md`,
-`V2_PS_HLINE_ETHERNET_ABI_KO.md` 및 K0 체크포인트 문서를 함께 참조한다.
+`V2_PS_HLINE_ETHERNET_ABI_KO.md`, `V2_RTL_MAINTENANCE_GUIDE_KO.md` 및 K0
+체크포인트 문서를 함께 참조한다.

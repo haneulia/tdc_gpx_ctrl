@@ -35,17 +35,21 @@ multiple clocks and is checked against this reference model.
   GPX reference is 40 MHz, then the Laser and GPX paths both use the resulting
   25 ns-grid effective time. A direct staged MTimer value is intentionally
   overridden.
-- Runtime GPX changes use `DISARM -> verify laser gates off -> edit shadow/image
-  -> COMMIT -> verify active image -> ARM`. DISARM preserves RUN and Encoder/
-  Face tracking.
+- Runtime GPX changes use `DISARM -> verify laser gates off -> edit CTL12 and,
+  only when non-MTimer GPX bits change, CTL21/22 -> COMMIT -> verify -> ARM`.
+  DISARM preserves RUN and Encoder/Face tracking. CTL23 index `11CCAAAA`
+  reads the actual external Chip register and CTL24 returns `{address,data28}`.
 - The requested optical-angle lattice has priority over delayed firing. If the
   Laser lifecycle or GPX acquisition is not ready at a due point, the scheduler
-  leaves a Hole and records `schedule_overrun`; it never fires later at the
+  leaves a 결측 Shot 열(Hole), 즉 요청 격자에는 있지만 측정하지 못한 명시적
+  empty H-Line, and records `schedule_overrun`; it never fires later at the
   wrong angle.
 
 The Korean operational details, exact status bits and error codes are in
 `ip_package/PRODUCT_GUIDE_KO.md` and
-`../v2_architecture/V2_UNIFIED_CSR_REGISTER_MAP.md`.
+`../v2_architecture/V2_UNIFIED_CSR_REGISTER_MAP.md`. Package ownership,
+variable units and the Raw28-to-DDR code-reading order are in
+`../v2_architecture/V2_RTL_MAINTENANCE_GUIDE_KO.md`.
 
 ## Current Status
 
@@ -85,7 +89,8 @@ The Korean operational details, exact status bits and error codes are in
   profile activation plus acknowledged CSR system-command CDC, and K0-4
   through K0-7 connect Processing/Echo, physical GPX B5-B8 and the complete
   dual-lane AXIS/VDMA output. K0-8 closes the CTL23/24 native-domain diagnostic
-  snapshot, runtime IRQ source 5..9 and remote-reset recovery. K0-9 closes the
+  snapshot, actual physical GPX Register read, runtime IRQ source 5..9 and
+  remote-reset recovery. K0-9 closes the
   six-profile 32/64/128-bit final implementation matrix with minimum WNS
   `+0.103 ns`, then repeats the DDR/HTML Word and PS H-Line/Ethernet byte
   comparisons against that final RTL. K0-10 packages the same implementation

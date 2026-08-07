@@ -54,6 +54,11 @@ entity lidar_gpx_acquisition_subsystem is
         i_tdc_clear_status  : in  std_logic := '0';
         o_tdc_safe          : out std_logic;
         o_tdc_shot_complete : out std_logic;
+        i_tdc_register_read : in gpx_register_read_request_t :=
+            C_GPX_REGISTER_READ_REQUEST_IDLE;
+        o_tdc_register_read_ready : out std_logic;
+        o_tdc_register_read_response : out gpx_register_read_response_t;
+        i_tdc_register_read_response_ready : in std_logic := '1';
         -- Processing-clock-domain reset busy. Safe for Processing control
         -- decisions; TDC-domain reset busy is folded into o_tdc_safe.
         o_cdc_reset_busy    : out std_logic;
@@ -247,6 +252,11 @@ begin
             i_force_reinit   => i_tdc_force_reinit,
             i_clear_status   => i_tdc_clear_status,
             o_safe           => coordinator_safe_c,
+            i_register_read  => i_tdc_register_read,
+            o_register_read_ready => o_tdc_register_read_ready,
+            o_register_read_response => o_tdc_register_read_response,
+            i_register_read_response_ready =>
+                i_tdc_register_read_response_ready,
             i_shot           => tdc_shot_c,
             o_shot_ready     => tdc_shot_ready_c,
             i_stop_tdc       => tdc_stop_c,

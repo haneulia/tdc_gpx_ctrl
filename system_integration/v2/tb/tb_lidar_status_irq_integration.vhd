@@ -138,7 +138,24 @@ architecture sim of tb_lidar_status_irq_integration is
     signal shot_drop : std_logic := '0';
     signal stop_drop : std_logic := '0';
 
+    signal operation_status : operation_state_t := C_OPERATION_STATE_SAFE;
+    signal tdc_safe : std_logic := '1';
+    signal tdc_run_enable : std_logic;
+    signal register_service_pause : std_logic;
+    signal register_read : gpx_register_read_request_t :=
+        C_GPX_REGISTER_READ_REQUEST_IDLE;
+    signal register_read_ready : std_logic;
+    signal register_read_response : gpx_register_read_response_t :=
+        C_GPX_REGISTER_READ_RESPONSE_IDLE;
+    signal register_read_response_ready : std_logic;
+    signal register_read_count : natural := 0;
+
 begin
+
+    -- 실제 Top과 동일하게 maintenance read 동안 acquisition RUN만 내린다.
+    -- CSR/Processing clock은 계속 동작하므로 PS가 완료 상태를 읽을 수 있다.
+    tdc_run_enable <= not register_service_pause;
+    register_read_ready <= register_service_pause and tdc_safe;
 
     p_csr_clock : process
     begin
@@ -191,6 +208,39 @@ begin
         end if;
     end process p_clear_monitors;
 
+    -- 외부 TDC-GPX register read 응답 모델. Chip 1, Reg7 요청에 대해
+    -- 28-bit 실제 readback 값을 반환하고 response backpressure를 지킨다.
+    p_gpx_register_model : process (tdc_clk)
+    begin
+        if rising_edge(tdc_clk) then
+            if tdc_rst_n = '0' then
+                register_read_response <=
+                    C_GPX_REGISTER_READ_RESPONSE_IDLE;
+                register_read_count <= 0;
+            else
+                if register_read_response.valid = '1' and
+                   register_read_response_ready = '1' then
+                    register_read_response <=
+                        C_GPX_REGISTER_READ_RESPONSE_IDLE;
+                end if;
+
+                if register_read.valid = '1' and
+                   register_read_ready = '1' then
+                    assert register_read.chip = 1 and
+                           register_read.address = x"7"
+                        report "K0-8 unexpected physical GPX register request"
+                        severity failure;
+                    register_read_response.valid <= '1';
+                    register_read_response.error <= '0';
+                    register_read_response.chip <= register_read.chip;
+                    register_read_response.address <= register_read.address;
+                    register_read_response.read_data <= x"1ABCDE0";
+                    register_read_count <= register_read_count + 1;
+                end if;
+            end if;
+        end if;
+    end process p_gpx_register_model;
+
     u_csr : entity work.lidar_csr_bank
         generic map (
             G_BUILD_CONFIG => C_BUILD_CONFIG
@@ -227,7 +277,7 @@ begin
             i_cfg_active => fn_active_config(
                 fn_default_runtime_config(C_BUILD_CONFIG), 0),
             i_cfg_active_gpx_image => C_GPX_REGISTER_IMAGE_DEFAULT,
-            i_operation_status => C_OPERATION_STATE_SAFE,
+            i_operation_status => operation_status,
             i_operation_command_ready => '1',
             i_operation_command_busy => '0',
             i_operation_command_rejected => '0',
@@ -316,10 +366,16 @@ begin
             i_terminal_mask => terminal_mask,
             i_lane_status => lane_status,
             i_lane_faults => lane_faults,
-            i_tdc_safe => '1',
-            i_tdc_run_enable => '1',
+            i_tdc_safe => tdc_safe,
+            i_tdc_run_enable => tdc_run_enable,
             i_tdc_active_valid => '1',
             i_tdc_config_ready => '1',
+            o_tdc_register_service_pause => register_service_pause,
+            o_tdc_register_read => register_read,
+            i_tdc_register_read_ready => register_read_ready,
+            i_tdc_register_read_response => register_read_response,
+            o_tdc_register_read_response_ready =>
+                register_read_response_ready,
             o_runtime_irq => runtime_irq
         );
 
@@ -497,6 +553,22 @@ begin
         capture_diag(C_DIAG_TDC_SUMMARY, x"00007433");
         abort_diag_with_remote_reset(proc_rst_n, C_DIAG_PROC_FLAGS);
         capture_diag(C_DIAG_PROC_INVALID_COUNT, x"00000000");
+
+        -- 11CCAAAA에서 CC=01(Chip 1), AAAA=0111(Reg7)이다.
+        -- scheduler가 켜져 있으면 물리 bus 요청 없이 ordering error로 거부한다.
+        operation_status.scheduler_enable <= '1';
+        capture_diag(16#D7#, x"70000000", '1');
+        assert register_read_count = 0
+            report "K0-8 armed physical GPX read reached the bus"
+            severity failure;
+
+        -- DISARM 뒤에는 acquisition만 자동 pause하고 실제 28-bit 값을 읽는다.
+        operation_status.scheduler_enable <= '0';
+        capture_diag(16#D7#, x"71ABCDE0");
+        assert register_read_count = 1 and register_service_pause = '0' and
+               tdc_run_enable = '1'
+            report "K0-8 physical GPX read did not resume acquisition"
+            severity failure;
 
         rise_profile.enabled <= '1';
         rise_profile.valid <= '1';

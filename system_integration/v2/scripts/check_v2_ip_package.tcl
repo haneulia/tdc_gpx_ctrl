@@ -15,11 +15,16 @@ set component [file join $package_dir component.xml]
 set packaged_xgui [file join $package_dir xgui \
     tdc_gpx_lidar_ctrl_v2_v2_0.tcl]
 set packaged_guide [file join $package_dir doc PRODUCT_GUIDE_KO.md]
+set packaged_maintenance_guide [file join $package_dir doc \
+    V2_RTL_MAINTENANCE_GUIDE_KO.md]
 set canonical_xgui [file join $v2_dir ip_package \
     tdc_gpx_lidar_ctrl_v2_xgui.tcl]
 set canonical_guide [file join $v2_dir ip_package PRODUCT_GUIDE_KO.md]
+set canonical_maintenance_guide [file join $v2_dir .. v2_architecture \
+    V2_RTL_MAINTENANCE_GUIDE_KO.md]
 foreach required [list $component $packaged_xgui $packaged_guide \
-        $canonical_xgui $canonical_guide] {
+        $packaged_maintenance_guide $canonical_xgui $canonical_guide \
+        $canonical_maintenance_guide] {
     if {![file exists $required]} {
         error "Required v2 package artifact is missing: $required"
     }
@@ -54,10 +59,12 @@ foreach entry $entries {
 }
 v2_require_file_equal $canonical_xgui $packaged_xgui {v2 XGUI}
 v2_require_file_equal $canonical_guide $packaged_guide {v2 Product Guide}
+v2_require_file_equal $canonical_maintenance_guide \
+    $packaged_maintenance_guide {v2 RTL Maintenance Guide}
 if {[string first {C_MAX_CHIPS} [v2_read_binary $component]] >= 0} {
     error {component.xml exposes unresolved C_MAX_CHIPS in a public HDL type}
 }
-puts {LIDAR_V2_K010_SOURCE_SYNC_PASS files=89 rtl=87 xgui=1 guide=1}
+puts {LIDAR_V2_K010_SOURCE_SYNC_PASS files=90 rtl=87 xgui=1 guides=2}
 
 # Avoid the damaged per-user Tcl Store on this workstation.
 set install_tcl_store [file normalize \
@@ -242,7 +249,10 @@ foreach packaged_file $synth_files {
 }
 set guide_group [v2_require_one [ipx::get_file_groups xilinx_productguide \
     -of_objects $core] {Product Guide group}]
-v2_require_one [ipx::get_files -of_objects $guide_group] {Product Guide file}
+set guide_files [ipx::get_files -of_objects $guide_group]
+if {[llength $guide_files] != 2} {
+    error "Expected two Korean guide files, found [llength $guide_files]"
+}
 puts {LIDAR_V2_K010_COMPONENT_CONTRACT_PASS}
 
 source $packaged_xgui

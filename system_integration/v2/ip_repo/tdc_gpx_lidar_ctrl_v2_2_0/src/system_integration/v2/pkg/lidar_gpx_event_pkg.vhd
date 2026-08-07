@@ -6,6 +6,9 @@ use work.lidar_build_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_gpx_pkg.all;
 
+-- Processing↔TDC CDC를 통과하는 Shot/STOP/Raw GPX event의 고정 payload
+-- 계약. pack/unpack 함수는 서로 역함수여야 하며 field를 추가할 때는
+-- payload width, 양쪽 함수, CDC 회귀를 한 commit에서 함께 갱신한다.
 package lidar_gpx_event_pkg is
 
     constant C_GPX_SHOT_REQUEST_PAYLOAD_WIDTH : positive := 63;

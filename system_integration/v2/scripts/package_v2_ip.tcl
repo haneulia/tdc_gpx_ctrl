@@ -20,7 +20,10 @@ set manifest_source [file join $v2_dir ip_package v2_ip_package_manifest.tcl]
 set xgui_source [file join $v2_dir ip_package \
     tdc_gpx_lidar_ctrl_v2_xgui.tcl]
 set product_guide_source [file join $v2_dir ip_package PRODUCT_GUIDE_KO.md]
-foreach required [list $manifest_source $xgui_source $product_guide_source] {
+set maintenance_guide_source [file join $v2_dir .. v2_architecture \
+    V2_RTL_MAINTENANCE_GUIDE_KO.md]
+foreach required [list $manifest_source $xgui_source $product_guide_source \
+        $maintenance_guide_source] {
     if {![file exists $required]} {
         error "Required package source is missing: $required"
     }
@@ -57,6 +60,10 @@ file copy -force $xgui_source $xgui_destination
 set product_guide_name PRODUCT_GUIDE_KO.md
 set product_guide_destination [file join $package_doc $product_guide_name]
 file copy -force $product_guide_source $product_guide_destination
+set maintenance_guide_name V2_RTL_MAINTENANCE_GUIDE_KO.md
+set maintenance_guide_destination [file join $package_doc \
+    $maintenance_guide_name]
+file copy -force $maintenance_guide_source $maintenance_guide_destination
 
 # Avoid a stale per-user Tcl Store cache. Use the installed Vivado store as the
 # reproducible packaging source.
@@ -380,6 +387,7 @@ if {[llength $product_guide_group] != 1} {
 }
 ipx::remove_all_file $product_guide_group
 ipx::add_file doc/$product_guide_name $product_guide_group
+ipx::add_file doc/$maintenance_guide_name $product_guide_group
 
 foreach group [ipx::get_file_groups -of_objects $core] {
     set_property component_subcores {} $group

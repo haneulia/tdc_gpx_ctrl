@@ -67,6 +67,12 @@ entity lidar_status_snapshot_subsystem is
         i_tdc_run_enable   : in std_logic;
         i_tdc_active_valid : in std_logic;
         i_tdc_config_ready : in std_logic;
+        o_tdc_register_service_pause : out std_logic;
+        o_tdc_register_read : out gpx_register_read_request_t;
+        i_tdc_register_read_ready : in std_logic := '0';
+        i_tdc_register_read_response : in gpx_register_read_response_t :=
+            C_GPX_REGISTER_READ_RESPONSE_IDLE;
+        o_tdc_register_read_response_ready : out std_logic;
 
         o_runtime_irq : out lidar_runtime_irq_t
     );
@@ -307,6 +313,12 @@ begin
             i_run_enable => i_tdc_run_enable,
             i_active_valid => i_tdc_active_valid,
             i_config_ready => i_tdc_config_ready,
+            o_register_service_pause => o_tdc_register_service_pause,
+            o_register_read => o_tdc_register_read,
+            i_register_read_ready => i_tdc_register_read_ready,
+            i_register_read_response => i_tdc_register_read_response,
+            o_register_read_response_ready =>
+                o_tdc_register_read_response_ready,
             o_irq_gpx_transport => irq_gpx_transport_c
         );
 

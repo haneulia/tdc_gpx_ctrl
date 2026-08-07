@@ -4,6 +4,9 @@ use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
 
+-- Processing pipeline을 흐르는 의미 기반 event 계약. 위치 표본, Face 경계,
+-- Shot 요청, TDC 시작 기준시점(T0), operation 명령/상태를 record로 묶어
+-- payload bit 순서를 각 모듈이 임의로 해석하지 않게 한다.
 package lidar_event_types_pkg is
 
     constant C_POSITION_LATENCY_WIDTH : positive := 8;

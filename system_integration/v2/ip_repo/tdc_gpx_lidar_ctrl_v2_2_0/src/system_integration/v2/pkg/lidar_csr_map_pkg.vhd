@@ -6,14 +6,19 @@ use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_status_pkg.all;
 
+-- PS가 보는 32-bit AXI4-Lite ABI의 단일 정의점. Word 번호, bit layout,
+-- reset default, pack/unpack 및 write encoding 검사를 함께 소유한다.
+-- CTL은 후보 shadow, STAT는 승인된 active/derived 또는 live 상태이며,
+-- CTL23/24는 주소 영역만 CTL에 있을 뿐 write 불가 결과를 담는 진단 포털이다.
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;
-    constant C_LIDAR_CSR_ABI_MINOR : natural := 5;
+    constant C_LIDAR_CSR_ABI_MINOR : natural := 6;
 
-    constant C_LIDAR_CTL_COUNT  : positive := 32;
-    constant C_LIDAR_STAT_COUNT : positive := 32;
-    constant C_LIDAR_IRQ_COUNT  : positive := 4;
+    constant C_LIDAR_CTL_COUNT          : positive := 32;
+    constant C_LIDAR_STAT_COUNT         : positive := 32;
+    -- IRQ source 수가 아니라 ENABLE/STATUS/FLAG/ACK 제어 Register 수다.
+    constant C_LIDAR_IRQ_REGISTER_COUNT : positive := 4;
 
     subtype csr_word_t is std_logic_vector(31 downto 0);
     type csr_word_array_t is array (0 to C_LIDAR_CTL_COUNT - 1) of csr_word_t;
@@ -53,7 +58,8 @@ package lidar_csr_map_pkg is
 
     -- CTL23 write: INDEX[7:0] plus CAPTURE W1S[8]. CTL23 read: the same
     -- selected index, BUSY[8], VALID[9], ERROR[10], SEQUENCE[31:16]. CTL24 is
-    -- the last atomic 32-bit response and rejects every write.
+    -- the last atomic 32-bit response and rejects every write. INDEX=11CCAAAA
+    -- is the physical GPX read service; CC=Chip and AAAA=Register address.
     constant C_DIAG_INDEX_MSB       : natural := 7;
     constant C_DIAG_INDEX_LSB       : natural := 0;
     constant C_DIAG_CAPTURE_BIT     : natural := 8;
@@ -121,20 +127,26 @@ package lidar_csr_map_pkg is
     constant C_IRQ_ECHO_DIAGNOSTIC    : natural := 7;
     constant C_IRQ_GPX_TRANSPORT      : natural := 8;
     constant C_IRQ_GPX_DATA           : natural := 9;
+    -- 실제 독립 IRQ 사건 source 수. 위 제어 Register 4개가 이 10 bit를 관리한다.
     constant C_LIDAR_IRQ_SOURCES    : positive := 10;
 
+    -- Word 번호를 실제 AXI4-Lite byte 주소로 바꾸는 주소 helper.
     function fn_ctl_byte_offset(index : natural) return natural;
     function fn_stat_byte_offset(index : natural) return natural;
     function fn_irq_byte_offset(index : natural) return natural;
+    -- 사람이 읽는 enum을 고정 CSR bit encoding으로 바꾸는 helper.
     function fn_decode_mode_bits(mode : decode_mode_t)
         return std_logic_vector;
     function fn_direction_bit(direction : direction_t) return std_logic;
+    -- CTL1..20과 의미 record의 유일한 양방향 변환점. 새 field를 넣을 때
+    -- pack/unpack, valid 검사, ABI 문서를 같은 변경에서 함께 갱신한다.
     function fn_pack_runtime_config(
         config : lidar_runtime_config_t
     ) return csr_word_array_t;
     function fn_unpack_runtime_config(
         words : csr_word_array_t
     ) return lidar_runtime_config_t;
+    -- reserved bit와 enum encoding을 포함해 한 CTL Word 쓰기를 검사한다.
     function fn_ctl_word_encoding_valid(
         index : natural;
         value : csr_word_t
