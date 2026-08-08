@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: AXI4-Lite CSR bank의 주소, 접근 속성, 명령과 IRQ 동작을 검증한다.
+-- 핵심 검증 계약: AW/W 독립 도착, backpressure, W1S/W1C, portal과 오류 sticky를 지킨다.
+-- 관련 RTL: lidar_csr_bank, lidar_csr_map_pkg.
+-- 실행 회귀: scripts/run_v2_unified_csr.ps1
+-- 유지보수 주의: 새 register/bit는 read/write/illegal-access/clear 벡터를 모두 추가한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

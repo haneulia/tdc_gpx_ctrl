@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: LVDS Echo를 저지연 TDC STOP으로 전달하는 physical/simulation 경로를 검증한다.
+-- 핵심 검증 계약: 16/32 lane, Return 1~7, channel delay, 비활성 generate와 진단 격리이다.
+-- 관련 RTL: lidar_echo_subsystem, echo_receiver physical/simulation 하위 경로.
+-- 실행 회귀: scripts/run_v2_echo.ps1
+-- 유지보수 주의: physical STOP latency에는 CSR/AXIS 의존 논리를 추가하지 않는다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

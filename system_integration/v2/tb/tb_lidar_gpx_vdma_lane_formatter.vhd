@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: J2 legacy lane formatter의 등록 전송과 backpressure 기준선을 검증한다.
+-- 핵심 검증 계약: SOF/EOL, 32/64/128 폭, stall/abort에서 byte 보존을 확인한다.
+-- 관련 RTL: lidar_gpx_vdma_lane_formatter.
+-- 실행 회귀: scripts/run_v2_gpx_vdma_lane_formatter.ps1
+-- 유지보수 주의: 반복 prefix 방식은 최종 ABI가 아니며 회귀 기준선 용도로만 유지한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

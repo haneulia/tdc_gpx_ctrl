@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 설정 record의 기본값, pack/unpack, 기준 산식을 검증한다.
+-- 핵심 검증 계약: Source/Derived/Active 필드가 섞이지 않고 round-trip 값이 보존된다.
+-- 관련 RTL: lidar_build_pkg, lidar_config_types_pkg, lidar_config_reference_pkg.
+-- 실행 회귀: scripts/run_v2_config_pkg.ps1
+-- 유지보수 주의: 설정 record 필드가 바뀌면 기본값과 경계값 assertion을 함께 갱신한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

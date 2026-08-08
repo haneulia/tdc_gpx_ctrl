@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 모터 입력부터 Shot/laser 제어와 monitor 출력까지 통합 검증한다.
+-- 핵심 검증 계약: B0~B3 사건, source 상호배제와 monitor backpressure 비의존성을 지킨다.
+-- 관련 RTL: lidar_processing_subsystem과 operation/motor/Face/scheduler/laser 계층.
+-- 실행 회귀: scripts/run_v2_processing_subsystem.ps1
+-- 유지보수 주의: 하위 단위 TB 통과 후 end-to-end latency와 identity를 변경한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Rise/Fall Shot/Hole/Footer/width-packer 전체 AXIS 출력 체인을 검증한다.
+-- 핵심 검증 계약: dual-lane 독립 stall, SOF/EOL/TKEEP/TLAST, geometry와 Frame 완료이다.
+-- 관련 RTL: lidar_gpx_axis_output_subsystem과 Stage J 출력 하위 블록.
+-- 실행 회귀: scripts/run_v2_k06_axis_dual_lane.ps1
+-- 유지보수 주의: 한 lane stall이 다른 lane 데이터나 Footer 소유권을 오염시키지 않아야 한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

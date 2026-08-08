@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 하나의 Face-close를 Rise/Fall Footer 경로에 손실 없이 복제한다.
+-- 핵심 검증 계약: lane별 독립 backpressure, exactly-once 전달과 global 완료 ACK이다.
+-- 관련 RTL: lidar_gpx_frame_close_fork.
+-- 실행 회귀: scripts/run_v2_gpx_face_footer.ps1
+-- 유지보수 주의: 한 lane disable 시에도 다른 lane 완료와 source ready가 교착되지 않아야 한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

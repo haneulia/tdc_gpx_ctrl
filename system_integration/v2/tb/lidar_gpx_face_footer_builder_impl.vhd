@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: VDMA profile 계산과 Face Footer 생성 경로의 구현 timing을 점검한다.
+-- 핵심 검증 계약: sequential geometry 계산과 Footer 출력이 목표 clock에서 구현된다.
+-- 관련 RTL: lidar_gpx_vdma_profile_manager, lidar_gpx_face_footer_builder.
+-- 실행 회귀: scripts/run_v2_gpx_face_footer.ps1
+-- 유지보수 주의: field/geometry 기능은 대응 두 단위 TB가 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

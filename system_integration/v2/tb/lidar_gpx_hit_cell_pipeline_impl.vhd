@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Hit decoder와 Cell collector 결합 경로의 implementation timing을 점검한다.
+-- 핵심 검증 계약: B6/B7 경계 register와 backpressure 경로가 목표 clock을 만족한다.
+-- 관련 RTL: lidar_gpx_hit_decoder, lidar_gpx_cell_collector.
+-- 실행 회귀: scripts/run_v2_gpx_cell_collector.ps1
+-- 유지보수 주의: payload/순서 검증은 tb_lidar_gpx_hit_cell_pipeline이 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

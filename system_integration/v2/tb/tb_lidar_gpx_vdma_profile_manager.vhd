@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Return/Cell/폭에서 HSIZE, VSIZE, STRIDE와 Footer line을 계산한다.
+-- 핵심 검증 계약: Rise/Fall 독립 profile, Face-boundary request/ACK와 고정 최대 STRIDE이다.
+-- 관련 RTL: lidar_gpx_vdma_profile_manager와 geometry package 함수.
+-- 실행 회귀: scripts/run_v2_gpx_face_footer.ps1
+-- 유지보수 주의: geometry 식 변경 시 32/64/128 폭과 최소/최대 profile을 모두 검증한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

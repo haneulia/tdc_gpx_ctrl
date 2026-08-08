@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: operation, Face tracker와 scheduler의 직접 event 연결을 검증한다.
+-- 핵심 검증 계약: AXIS backpressure 없이 B0~B2 위치/Face/Shot 사건 순서를 보존한다.
+-- 관련 RTL: lidar_operation_manager, face_tracker, shot_scheduler.
+-- 실행 회귀: scripts/run_v2_shot_scheduler.ps1
+-- 유지보수 주의: 단위 TB 통과 뒤에만 이 chain의 기대 사건 순서를 변경한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

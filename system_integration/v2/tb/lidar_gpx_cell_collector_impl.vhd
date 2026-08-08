@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: B7 Cell collector의 RAM/ready/context 경로를 구현 점검한다.
+-- 핵심 검증 계약: Return 저장 구조가 목표 clock과 자원 예산을 만족하고 latch가 없다.
+-- 관련 RTL: lidar_gpx_cell_collector.
+-- 실행 회귀: scripts/run_v2_gpx_cell_collector.ps1
+-- 유지보수 주의: Return/fault 기능은 tb_lidar_gpx_cell_collector가 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

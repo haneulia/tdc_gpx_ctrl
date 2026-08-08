@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Processing subsystem을 150/200 및 200/150 MHz 관계로 실행한다.
+-- 핵심 검증 계약: TDC clock 관계와 무관하게 Processing 사건 및 안전 출력이 동일하다.
+-- 관련 RTL/TB: tb_lidar_processing_subsystem, lidar_processing_subsystem.
+-- 실행 회귀: scripts/run_v2_processing_subsystem.ps1
+-- 유지보수 주의: routine regression의 두 clock 관계를 삭제하거나 완화하지 않는다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 

@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: GPX acquisition 전체 계층의 CDC, timing과 자원을 구현 점검한다.
+-- 핵심 검증 계약: routine clock profile에서 zero latch와 non-negative timing을 확보한다.
+-- 관련 RTL: lidar_gpx_acquisition_subsystem.
+-- 실행 회귀: scripts/run_v2_gpx_acquisition_subsystem.ps1
+-- 유지보수 주의: 데이터 무결성 판정은 tb_lidar_gpx_acquisition_subsystem이 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

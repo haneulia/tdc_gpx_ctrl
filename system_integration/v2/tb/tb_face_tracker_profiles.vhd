@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: face-tracker 공통 TB를 150/200 MHz와 Face 1~5 조합으로 펼친다.
+-- 핵심 검증 계약: build-time Face 수마다 center/boundary/wrap 계산이 동일 규칙을 따른다.
+-- 관련 RTL/TB: tb_face_tracker, face_tracker.
+-- 실행 회귀: scripts/run_v2_face_tracker.ps1
+-- 유지보수 주의: g_N_FACES 범위가 바뀌면 wrapper와 XGUI 허용 범위를 함께 바꾼다.
+-- ============================================================================
 entity tb_face_tracker_150_f1 is end entity;
 architecture sim of tb_face_tracker_150_f1 is begin
     u : entity work.tb_face_tracker generic map (150, 3333, 1);

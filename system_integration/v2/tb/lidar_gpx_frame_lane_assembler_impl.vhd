@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: B8 Frame lane assembler의 slot 선택과 출력 timing을 구현 점검한다.
+-- 핵심 검증 계약: topology-sized mux/register 경로가 목표 clock과 자원 예산을 만족한다.
+-- 관련 RTL: lidar_gpx_frame_lane_assembler.
+-- 실행 회귀: scripts/run_v2_gpx_frame_lane_assembler.ps1
+-- 유지보수 주의: 순서/Gap 기능은 tb_lidar_gpx_frame_lane_assembler가 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

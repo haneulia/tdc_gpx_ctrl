@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 누락된 Shot column을 명시적 Hole Line으로 채우는 동작을 검증한다.
+-- 핵심 검증 계약: leading/interior/trailing/all-hole, 순서와 backpressure 보존이다.
+-- 관련 RTL: lidar_gpx_hole_line_expander.
+-- 실행 회귀: scripts/run_v2_gpx_hole_line_expander.ps1
+-- 유지보수 주의: Hole은 시간축 column 보존용이며 실제 Hit 손실과 혼동하지 않는다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

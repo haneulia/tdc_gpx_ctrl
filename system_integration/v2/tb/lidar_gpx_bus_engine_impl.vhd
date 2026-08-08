@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: GPX bus engine의 합성/구현 timing과 자원 사용을 재현하는 하네스다.
+-- 핵심 검증 계약: 물리 bus request/response 경로가 목표 TDC clock에서 구현 가능해야 한다.
+-- 관련 RTL: lidar_gpx_bus_engine.
+-- 실행 회귀: scripts/run_v2_gpx_bus.ps1
+-- 유지보수 주의: 기능 등가는 tb_lidar_gpx_bus_engine, 이 파일은 implementation 증거를 담당한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

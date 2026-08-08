@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 한 clock domain의 PREPARE/ACTIVATE/RELEASE 설정 gateway를 검증한다.
+-- 핵심 검증 계약: 순서, ACK, abort와 candidate 보존이 원자적 활성화 계약을 지킨다.
+-- 관련 RTL: lidar_config_gateway.
+-- 실행 회귀: scripts/run_v2_config_manager.ps1
+-- 유지보수 주의: handshake 상태를 바꾸면 정상 경로와 prepare-abort를 함께 확인한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

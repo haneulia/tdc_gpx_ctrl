@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Processing↔TDC typed command/result gateway의 SYNC/ASYNC 경로를 검증한다.
+-- 핵심 검증 계약: ready/valid 보존, 순서, reset 복구와 150/200·200/150 전달이다.
+-- 관련 RTL: lidar_gpx_shot_gateway, lidar_gpx_result_gateway.
+-- 실행 회귀: scripts/run_v2_gpx_event_gateway.ps1
+-- 유지보수 주의: payload 필드 추가 시 stall 중 안정성과 양 clock 관계를 함께 검사한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

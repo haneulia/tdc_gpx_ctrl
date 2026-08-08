@@ -250,10 +250,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 최종 PASS marker는 `LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS`이다.
 
+RTL 변경 전에는 테스트벤치 header, 전용 coverage guide와 실행 스크립트 연결도
+정적으로 확인한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/check_v2_testbench_docs.ps1
+```
+
+이 검사는 simulation을 대신하지 않으며, 테스트 자산의 목적과 회귀 연결이
+유지되고 있는지를 확인한다.
+
 ## 9. 상세 문서
 
 통합 데이터 흐름, CSR bit map, PACKED17 ABI와 검증 근거는 저장소의
 `system_integration/v2_architecture` 문서를 기준으로 한다. 특히
 `V2_UNIFIED_CSR_REGISTER_MAP.md`, `V2_CLOCK_EVENT_DATA_CONTRACT.md`,
-`V2_PS_HLINE_ETHERNET_ABI_KO.md`, `V2_RTL_MAINTENANCE_GUIDE_KO.md` 및 K0
-체크포인트 문서를 함께 참조한다.
+`V2_PS_HLINE_ETHERNET_ABI_KO.md`, `V2_RTL_MAINTENANCE_GUIDE_KO.md`,
+`V2_TESTBENCH_COVERAGE_GUIDE_KO.md` 및 K0 체크포인트 문서를 함께 참조한다.

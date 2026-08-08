@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: CLEAR/RESET system command의 Processing/TDC CDC 전달을 검증한다.
+-- 핵심 검증 계약: 명령은 destination당 1 pulse이며 busy 중 중복/모호 명령은 거부된다.
+-- 관련 RTL: lidar_system_command_cdc.
+-- 실행 회귀: scripts/run_v2_k03_integration.ps1
+-- 유지보수 주의: command를 추가하면 mailbox 점유, reset 복구와 pulse 폭도 검증한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 

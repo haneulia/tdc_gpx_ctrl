@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: operation부터 laser executor까지 B0~B3 직접 제어 체인을 검증한다.
+-- 핵심 검증 계약: Shot 위치, fire, fire_done, TDC start/stop과 busy 억제가 연결된다.
+-- 관련 RTL: operation manager, face_tracker, shot_scheduler, laser_executor.
+-- 실행 회귀: scripts/run_v2_laser_executor.ps1
+-- 유지보수 주의: 블록 latency 변경 시 단위 TB와 이 end-to-end 기준을 동시에 갱신한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

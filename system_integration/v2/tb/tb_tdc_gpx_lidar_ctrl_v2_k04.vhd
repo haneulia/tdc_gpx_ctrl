@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: v2 Top의 Processing/Echo 통합과 physical/simulation 모드를 검증한다.
+-- 핵심 검증 계약: K0-4 source 상호배제, fire/start/STOP 경로와 profile barrier이다.
+-- 관련 RTL: tdc_gpx_lidar_ctrl_v2_top, Processing subsystem, Echo subsystem.
+-- 실행 회귀: scripts/run_v2_k04_integration.ps1
+-- 유지보수 주의: simulation mode가 physical fire 또는 LVDS STOP을 구동하지 않게 유지한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

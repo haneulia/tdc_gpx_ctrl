@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Hit를 Chip/STOP/slope별 PACKED17 Cell로 수집하는 동작을 검증한다.
+-- 핵심 검증 계약: Return 1~7, visible filter, physical overflow, blank/timeout/abort와 stall이다.
+-- 관련 RTL: lidar_gpx_cell_collector.
+-- 실행 회귀: scripts/run_v2_gpx_cell_collector.ps1
+-- 유지보수 주의: Return 정책 변경 시 의도적 필터와 실제 손실 fault를 구분한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

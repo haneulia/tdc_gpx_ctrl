@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 외부 GPX pin부터 merged B5 raw stream까지 acquisition 전체를 검증한다.
+-- 핵심 검증 계약: 32 physical STOP lane, Chip/IFIFO/raw28/Shot identity와 fault 진단이다.
+-- 관련 RTL: lidar_gpx_acquisition_subsystem과 bus/lane/coordinator/gateway 계층.
+-- 실행 회귀: scripts/run_v2_gpx_acquisition_subsystem.ps1
+-- 유지보수 주의: 150/200·200/150 CDC와 정상/timeout/cap/backpressure 시나리오를 유지한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

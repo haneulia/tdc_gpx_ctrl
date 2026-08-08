@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Face 완료 정보로 고정 32-byte Footer byte열을 생성하는 동작을 검증한다.
+-- 핵심 검증 계약: Face/T0/geometry/fault 필드, Rise/Fall profile과 32/64/128 packing이다.
+-- 관련 RTL: lidar_gpx_face_footer_builder, lidar_gpx_vdma_profile_manager.
+-- 실행 회귀: scripts/run_v2_gpx_face_footer.ps1
+-- 유지보수 주의: Footer field 변경 시 version, PS/Viewer decoder와 Golden을 같이 바꾼다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

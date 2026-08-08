@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Processing Active 설정과 Echo/VDMA profile 준비 barrier를 검증한다.
+-- 핵심 검증 계약: ready, busy, version과 VDMA ACK가 모두 맞기 전 operation을 해제하지 않는다.
+-- 관련 RTL: lidar_processing_activation_barrier.
+-- 실행 회귀: scripts/run_v2_k04_integration.ps1
+-- 유지보수 주의: 새 의존 block이 생기면 완료 조건과 overlap-abort negative test를 추가한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

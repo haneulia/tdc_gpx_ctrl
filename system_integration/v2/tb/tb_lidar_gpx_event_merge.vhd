@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 여러 GPX lane result를 하나의 ordered stream으로 병합하는 동작을 검증한다.
+-- 핵심 검증 계약: lane별 입력 격리, 고정 순서, terminal 보존과 output backpressure이다.
+-- 관련 RTL: lidar_gpx_event_merge.
+-- 실행 회귀: scripts/run_v2_gpx_acquisition_coordinator.ps1
+-- 유지보수 주의: arbitration 정책 변경 시 starvation과 terminal 누락 벡터를 추가한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

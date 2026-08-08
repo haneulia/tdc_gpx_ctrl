@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: v2 Top의 K0-5 physical B5~B8 및 K0-6 AXIS 출력 경계를 검증한다.
+-- 핵심 검증 계약: GPX identity, Rise/Fall lane, Hole/T0/Footer와 32/64/128 폭 출력이다.
+-- 관련 RTL: tdc_gpx_lidar_ctrl_v2_top과 acquisition/data/AXIS 전체 계층.
+-- 실행 회귀: scripts/run_v2_k05_integration.ps1, run_v2_k06_axis_integration.ps1
+-- 유지보수 주의: 이 파일의 K05/K06 top을 구분하고 routine 두 clock 관계를 모두 유지한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

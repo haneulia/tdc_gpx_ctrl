@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: GPX SYNC/ASYNC event gateway의 CDC 구조와 timing을 구현 점검한다.
+-- 핵심 검증 계약: 선택 profile에서 FIFO/handshake 경로가 latch 없이 timing을 만족한다.
+-- 관련 RTL: lidar_gpx_shot_gateway, lidar_gpx_result_gateway.
+-- 실행 회귀: scripts/run_v2_gpx_event_gateway.ps1
+-- 유지보수 주의: 기능/순서 판정은 tb_lidar_gpx_event_gateway가 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 

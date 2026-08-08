@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Shot Metadata와 연속 Cell word를 하나의 canonical Line으로 만든다.
+-- 핵심 검증 계약: T0/Shot identity, 16-byte metadata, Cell 순서와 line terminal이다.
+-- 관련 RTL: lidar_gpx_shot_line_builder.
+-- 실행 회귀: scripts/run_v2_gpx_shot_line_builder.ps1
+-- 유지보수 주의: metadata layout 변경 시 byte offset과 PS decoder를 동시에 갱신한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

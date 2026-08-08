@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 32-bit canonical word를 합성시 선택한 32/64/128-bit AXIS로 pack한다.
+-- 핵심 검증 계약: byte 순서, TKEEP, TLAST, final-Beat padding과 stall 안정성이다.
+-- 관련 RTL: lidar_gpx_axis_word_packer.
+-- 실행 회귀: scripts/run_v2_gpx_axis_word_packer.ps1
+-- 유지보수 주의: 폭별 별도 ABI를 만들지 말고 동일 byte열의 packing만 바뀌어야 한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

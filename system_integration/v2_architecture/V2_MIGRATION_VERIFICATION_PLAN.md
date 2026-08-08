@@ -242,6 +242,30 @@ when that checkpoint introduces or changes a CDC boundary, and again at the
 integrated release gate. This keeps ordinary regressions bounded without
 weakening clock-relation coverage.
 
+### 3.1 테스트벤치를 RTL 계약으로 관리하는 정책
+
+테스트벤치는 단계 완료 후 덧붙이는 확인물이 아니라, 각 Stage 경계를 정의하는
+**실행 가능한 사양서**로 관리한다. 전체 인벤토리, 관련 RTL, 실행 스크립트와
+명시적 커버리지 공백은 `V2_TESTBENCH_COVERAGE_GUIDE_KO.md`가 소유한다.
+
+필수 gate는 다음과 같다.
+
+1. 기능 수정은 가능하면 먼저 실패를 재현하는 단위 또는 통합 TB를 만든다.
+2. 모든 TB와 implementation harness는 파일 상단에 한글로 목적, 핵심 계약,
+   관련 RTL, 실행 회귀와 유지보수 주의를 기록한다.
+3. self-checking TB는 모든 assertion이 끝난 뒤 고유 PASS marker를 한 번만 낸다.
+4. regression script는 process exit code와 예상 PASS marker를 모두 검사한다.
+5. CSR/ABI/clock/reset 변경은 positive path뿐 아니라 illegal access, timeout,
+   abort, backpressure와 clear/reset 복구를 함께 검증한다.
+6. profile wrapper는 generic/clock 조합만 소유하고 기능 assertion을 복제하지
+   않는다.
+7. implementation harness의 timing PASS는 기능 PASS를 대신하지 않는다.
+8. 새 테스트 자산은 coverage guide와 실행 스크립트에 함께 등록되어야 하며,
+   `check_v2_testbench_docs.ps1` 정적 검사를 통과해야 한다.
+
+Sign-off 보고서는 `Unit`, `Integration`, `Golden`, `Implementation`, `Board`
+중 어느 수준이 통과했는지 명시하며, 단순한 `PASS`로 범위를 확대 해석하지 않는다.
+
 ## 4. Assertions Required from the First RTL Stage
 
 - active configuration versions match before operation enable;
@@ -550,3 +574,20 @@ with minimum WNS `+0.103 ns`, and repeats both executable Golden comparisons.
 K0-10 closes the remaining K0 packaging gate. K0 is complete and K1 full
 RTL/HTML alignment is the active Stage 8 work. The physical parent is still
 outside this Checkpoint.
+
+## 16. Active RTL Work Package: Stage 8 / Checkpoint K1
+
+K1은 K0의 통합 RTL을 바로 HTML에 연결하기 전에, 이번 CSR 의미 재검토에서
+드러난 상태 초기화와 관측 계층의 공백을 먼저 닫는다. 진행 순서는 다음과 같다.
+
+| Step | Status | Required work and evidence |
+|---:|---|---|
+| K1-0 | Complete | Shadow/Active/Derived/Physical 용어와 CLEAR_STATUS 실제 범위를 문서화하고 70개 테스트 자산의 한글 계약 header 및 coverage guide를 고정한다. |
+| K1-1 | Pending | legacy TDC sticky owner 전체에 CLEAR_STATUS를 전달한다. lane fault `[2],[3],[4],[10],[11],[12]`를 각각 주입하고 clear, 같은-cycle 새 fault 우선, IRQ W1C 순서를 검증한다. |
+| K1-2 | Pending | Reg7의 staging MTimer write, COMMIT 자동 대체, active image, 실제 Chip readback을 한 시나리오에서 비교한다. COMMIT 실패와 진행 중 Shadow 수정도 포함한다. |
+| K1-3 | Pending | RPM, 광학 Shot 간격, 목표 왕복시간, runtime Return 1~7, 32/64/128-bit, slope topology와 clock 관계를 RTL 결과와 HTML Golden model로 자동 비교한다. |
+| K1-4 | Pending | routine 두 clock profile 전체 회귀, 필요한 extreme/sync CDC profile, DDR/PS/HTML byte 비교, package/XGUI/OOC 검사를 다시 수행해 K1 Sign-off 문서를 만든다. |
+
+K1-1과 K1-2는 동작 계약 closure이므로 K1-3보다 먼저 수행한다. K1-3의 HTML
+PASS는 이 두 상태/설정 계약을 대체할 수 없다. 실제 VDMA, HP port, DDR cache와
+PCB GPX/LVDS/laser 검증은 Stage 9 L0에 남으며 K1 Sign-off 범위에 포함하지 않는다.

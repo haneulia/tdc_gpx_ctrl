@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: operation 안전 TB를 50/150/200 MHz에서 반복한다.
+-- 핵심 검증 계약: 시간 환산과 관계없이 명령 우선순위와 fail-safe 출력이 동일하다.
+-- 관련 RTL/TB: tb_lidar_operation_subsystem, operation manager 계층.
+-- 실행 회귀: scripts/run_v2_operation.ps1
+-- 유지보수 주의: 지원 Processing clock 목록 변경 시 이 profile 표도 함께 갱신한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 

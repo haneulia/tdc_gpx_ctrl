@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Cell을 Rise/Fall canonical Frame lane 순서로 조립하는 동작을 검증한다.
+-- 핵심 검증 계약: channel order, hole/gap, dedicated/dual-edge와 lane별 backpressure이다.
+-- 관련 RTL: lidar_gpx_frame_lane_assembler.
+-- 실행 회귀: scripts/run_v2_gpx_frame_lane_assembler.ps1
+-- 유지보수 주의: slot 순서 변경 시 PS/HTML ABI보다 먼저 canonical B8 oracle을 갱신한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

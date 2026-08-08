@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Echo subsystem을 실제 합성/구현해 latency와 자원 경로를 점검하는 하네스다.
+-- 핵심 검증 계약: physical direct path와 선택된 simulation generate가 합성 구조에 반영된다.
+-- 관련 RTL: lidar_echo_subsystem.
+-- 실행 회귀: scripts/run_v2_echo.ps1
+-- 유지보수 주의: 이 파일은 assertion TB가 아니며 기능 판정은 tb_lidar_echo_subsystem이 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

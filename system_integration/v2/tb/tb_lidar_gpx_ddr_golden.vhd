@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: RTL AXIS 결과를 STRIDE-aware DDR 이미지로 저장해 Golden과 비교한다.
+-- 핵심 검증 계약: 모든 할당 word, Hole/Shot/Footer, 32/64/128 폭의 byte exactness이다.
+-- 관련 RTL: 완전한 GPX data/output chain과 HTML/PS Golden 변환 스크립트.
+-- 실행 회귀: scripts/run_v2_gpx_ddr_golden.ps1
+-- 유지보수 주의: PASS marker만 보지 말고 생성 capture의 Word 비교까지 성공해야 한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

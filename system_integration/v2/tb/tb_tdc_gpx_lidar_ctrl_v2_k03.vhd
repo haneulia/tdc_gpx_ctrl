@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: v2 public Top의 config/VDMA activation과 system-command CDC를 검증한다.
+-- 핵심 검증 계약: K0-3 atomic profile 적용, command one-shot과 Top port 연결 무결성이다.
+-- 관련 RTL: tdc_gpx_lidar_ctrl_v2_top과 CSR/config/command CDC 계층.
+-- 실행 회귀: scripts/run_v2_k03_integration.ps1
+-- 유지보수 주의: public generic/port 변경 시 단위 TB보다 먼저 Top 연결 누락을 확인한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: 단일 GPX acquisition lane의 TDC-domain timing과 자원을 점검한다.
+-- 핵심 검증 계약: bus/IFIFO/result 경로가 목표 clock에서 구현되고 latch가 없어야 한다.
+-- 관련 RTL: lidar_gpx_acquisition_lane.
+-- 실행 회귀: scripts/run_v2_gpx_acquisition_lane.ps1
+-- 유지보수 주의: 기능 fault/cap 검증은 tb_lidar_gpx_acquisition_lane이 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

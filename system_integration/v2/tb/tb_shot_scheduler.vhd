@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Face 안에서 각도·시간 계약을 만족하는 Shot 요청 생성을 검증한다.
+-- 핵심 검증 계약: 광학 간격, 방향/wrap, executor busy 억제와 late-angle 금지를 지킨다.
+-- 관련 RTL: shot_scheduler.
+-- 실행 회귀: scripts/run_v2_shot_scheduler.ps1
+-- 유지보수 주의: 간격 산식을 바꾸면 정방향/역방향 및 exact/overshoot 벡터를 같이 바꾼다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

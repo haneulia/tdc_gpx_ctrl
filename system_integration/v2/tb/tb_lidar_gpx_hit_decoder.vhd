@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: GPX I-Mode 28-bit word를 typed 17-bit Hit event로 해석하는 동작을 검증한다.
+-- 핵심 검증 계약: field bit, Hit[16], Chip/STOP/slope, dedicated/dual과 fault drop이다.
+-- 관련 RTL: lidar_gpx_hit_decoder.
+-- 실행 회귀: scripts/run_v2_gpx_hit_decoder.ps1
+-- 유지보수 주의: GPX bit map 변경 시 정상·예약 bit·잘못된 topology 벡터를 같이 갱신한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

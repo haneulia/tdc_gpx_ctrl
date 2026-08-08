@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: B5~B8 결합 데이터 경로의 최종 implementation timing을 점검한다.
+-- 핵심 검증 계약: routine clock profile에서 CDC/DRC/latch와 WNS release 기준을 만족한다.
+-- 관련 RTL: lidar_gpx_b5_b8_subsystem.
+-- 실행 회귀: scripts/run_v2_gpx_b5_b8_subsystem.ps1
+-- 유지보수 주의: byte/Cell 무결성은 tb_lidar_gpx_b5_b8_subsystem이 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

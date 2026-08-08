@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: AXI CSR write부터 양 domain Active 적용까지 통합 검증한다.
+-- 핵심 검증 계약: GPX image snapshot, Reg7.MTimer 자동 계산, safe-point와 rollback을 지킨다.
+-- 관련 RTL: lidar_csr_config_subsystem과 CSR/configuration/GPX activation 계층.
+-- 실행 회귀: scripts/run_v2_unified_csr.ps1
+-- 유지보수 주의: Shadow/Active 의미를 바꾸면 동시 write와 실패 COMMIT 벡터를 보강한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

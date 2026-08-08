@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: B6 Hit decoder의 조합 깊이와 registered timing을 구현 점검한다.
+-- 핵심 검증 계약: raw28-to-Hit 경로가 목표 Processing clock에서 timing을 만족한다.
+-- 관련 RTL: lidar_gpx_hit_decoder.
+-- 실행 회귀: scripts/run_v2_gpx_hit_decoder.ps1
+-- 유지보수 주의: bit 정확성은 tb_lidar_gpx_hit_decoder, 이 파일은 구현 품질을 담당한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

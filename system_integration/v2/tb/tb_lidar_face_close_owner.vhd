@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Face 종료 요청과 마지막 Shot/lane terminal 사이의 단일 소유권을 검증한다.
+-- 핵심 검증 계약: trailing/all-hole close, 중복/overlap 진단과 정확히 한 close event이다.
+-- 관련 RTL: lidar_face_close_owner.
+-- 실행 회귀: scripts/run_v2_gpx_b5_b8_subsystem.ps1
+-- 유지보수 주의: Frame 종료 조건 변경 시 조기 close와 누락 close negative test를 유지한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

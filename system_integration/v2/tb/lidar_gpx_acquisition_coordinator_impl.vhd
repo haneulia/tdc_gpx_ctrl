@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: multi-Chip acquisition coordinator의 merge/제어 timing을 구현 점검한다.
+-- 핵심 검증 계약: active lane fanout과 registered merge 경로가 목표 clock을 만족한다.
+-- 관련 RTL: lidar_gpx_acquisition_coordinator.
+-- 실행 회귀: scripts/run_v2_gpx_acquisition_coordinator.ps1
+-- 유지보수 주의: 기능 순서/terminal 검증은 대응 tb_lidar_gpx_acquisition_coordinator가 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

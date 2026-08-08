@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Shot을 active Chip에 배포하고 lane 결과를 완료까지 모으는 coordinator를 검증한다.
+-- 핵심 검증 계약: runtime mask, lane terminal, merge 순서, backpressure와 config activation이다.
+-- 관련 RTL: lidar_gpx_acquisition_coordinator, event merge, config activation.
+-- 실행 회귀: scripts/run_v2_gpx_acquisition_coordinator.ps1
+-- 유지보수 주의: Chip 수/마스크 변경 시 inactive lane 무동작과 전체 완료 조건을 보강한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

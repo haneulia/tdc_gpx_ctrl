@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: canonical Cell을 폭 독립 PACKED17 32-bit word열로 직렬화한다.
+-- 핵심 검증 계약: Hit[16], Cell Metadata, Return 수, blank와 stall 중 payload 안정성이다.
+-- 관련 RTL: lidar_gpx_cell_word_serializer.
+-- 실행 회귀: scripts/run_v2_gpx_cell_word_serializer.ps1
+-- 유지보수 주의: ABI word 순서 변경 시 DDR/PS/HTML Golden을 같은 변경으로 묶는다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

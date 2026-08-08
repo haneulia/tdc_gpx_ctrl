@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: physical B5 stream부터 B8 Rise/Fall Cell lane까지 end-to-end 검증한다.
+-- 핵심 검증 계약: raw28/Hit17/Cell identity, Face close, dedicated/all-dual과 CDC stall이다.
+-- 관련 RTL: lidar_gpx_b5_b8_subsystem과 acquisition/hit/cell/frame 계층.
+-- 실행 회귀: scripts/run_v2_gpx_b5_b8_subsystem.ps1
+-- 유지보수 주의: 하위 단위 TB를 통과한 뒤 150/200·200/150 전체 순서를 비교한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

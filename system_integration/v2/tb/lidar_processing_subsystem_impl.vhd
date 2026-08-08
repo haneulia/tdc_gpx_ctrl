@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: Processing 전체 direct-event 경로의 구현 timing과 자원을 점검한다.
+-- 핵심 검증 계약: fire_done 외 경로의 register pipeline과 target clock timing을 확인한다.
+-- 관련 RTL: lidar_processing_subsystem.
+-- 실행 회귀: scripts/run_v2_processing_subsystem.ps1
+-- 유지보수 주의: 기능/안전 판정은 tb_lidar_processing_subsystem이 소유한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 

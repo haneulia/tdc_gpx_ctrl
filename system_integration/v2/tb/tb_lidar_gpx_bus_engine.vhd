@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: typed GPX bus wrapper와 검증된 v1 물리 bus FSM의 등가성을 검증한다.
+-- 핵심 검증 계약: pin/phase/28-bit data, BUS_TICKS, timeout과 response identity가 일치한다.
+-- 관련 RTL: lidar_gpx_bus_engine, tdc_gpx_chip_ctrl 및 물리 bus 하위 RTL.
+-- 실행 회귀: scripts/run_v2_gpx_bus.ps1
+-- 유지보수 주의: 물리 FSM 변경 시 이전 oracle과 cycle/pin 비교를 먼저 갱신한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

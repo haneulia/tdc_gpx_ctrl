@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: GPX 설정 image의 물리 programming과 활성화 barrier를 검증한다.
+-- 핵심 검증 계약: 모든 present Chip ACK 전 enable 금지, RELEASE 후 단일 버전 적용이다.
+-- 관련 RTL: lidar_gpx_config_activation.
+-- 실행 회귀: scripts/run_v2_unified_csr.ps1
+-- 유지보수 주의: Chip mask/ACK 정책 변경 시 조기 ACK와 fault 경로를 반드시 유지한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

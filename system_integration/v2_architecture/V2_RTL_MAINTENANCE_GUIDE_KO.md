@@ -455,3 +455,33 @@ Shot 번호는 제공하지 않는다.
 8. 150/200 및 200/150 MHz에서 기능 회귀를 통과하는가?
 9. CSR ABI minor, register map, XGUI, software decoder 문서를 함께 갱신했는가?
 10. 새 sticky의 진단 page, IRQ 분류, clear 방법이 정의됐는가?
+11. 변경을 재현하거나 보호하는 테스트벤치 assertion이 있는가?
+12. 관련 TB의 한글 계약 header와 coverage guide가 현재 RTL 의미와 일치하는가?
+
+## 12. 테스트벤치 유지보수 원칙
+
+테스트벤치는 RTL과 동등한 설계 자산이다. 전체 파일별 목적, 관련 RTL, 실행
+스크립트와 현재 공백은 `V2_TESTBENCH_COVERAGE_GUIDE_KO.md`를 기준으로 한다.
+
+유지보수 순서는 다음과 같다.
+
+1. 발견된 결함을 가장 좁은 경계의 TB에서 먼저 재현한다.
+2. assertion message에는 실패한 계약과 기대/관측 대상을 드러낸다.
+3. RTL 수정 후 단위 TB를 통과하고, 인접 통합 TB와 Golden 비교로 범위를 넓힌다.
+4. clock/CDC 또는 output 폭 변경이면 대응 profile wrapper를 모두 실행한다.
+5. PASS marker가 있어도 외부 Golden 비교나 implementation 명령이 실패하면
+   Sign-off로 기록하지 않는다.
+6. TB를 삭제하거나 assertion을 완화할 때는 대체 커버 위치를 coverage guide에
+   먼저 기록한다.
+
+모든 `system_integration/v2/tb/*.vhd` 파일에는 다음 한글 header를 유지한다.
+
+- `테스트 자산 목적`;
+- `핵심 검증 계약`;
+- `관련 RTL`;
+- `실행 회귀`;
+- `유지보수 주의`.
+
+`check_v2_testbench_docs.ps1`는 이 header, 전용 guide 등록과 회귀 스크립트 연결을
+정적으로 검사한다. 이 검사는 기능 simulation을 대신하지 않고, 테스트 자산이
+조용히 고아 파일이 되는 것을 막는다.

@@ -1,3 +1,10 @@
+-- ============================================================================
+-- 테스트 자산 목적: laser-executor 공통 TB를 150/200 MHz profile로 실행한다.
+-- 핵심 검증 계약: 물리 시간 설정이 주파수별 clock 폭으로 바뀌어도 사건 순서는 같다.
+-- 관련 RTL/TB: tb_laser_executor, laser_executor.
+-- 실행 회귀: scripts/run_v2_laser_executor.ps1
+-- 유지보수 주의: profile wrapper에 기능 판단을 넣지 말고 공통 TB assertion을 확장한다.
+-- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 
