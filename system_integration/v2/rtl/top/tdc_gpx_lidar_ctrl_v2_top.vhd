@@ -20,6 +20,8 @@ entity tdc_gpx_lidar_ctrl_v2_top is
     generic (
         G_CSR_CLK_MHZ      : positive range 50 to 200 := 100;
         G_PROC_CLK_MHZ     : positive range 50 to 200 := 150;
+        -- PL 내부 GPX bus/acquisition clock이다. 외부 TDC-GPX 기준 클럭은
+        -- 이 Generic과 별개이며 PCB/HW에서 반드시 40 MHz를 공급한다.
         G_TDC_CLK_MHZ      : positive range 50 to 200 := 200;
         G_STREAM_CLK_MODE  : string := "ASYNC";
         -- Keep public generic limits literal so Vivado IP Packager can

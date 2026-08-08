@@ -5,6 +5,11 @@
 이 문서는 `lidar_csr_bank`의 AXI4-Lite software ABI를 정의한다. 주소는
 9-bit byte address이고 data width는 32 bit이다. 현재 ABI는 `2.6`이다.
 
+> **필수 PCB/HW 계약:** 외부 TDC-GPX reference-clock pin에는 반드시
+> `40 MHz`를 공급한다. 기준 주기(Tref)는 `25 ns`이며, PL bus/acquisition
+> clock인 `G_TDC_CLK_MHZ`와 다른 신호다. 이 IP는 외부 reference clock을
+> 생성하거나 측정하지 않는다.
+
 | 영역 | Word 수 | Byte 주소 | 용도 |
 |---|---:|---:|---|
 | CTL | 32 | `0x000..0x07C` | W1S 명령 및 runtime shadow 설정 |
@@ -24,9 +29,10 @@
 - CTL21/22는 16개 GPX register image를 위한 indexed portal이다. 16개 word를
   CSR 주소에 펼치지 않으므로 CTL/STAT/IRQ 주소 경계와 전체 CTL 수 32를
   유지한다. GPX staging image도 같은 COMMIT snapshot에 포함된다.
-- CTL23/24는 Processing/TDC runtime 상태를 위한 indexed read-only portal이다.
-  한 번에 한 page만 원래 clock domain에서 snapshot하며, 기존 STAT 주소와
-  CTL/STAT/IRQ 개수는 바꾸지 않는다.
+- CTL23/24는 Processing/TDC runtime 상태를 위한 indexed portal이다. CTL23은
+  page 선택과 CAPTURE W1S write 및 진행 상태 readback을 제공하고, CTL24만
+  read-only 결과다. 한 번에 한 page만 원래 clock domain에서 snapshot하며,
+  기존 STAT 주소와 CTL/STAT/IRQ 개수는 바꾸지 않는다.
 - reset 직후에는 합법적인 기본 shadow가 준비되지만 아직 active 값은
   없다. 따라서 `ACTIVE_VALID=0`, `SHADOW_DIRTY=1`이며 최초 `COMMIT`이
   필요하다.
@@ -107,6 +113,11 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 `0` write는 no-op이다. 한 write에서 command bit를 둘 이상 세우면 어느
 command도 실행되지 않는다. `COMMIT`을 BUSY 중 다시 쓰면 manager가
 `CFG_TRANSACTION_BUSY`로 reject한다.
+
+W1S(Write One to Set/Start)는 **write 의미**다. 해당 bit에 1을 쓰면 일회성
+command를 시작하고 0은 아무 동작도 하지 않는다는 뜻이며, Register 전체가
+read 불가라는 뜻은 아니다. CTL0은 read하면 0이고, CTL23의 CAPTURE[8]은
+write 시 W1S이지만 같은 bit를 read할 때는 BUSY 상태를 반환한다.
 
 `CLEAR_STATUS`는 active 설정, shadow, `SHADOW_DIRTY`, manager의
 `RECOVERY_REQUIRED` 및 IRQ pending flag를 지우지 않는다. IRQ pending은
@@ -280,6 +291,12 @@ table, INDEX/DATA portal 또는 Echo 전용 APPLY command는 없다.
 
 따라서 최대 32채널 지원을 위해 CSR를 채널별로 늘리지 않는다. CTL20의 두
 16-bit 값만 저장하고 내부에서 채널 번호에 따라 확장한다.
+
+CTL20 readback만으로는 적용 완료를 판정하지 않는다. CTL20은 마지막으로 쓴
+Shadow 후보값이므로, 성공한 COMMIT 뒤 `SHADOW_DIRTY=0`, Echo profile
+`READY=1`, `BUSY=0`, `PROFILE_VERSION=STAT3.ACTIVE_VERSION`을 함께 확인해야
+그 값으로 현재 profile이 만들어졌음을 보장할 수 있다. 두 16-bit field가
+32 bit 전체를 사용하므로 상위 bit를 적용 상태로 재사용하지 않는다.
 
 ### 3.8 CTL21/CTL22 GPX_REGISTER_IMAGE_PORTAL
 
@@ -563,8 +580,9 @@ Source 0..2와 4는 완료/거부 시점의 event를 pending으로 보존한다.
 runtime source 5..9는 원인이 유지되는 level이다. 따라서 level source는 먼저
 `CTL0.CLEAR_STATUS`를 보내고 IRQ_STATUS source가 0으로 내려온 뒤 IRQ_FLAG에
 W1C한다. 단, source 3 `RECOVERY_REQUIRED`는 CLEAR_STATUS로 지워지지 않으며
-coordinated reset이 필요하다. 원인이 high인 동안 IRQ_FLAG만 지우면 다시
-pending 되는 것이 정상이다.
+coordinated reset이 필요하다. 구현은 동기화된 source의 상승 edge를 pending으로
+보존하므로 원인이 여전히 high일 때 IRQ_FLAG부터 W1C하면 flag가 다시 자동으로
+set되지 않을 수 있다. 이 순서를 바꾸지 않는다.
 
 ## 6. 오류 코드
 

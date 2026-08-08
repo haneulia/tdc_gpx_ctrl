@@ -27,6 +27,13 @@ Vivado IP Catalog에서 병행할 수 있다.
 때만 사용한다. 정규 Sign-off 조합은 `150/200 MHz`, `200/150 MHz`이며,
 동기 모드 패키지 검증은 `150/150 MHz`로 수행한다.
 
+> **필수 PCB/HW 계약:** 모든 외부 TDC-GPX reference-clock pin에는 반드시
+> **40 MHz**를 공급하여 기준 클럭 주기(Tref)를 **25 ns**로 만들어야 한다.
+> `G_TDC_CLK_MHZ`와 `i_tdc_clk`는 PL의 GPX bus/acquisition clock일 뿐 Tref가
+> 아니다. 이 IP는 40 MHz를 생성하거나 측정하지 않으므로 parent schematic,
+> clock 회로와 보드 제약에서 별도로 확인해야 한다. 이 계약이 다르면
+> `CTL12`의 5 ns 단위와 `Reg7.MTimer` 변환도 맞지 않는다.
+
 ## 3. 합성 시 고정되는 항목
 
 - `G_NUM_CHIPS`: 물리 TDC-GPX Chip 수, 1~4
@@ -81,6 +88,11 @@ CAPTURE bit를 더해 CTL23에 쓴다. 예를 들어 Chip 1 Reg7은 `0x1D7`이�
 물리 read 중 RTL은 acquisition만 자동 pause/resume하며 COMMIT/RUN/ARM은
 완료될 때까지 거부한다.
 
+W1S(Write One to Set/Start)는 write 의미다. 1을 쓰면 일회성 command를
+시작하고 0은 no-op이라는 뜻이며, Register가 read 불가라는 뜻은 아니다.
+CTL0은 read하면 0이고, CTL23 bit 8은 write할 때 CAPTURE W1S지만 read할 때는
+진단 요청의 BUSY 상태다.
+
 ### 5.1 목표 왕복시간과 GPX Reg7.MTimer
 
 `CTL12.TARGET_RANGE`는 5 ns 단위의 **요청 목표 왕복시간**이며 유일한
@@ -121,6 +133,33 @@ CTL12에서 파생한 값으로 덮어쓴다. 기본 요청값 288 ticks는 1,44
 - IRQ source 5 `PROCESSING_WARNING`: 기존 ABI 이름이며, `schedule_overrun`은
   요청 광학각 후보점의 Shot 시간 계약 오류로 처리
 
+### 5.3 Shadow, Active와 CTL20 적용 확인
+
+`CTL1..20`을 읽으면 마지막으로 쓴 **Shadow 후보값**을 반환한다. 이 값은
+`COMMIT` 성공 전까지 실제 동작에 사용되지 않는다. 적용 여부는
+`STAT2.SUCCESS_STICKY=1`, `ERROR_STICKY=0`, `SHADOW_DIRTY=0`과
+`STAT3.ACTIVE_VERSION` 증가를 함께 확인한다. `CTL1..19`의 승인된 source는
+`STAT4..22`에서 직접 읽고, 양자화 또는 단위 변환 결과는 `STAT23..31`에서
+확인한다. 따라서 Active/Derived readback은 설정 적용 시점, COMMIT 거부,
+자동 보정 및 정수 양자화 결과를 Shadow 후보값과 구분하기 위해 존재한다.
+
+`CTL20.ECHO_DELAY_PROFILE`은 Echo simulation의 Channel 0 지연과 채널 증가
+지연을 담는다. 별도 Active-value Register는 추가하지 않는다. Echo simulation
+build에서는 다음 조건이 모두 참이면 CTL20을 읽은 값이 해당 Active version의
+profile을 만들 때 사용된 값임이 보장된다.
+
+```text
+STAT2.SUCCESS_STICKY = 1
+STAT2.SHADOW_DIRTY   = 0
+진단 0x1B.READY      = 1
+진단 0x1B.BUSY       = 0
+진단 0x1B.VERSION    = STAT3.ACTIVE_VERSION
+```
+
+Echo simulation이 합성에서 비활성이면 CTL20은 기능 경로에 사용되지 않는다.
+CTL20의 두 16-bit field에는 현재 reserved bit가 없으므로 상위 bit를 적용
+상태로 재사용하지 않는다.
+
 ## 6. AXI 및 VDMA 계약
 
 - `m_axis_rise`, `m_axis_fall`: 합성 폭과 같은 `TDATA/TKEEP/TSTRB`
@@ -134,7 +173,38 @@ DDR Word 배열은 HTML Golden Vector와 Word 단위로 비교되고, PS referen
 decoder는 DMA cache ownership 전환 후 H-Line과 Ethernet Viewer packet을
 바이트 단위로 비교한다. 이 두 검증은 K0-9 Sign-off 항목이다.
 
-## 7. 패키지 검증
+## 7. PS IRQ 연결과 처리
+
+`o_irq`는 Zynq PS의 PL-to-PS interrupt 입력에 연결하며 Level-High로 설정한다.
+IRQ는 Shot 번호를 운반하는 데이터가 아니라 PS에 원인 확인을 요청하는 알림이다.
+따라서 정확한 Face/Shot/Cell 관계는 DDR metadata와 진단 snapshot에서 확인하고,
+IRQ source는 처리 우선순위를 정하는 데 사용한다. 정기 polling도 가능하지만
+오류 통보 지연이 커지므로 정상 운용은 PS interrupt 연결을 권장한다.
+
+| 주소 | Register | 의미 |
+|---:|---|---|
+| `0x100` | IRQ_ENABLE | bit 0..9 개별 활성, 모두 활성은 `0x000003FF` |
+| `0x104` | IRQ_STATUS | 동기화된 현재 원인 level |
+| `0x108` | IRQ_FLAG | source별 pending flag, W1C |
+| `0x10C` | IRQ_MODE | bit별 `0=manual level`, `1=one-clock pulse` |
+
+Fault 운용에는 `IRQ_MODE=0`을 권장한다. 한 source를 처리하는 동안 다른 source가
+발생하면 새 bit가 `IRQ_FLAG[9:0]`에 독립적으로 남고 통합 IRQ는 High를 유지한다.
+ISR은 `IRQ_FLAG & IRQ_ENABLE`이 0이 될 때까지 반복하여 모든 pending bit를
+처리한다. 새 event와 같은 CSR clock의 W1C가 겹치면 새 event가 우선한다.
+
+`IRQ_FLAG`는 고정 STAT가 아니라 전용 IRQ Register다. 누적 fault count는
+CTL23/24 indexed portal의 `0x11..0x18`, `0x21..0x23`에서 읽는다. `0x24`와
+`0x40..0x5F`는 누적 fault count가 아니라 가장 최근에 완료된 Echo Shot의
+합계와 채널별 count snapshot이며 다음 Shot snapshot으로 갱신된다.
+`CTL0.CLEAR_STATUS`는 Processing/Echo/TDC sticky와 누적 fault count를 원래
+clock domain에서 지우지만, 최근 Shot snapshot과 `IRQ_FLAG`를 같은 의미로
+지우는 명령은 아니다. 원인 level이 0으로 내려온 것을 `IRQ_STATUS`에서 확인한
+뒤 `IRQ_FLAG`에 처리 bit를 W1C한다.
+IRQ 8 `GPX_TRANSPORT`와 IRQ 9 `GPX_DATA`는 현재 세부 fault bitmap을 제공하지만
+source별 누적 count나 최초 발생 Shot 번호는 제공하지 않는다.
+
+## 8. 패키지 검증
 
 다음 회귀는 패키지 재생성, 원본 파일 동등성, XGUI 유효성, v1/v2 Catalog
 공존 및 대표 3개 OOC 합성을 연속 수행한다.
@@ -146,7 +216,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 최종 PASS marker는 `LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS`이다.
 
-## 8. 상세 문서
+## 9. 상세 문서
 
 통합 데이터 흐름, CSR bit map, PACKED17 ABI와 검증 근거는 저장소의
 `system_integration/v2_architecture` 문서를 기준으로 한다. 특히

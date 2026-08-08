@@ -27,6 +27,15 @@ unchanged and is used as the observable-behavior reference during migration.
 does not call it. The sequential commit calculator derives the same values over
 multiple clocks and is checked against this reference model.
 
+## Mandatory External GPX Reference Clock
+
+> **PCB/HW contract:** Every external TDC-GPX reference-clock pin must receive
+> **40 MHz**, so the GPX reference period (Tref) is **25 ns**. The IP does not
+> generate or measure this clock. `G_TDC_CLK_MHZ` and `i_tdc_clk` configure the
+> PL GPX bus/acquisition clock only and must not be mistaken for the 40 MHz GPX
+> reference. The parent schematic, clock circuit and board constraints must
+> close this contract before hardware Sign-off.
+
 ## Runtime Timing And Safe GPX Reconfiguration
 
 - `CTL12.TARGET_RANGE` is the sole software-owned target round-trip time in

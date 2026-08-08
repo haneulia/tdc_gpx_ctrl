@@ -122,6 +122,9 @@ proc init_gui {IPINST} {
     -widget comboBox
   ipgui::add_param $IPINST -name G_STREAM_CLK_MODE -parent $clocks \
     -widget comboBox
+  ipgui::add_static_text $IPINST -name gpx_reference_clock_contract \
+    -parent $clocks -text \
+    {MANDATORY HW CONTRACT: Supply 40 MHz (Tref = 25 ns) to every external TDC-GPX reference-clock pin. G_TDC_CLK_MHZ controls only the PL bus/acquisition clock; this IP neither generates nor verifies the 40 MHz reference.}
   ipgui::add_static_text $IPINST -name clock_help -parent $clocks -text \
     {ASYNC allows either Processing/TDC frequency order. SYNC requires equal values and the same physical clock net. K0 routine sign-off covers 150/200 and 200/150 MHz.}
 

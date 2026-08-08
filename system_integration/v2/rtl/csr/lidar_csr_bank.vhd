@@ -10,15 +10,14 @@ use work.lidar_gpx_pkg.all;
 use work.lidar_gpx_image_pkg.all;
 use work.lidar_status_pkg.all;
 
--- One AXI4-Lite owner for the v2 LiDAR configuration ABI.
+-- V2 LiDAR 설정 ABI를 단독 소유하는 AXI4-Lite Register bank.
 --
--- CTL1..20 are shadow storage. CTL21/22 are an indexed 16-entry GPX setting
--- image portal, while CTL23/24 are the read-only runtime-diagnostic portal.
--- CTL23 INDEX=11CCAAAA additionally requests one actual physical GPX read;
--- CTL24 then returns {requested_address[3:0], read_data[27:0]}. CTL0 is
--- write-one-set command space and never stores a command
--- level. Active readback is sourced only from the atomic transaction owner,
--- so software can distinguish edited and applied data.
+-- CTL1..20은 Shadow 저장소이고 CTL21/22는 16-entry GPX 설정 image 포털이다.
+-- CTL23은 R/W1S 진단 command/status, CTL24는 read-only 원자 진단 결과다.
+-- CTL23 INDEX=11CCAAAA는 실제 외부 GPX Register read를 요청하고 CTL24는
+-- {요청주소[3:0], read_data[27:0]}를 반환한다. CTL0은 W1S command 공간이며
+-- command level을 저장하지 않는다. Active readback은 원자 transaction 소유자만
+-- 구동하므로 software가 편집한 후보값과 실제 적용값을 구분할 수 있다.
 entity lidar_csr_bank is
     generic (
         G_BUILD_CONFIG : lidar_build_config_t := C_DEFAULT_BUILD_CONFIG

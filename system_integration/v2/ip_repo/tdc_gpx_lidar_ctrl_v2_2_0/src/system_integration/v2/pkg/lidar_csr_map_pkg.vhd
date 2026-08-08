@@ -8,8 +8,10 @@ use work.lidar_status_pkg.all;
 
 -- PS가 보는 32-bit AXI4-Lite ABI의 단일 정의점. Word 번호, bit layout,
 -- reset default, pack/unpack 및 write encoding 검사를 함께 소유한다.
--- CTL은 후보 shadow, STAT는 승인된 active/derived 또는 live 상태이며,
--- CTL23/24는 주소 영역만 CTL에 있을 뿐 write 불가 결과를 담는 진단 포털이다.
+-- CTL1..20은 후보 shadow, STAT는 승인된 active/derived 또는 live 상태다.
+-- CTL0은 W1S command, CTL21/22는 GPX image portal, CTL23은 R/W1S 진단
+-- command/status, CTL24는 read-only 결과다. CTL이라는 주소 영역 이름만으로
+-- 모든 Word가 R/W라고 해석하지 않는다.
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;

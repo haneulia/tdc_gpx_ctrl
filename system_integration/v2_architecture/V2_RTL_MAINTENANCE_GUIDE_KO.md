@@ -41,8 +41,8 @@
 | 용어 | 이 설계에서의 정확한 의미 |
 |---|---|
 | CSR | PS가 AXI4-Lite로 접근하는 제어·상태 Register 묶음(Control and Status Register) |
-| CTL / STAT | 각각 제어 주소 영역과 상태 주소 영역. CTL23/24는 주소만 CTL 영역이며 write 불가 진단 결과 포털 |
-| IRQ | 원인 source를 보존하고 PS에 알리는 Interrupt Request. 이 설계는 level-high sticky 기반 |
+| CTL / STAT | 각각 제어 주소 영역과 상태 주소 영역. CTL23은 R/W1S 진단 command/status이고 CTL24만 read-only 결과 |
+| IRQ | 원인 source를 보존하고 PS에 알리는 Interrupt Request. 단일 level-high 출력이며 Shot 번호를 운반하지 않음 |
 | TDC | 시간차를 디지털 값으로 변환하는 외부 TDC-GPX와 그 획득 경로(Time-to-Digital Converter) |
 | GPX Register | 외부 TDC-GPX Chip 내부의 4-bit 주소/28-bit 값 Register 0..15 |
 | MTimer | GPX Reg7[27:15]의 측정 Timer. 40 MHz 기준 25 ns 단위이며 목표 왕복시간에서 파생 |
@@ -61,6 +61,15 @@
 | 결측 Shot 열(Hole) | 요청 각도 시한에 측정하지 못했지만 H-Line 번호 보존을 위해 명시적으로 남기는 빈 Shot 행 |
 | COMMIT | CTL shadow 전체를 검증·파생한 뒤 Processing/TDC에 같은 version으로 원자 적용하는 명령 |
 | ARM / DISARM | 물리 레이저 발사 허용 / 금지. DISARM 중에도 위치 추적과 CSR 접근은 유지 |
+
+### 2.2 필수 외부 GPX 기준 클럭 계약
+
+모든 외부 TDC-GPX reference-clock pin에는 반드시 `40 MHz`를 공급한다. 따라서
+기준 클럭 주기(Tref)는 `25 ns`다. `G_TDC_CLK_MHZ`와 `i_tdc_clk`는 PL 내부의
+GPX bus/acquisition clock이며 Tref와 다른 신호다. RTL은 외부 reference clock을
+생성하거나 측정하지 않으므로 이 조건은 parent schematic, clock 회로, PCB 및
+보드 제약 검토가 소유한다. 40 MHz가 아니면 `CTL12`의 5 ns 단위에서
+`Reg7.MTimer`로 변환하는 `/5` 계약이 성립하지 않는다.
 
 ## 3. 설정 소유권
 
@@ -89,6 +98,23 @@ Register 7 표(인쇄면 19쪽)와 I-Mode MTimer 설명(인쇄면 26쪽)이다. 
 `MTimer[27:15]`, `0..8191`, `Tref` 단위를 정의하고, 후자는 40 MHz 기준
 `25 ns..204.7 us` 운용 범위를 설명한다. 문서의 `204.7 us`는 반올림 표기이며
 RTL은 정수식 `8191 * 25 ns = 204.775 us`를 사용한다.
+
+### 3.1 Shadow와 Active 적용 확인
+
+`CTL1..20` readback은 마지막으로 쓴 Shadow 후보값이다. COMMIT이 실패하거나
+진행 중이면 실제 동작값과 다를 수 있다. `STAT2.SUCCESS_STICKY=1`,
+`ERROR_STICKY=0`, `SHADOW_DIRTY=0`과 `STAT3.ACTIVE_VERSION` 증가가 함께
+확인되어야 해당 Shadow revision의 원자 적용이 끝난 것이다. COMMIT 도중
+software가 다시 쓰면 새 값은 다음 transaction 소유가 되고 SHADOW_DIRTY가
+다시 1이 된다.
+
+`CTL1..19`의 승인 source는 `STAT4..22`, 계산·양자화된 값은 `STAT23..31`에
+분리한다. `CTL20`은 Echo simulation delay source다. 별도 Active mirror를
+추가하지 않고, simulation build에서 진단 `0x1B`의 READY=1, BUSY=0,
+PROFILE_VERSION=`STAT3.ACTIVE_VERSION`과 SHADOW_DIRTY=0을 함께 확인한다.
+CTL20의 두 16-bit field에는 reserved bit가 없으므로 상위 bit를 적용 flag로
+재사용하지 않는다. Echo simulation이 비활성이면 CTL20은 기능 경로에서 쓰지
+않는다.
 
 ## 4. 패키지별 소유권
 
@@ -286,6 +312,13 @@ Face Footer는 Face 전체의 완료 count, geometry, fault와 commit marker를 
 | CTL21/22 active view | 마지막 성공 COMMIT에서 쓰려고 적용한 effective image | 아니오 |
 | CTL23/24 `11CCAAAA` | 외부 Chip의 현재 Register 실제 readback | 예 |
 
+staging view는 software가 다음 COMMIT을 위해 수정하는 16-entry GPX Register
+후보 image다. active view는 마지막 성공 COMMIT에서 승인된 effective image며
+read-only다. Reg7.MTimer는 staging에 쓴 값이 아니라 CTL12에서 자동 파생한
+값으로 덮어쓴 뒤 active image가 된다. active view는 RTL이 적용하려고 쓴
+image이지 물리 pin을 통한 readback은 아니므로, 실제 Chip 확인은 CTL23/24를
+사용한다.
+
 목표 왕복시간만 바꾸면 CTL12만 수정한다. CTL21/22는 MTimer 이외의 GPX bit를
 수정할 때만 필요하다. 실제 Chip 상태 확인 절차는 다음과 같다.
 
@@ -324,6 +357,27 @@ Source 5의 이름은 ABI 호환 때문에 WARNING이지만 `schedule_overrun`�
 일반 sticky IRQ는 `CLEAR_STATUS -> IRQ_STATUS=0 확인 -> IRQ_FLAG W1C` 순서로
 지운다. `RECOVERY_REQUIRED`는 CLEAR_STATUS로 지우지 않고 coordinated reset을
 수행한 뒤 W1C한다.
+
+`o_irq`는 Zynq PS의 PL-to-PS interrupt에 Level-High로 연결하는 것이 기본이다.
+정기 polling은 가능하지만 IRQ 통보 지연만 늘어나며 Shot 식별 문제를 해결하지
+않는다. IRQ는 원인 알림이고 정확한 Face/Shot/Cell 관계는 DDR metadata와 진단
+snapshot의 소유다. 정확한 최초 fault Shot을 별도로 요구한다면 IRQ를 polling으로
+바꾸는 대신 first-fault context를 추가해야 한다.
+
+`IRQ_ENABLE[9:0]`은 source별 출력 mask이며 모두 활성은 `0x000003FF`다.
+Fault는 `IRQ_MODE=0` manual level을 사용한다. 한 source의 ISR 처리 중 다른
+source가 발생하면 각 bit가 IRQ_FLAG에 독립적으로 남으므로 ISR은
+`IRQ_FLAG & IRQ_ENABLE`이 0이 될 때까지 반복한다. 새 event와 W1C가 같은 CSR
+clock에 겹치면 새 event가 우선한다.
+
+IRQ_FLAG는 고정 STAT가 아니라 `0x108` 전용 IRQ Register다. 누적 fault count는
+CTL23/24 page `0x11..0x18`, `0x21..0x23`에 있다. `0x24`와 `0x40..0x5F`는
+가장 최근에 완료된 Echo Shot의 합계와 채널별 count snapshot이며, 다음 Shot
+snapshot으로 갱신된다. `CTL0.CLEAR_STATUS`는 native-domain sticky와 누적
+fault count를 0으로 만들지만, 최근 Shot snapshot과 IRQ_FLAG를 같은 의미로
+지우는 명령은 아니다. IRQ_FLAG는 별도 W1C해야 한다. GPX_TRANSPORT와
+GPX_DATA는 현재 세부 fault bitmap만 제공하고 source별 누적 count와 최초 발생
+Shot 번호는 제공하지 않는다.
 
 ## 10. 내부 RTL 주석 기준
 
