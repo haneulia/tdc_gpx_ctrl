@@ -102,7 +102,7 @@ decode의 14,400 states/revolution에서 Face center는 다음과 같다.
 | Bit | 이름 | 의미 |
 |---:|---|---|
 | 0 | COMMIT | 현재 shadow를 snapshot하여 검증/계산/atomic activation 시작 |
-| 1 | CLEAR_STATUS | STAT2 sticky와 last error/reject code clear |
+| 1 | CLEAR_STATUS | CSR/Processing/TDC 진단 이력 clear 요청; 아래 정확한 범위 참조 |
 | 2 | SOFT_RESET_REQUEST | 외부 reset supervisor로 1 CSR clock request 출력 |
 | 3 | RUN | Processing operation을 RUN 상태로 전환 |
 | 4 | STOP | RUN과 ARM을 함께 해제하여 안전 정지 |
@@ -123,6 +123,54 @@ write 시 W1S이지만 같은 bit를 read할 때는 BUSY 상태를 반환한다.
 `RECOVERY_REQUIRED` 및 IRQ pending flag를 지우지 않는다. IRQ pending은
 IRQ_FLAG에 W1C해야 한다. `SOFT_RESET_REQUEST`도 이 block 자체를 reset하지
 않으며 parent reset supervisor가 실제 coordinated reset을 수행해야 한다.
+
+#### CLEAR_STATUS가 정확히 지우는 값
+
+`CLEAR_STATUS`는 **설정 초기화가 아니라 진단 이력 초기화**다. CSR clock에서
+명령을 승인한 뒤 Processing/TDC clock domain에 각각 한 번 전달되므로, 아래
+원격 page는 같은 CSR clock에 즉시 0이 되는 것이 아니다. Software는 관련
+`IRQ_STATUS`와 진단 page를 다시 읽어 clear 완료를 확인해야 한다.
+
+| 관측 위치 | 0으로 만드는 field | 유지되는 field |
+|---|---|---|
+| `STAT2 TRANSACTION` | `[1] DONE_STICKY`, `[2] SUCCESS_STICKY`, `[3] ERROR_STICKY`, `[4] REJECTED_STICKY`, `[7] ACCESS_ERROR_STICKY`, `[23:16] LAST_ERROR_CODE`, `[31:24] LAST_REJECT_CODE` | `[0] BUSY`, `[5] RECOVERY_REQUIRED`, `[6] ACTIVE_VALID`, `[8] SHADOW_DIRTY` |
+| `CTL23 DIAG_INDEX` / `CTL24 DIAG_DATA` | `VALID[9]=0`, `ERROR[10]=0`, `DIAG_DATA=0` | `INDEX[7:0]`, `BUSY[8]`, `SEQUENCE[31:16]`; 진행 중 요청도 취소하지 않음 |
+| 진단 `0x10 PROC_FLAGS` | `[0]` invalid-transition sticky, `[1]` source-switch sticky, `[4]` Face overlap, `[5]` schedule overrun, `[6]` Face-close overflow, `[7]` monitor drop, `[11:8]` Laser lifecycle sticky, `[23:20]` GPX Processing data-path fault, `[25:24]` Shot/STOP CDC drop | `[3:2]` virtual-Z 현재 fault와 `[19:12]`, `[26]` ready/idle/enable/reset-busy live state |
+| 진단 `0x11..0x18` | 위치 전이, Face overlap, Shot overrun, monitor drop, Laser request-drop/timeout/abort/unexpected-done 누적 count | 해당 없음 |
+| 진단 `0x1A GPX_PROC_FAULTS` | `[18:0]` Raw28/Hit17/Cell/Frame 및 Shot/STOP drop sticky | 해당 없음 |
+| 진단 `0x20 ECHO_FLAGS` | `[4:2]` outside-window/overlap/profile-not-ready sticky, `[7:6]` timeout/aborted sticky | `[0]` window active, `[1]` simulation active, `[5]` 최근 snapshot valid |
+| 진단 `0x21..0x23` | Echo outside-window/overlap/profile-not-ready 누적 count | 해당 없음 |
+| 진단 `0x80 TDC_SUMMARY` | `[15]` 물리 GPX Register-read error sticky | `[14:0]` mask/ready/run/active live state |
+| 진단 `0x88..0x8B TDC_LANE_FAULT_n` | `[0]` drain-timeout 이력, `[1]` sequence 이력, `[5]` Register request overflow, `[6]` run-timeout 이력, `[9:7]` timeout cause | 아래 TDC lane 주의사항 참조 |
+
+다음 값은 `CLEAR_STATUS`로 지우지 않는다.
+
+- `CTL1..20` Shadow, CTL21/22 staging image, 마지막 성공 Active 설정/image;
+- `STAT3` operation/Active version, `STAT4..31` Active/Derived 값과
+  `STAT31[31:16]` COMMIT 완료 횟수;
+- 진단 `0x1B..0x1F`의 profile/geometry live 값;
+- 진단 `0x24..0x26`, `0x40..0x5F`의 최근 Echo Shot snapshot;
+- `IRQ_ENABLE`, `IRQ_FLAG`, `IRQ_MODE`. `IRQ_FLAG`는 원인 level을 먼저 내린 뒤
+  별도로 W1C한다.
+
+현재 TDC lane에는 Sign-off 전에 닫아야 할 clear 의미 불일치가 있다.
+`TDC_LANE_FAULT_n[2] response mismatch`, `[3] raw drop`, `[10] init/config
+coalesced`, `[11] command collision`, `[12] bus fatal`은 직접 소유한 legacy
+sticky가 `CLEAR_STATUS`를 소비하지 않는다. `[4] drain cap`도 물리 output-cap
+성분은 지워지지만 controller quarantine-cap 성분은 남을 수 있다. 따라서 이
+원인 중 하나가 발생한 뒤에는 `IRQ_STATUS[8] GPX_TRANSPORT`가 내려가지 않을 수
+있다. 현 RTL 기준 복구는 다음과 같다.
+
+| TDC lane fault | 현재 내려가는 조건 |
+|---|---|
+| `[2]`, `[3]`, `[10]` | `SOFT_RESET_REQUEST`가 실제 TDC-domain reset으로 전달되거나 hard reset |
+| `[4]` controller cap, `[11]`, `[12]` | hard reset |
+
+이 표는 현재 구현을 숨김없이 기록한 것이다. 최종 Sign-off 계약은 해당 legacy
+sticky에도 `CLEAR_STATUS`를 연결하고 회귀로 확인한 뒤, 위 예외 표를 삭제하는
+방향이 권장된다. clear와 새 fault가 같은 소유 clock에 겹치면 새 fault가
+우선되어 sticky/count가 0이 아니라 1로 남을 수 있다. 이는 새 사건을 잃지 않기
+위한 의도된 우선순위다.
 
 RUN/STOP/ARM/DISARM은 저장되는 설정 bit가 아니라 Processing domain으로
 전달되는 일회성 event이다. CSR-to-Processing mailbox가 이전 명령의 ACK를
@@ -336,6 +384,66 @@ ACTIVATE ACK는 모든 build-time present GPX chip의 register programming 완�
 값으로 덮어쓴다. `VIEW_ACTIVE=1`로 읽는 Reg7은 software staging 원본이
 아니라 실제 적용된 MTimer를 포함한 effective image다.
 
+중요하게도 `VIEW_ACTIVE=0`에서 Reg7.MTimer bit를 쓰면 **staging 저장소에는
+그 값이 기록되고 다시 읽힌다**. 다만 COMMIT의 prepare 단계에서 그 13 bit만
+`ceil(CTL12.TARGET_RANGE_5NS / 5)`로 덮어쓰므로, software가 쓴 MTimer는
+Active image나 물리 Chip에 적용되지 않는다. COMMIT 뒤에도 staging image는
+software 원본을 그대로 보존하므로 staging Reg7과 active Reg7이 다른 것은
+정상이다.
+
+| 값의 층 | 읽는 방법 | Reg7.MTimer 의미 | 쓰기 가능 여부 |
+|---|---|---|---|
+| Staging 후보 image | CTL21 `VIEW_ACTIVE=0`, CTL22 read | software가 마지막으로 쓴 원본; COMMIT 때 MTimer source로 사용하지 않음 | 가능 |
+| Active effective image | CTL21 `VIEW_ACTIVE=1`, CTL22 read | CTL12에서 자동 계산되어 마지막 성공 COMMIT에 적용한 값 | 불가 |
+| 물리 Chip Register | CTL23/24 `11CCAAAA` read | 외부 GPX pin/bus로 실제 다시 읽은 값 | 이 portal은 read-only |
+
+권장 Reg7 운용 순서는 다음과 같다.
+
+1. CTL21에서 `INDEX=7`, `VIEW_ACTIVE=0`을 선택하고 CTL22를 읽는다.
+2. HSDiv, RefClkDiv, interrupt route 등 MTimer 이외 bit만 read-modify-write한다.
+3. 목표 왕복시간은 CTL12에 5 ns tick으로 쓴다. staging MTimer를 별도로
+   계산하거나 active 값과 맞추지 않는다.
+4. COMMIT 성공과 `SHADOW_DIRTY=0`을 확인한다.
+5. CTL21 `VIEW_ACTIVE=1`의 Reg7에서 자동 계산된 MTimer를 확인한다.
+6. 보드 검증이나 고장 분석에서는 CTL23/24로 같은 Chip의 실제 Reg7을 읽어
+   Active image와 비교한다.
+
+### 3.9 Shadow, Active, Derived, Physical의 관계
+
+설정값은 다음 순서로 이동한다.
+
+```text
+PS write
+  -> Shadow 후보(CTL1..20, CTL21/22 staging image)
+  -> CTL0.COMMIT 시점의 원자 snapshot
+  -> 검증 + 시간 변환 + 정수 양자화 + Reg7.MTimer 자동 대체
+  -> Processing/TDC 두 domain prepare/activate/release
+  -> Active source(STAT4..22) + Derived(STAT23..31)
+  -> GPX Active effective image(CTL21/22 active view)
+  -> 외부 GPX 물리 Register(CTL23/24 readback으로 별도 확인)
+```
+
+| 설정 종류 | 후보값 확인 | 승인 source 확인 | 계산/적용 확인 |
+|---|---|---|---|
+| CTL1..19 일반 설정 | 같은 CTL read | 대응 `STAT4..22` | 대응 `STAT23..31` Derived와 `STAT3.ACTIVE_VERSION` |
+| CTL20 Echo delay | CTL20 read | 별도 32-bit Active mirror 없음 | 진단 `0x1B`의 READY/BUSY/VERSION과 `SHADOW_DIRTY` |
+| GPX 16-word image | CTL21/22 staging view | CTL21/22 active view | CTL23/24 물리 Chip readback |
+
+COMMIT이 실패하면 Shadow 후보는 남지만 Active와 Active version은 바뀌지 않는다.
+COMMIT 진행 중 software가 Shadow를 다시 쓰면 진행 중 transaction은 시작 시점의
+snapshot만 적용하고, 새 write는 다음 transaction 후보가 된다. 따라서 성공
+완료 뒤에도 `SHADOW_DIRTY=1`이면 오류가 아니라 "다음 COMMIT 후보가 이미
+존재함"을 뜻한다. 반대로 다음 조건이 모두 참이어야 현재 Shadow revision과
+Active가 일치한다고 판정한다.
+
+```text
+STAT2.BUSY           = 0
+STAT2.SUCCESS_STICKY = 1
+STAT2.ERROR_STICKY   = 0
+STAT2.SHADOW_DIRTY   = 0
+STAT3.ACTIVE_VERSION = 기대한 새 version
+```
+
 ## 4. STAT 레지스터
 
 ### 4.1 STAT0 CORE_INFO (`0x080`)
@@ -536,6 +644,44 @@ CTL21/22의 `VIEW_ACTIVE=1`은 마지막으로 승인해 쓰려고 한 **설정 
 | `0x25` | ECHO_RISE_MASK | channel 31:0 Rise mask |
 | `0x26` | ECHO_FALL_MASK | channel 31:0 Fall mask |
 | `0x40..0x5F` | ECHO_CHANNEL_0..31 | 7:0 Rise count, 15:8 Fall count |
+
+#### 진단 0x1B PROC_PROFILE_STATE의 목적과 사용법
+
+`0x1B`는 설정값 자체를 다시 저장하는 Register가 아니라, 성공한 Active 설정이
+Processing-side Echo profile과 Rise/Fall VDMA geometry까지 전파되었는지 확인하는
+**적용 상태 snapshot**이다.
+
+| Bit | 이름 | 의미 |
+|---:|---|---|
+| 0 | ECHO_PROFILE_READY | Echo 지연 profile을 현재 사용할 수 있음 |
+| 1 | ECHO_PROFILE_BUSY | 채널별 Echo 지연 profile을 순차 전개 중 |
+| 2 | RISE_PROFILE_VALID | Rise HSIZE/VSIZE/STRIDE 계산 결과가 유효함 |
+| 3 | RISE_PROFILE_ENABLED | 현재 Active topology에서 Rise 출력 lane을 사용함 |
+| 4 | FALL_PROFILE_VALID | Fall HSIZE/VSIZE/STRIDE 계산 결과가 유효함 |
+| 5 | FALL_PROFILE_ENABLED | 현재 Active topology에서 Fall 출력 lane을 사용함 |
+| 6 | PROCESSING_PIPELINE_IDLE | Processing pipeline에 진행 중 데이터가 없음 |
+| 7 | GPX_AXIS_IDLE | GPX 결과 AXIS/CDC 출력에 진행 중 데이터가 없음 |
+| 8 | GPX_CDC_RESET_BUSY | GPX CDC reset handshake 진행 중; 1이면 새 운용 시작 금지 |
+| 15:9 | RESERVED | 0 |
+| 31:16 | ECHO_PROFILE_VERSION | 전개 완료한 Echo profile의 Active version |
+
+조회할 때 CTL23에 page 번호 `0x1B`만 쓰는 것이 아니라 CAPTURE bit를 더한
+`0x0000011B`를 쓴다. 그 뒤 `BUSY=0`, `VALID=1`, `ERROR=0`, `SEQUENCE` 증가를
+확인하고 CTL24를 읽는다.
+
+Echo simulation build에서 CTL20 적용 완료 조건은 다음과 같다.
+
+```text
+STAT2.SHADOW_DIRTY             = 0
+0x1B.ECHO_PROFILE_READY        = 1
+0x1B.ECHO_PROFILE_BUSY         = 0
+0x1B.ECHO_PROFILE_VERSION      = STAT3.ACTIVE_VERSION
+```
+
+Echo simulation이 합성에서 제외되면 READY=1, BUSY=0, VERSION=0이 정상이며,
+이때 CTL20은 기능 경로에서 사용되지 않는다. Rise/Fall은 version field가 따로
+없으므로 `VALID/ENABLED`와 `STAT3.ACTIVE_VERSION`, 그리고 필요하면
+`0x1C..0x1F` geometry를 함께 확인한다.
 
 #### TDC page
 

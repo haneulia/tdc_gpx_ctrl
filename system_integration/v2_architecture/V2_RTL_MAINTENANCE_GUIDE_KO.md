@@ -25,7 +25,7 @@
 | `*_c` | register에서 계산되는 조합값; clock domain을 넘기지 않음 |
 | `*_meta_r`, `*_sync_r` | 비동기 입력의 1단/2단 동기화 register |
 | `*_pulse` | 이름에 적힌 domain에서 정확히 1 clock인 사건 |
-| `*_sticky` | 원인을 보존하며 reset 또는 CLEAR_STATUS 전까지 유지 |
+| `*_sticky` | 원인을 보존하는 진단 register. 정확한 clear 소유자는 선언부와 CSR map을 확인 |
 | `*_count` | 사건 누적 횟수; 포화/순환 정책은 선언부 주석과 CSR 문서를 확인 |
 | `*_5ns_ticks` | 200 MHz clock 수가 아니라 주파수 독립적인 5 ns 시간 단위 |
 | `*_clks` | 이름에 적힌 clock domain의 실제 cycle 수 |
@@ -115,6 +115,46 @@ PROFILE_VERSION=`STAT3.ACTIVE_VERSION`과 SHADOW_DIRTY=0을 함께 확인한다.
 CTL20의 두 16-bit field에는 reserved bit가 없으므로 상위 bit를 적용 flag로
 재사용하지 않는다. Echo simulation이 비활성이면 CTL20은 기능 경로에서 쓰지
 않는다.
+
+설정 경로를 유지보수할 때는 다음 네 층을 같은 값으로 취급하지 않는다.
+
+```text
+Shadow 후보
+  -> COMMIT snapshot/검증/파생
+  -> Active source + Derived 값
+  -> GPX Active effective image
+  -> 외부 GPX 물리 readback
+```
+
+- CTL1..20 read는 Shadow 후보이며 실패한 COMMIT 값도 그대로 남는다.
+- STAT4..22는 CTL1..19의 승인 source, STAT23..31은 시간 변환·양자화 결과다.
+- CTL21/22 staging image는 다음 후보, active view는 마지막 성공 effective
+  image다. 둘 다 외부 Chip을 read한 값은 아니다.
+- CTL23/24 `11CCAAAA`만 실제 GPX bus readback이다.
+- COMMIT 도중 Shadow write는 진행 transaction을 바꾸지 않고 다음 후보가 되며
+  성공 후에도 `SHADOW_DIRTY=1`을 유지한다.
+
+전체 관계표와 software 판정식은 `V2_UNIFIED_CSR_REGISTER_MAP.md`의
+"3.9 Shadow, Active, Derived, Physical의 관계"를 단일 계약으로 사용한다.
+
+### 3.2 CLEAR_STATUS 유지보수 규칙
+
+`CLEAR_STATUS`는 설정이나 operation을 초기화하지 않고 CSR, Processing,
+TDC domain의 진단 이력을 지우는 command다. 다음 항목은 의도적으로 유지한다.
+
+- Shadow/Active/Derived 설정, Active version, RUN/ARM 상태;
+- `RECOVERY_REQUIRED`, `SHADOW_DIRTY`, COMMIT 완료 횟수;
+- Echo 최근 Shot snapshot과 profile/geometry live 상태;
+- IRQ_ENABLE/IRQ_FLAG/IRQ_MODE. IRQ_FLAG는 별도 W1C한다.
+
+현재 legacy `tdc_gpx_chip_ctrl`에는 clear 의미가 완전히 닫히지 않은 항목이 있다.
+`response_mismatch`, `raw_drop`, `init_cfg_coalesced`, `command_collision`,
+`bus_fatal` sticky와 controller `drain_cap`은 `CLEAR_STATUS`만으로 내려가지 않을
+수 있다. 따라서 이 항목을 고치기 전에는 `GPX_TRANSPORT` IRQ source가 clear 뒤
+남는 현상을 software 오류로 오판하지 않는다. 동시에 이는 최종 Sign-off 예외로
+남겨서는 안 되며, 각 sticky 소유 process에 clear를 연결하고 TDC lane 회귀를
+추가해야 한다. bit별 현재 동작은 CSR map의 "CLEAR_STATUS가 정확히 지우는 값"
+표를 따른다.
 
 ## 4. 패키지별 소유권
 
@@ -319,6 +359,12 @@ read-only다. Reg7.MTimer는 staging에 쓴 값이 아니라 CTL12에서 자동 
 image이지 물리 pin을 통한 readback은 아니므로, 실제 Chip 확인은 CTL23/24를
 사용한다.
 
+Reg7.MTimer write가 무시되어 저장조차 안 되는 것은 아니다. CTL22 staging
+write는 28 bit 전체를 기록하므로 `VIEW_ACTIVE=0` read에서는 software가 쓴
+MTimer가 보인다. 다만 COMMIT prepare에서 MTimer 13 bit만 CTL12 파생값으로
+대체하므로 `VIEW_ACTIVE=1`에는 자동 계산값이 보인다. staging과 active Reg7이
+다른 것은 이 계약에 따른 정상 상태다.
+
 목표 왕복시간만 바꾸면 CTL12만 수정한다. CTL21/22는 MTimer 이외의 GPX bit를
 수정할 때만 필요하다. 실제 Chip 상태 확인 절차는 다음과 같다.
 
@@ -374,8 +420,9 @@ IRQ_FLAG는 고정 STAT가 아니라 `0x108` 전용 IRQ Register다. 누적 faul
 CTL23/24 page `0x11..0x18`, `0x21..0x23`에 있다. `0x24`와 `0x40..0x5F`는
 가장 최근에 완료된 Echo Shot의 합계와 채널별 count snapshot이며, 다음 Shot
 snapshot으로 갱신된다. `CTL0.CLEAR_STATUS`는 native-domain sticky와 누적
-fault count를 0으로 만들지만, 최근 Shot snapshot과 IRQ_FLAG를 같은 의미로
-지우는 명령은 아니다. IRQ_FLAG는 별도 W1C해야 한다. GPX_TRANSPORT와
+fault count를 0으로 만들도록 설계된 명령이지만, 위 3.2에 기록한 legacy TDC
+sticky 예외가 현재 남아 있다. 최근 Shot snapshot과 IRQ_FLAG를 같은 의미로
+지우는 명령도 아니다. IRQ_FLAG는 별도 W1C해야 한다. GPX_TRANSPORT와
 GPX_DATA는 현재 세부 fault bitmap만 제공하고 source별 누적 count와 최초 발생
 Shot 번호는 제공하지 않는다.
 

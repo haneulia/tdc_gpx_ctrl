@@ -88,6 +88,20 @@ CAPTURE bit를 더해 CTL23에 쓴다. 예를 들어 Chip 1 Reg7은 `0x1D7`이�
 물리 read 중 RTL은 acquisition만 자동 pause/resume하며 COMMIT/RUN/ARM은
 완료될 때까지 거부한다.
 
+CTL21/22의 bit 구성과 접근 권한은 다음과 같다.
+
+| Register | Bit | 의미 |
+|---|---:|---|
+| CTL21 | 3:0 | GPX Register index 0..15 |
+| CTL21 | 8 | `0=staging 후보`, `1=마지막 성공 Active image` |
+| CTL21 | 31:9, 7:4 | Reserved, 반드시 0 |
+| CTL22 | 27:0 | 선택한 GPX 28-bit Register image |
+| CTL22 | 31:28 | Reserved, 반드시 0 |
+
+CTL22는 staging view에서 R/W, Active view에서 RO다. Reg7.MTimer를 staging에
+쓰면 저장되고 staging read에도 보이지만, COMMIT 때 CTL12 파생값으로 대체되므로
+Active/물리 Chip에 그 수동값이 적용되지는 않는다.
+
 W1S(Write One to Set/Start)는 write 의미다. 1을 쓰면 일회성 command를
 시작하고 0은 no-op이라는 뜻이며, Register가 read 불가라는 뜻은 아니다.
 CTL0은 read하면 0이고, CTL23 bit 8은 write할 때 CAPTURE W1S지만 read할 때는
@@ -160,6 +174,18 @@ Echo simulation이 합성에서 비활성이면 CTL20은 기능 경로에 사용
 CTL20의 두 16-bit field에는 현재 reserved bit가 없으므로 상위 bit를 적용
 상태로 재사용하지 않는다.
 
+진단 `0x1B`를 읽을 때는 CTL23에 CAPTURE를 포함한 `0x0000011B`를 쓴다.
+CTL23의 `BUSY=0`, `VALID=1`, `ERROR=0`, `SEQUENCE` 증가 뒤 CTL24를 읽는다.
+
+| Bit | 의미 |
+|---:|---|
+| 0 / 1 | Echo profile READY / BUSY |
+| 2 / 3 | Rise profile VALID / ENABLED |
+| 4 / 5 | Fall profile VALID / ENABLED |
+| 6 / 7 | Processing pipeline idle / GPX AXIS idle |
+| 8 | GPX CDC reset busy |
+| 31:16 | Echo profile Active version |
+
 ## 6. AXI 및 VDMA 계약
 
 - `m_axis_rise`, `m_axis_fall`: 합성 폭과 같은 `TDATA/TKEEP/TSTRB`
@@ -197,10 +223,18 @@ ISR은 `IRQ_FLAG & IRQ_ENABLE`이 0이 될 때까지 반복하여 모든 pending
 CTL23/24 indexed portal의 `0x11..0x18`, `0x21..0x23`에서 읽는다. `0x24`와
 `0x40..0x5F`는 누적 fault count가 아니라 가장 최근에 완료된 Echo Shot의
 합계와 채널별 count snapshot이며 다음 Shot snapshot으로 갱신된다.
-`CTL0.CLEAR_STATUS`는 Processing/Echo/TDC sticky와 누적 fault count를 원래
-clock domain에서 지우지만, 최근 Shot snapshot과 `IRQ_FLAG`를 같은 의미로
-지우는 명령은 아니다. 원인 level이 0으로 내려온 것을 `IRQ_STATUS`에서 확인한
-뒤 `IRQ_FLAG`에 처리 bit를 W1C한다.
+`CTL0.CLEAR_STATUS`는 Processing/Echo/TDC 진단 이력 clear를 각 원래 clock
+domain에 요청한다. Shadow/Active 설정, RUN/ARM, `RECOVERY_REQUIRED`,
+`SHADOW_DIRTY`, 최근 Echo Shot snapshot, `IRQ_FLAG`는 지우지 않는다. 원인
+level이 0으로 내려온 것을 `IRQ_STATUS`에서 확인한 뒤 `IRQ_FLAG`에 처리 bit를
+W1C한다.
+
+현재 legacy TDC lane의 response-mismatch/raw-drop/init-coalesced/command-
+collision/bus-fatal 및 controller drain-cap sticky는 `CLEAR_STATUS`만으로
+내려가지 않을 수 있는 Sign-off 보완 항목이다. 이 원인이 발생한 경우
+`GPX_TRANSPORT`가 남을 수 있다. bit별 현재 clear 범위와 reset 조건은
+`V2_UNIFIED_CSR_REGISTER_MAP.md`의 "CLEAR_STATUS가 정확히 지우는 값" 표를
+기준으로 한다.
 IRQ 8 `GPX_TRANSPORT`와 IRQ 9 `GPX_DATA`는 현재 세부 fault bitmap을 제공하지만
 source별 누적 count나 최초 발생 Shot 번호는 제공하지 않는다.
 

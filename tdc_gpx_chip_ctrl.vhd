@@ -95,8 +95,12 @@ entity tdc_gpx_chip_ctrl is
         -- and the bus has been externally flushed.
         i_cmd_force_reinit  : in  std_logic := '0';
         i_cmd_cfg_write     : in  std_logic;         -- IDLE -> CFG_WRITE
-        -- Round 7 B-5: SW-initiated sticky clear, forwarded to u_reg so its
-        -- s_err_req_overflow_r follows the same clear semantic as status_agg.
+        -- Round 7 B-5: SW-initiated sticky clear. In this legacy controller
+        -- it is currently forwarded only to u_reg, so it clears register
+        -- request overflow but not response-mismatch/raw-drop/init-coalesce/
+        -- coordinator quarantine stickies. The v2 CSR clear table records
+        -- this Sign-off gap explicitly; do not describe this port as a full
+        -- controller-status clear until every owning process consumes it.
         -- Default '0' keeps legacy instantiations unaffected.
         i_soft_clear        : in  std_logic := '0';
 
@@ -884,8 +888,10 @@ begin
                 -- s_err_bus_fatal_r is latched. Counter increments only while
                 -- in PH_RESP_DRAIN AND the bus has stabilised at idle. Any
                 -- activity (busy or rsp_pending) resets the counter. When
-                -- the window is reached, transition to PH_INIT. The existing
-                -- bus-fatal sticky remains set until software clears status.
+                -- the window is reached, transition to PH_INIT. Under the
+                -- current legacy wiring the bus-fatal sticky remains set
+                -- until hard reset; i_soft_clear does not yet reach this
+                -- coordinator-owned register.
                 -- If the bus never clears, the counter never reaches the
                 -- threshold and the module stays in quarantine as before.
                 if s_phase_r = PH_RESP_DRAIN and s_err_bus_fatal_r = '1' then
