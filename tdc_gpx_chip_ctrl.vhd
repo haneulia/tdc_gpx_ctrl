@@ -37,8 +37,8 @@
 --   The 1023-cycle cap covers every legal runtime div/ticks transaction;
 --   activity beyond that point is diagnosed as a stuck physical bus.
 --
--- PH_RESP_DRAIN auto-recover (Round 13 follow-up, audit 3번):
---   After s_err_bus_fatal_r is latched (quarantine counter reached 65K
+-- PH_RESP_DRAIN auto-recover (Round 13 follow-up, audit item 3):
+--   After s_bus_fatal_active_r is asserted (quarantine counter reached 65K
 --   with bus still active), a secondary observer tracks how long the bus
 --   has been stably idle. If it stays idle for g_BUS_IDLE_STABLE_CLKS
 --   cycles, the phase auto-
@@ -63,9 +63,10 @@ entity tdc_gpx_chip_ctrl is
         g_POWERUP_CLKS      : positive := c_DEFAULT_POWERUP_CLKS;
         g_RECOVERY_CLKS     : positive := c_DEFAULT_RECOVERY_CLKS;
         g_ALU_PULSE_CLKS    : positive := c_DEFAULT_ALU_PULSE_CLKS;
-        -- Round 13 follow-up P4 (audit 3번): bus-idle stability window for
-        -- auto-recover from PH_RESP_DRAIN quarantine. After s_err_bus_fatal_r
-        -- latches, the bus must stay idle (busy='0' AND rsp_pending='0') for
+        -- Round 13 follow-up P4 (audit item 3): bus-idle stability window for
+        -- auto-recover from PH_RESP_DRAIN quarantine. After the live
+        -- bus-fatal state asserts, the bus must stay idle
+        -- (busy='0' AND rsp_pending='0') for
         -- this many consecutive cycles before auto-transitioning to PH_INIT.
         -- Production top derives this count from a physical-time generic and
         -- g_TDC_CLK_MHZ. Standalone default is 4096 clocks at 200 MHz.
@@ -95,12 +96,9 @@ entity tdc_gpx_chip_ctrl is
         -- and the bus has been externally flushed.
         i_cmd_force_reinit  : in  std_logic := '0';
         i_cmd_cfg_write     : in  std_logic;         -- IDLE -> CFG_WRITE
-        -- Round 7 B-5: SW-initiated sticky clear. In this legacy controller
-        -- it is currently forwarded only to u_reg, so it clears register
-        -- request overflow but not response-mismatch/raw-drop/init-coalesce/
-        -- coordinator quarantine stickies. The v2 CSR clear table records
-        -- this Sign-off gap explicitly; do not describe this port as a full
-        -- controller-status clear until every owning process consumes it.
+        -- SW-initiated diagnostic clear. This clears sticky history only;
+        -- active FSMs, FIFO contents, pending requests, and quarantine control
+        -- state are preserved. A new fault on the same clock wins over clear.
         -- Default '0' keeps legacy instantiations unaffected.
         i_soft_clear        : in  std_logic := '0';
 
@@ -211,8 +209,10 @@ entity tdc_gpx_chip_ctrl is
         -- Investigate cmd_arb (source serialization failure), not the
         -- dropped command itself.
         o_err_cmd_collision  : out std_logic;
-        -- Round 13 axis 2: bus fatal sticky (PH_RESP_DRAIN quarantine cap
-        -- reached AND bus still stuck). In-band recovery impossible.
+        -- Round 13 axis 2: bus fatal diagnostic sticky (PH_RESP_DRAIN
+        -- quarantine cap reached while the bus is still active). The live
+        -- quarantine can recover only after the idle-stable observer passes
+        -- or an external reset/reinit is performed; CLEAR_STATUS cannot do it.
         o_err_bus_fatal        : out std_logic
     );
 end entity tdc_gpx_chip_ctrl;
@@ -392,16 +392,30 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: FIFO credit violation
+    signal s_rsp_mismatch_event_c : std_logic := '0';
+    signal s_raw_drop_event_c     : std_logic := '0';
+    signal s_drain_cap_event_c    : std_logic := '0';
+    signal s_cmd_collision_event_c : std_logic := '0';
+    signal s_bus_fatal_event_c    : std_logic := '0';
+    signal s_raw_push_c           : std_logic := '0';
+    signal s_raw_control_c        : std_logic := '0';
+    signal s_raw_pop_c            : std_logic := '0';
+    signal s_raw_count_after_pop_c : natural range 0 to c_RAW_FIFO_DEPTH := 0;
     signal s_drain_done_faulted   : std_logic;  -- Round 13 axis 1a: from chip_run
-    -- Round 13 axis 2: bus fatal sticky.
+    -- Round 13 axis 2: software-visible bus fatal sticky.
     -- Set when PH_RESP_DRAIN quarantine reaches saturation (~65K cycles
-    -- @200MHz = ~327us) with bus still busy/rsp_pending. Means in-band
-    -- recovery is impossible; SW must hard-reset or power-cycle.
+    -- @200MHz = ~327us) with bus still busy/rsp_pending. Command-driven
+    -- recovery cannot proceed while the bus remains active. A later stable
+    -- idle window may auto-reinitialize it; external reset/reinit is fallback.
     -- OR-folded into top-level status.err_fatal so it joins the
     -- err_handler fatal path that SW already watches.
     signal s_err_bus_fatal_r        : std_logic := '0';
-    -- Round 13 follow-up (audit 3번): bounded auto-recover from quarantine.
-    -- After s_err_bus_fatal_r is set, if the bus later stabilises at idle
+    -- Functional quarantine state is intentionally separate from the sticky.
+    -- CLEAR_STATUS may erase post-mortem history only after the live fatal
+    -- condition has recovered; it must never release PH_RESP_DRAIN by itself.
+    signal s_bus_fatal_active_r     : std_logic := '0';
+    -- Round 13 follow-up (audit item 3): bounded auto-recover from quarantine.
+    -- After s_bus_fatal_active_r is set, if the bus later stabilises at idle
     -- (busy='0' AND rsp_pending='0') for g_BUS_IDLE_STABLE_CLKS consecutive
     -- cycles, auto-transition to PH_INIT. This reclaims liveness when the
     -- bus recovers on its own without requiring SW force_reinit, while
@@ -445,6 +459,7 @@ begin
             i_rst_n         => s_sub_rst_n,
             i_start         => s_init_start,
             i_cfg_write_req => s_init_cfg_write,
+            i_soft_clear    => i_soft_clear,
             i_cfg_image     => s_cfg_image_snap_r,
             o_done          => s_init_done,
             o_timeout       => s_init_timeout,
@@ -632,6 +647,59 @@ begin
     -- =========================================================================
     -- Coordinator FSM: dispatch to sub-FSMs
     -- =========================================================================
+    -- Diagnostic event predicates are named explicitly so fault-injection
+    -- regression can exercise every safety-net sticky without disturbing the
+    -- functional FSM state. They feed only diagnostic flops, not data/control.
+    s_cmd_collision_event_c <= '1' when
+        s_phase_r = PH_IDLE and (
+            (i_cmd_start and i_cmd_cfg_write) = '1' or
+            (i_cmd_start and (i_cmd_reg_read or i_cmd_reg_write)) = '1' or
+            (i_cmd_cfg_write and (i_cmd_reg_read or i_cmd_reg_write)) = '1' or
+            (i_cmd_reg_read and i_cmd_reg_write) = '1')
+        else '0';
+
+    s_drain_cap_event_c <= '1' when
+        s_phase_r = PH_RESP_DRAIN and
+        s_drain_cnt_r = to_unsigned(
+            c_RESP_DRAIN_GRACE_CLKS, s_drain_cnt_r'length) and
+        (i_bus_busy = '1' or i_bus_rsp_pending = '1')
+        else '0';
+
+    s_bus_fatal_event_c <= '1' when
+        s_drain_cap_event_c = '1' and
+        s_drain_quarantine_cnt_r = x"FFFF" and
+        s_bus_fatal_active_r = '0'
+        else '0';
+
+    -- Coordinator-owned sticky history. CLEAR_STATUS never changes the phase
+    -- or counters. A live/new fault is assigned after clear and therefore wins.
+    p_coordinator_fault_status : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_err_drain_cap_r     <= '0';
+                s_err_cmd_collision_r <= '0';
+                s_err_bus_fatal_r     <= '0';
+            else
+                if i_soft_clear = '1' then
+                    s_err_drain_cap_r     <= '0';
+                    s_err_cmd_collision_r <= '0';
+                    s_err_bus_fatal_r     <= '0';
+                end if;
+                if s_drain_cap_event_c = '1' then
+                    s_err_drain_cap_r <= '1';
+                end if;
+                if s_cmd_collision_event_c = '1' then
+                    s_err_cmd_collision_r <= '1';
+                end if;
+                if s_bus_fatal_event_c = '1' or
+                   s_bus_fatal_active_r = '1' then
+                    s_err_bus_fatal_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_coordinator_fault_status;
+
     p_coordinator : process(i_clk)
     begin
         if rising_edge(i_clk) then
@@ -646,9 +714,7 @@ begin
                 s_n_drain_cap_snap_r <= (others => '0');
                 s_bus_clk_div_snap_r <= to_unsigned(2, 6);
                 s_bus_ticks_snap_r   <= to_unsigned(5, 3);
-                s_err_drain_cap_r    <= '0';
-                s_err_cmd_collision_r <= '0';
-                s_err_bus_fatal_r        <= '0';
+                s_bus_fatal_active_r     <= '0';
                 s_drain_quarantine_cnt_r <= (others => '0');
                 s_bus_idle_stable_cnt_r  <= (others => '0');
                 s_force_reinit_start_pending_r <= '0';
@@ -693,10 +759,7 @@ begin
                         --     directly (should never happen, but caught)
                         -- A fire of this sticky is a RED FLAG: investigate
                         -- cmd_arb, not the dropped command itself.
-                        if (i_cmd_start and i_cmd_cfg_write) = '1'
-                           or (i_cmd_start and (i_cmd_reg_read or i_cmd_reg_write)) = '1'
-                           or (i_cmd_cfg_write and (i_cmd_reg_read or i_cmd_reg_write)) = '1' then
-                            s_err_cmd_collision_r <= '1';
+                        if s_cmd_collision_event_c = '1' then
                             -- synthesis translate_off
                             assert false
                                 report "chip_ctrl: multiple commands in PH_IDLE (lower priority dropped)"
@@ -777,7 +840,7 @@ begin
                         if i_bus_busy = '0' and i_bus_rsp_pending = '0'
                            and s_drain_cnt_r >= to_unsigned(
                                3, s_drain_cnt_r'length)
-                           and s_err_bus_fatal_r = '0' then
+                           and s_bus_fatal_active_r = '0' then
                             if s_drain_to_init_r = '1' then
                                 -- synthesis translate_off
                                 assert false
@@ -840,11 +903,10 @@ begin
                                         severity warning;
                                     -- synthesis translate_on
                                 end if;
-                                s_err_drain_cap_r <= '1';
                                 if s_drain_quarantine_cnt_r /= x"FFFF" then
                                     s_drain_quarantine_cnt_r <=
                                         s_drain_quarantine_cnt_r + 1;
-                                elsif s_err_bus_fatal_r = '0' then
+                                elsif s_bus_fatal_active_r = '0' then
                                     -- Round 13 axis 2: at quarantine cap AND
                                     -- bus still stuck → escalate to fatal.
                                     -- This is the "dead-end" signal for SW:
@@ -863,12 +925,12 @@ begin
                                                " skid_valid=" & std_logic'image(s_rsp_sk_tvalid)
                                         severity warning;
                                     -- synthesis translate_on
-                                    s_err_bus_fatal_r <= '1';
+                                    s_bus_fatal_active_r <= '1';
                                 end if;
                                 -- At x"FFFF": saturate in place. No in-band
                                 -- escalation — but fatal sticky above is now
                                 -- set the first time we reach saturation.
-                            elsif s_err_bus_fatal_r = '0' then
+                            elsif s_bus_fatal_active_r = '0' then
                                 if s_drain_to_init_r = '1' then
                                     s_phase_r    <= PH_INIT;
                                     s_init_start <= '1';
@@ -884,17 +946,17 @@ begin
 
                 end case;
 
-                -- Round 13 follow-up (audit 3번): bounded auto-recover after
-                -- s_err_bus_fatal_r is latched. Counter increments only while
+                -- Round 13 follow-up (audit item 3): bounded auto-recover after
+                -- s_bus_fatal_active_r is latched. Counter increments only while
                 -- in PH_RESP_DRAIN AND the bus has stabilised at idle. Any
                 -- activity (busy or rsp_pending) resets the counter. When
-                -- the window is reached, transition to PH_INIT. Under the
-                -- current legacy wiring the bus-fatal sticky remains set
-                -- until hard reset; i_soft_clear does not yet reach this
-                -- coordinator-owned register.
+                -- the window is reached, transition to PH_INIT. The
+                -- diagnostic sticky remains set after recovery until
+                -- CLEAR_STATUS, while the functional active state is released.
                 -- If the bus never clears, the counter never reaches the
                 -- threshold and the module stays in quarantine as before.
-                if s_phase_r = PH_RESP_DRAIN and s_err_bus_fatal_r = '1' then
+                if s_phase_r = PH_RESP_DRAIN and
+                   s_bus_fatal_active_r = '1' then
                     if i_bus_busy = '0' and i_bus_rsp_pending = '0' then
                         if s_bus_idle_stable_cnt_r <
                            to_unsigned(g_BUS_IDLE_STABLE_CLKS,
@@ -913,6 +975,7 @@ begin
                             s_drain_to_init_r        <= '0';
                             s_drain_quarantine_cnt_r <= (others => '0');
                             s_bus_idle_stable_cnt_r  <= (others => '0');
+                            s_bus_fatal_active_r     <= '0';
                         end if;
                     else
                         s_bus_idle_stable_cnt_r <= (others => '0');
@@ -972,6 +1035,7 @@ begin
                     s_drain_cnt_r            <= (others => '0');
                     s_drain_to_init_r        <= '0';
                     s_drain_quarantine_cnt_r <= (others => '0');
+                    s_bus_fatal_active_r     <= '0';
                     s_force_reinit_start_pending_r <= '1';
                 end if;
             end if;
@@ -1062,6 +1126,45 @@ begin
     o_puresn         <= s_init_puresn;
     o_alutrigger     <= s_run_alutrigger;
 
+    -- Raw FIFO credit event uses the same pop-before-push occupancy contract
+    -- as p_raw_fifo. The named predicate is diagnostic-only and is also the
+    -- stable fault-injection point for the CLEAR_STATUS regression.
+    s_raw_pop_c <= '1' when
+        s_raw_count_r > 0 and i_m_raw_axis_tready = '1' else '0';
+    s_raw_count_after_pop_c <= s_raw_count_r - 1 when s_raw_pop_c = '1'
+                               else s_raw_count_r;
+    s_raw_push_c <= s_run_drain_done or s_run_ififo1_beat or s_run_raw_valid;
+    s_raw_control_c <= s_run_drain_done or s_run_ififo1_beat;
+    s_raw_drop_event_c <= '1' when s_raw_push_c = '1' and (
+        (s_raw_control_c = '1' and
+         s_raw_count_after_pop_c >= c_RAW_FIFO_DEPTH) or
+        (s_raw_control_c = '0' and
+         s_raw_count_after_pop_c >= c_RAW_DATA_LIMIT))
+        else '0';
+
+    -- Sub-FSM diagnostics historically clear on a real sub-FSM reset as well
+    -- as CLEAR_STATUS. FIFO contents and request state are owned elsewhere.
+    p_subsystem_fault_status : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if s_sub_rst_n = '0' then
+                s_err_rsp_mismatch_r <= '0';
+                s_err_raw_overflow_r <= '0';
+            else
+                if i_soft_clear = '1' then
+                    s_err_rsp_mismatch_r <= '0';
+                    s_err_raw_overflow_r <= '0';
+                end if;
+                if s_rsp_mismatch_event_c = '1' then
+                    s_err_rsp_mismatch_r <= '1';
+                end if;
+                if s_raw_drop_event_c = '1' then
+                    s_err_raw_overflow_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_subsystem_fault_status;
+
     -- AXI-Stream raw word FIFO. Pop is applied before push in the variable
     -- count snapshot, so a full FIFO can still sustain one pop + one push in
     -- the same cycle. Memory contents are not reset; count=0 defines empty.
@@ -1081,7 +1184,6 @@ begin
                 s_raw_wr_ptr_r <= 0;
                 s_raw_count_r  <= 0;
                 s_raw_hold_busy <= '0';
-                s_err_raw_overflow_r <= '0';
             else
                 v_rd_ptr := s_raw_rd_ptr_r;
                 v_wr_ptr := s_raw_wr_ptr_r;
@@ -1149,7 +1251,6 @@ begin
                         end if;
                         v_count := v_count + 1;
                     else
-                        s_err_raw_overflow_r <= '1';
                         -- synthesis translate_off
                         assert false
                             report "chip_ctrl: raw FIFO credit violation (control="
@@ -1250,41 +1351,40 @@ begin
     -- Checks tuser[0]=RW and tuser[4:1]=addr against the active sub-FSM's
     -- last dispatched request.  Covers INIT, CFG_WRITE, RUN, and REG.
     -- =========================================================================
-    p_rsp_check : process(i_clk)
+    p_rsp_event : process(all)
         variable v_exp_rw   : std_logic;
         variable v_exp_addr : std_logic_vector(3 downto 0);
         variable v_check    : boolean;
     begin
-        if rising_edge(i_clk) then
-            if s_sub_rst_n = '0' then
-                s_err_rsp_mismatch_r <= '0';
-            elsif s_bus_rsp_fire = '1' then
-                v_check := false;
-                case s_phase_r is
-                    when PH_INIT | PH_CFG_WRITE =>
-                        v_exp_rw   := s_init_bus_rw;
-                        v_exp_addr := s_init_bus_addr;
-                        v_check    := true;
-                    when PH_RUN =>
-                        -- Check ALL run responses including burst (addr/rw stay constant)
-                        v_exp_rw   := s_run_bus_rw;
-                        v_exp_addr := s_run_bus_addr;
-                        v_check    := true;
-                    when PH_REG =>
-                        v_exp_rw   := s_reg_bus_rw;
-                        v_exp_addr := s_reg_bus_addr;
-                        v_check    := true;
-                    when others =>
-                        null;
-                end case;
-                if v_check then
-                    if s_rsp_sk_tuser(0) /= v_exp_rw
-                       or s_rsp_sk_tuser(4 downto 1) /= v_exp_addr then
-                        s_err_rsp_mismatch_r <= '1';
-                    end if;
-                end if;
+        v_exp_rw := '0';
+        v_exp_addr := (others => '0');
+        v_check := false;
+        s_rsp_mismatch_event_c <= '0';
+
+        if s_bus_rsp_fire = '1' then
+            case s_phase_r is
+                when PH_INIT | PH_CFG_WRITE =>
+                    v_exp_rw   := s_init_bus_rw;
+                    v_exp_addr := s_init_bus_addr;
+                    v_check    := true;
+                when PH_RUN =>
+                    -- Check ALL run responses including burst (addr/rw stay constant)
+                    v_exp_rw   := s_run_bus_rw;
+                    v_exp_addr := s_run_bus_addr;
+                    v_check    := true;
+                when PH_REG =>
+                    v_exp_rw   := s_reg_bus_rw;
+                    v_exp_addr := s_reg_bus_addr;
+                    v_check    := true;
+                when others =>
+                    null;
+            end case;
+            if v_check and (
+                s_rsp_sk_tuser(0) /= v_exp_rw or
+                s_rsp_sk_tuser(4 downto 1) /= v_exp_addr) then
+                s_rsp_mismatch_event_c <= '1';
             end if;
         end if;
-    end process p_rsp_check;
+    end process p_rsp_event;
 
 end architecture coordinator;

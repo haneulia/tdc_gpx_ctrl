@@ -124,6 +124,9 @@ begin
             run_timeout_cause_r <= (others => (others => '0'));
             irq_transport_r <= '0';
         elsif rising_edge(i_clk) then
+            v_transport_fault := '0';
+            -- CLEAR_STATUS는 이력만 지우며 진행 중 portal transaction은
+            -- 유지한다. Pulse형 새 사건은 같은 clock의 clear보다 우선한다.
             if i_clear_status = '1' then
                 drain_timeout_seen_r <= (others => '0');
                 sequence_seen_r <= (others => '0');
@@ -134,25 +137,11 @@ begin
             else
                 v_transport_fault := register_service_error_seen_r;
                 for lane in 0 to G_BUILD_CONFIG.num_chips - 1 loop
-                    if i_lane_faults(lane).drain_timeout_pulse = '1' then
-                        drain_timeout_seen_r(lane) <= '1';
-                    end if;
-                    if i_lane_faults(lane).sequence_pulse = '1' then
-                        sequence_seen_r(lane) <= '1';
-                    end if;
-                    if i_lane_faults(lane).run_timeout_pulse = '1' then
-                        run_timeout_seen_r(lane) <= '1';
-                        run_timeout_cause_r(lane) <=
-                            i_lane_faults(lane).run_timeout_cause;
-                    end if;
                     v_transport_fault := v_transport_fault or
-                        i_lane_faults(lane).drain_timeout_pulse or
-                        i_lane_faults(lane).sequence_pulse or
                         i_lane_faults(lane).response_mismatch_sticky or
                         i_lane_faults(lane).raw_drop_sticky or
                         i_lane_faults(lane).drain_cap_sticky or
                         i_lane_faults(lane).register_overflow_sticky or
-                        i_lane_faults(lane).run_timeout_pulse or
                         i_lane_faults(lane).init_cfg_coalesced_sticky or
                         i_lane_faults(lane).command_collision_sticky or
                         i_lane_faults(lane).bus_fatal_sticky or
@@ -160,9 +149,32 @@ begin
                         sequence_seen_r(lane) or
                         run_timeout_seen_r(lane);
                 end loop;
-                if v_transport_fault = '1' then
-                    irq_transport_r <= '1';
+            end if;
+
+            -- Pulse event는 clear와 겹쳐도 보존한다. 반면 level sticky는
+            -- owner가 같은 edge에서 clear되기 전의 이전 값을 보이므로,
+            -- clear clock에는 위 old-level 집계에서 의도적으로 제외한다.
+            for lane in 0 to G_BUILD_CONFIG.num_chips - 1 loop
+                if i_lane_faults(lane).drain_timeout_pulse = '1' then
+                    drain_timeout_seen_r(lane) <= '1';
                 end if;
+                if i_lane_faults(lane).sequence_pulse = '1' then
+                    sequence_seen_r(lane) <= '1';
+                end if;
+                if i_lane_faults(lane).run_timeout_pulse = '1' then
+                    run_timeout_seen_r(lane) <= '1';
+                    run_timeout_cause_r(lane) <=
+                        i_lane_faults(lane).run_timeout_cause;
+                end if;
+                if i_lane_faults(lane).drain_timeout_pulse = '1' or
+                   i_lane_faults(lane).sequence_pulse = '1' or
+                   i_lane_faults(lane).run_timeout_pulse = '1' then
+                    v_transport_fault := '1';
+                end if;
+            end loop;
+
+            if v_transport_fault = '1' then
+                irq_transport_r <= '1';
             end if;
 
             case state_r is

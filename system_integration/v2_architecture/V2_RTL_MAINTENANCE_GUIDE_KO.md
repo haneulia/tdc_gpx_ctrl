@@ -147,14 +147,21 @@ TDC domain의 진단 이력을 지우는 command다. 다음 항목은 의도적�
 - Echo 최근 Shot snapshot과 profile/geometry live 상태;
 - IRQ_ENABLE/IRQ_FLAG/IRQ_MODE. IRQ_FLAG는 별도 W1C한다.
 
-현재 legacy `tdc_gpx_chip_ctrl`에는 clear 의미가 완전히 닫히지 않은 항목이 있다.
-`response_mismatch`, `raw_drop`, `init_cfg_coalesced`, `command_collision`,
-`bus_fatal` sticky와 controller `drain_cap`은 `CLEAR_STATUS`만으로 내려가지 않을
-수 있다. 따라서 이 항목을 고치기 전에는 `GPX_TRANSPORT` IRQ source가 clear 뒤
-남는 현상을 software 오류로 오판하지 않는다. 동시에 이는 최종 Sign-off 예외로
-남겨서는 안 되며, 각 sticky 소유 process에 clear를 연결하고 TDC lane 회귀를
-추가해야 한다. bit별 현재 동작은 CSR map의 "CLEAR_STATUS가 정확히 지우는 값"
-표를 따른다.
+K1-1에서 legacy TDC lane의 `response_mismatch`, `raw_drop`, controller
+`drain_cap`, Register request overflow, `init_cfg_coalesced`,
+`command_collision`, `bus_fatal` 이력까지 각 소유 process가 `CLEAR_STATUS`를
+직접 소비하도록 닫았다. 모든 sticky process는 `clear 먼저, 같은 clock의 새 사건
+나중` 순서이므로 새 fault가 우선한다. 이 규칙을 바꾸면 순간 fault가 유실된다.
+
+`bus_fatal`은 `s_bus_fatal_active_r` 기능 상태와 `s_err_bus_fatal_r` 진단 이력을
+반드시 분리한다. `CLEAR_STATUS`는 후자만 지울 수 있고, 전자는 안정된 bus-idle
+복구 또는 reset/reinit에서만 내려간다. 따라서 살아 있는 치명 오류를 software가
+숨기거나 격리를 풀 수 없다. 비트별 의미와 software clear 순서는 CSR map의
+"CLEAR_STATUS가 정확히 지우는 값"을 따른다. 소유자 회귀는 다음 명령으로 실행한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File system_integration/v2/scripts/run_v2_gpx_clear_status.ps1
+```
 
 ## 4. 패키지별 소유권
 
@@ -420,9 +427,10 @@ IRQ_FLAG는 고정 STAT가 아니라 `0x108` 전용 IRQ Register다. 누적 faul
 CTL23/24 page `0x11..0x18`, `0x21..0x23`에 있다. `0x24`와 `0x40..0x5F`는
 가장 최근에 완료된 Echo Shot의 합계와 채널별 count snapshot이며, 다음 Shot
 snapshot으로 갱신된다. `CTL0.CLEAR_STATUS`는 native-domain sticky와 누적
-fault count를 0으로 만들도록 설계된 명령이지만, 위 3.2에 기록한 legacy TDC
-sticky 예외가 현재 남아 있다. 최근 Shot snapshot과 IRQ_FLAG를 같은 의미로
-지우는 명령도 아니다. IRQ_FLAG는 별도 W1C해야 한다. GPX_TRANSPORT와
+fault count를 각 소유 clock에서 0으로 만든다. 같은 clock에 새 사건이 겹치거나
+살아 있는 level fault가 있으면 해당 source는 즉시 다시 1이 된다. 최근 Shot
+snapshot과 IRQ_FLAG를 지우는 명령은 아니며 IRQ_FLAG는 별도 W1C해야 한다.
+GPX_TRANSPORT와
 GPX_DATA는 현재 세부 fault bitmap만 제공하고 source별 누적 count와 최초 발생
 Shot 번호는 제공하지 않는다.
 

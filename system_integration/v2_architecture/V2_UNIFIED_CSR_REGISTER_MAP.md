@@ -141,7 +141,7 @@ IRQ_FLAG에 W1C해야 한다. `SOFT_RESET_REQUEST`도 이 block 자체를 reset�
 | 진단 `0x20 ECHO_FLAGS` | `[4:2]` outside-window/overlap/profile-not-ready sticky, `[7:6]` timeout/aborted sticky | `[0]` window active, `[1]` simulation active, `[5]` 최근 snapshot valid |
 | 진단 `0x21..0x23` | Echo outside-window/overlap/profile-not-ready 누적 count | 해당 없음 |
 | 진단 `0x80 TDC_SUMMARY` | `[15]` 물리 GPX Register-read error sticky | `[14:0]` mask/ready/run/active live state |
-| 진단 `0x88..0x8B TDC_LANE_FAULT_n` | `[0]` drain-timeout 이력, `[1]` sequence 이력, `[5]` Register request overflow, `[6]` run-timeout 이력, `[9:7]` timeout cause | 아래 TDC lane 주의사항 참조 |
+| 진단 `0x88..0x8B TDC_LANE_FAULT_n` | `[0]` drain-timeout, `[1]` sequence, `[2]` response mismatch, `[3]` raw drop, `[4]` drain cap, `[5]` Register request overflow, `[6]` run-timeout, `[9:7]` timeout cause, `[10]` init/config coalesced, `[11]` command collision, `[12]` bus fatal 이력 | 진행 중 FSM/FIFO/pending 요청과 살아 있는 bus-fatal 격리 상태; 살아 있는 원인은 clear 뒤 다시 bit를 세움 |
 
 다음 값은 `CLEAR_STATUS`로 지우지 않는다.
 
@@ -153,24 +153,18 @@ IRQ_FLAG에 W1C해야 한다. `SOFT_RESET_REQUEST`도 이 block 자체를 reset�
 - `IRQ_ENABLE`, `IRQ_FLAG`, `IRQ_MODE`. `IRQ_FLAG`는 원인 level을 먼저 내린 뒤
   별도로 W1C한다.
 
-현재 TDC lane에는 Sign-off 전에 닫아야 할 clear 의미 불일치가 있다.
-`TDC_LANE_FAULT_n[2] response mismatch`, `[3] raw drop`, `[10] init/config
-coalesced`, `[11] command collision`, `[12] bus fatal`은 직접 소유한 legacy
-sticky가 `CLEAR_STATUS`를 소비하지 않는다. `[4] drain cap`도 물리 output-cap
-성분은 지워지지만 controller quarantine-cap 성분은 남을 수 있다. 따라서 이
-원인 중 하나가 발생한 뒤에는 `IRQ_STATUS[8] GPX_TRANSPORT`가 내려가지 않을 수
-있다. 현 RTL 기준 복구는 다음과 같다.
+K1-1부터 `TDC_LANE_FAULT_n[0:12]`의 모든 이력 field는 각 실제 소유 process에서
+`CLEAR_STATUS`를 소비한다. 단, 이 명령은 진행 중인 Chip 초기화, Register 요청,
+IFIFO/FIFO 내용, acquisition FSM 또는 bus-fatal 격리 상태를 취소하지 않는다.
+clear와 새 fault가 같은 TDC clock에 겹치면 **새 fault가 우선**되어 해당 bit가
+1로 남는다. 이는 새 사건을 잃지 않기 위한 의도된 우선순위다.
 
-| TDC lane fault | 현재 내려가는 조건 |
-|---|---|
-| `[2]`, `[3]`, `[10]` | `SOFT_RESET_REQUEST`가 실제 TDC-domain reset으로 전달되거나 hard reset |
-| `[4]` controller cap, `[11]`, `[12]` | hard reset |
-
-이 표는 현재 구현을 숨김없이 기록한 것이다. 최종 Sign-off 계약은 해당 legacy
-sticky에도 `CLEAR_STATUS`를 연결하고 회귀로 확인한 뒤, 위 예외 표를 삭제하는
-방향이 권장된다. clear와 새 fault가 같은 소유 clock에 겹치면 새 fault가
-우선되어 sticky/count가 0이 아니라 1로 남을 수 있다. 이는 새 사건을 잃지 않기
-위한 의도된 우선순위다.
+`[12] bus fatal`은 특히 기능 상태와 진단 이력을 분리한다. 살아 있는 bus-fatal
+격리 상태는 `CLEAR_STATUS`로 해제되지 않으며, 안정된 bus-idle 복구 또는 실제
+reset/reinit만 기능 상태를 해제한다. 기능 상태가 살아 있으면 `[12]`는 clear와
+동시에 다시 1이 된다. 기능 복구 뒤에는 `CLEAR_STATUS`로 post-mortem 진단 이력만
+지울 수 있다. 이후 `IRQ_STATUS[8] GPX_TRANSPORT=0`을 확인하고 `IRQ_FLAG[8]`을
+W1C한다.
 
 RUN/STOP/ARM/DISARM은 저장되는 설정 bit가 아니라 Processing domain으로
 전달되는 일회성 event이다. CSR-to-Processing mailbox가 이전 명령의 ACK를

@@ -229,10 +229,11 @@ domain에 요청한다. Shadow/Active 설정, RUN/ARM, `RECOVERY_REQUIRED`,
 level이 0으로 내려온 것을 `IRQ_STATUS`에서 확인한 뒤 `IRQ_FLAG`에 처리 bit를
 W1C한다.
 
-현재 legacy TDC lane의 response-mismatch/raw-drop/init-coalesced/command-
-collision/bus-fatal 및 controller drain-cap sticky는 `CLEAR_STATUS`만으로
-내려가지 않을 수 있는 Sign-off 보완 항목이다. 이 원인이 발생한 경우
-`GPX_TRANSPORT`가 남을 수 있다. bit별 현재 clear 범위와 reset 조건은
+K1-1부터 legacy TDC lane의 response-mismatch, raw-drop, controller drain-cap,
+Register request overflow, init-coalesced, command-collision, bus-fatal 진단 이력은
+모두 `CLEAR_STATUS`를 소비한다. 같은 TDC clock에 새 fault가 겹치면 새 fault가
+우선한다. 살아 있는 bus-fatal 격리 상태는 clear로 해제되지 않으며, 원인이
+복구된 뒤에만 post-mortem sticky를 지울 수 있다. bit별 범위와 reset 조건은
 `V2_UNIFIED_CSR_REGISTER_MAP.md`의 "CLEAR_STATUS가 정확히 지우는 값" 표를
 기준으로 한다.
 IRQ 8 `GPX_TRANSPORT`와 IRQ 9 `GPX_DATA`는 현재 세부 fault bitmap을 제공하지만

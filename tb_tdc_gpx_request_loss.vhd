@@ -2,6 +2,12 @@
 -- tb_tdc_gpx_request_loss.vhd
 -- Verifies the consolidated register-request loss diagnostics.
 -- =============================================================================
+-- 테스트 자산 목적: GPX Register 요청 손실 진단과 pending queue를 검증한다.
+-- 핵심 검증 계약: write-wins, CLEAR_STATUS, 같은 clock 새 overflow 우선이다.
+-- 관련 RTL: tdc_gpx_cmd_arb, tdc_gpx_chip_reg.
+-- 실행 회귀: system_integration/v2/scripts/run_v2_gpx_clear_status.ps1
+-- 유지보수 주의: sticky clear가 active/pending transaction을 지우면 안 된다.
+-- =============================================================================
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -158,9 +164,30 @@ begin
         assert s_reg_req_overflow = '0'
             report "chip_reg request-loss sticky did not clear"
             severity failure;
+
+        -- clear와 새 request-loss가 같은 clock이면 새 fault가 우선한다.
+        wait until falling_edge(s_clk);
+        s_reg_soft_clear  <= '1';
+        s_reg_start_read  <= '1';
+        s_reg_start_write <= '1';
+        wait until rising_edge(s_clk);
+        wait for 1 ns;
+        assert s_reg_req_overflow = '1'
+            report "chip_reg same-cycle overflow event lost to CLEAR_STATUS"
+            severity failure;
+
+        wait until falling_edge(s_clk);
+        s_reg_start_read  <= '0';
+        s_reg_start_write <= '0';
+        wait until rising_edge(s_clk);
+        wait for 1 ns;
+        assert s_reg_req_overflow = '0'
+            report "chip_reg request-loss sticky did not clear after retry"
+            severity failure;
         s_reg_soft_clear <= '0';
 
         report "REQUEST_LOSS_DIAGNOSTIC_COLLAPSE PASS" severity note;
+        report "LIDAR_V2_K11_REGISTER_STICKY_CLEAR_PASS" severity note;
         std.env.stop;
         wait;
     end process p_stimulus;

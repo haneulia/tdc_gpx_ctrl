@@ -57,6 +57,9 @@ entity tdc_gpx_chip_init is
         -- Control from coordinator
         i_start          : in  std_logic;        -- begin powerup init sequence
         i_cfg_write_req  : in  std_logic;        -- runtime cfg_write (no master reset)
+        -- 진단 이력만 지운다. 진행 중인 초기화/설정 쓰기와 pending 요청은
+        -- 유지하며, 같은 clock의 새 coalesced 사건이 clear보다 우선한다.
+        i_soft_clear     : in  std_logic := '0';
         -- Coordinator-owned snapshot. Must remain stable from request
         -- acceptance until o_busy is low and no deferred request remains.
         i_cfg_image      : in  t_cfg_image;
@@ -157,6 +160,12 @@ begin
             else
                 s_done_r        <= '0';
                 s_timeout_out_r <= '0';
+
+                -- CLEAR_STATUS는 진단 sticky만 지운다. 아래 busy-window
+                -- 사건 검출이 뒤에서 다시 '1'을 쓰므로 동시 사건이 우선한다.
+                if i_soft_clear = '1' then
+                    s_cfg_write_coalesced_r <= '0';
+                end if;
 
                 case s_state_r is
 

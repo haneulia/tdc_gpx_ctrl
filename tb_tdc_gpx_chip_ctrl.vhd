@@ -34,11 +34,18 @@
 --   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
 --   [20] Forced pending response trips the secondary deadlock watchdog.
 --   [21] stop_tdc window-end semantics + max_range/drain-margin contract.
+--   [22] CLEAR_STATUS clears diagnostic history without resetting function.
 --   Negative modes:
 --     g_NEGATIVE_MODE=1: force empty IFIFO read monitor and fail intentionally.
 --     g_NEGATIVE_MODE=2: force raw tuser monitor and fail intentionally.
 --
 -- Standard: VHDL-93 compatible
+-- =============================================================================
+-- 테스트 자산 목적: GPX Chip controller와 bus PHY의 전체 운용을 검증한다.
+-- 핵심 검증 계약: init/run/drain/backpressure/quarantine와 진단 clear를 지킨다.
+-- 관련 RTL: tdc_gpx_chip_ctrl, tdc_gpx_bus_phy 및 하위 FSM.
+-- 실행 회귀: scripts/run_c06_v002_regression.ps1, run_v2_gpx_clear_status.ps1
+-- 유지보수 주의: CLEAR_STATUS는 기능 FSM/FIFO를 초기화하지 않아야 한다.
 -- =============================================================================
 
 library ieee;
@@ -108,6 +115,7 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_cmd_start          : std_logic := '0';
     signal s_cmd_stop           : std_logic := '0';
     signal s_cmd_soft_reset     : std_logic := '0';
+    signal s_soft_clear         : std_logic := '0';
     signal s_cmd_cfg_write      : std_logic := '0';
     signal s_cmd_reg_read       : std_logic := '0';
     signal s_cmd_reg_write      : std_logic := '0';
@@ -198,6 +206,9 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_err_raw_overflow   : std_logic;
     signal s_err_raw_drop       : std_logic;
     signal s_err_drain_cap      : std_logic;
+    signal s_err_rsp_mismatch   : std_logic;
+    signal s_init_cfg_coalesced : std_logic;
+    signal s_err_cmd_collision  : std_logic;
     signal s_err_bus_fatal      : std_logic;
     signal s_run_timeout        : std_logic;
     signal s_run_timeout_cause  : std_logic_vector(2 downto 0);
@@ -313,6 +324,7 @@ begin
             i_cmd_stop          => s_cmd_stop,
             i_cmd_soft_reset    => s_cmd_soft_reset,
             i_cmd_soft_reset_err => '0',
+            i_soft_clear        => s_soft_clear,
             i_cmd_cfg_write     => s_cmd_cfg_write,
             i_cmd_reg_read      => s_cmd_reg_read,
             i_cmd_reg_write     => s_cmd_reg_write,
@@ -357,15 +369,15 @@ begin
             o_busy              => s_ctrl_busy,
             o_err_drain_timeout => s_err_drain_timeout,
             o_err_sequence      => s_err_sequence,
-            o_err_rsp_mismatch  => open,
+            o_err_rsp_mismatch  => s_err_rsp_mismatch,
             o_err_raw_overflow  => s_err_raw_overflow,
             o_err_raw_drop      => s_err_raw_drop,
             o_err_drain_cap     => s_err_drain_cap,
             o_err_reg_overflow  => open,
             o_run_timeout       => s_run_timeout,
             o_run_timeout_cause => s_run_timeout_cause,
-            o_init_cfg_coalesced => open,
-            o_err_cmd_collision => open,
+            o_init_cfg_coalesced => s_init_cfg_coalesced,
+            o_err_cmd_collision => s_err_cmd_collision,
             o_err_bus_fatal => s_err_bus_fatal,
             o_run_drain_complete => s_run_drain_complete
         );
@@ -2555,6 +2567,23 @@ begin
         wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
         pulse(s_cmd_stop);
         wait_ctrl_idle(c_TIMEOUT, v_found);
+
+        -- =============================================================
+        -- [22] CLEAR_STATUS는 기능 상태가 아닌 진단 이력만 clear한다.
+        -- [19]에서 남긴 drain-cap/bus-fatal post-mortem sticky도 실제
+        -- quarantine 복구가 끝난 뒤에는 여기서 내려가야 한다.
+        -- =============================================================
+        pr_info("[22] Controller diagnostic CLEAR_STATUS contract");
+        pulse(s_soft_clear);
+        wait_clk(1);
+        if s_err_rsp_mismatch = '0' and s_err_raw_drop = '0' and
+           s_err_drain_cap = '0' and s_init_cfg_coalesced = '0' and
+           s_err_cmd_collision = '0' and s_err_bus_fatal = '0' then
+            pr_pass("[22] all controller diagnostic stickies cleared");
+        else
+            pr_fail("[22] one or more controller diagnostic stickies remained",
+                    v_fail);
+        end if;
 
         -- =============================================================
         -- Summary

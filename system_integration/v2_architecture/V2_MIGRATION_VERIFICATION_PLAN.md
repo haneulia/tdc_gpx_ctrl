@@ -583,7 +583,7 @@ K1은 K0의 통합 RTL을 바로 HTML에 연결하기 전에, 이번 CSR 의미 
 | Step | Status | Required work and evidence |
 |---:|---|---|
 | K1-0 | Complete | Shadow/Active/Derived/Physical 용어와 CLEAR_STATUS 실제 범위를 문서화하고 70개 테스트 자산의 한글 계약 header 및 coverage guide를 고정한다. |
-| K1-1 | Pending | legacy TDC sticky owner 전체에 CLEAR_STATUS를 전달한다. lane fault `[2],[3],[4],[10],[11],[12]`를 각각 주입하고 clear, 같은-cycle 새 fault 우선, IRQ W1C 순서를 검증한다. |
+| K1-1 | Complete | legacy TDC sticky owner 전체에 CLEAR_STATUS를 전달했다. lane fault `[2],[3],[4],[10],[11],[12]`, 같은-cycle 새 fault 우선, 살아 있는 bus-fatal 격리 보존, IRQ W1C 순서를 owner/K08 회귀로 검증했다. TDC 150/200 MHz 구현 WNS는 각각 `+1.532 ns`, `+0.541 ns`다. |
 | K1-2 | Pending | Reg7의 staging MTimer write, COMMIT 자동 대체, active image, 실제 Chip readback을 한 시나리오에서 비교한다. COMMIT 실패와 진행 중 Shadow 수정도 포함한다. |
 | K1-3 | Pending | RPM, 광학 Shot 간격, 목표 왕복시간, runtime Return 1~7, 32/64/128-bit, slope topology와 clock 관계를 RTL 결과와 HTML Golden model로 자동 비교한다. |
 | K1-4 | Pending | routine 두 clock profile 전체 회귀, 필요한 extreme/sync CDC profile, DDR/PS/HTML byte 비교, package/XGUI/OOC 검사를 다시 수행해 K1 Sign-off 문서를 만든다. |

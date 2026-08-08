@@ -42,7 +42,7 @@
 | `tb_lidar_gpx_config_activation.vhd` | 모든 present Chip programming ACK 후 TDC enable | `lidar_gpx_config_activation` | `run_v2_unified_csr.ps1` | 조기 ACK와 fault activation을 유지한다. |
 | `tb_lidar_processing_activation_barrier.vhd` | Echo/VDMA ready, busy, version을 묶는 barrier | processing activation barrier | `run_v2_k04_integration.ps1` | 새 의존 block에는 negative test가 필요하다. |
 | `tb_lidar_system_command_cdc.vhd` | CLEAR/RESET one-shot CDC, busy/모호 명령 거부 | `lidar_system_command_cdc` | `run_v2_k03_integration.ps1` | destination pulse 폭과 reset 복구를 확인한다. |
-| `tb_lidar_status_irq_integration.vhd` | native snapshot, CTL23/24, 물리 GPX read, IRQ/CLEAR/W1C | CSR/status/command CDC | `run_v2_k08_status_irq.ps1` | 모든 sticky owner의 fault 주입이 필요하다. |
+| `tb_lidar_status_irq_integration.vhd` | native snapshot, CTL23/24, 물리 GPX read, 모든 TDC lane fault, 같은-clock fault/clear, IRQ/CLEAR/W1C | CSR/status/command CDC | `run_v2_k08_status_irq.ps1` | owner clear는 아래 K1-1 전용 회귀와 함께 유지한다. |
 
 ### 3.2 모터, Face, Shot 및 레이저
 
@@ -69,6 +69,18 @@
 | `tb_lidar_gpx_acquisition_coordinator.vhd` | Shot fanout, runtime mask, terminal merge, config | acquisition coordinator | `run_v2_gpx_acquisition_coordinator.ps1` | inactive lane 무동작을 확인한다. |
 | `tb_lidar_gpx_acquisition_subsystem.vhd` | external pin부터 B5, 32 physical STOP lane, fault/CDC | acquisition subsystem | `run_v2_gpx_acquisition_subsystem.ps1` | routine 두 clock 관계를 모두 유지한다. |
 | `tb_lidar_face_close_owner.vhd` | trailing/all-hole Face close, overlap, exactly-once | `lidar_face_close_owner` | `run_v2_gpx_b5_b8_subsystem.ps1` | 조기 close와 누락 close를 함께 본다. |
+
+#### 3.3.1 K1-1 legacy TDC 진단 소유자 회귀
+
+| 검증 자산 | 생성 목적과 핵심 커버 | 관련 RTL | 실행 | 변경 시 주의 |
+|---|---|---|---|---|
+| `tb_tdc_gpx_chip_init_cfg_owner.vhd` | init/config coalesced set/clear, busy 중 clear가 초기화를 취소하지 않음, clear와 새 사건 동시 발생 | `tdc_gpx_chip_init` | `run_v2_gpx_clear_status.ps1` | pending 초기화와 진단 sticky를 섞지 않는다. |
+| `tb_tdc_gpx_request_loss.vhd` | Register request overflow set/clear와 같은 clock 새 overflow 우선 | `tdc_gpx_chip_reg`, `tdc_gpx_cmd_arb` | `run_v2_gpx_clear_status.ps1` | queue/FSM은 clear 대상이 아니다. |
+| `v2_gpx_clear_status_fault_injection.tcl` | response mismatch, raw drop, drain cap, command collision, bus fatal을 이름 있는 사건점에 개별 주입 | `tdc_gpx_chip_ctrl` | `run_v2_gpx_clear_status.ps1` | 내부 상태를 임의로 바꾸지 말고 진단 event predicate만 force한다. |
+| `tb_tdc_gpx_chip_ctrl.vhd` | 기존 21개 기능 시나리오와 22번째 전체 진단 clear 무회귀 | Chip controller와 bus PHY | `run_v2_gpx_clear_status.ps1` | bus-fatal 기능 격리와 진단 이력을 별도 확인한다. |
+
+전용 스크립트는 위 네 층을 모두 실행하고
+`LIDAR_V2_K11_GPX_CLEAR_STATUS_REGRESSION_PASS`를 최종 표식으로 남긴다.
 
 ### 3.4 Hit, Cell 및 Frame
 
@@ -175,7 +187,6 @@ powershell -ExecutionPolicy Bypass -File system_integration/v2/scripts/check_v2_
 | 우선순위 | 공백 | 현재 상태 | 필요한 회귀 |
 |---|---|---|---|
 | P0 | K1 RTL/HTML 전체 operating matrix | 일부 Golden profile만 완료 | RPM/각분해능/거리/Return/폭/topology/clock matrix 자동 비교 |
-| P1 | legacy TDC sticky의 `CLEAR_STATUS` 통일 | 일부 owner가 clear를 소비하지 않음 | 각 lane fault `[2],[3],[4],[10],[11],[12]` 주입, clear, IRQ W1C 순서 검증 |
 | P1 | Reg7 Shadow/Active/Physical 3계층 단일 시나리오 | 개별 기능은 있으나 한 시퀀스 비교가 부족 | staging MTimer write→COMMIT 자동 대체→active view→physical readback |
 | P1 | 같은 sticky가 high인 동안 반복된 사건 | IRQ bit만으로 횟수 구분 불가 | 관련 진단 count 증가/clear/new-event-wins 검증 |
 | P2 | 실제 AXI VDMA, HP port, DDR cache coherency | RTL/Golden 모델 범위 밖 | Stage L parent/보드에서 DMA API와 cache invalidate 포함 측정 |
@@ -183,6 +194,10 @@ powershell -ExecutionPolicy Bypass -File system_integration/v2/scripts/check_v2_
 
 이 표의 공백은 현재 PASS를 무효화하지 않는다. 다만 해당 범위를 검증했다고
 확대 해석해서는 안 되며, K1 또는 Stage L Sign-off 전 반드시 닫아야 한다.
+
+legacy TDC sticky의 `CLEAR_STATUS` 통일은 K1-1에서 완료했다. lane fault
+`[2],[3],[4],[10],[11],[12]`, clear, 같은 clock 새 fault 우선, 통합 IRQ source와
+W1C 순서를 owner-level 회귀와 K08 회귀로 각각 검증했다.
 
 ## 8. 테스트벤치 유지보수 체크리스트
 

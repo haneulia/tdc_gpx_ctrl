@@ -597,6 +597,14 @@ begin
         lane_faults(0).drain_timeout_pulse <= '1';
         lane_faults(0).run_timeout_pulse <= '1';
         lane_faults(0).run_timeout_cause <= "101";
+        -- K1-1: legacy controller가 소유하는 TDC lane sticky bit를 모두
+        -- 올려 진단 page와 GPX_TRANSPORT IRQ bit 집계를 확인한다.
+        lane_faults(0).response_mismatch_sticky <= '1';
+        lane_faults(0).raw_drop_sticky <= '1';
+        lane_faults(0).drain_cap_sticky <= '1';
+        lane_faults(0).init_cfg_coalesced_sticky <= '1';
+        lane_faults(0).command_collision_sticky <= '1';
+        lane_faults(0).bus_fatal_sticky <= '1';
         wait until rising_edge(proc_clk);
         processing_diagnostics.source_switch_pulse <= '0';
         echo_diagnostics.snapshot.timeout <= '0';
@@ -613,7 +621,7 @@ begin
         capture_diag(C_DIAG_PROC_INVALID_COUNT, x"11223344");
         capture_diag(C_DIAG_ECHO_FLAGS, x"00000040");
         capture_diag(C_DIAG_GPX_PROC_FAULTS, x"00060003");
-        capture_diag(C_DIAG_TDC_LANE_FAULT_0, x"000002C1");
+        capture_diag(C_DIAG_TDC_LANE_FAULT_0, x"00001EDD");
         capture_diag(16#00#, x"00000000", '1');
 
         axi_read_value(fn_irq_byte_offset(1), v_word);
@@ -635,6 +643,15 @@ begin
         shot_drop <= '0';
         stop_drop <= '0';
         hit_faults.chip_index_error <= '0';
+        -- 실제 owner의 set/clear 우선순위는 전용 K1-1 fault-injection에서
+        -- 검증한다. 이 통합 TB에서는 owner clear 후 보이는 level을 모델링해
+        -- CSR source 하강과 IRQ_FLAG W1C 순서에 집중한다.
+        lane_faults(0).response_mismatch_sticky <= '0';
+        lane_faults(0).raw_drop_sticky <= '0';
+        lane_faults(0).drain_cap_sticky <= '0';
+        lane_faults(0).init_cfg_coalesced_sticky <= '0';
+        lane_faults(0).command_collision_sticky <= '0';
+        lane_faults(0).bus_fatal_sticky <= '0';
         wait_csr_cycles(20);
         assert proc_clear_seen = '1' and tdc_clear_seen = '1'
             report "K0-8 CLEAR_STATUS did not reach both destination domains"
@@ -657,6 +674,45 @@ begin
         axi_read_value(fn_irq_byte_offset(2), v_word);
         assert v_word = x"00000000" and irq = '0'
             report "K0-8 runtime IRQ W1C clear mismatch"
+            severity failure;
+
+        -- K1-1 status-source priority: TDC pulse fault를 CLEAR_STATUS와 같은
+        -- TDC clock에 겹친다. 새 사건은 clear에 유실되지 않아야 하며,
+        -- 원인을 두 번째 clear로 내린 뒤에도 IRQ_FLAG는 W1C 전까지 남는다.
+        lane_faults(0).drain_timeout_pulse <= '1';
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000002");
+        loop
+            wait until rising_edge(tdc_clk);
+            exit when tdc_clear = '1';
+        end loop;
+        lane_faults(0).drain_timeout_pulse <= '0';
+        wait_csr_cycles(20);
+        capture_diag(C_DIAG_TDC_LANE_FAULT_0, x"00000001");
+        axi_read_value(fn_irq_byte_offset(1), v_word);
+        assert v_word = x"00000100"
+            report "K1-1 same-cycle TDC fault was lost by CLEAR_STATUS"
+            severity failure;
+        axi_read_value(fn_irq_byte_offset(2), v_word);
+        assert v_word = x"00000100" and irq = '1'
+            report "K1-1 same-cycle TDC fault did not preserve IRQ_FLAG"
+            severity failure;
+
+        axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000002");
+        wait_csr_cycles(20);
+        capture_diag(C_DIAG_TDC_LANE_FAULT_0, x"00000000");
+        axi_read_value(fn_irq_byte_offset(1), v_word);
+        assert v_word = x"00000000"
+            report "K1-1 second CLEAR_STATUS did not remove TDC fault source"
+            severity failure;
+        axi_read_value(fn_irq_byte_offset(2), v_word);
+        assert v_word = x"00000100" and irq = '1'
+            report "K1-1 second CLEAR_STATUS incorrectly cleared IRQ_FLAG"
+            severity failure;
+        axi_write(fn_irq_byte_offset(2), x"00000100");
+        wait_csr_cycles(4);
+        axi_read_value(fn_irq_byte_offset(2), v_word);
+        assert v_word = x"00000000" and irq = '0'
+            report "K1-1 same-cycle fault IRQ W1C mismatch"
             severity failure;
 
         report "LIDAR_V2_K08_STATUS_IRQ_PASS proc_mhz=" &

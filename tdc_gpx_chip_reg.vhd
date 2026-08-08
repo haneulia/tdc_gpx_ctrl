@@ -129,6 +129,13 @@ begin
                 s_done_r        <= '0';
                 s_timeout_out_r <= '0';
 
+                -- CLEAR_STATUS는 queue/FSM을 건드리지 않고 진단 sticky만
+                -- 지운다. case 안의 새 overflow 기록이 뒤에서 실행되므로
+                -- 같은 clock의 새 request-loss 사건이 clear보다 우선한다.
+                if i_soft_clear = '1' then
+                    s_err_req_overflow_r <= '0';
+                end if;
+
                 case s_state_r is
 
                     when ST_OFF =>
@@ -248,14 +255,6 @@ begin
 
                 end case;
 
-                -- Round 8 C-1: SW-initiated sticky clear placed AFTER the
-                -- case so it wins over a concurrent set inside ST_ACTIVE
-                -- (VHDL sequential semantics: last assignment wins).
-                -- Matches the priority pattern used by status_agg and
-                -- err_handler for their shared i_soft_clear paths.
-                if i_soft_clear = '1' then
-                    s_err_req_overflow_r <= '0';
-                end if;
             end if;
         end if;
     end process p_fsm;
