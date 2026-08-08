@@ -1,6 +1,7 @@
 -- ============================================================================
--- 테스트 자산 목적: v2 Top의 K0-5 physical B5~B8 및 K0-6 AXIS 출력 경계를 검증한다.
--- 핵심 검증 계약: GPX identity, Rise/Fall lane, Hole/T0/Footer와 32/64/128 폭 출력이다.
+-- 테스트 자산 목적: v2 Top의 K0-5/K0-6 경계와 K1-2 Reg7 적용 계약을 검증한다.
+-- 핵심 검증 계약: GPX identity, Reg7 Shadow/Active/Physical, Rise/Fall lane,
+-- Hole/T0/Footer와 32/64/128 폭 출력을 한 실제 Top 흐름에서 확인한다.
 -- 관련 RTL: tdc_gpx_lidar_ctrl_v2_top과 acquisition/data/AXIS 전체 계층.
 -- 실행 회귀: scripts/run_v2_k05_integration.ps1, run_v2_k06_axis_integration.ps1
 -- 유지보수 주의: 이 파일의 K05/K06 top을 구분하고 routine 두 clock 관계를 모두 유지한다.
@@ -16,7 +17,11 @@ use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_config_reference_pkg.all;
 use work.lidar_csr_map_pkg.all;
+use work.lidar_gpx_pkg.all;
+use work.lidar_gpx_image_pkg.all;
 use work.lidar_gpx_vdma_pkg.all;
+use work.lidar_status_pkg.all;
+use work.tdc_gpx_cfg_pkg.all;
 use work.tdc_gpx_pkg.all;
 
 entity tb_tdc_gpx_lidar_ctrl_v2_axis_core is
@@ -56,6 +61,60 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     end function fn_build_config;
 
     constant C_BUILD_CONFIG : lidar_build_config_t := fn_build_config;
+    constant C_TARGET_A_5NS : positive := 48;
+    constant C_TARGET_B_5NS : positive := 53;
+
+    -- Software가 CTL22 staging view에 쓴 MTimer는 의도적으로 틀리게
+    -- 만든다. COMMIT 뒤에는 CTL12 파생값으로 바뀌고, HSDiv/RefClkDiv 등
+    -- MTimer 외 비트는 이 후보값 그대로 보존되어야 한다.
+    function fn_manual_reg7(
+        manual_mtimer : natural;
+        hsdiv_xor     : natural
+    ) return gpx_bus_data_t is
+        variable result : gpx_bus_data_t :=
+            C_GPX_REGISTER_IMAGE_DEFAULT(7)(27 downto 0);
+    begin
+        result(c_REG7_MTIMER_HI downto c_REG7_MTIMER_LO) :=
+            std_logic_vector(to_unsigned(
+                manual_mtimer, C_GPX_MTIMER_WIDTH));
+        result(c_REG7_HSDIV_HI downto c_REG7_HSDIV_LO) :=
+            result(c_REG7_HSDIV_HI downto c_REG7_HSDIV_LO) xor
+            std_logic_vector(to_unsigned(hsdiv_xor, 8));
+        return result;
+    end function fn_manual_reg7;
+
+    constant C_STAGED_REG7_A : gpx_bus_data_t :=
+        fn_manual_reg7(1, 1);
+    constant C_STAGED_REG7_B : gpx_bus_data_t :=
+        fn_manual_reg7(C_GPX_MTIMER_MAX, 2);
+
+    function fn_effective_reg7(
+        staged_value    : gpx_bus_data_t;
+        target_range_5ns : natural
+    ) return gpx_bus_data_t is
+        variable result : gpx_bus_data_t := staged_value;
+        variable mtimer : u32_t;
+    begin
+        mtimer := fn_gpx_mtimer_ref_ticks(
+            to_unsigned(target_range_5ns, 32));
+        result(c_REG7_MTIMER_HI downto c_REG7_MTIMER_LO) :=
+            std_logic_vector(mtimer(C_GPX_MTIMER_WIDTH - 1 downto 0));
+        return result;
+    end function fn_effective_reg7;
+
+    function fn_gpx_ctl_word(
+        value : gpx_bus_data_t
+    ) return std_logic_vector is
+        variable result : std_logic_vector(31 downto 0) := (others => '0');
+    begin
+        result(27 downto 0) := value;
+        return result;
+    end function fn_gpx_ctl_word;
+
+    constant C_EFFECTIVE_REG7_A : gpx_bus_data_t :=
+        fn_effective_reg7(C_STAGED_REG7_A, C_TARGET_A_5NS);
+    constant C_EFFECTIVE_REG7_B : gpx_bus_data_t :=
+        fn_effective_reg7(C_STAGED_REG7_B, C_TARGET_B_5NS);
 
     function fn_runtime_config return lidar_runtime_config_t is
         variable result : lidar_runtime_config_t :=
@@ -75,7 +134,8 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
         result.laser.face_enable_mask := "00001";
         result.laser.fire_width_5ns_ticks := to_unsigned(2, 16);
         result.laser.fire_done_timeout_5ns_ticks := to_unsigned(16, 16);
-        result.laser.target_range_window_5ns := to_unsigned(48, 32);
+        result.laser.target_range_window_5ns :=
+            to_unsigned(C_TARGET_A_5NS, 32);
         result.laser.start_width_5ns_ticks := to_unsigned(2, 16);
         result.laser.stop_width_5ns_ticks := to_unsigned(2, 16);
         result.laser.simulation_start_delay_5ns := to_unsigned(3, 32);
@@ -148,6 +208,9 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     type natural_array_t is array (0 to C_CHIPS - 1) of
         natural range 0 to 65535;
     type logic_array_t is array (0 to C_CHIPS - 1) of std_logic;
+    type physical_register_image_t is array (0 to 15) of gpx_bus_data_t;
+    type chip_register_image_array_t is array (0 to C_CHIPS - 1) of
+        physical_register_image_t;
 
     signal csr_clk : std_logic := '0';
     signal proc_clk : std_logic := '0';
@@ -207,6 +270,8 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
         (others => '0');
     signal chip_d_oe : std_logic_vector(C_CHIPS - 1 downto 0) :=
         (others => '0');
+    signal chip_register_image : chip_register_image_array_t :=
+        (others => (others => (others => '0')));
     signal fifo1_fill : natural_array_t := (others => 0);
     signal fifo2_fill : natural_array_t := (others => 0);
     signal fifo1_read_index : natural_array_t := (others => 0);
@@ -419,6 +484,8 @@ begin
                 fifo2_read_index <= (others => 0);
                 read_count <= (others => 0);
                 write_count <= (others => 0);
+                chip_register_image <=
+                    (others => (others => (others => '0')));
                 rdn_previous := (others => '1');
                 wrn_previous := (others => '1');
             else
@@ -443,7 +510,8 @@ begin
                             data_v := fn_raw_word(index, '1',
                                 fifo2_read_index(index));
                         else
-                            data_v := (others => '0');
+                            data_v := chip_register_image(index)(
+                                to_integer(unsigned(address_v)));
                         end if;
                         chip_d_out((index + 1) * 28 - 1 downto index * 28)
                             <= data_v;
@@ -469,6 +537,13 @@ begin
                     if tdc_wrn(index) = '0' and
                        wrn_previous(index) = '1' and
                        tdc_csn(index) = '0' then
+                        assert not is_x(tdc_d(
+                            (index + 1) * 28 - 1 downto index * 28))
+                            report "V2-K12-TOP GPX write data contains X/Z"
+                            severity failure;
+                        chip_register_image(index)(
+                            to_integer(unsigned(address_v))) <= tdc_d(
+                                (index + 1) * 28 - 1 downto index * 28);
                         write_count(index) <= write_count(index) + 1;
                     end if;
                     rdn_previous(index) := tdc_rdn(index);
@@ -603,6 +678,10 @@ begin
 
     p_test : process
         variable status_word : std_logic_vector(31 downto 0);
+        variable diag_sequence : natural := 0;
+        variable writes_before_invalid : natural_array_t := (others => 0);
+        variable active_version_before_invalid : unsigned(15 downto 0) :=
+            (others => '0');
 
         procedure wait_proc(count : positive) is
         begin
@@ -695,6 +774,117 @@ begin
             axi_write(fn_ctl_byte_offset(C_CTL_COMMAND), value);
         end procedure command;
 
+        procedure accept_vdma_profile(constant case_name : string) is
+            variable accepted : boolean := false;
+        begin
+            for cycle in 0 to 10000 loop
+                wait_proc(1);
+                if rise_cfg_valid = '1' and fall_cfg_valid = '1' then
+                    accepted := true;
+                    exit;
+                end if;
+            end loop;
+            assert accepted
+                report case_name & ": VDMA profile request timeout"
+                severity failure;
+            rise_cfg_ready <= '1';
+            fall_cfg_ready <= '1';
+            wait_proc(1);
+            rise_cfg_ready <= '0';
+            fall_cfg_ready <= '0';
+        end procedure accept_vdma_profile;
+
+        procedure wait_transaction_done(constant case_name : string) is
+            variable complete : boolean := false;
+        begin
+            for cycle in 0 to 2000 loop
+                axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), status_word);
+                if status_word(C_TXN_BUSY_BIT) = '0' and
+                   status_word(C_TXN_DONE_STICKY_BIT) = '1' then
+                    complete := true;
+                    exit;
+                end if;
+            end loop;
+            assert complete
+                report case_name & ": transaction completion timeout"
+                severity failure;
+        end procedure wait_transaction_done;
+
+        procedure stage_reg7(constant value : gpx_bus_data_t) is
+        begin
+            axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX),
+                x"00000007");
+            axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA),
+                fn_gpx_ctl_word(value));
+        end procedure stage_reg7;
+
+        procedure check_reg7_view(
+            constant active_view : boolean;
+            constant expected    : gpx_bus_data_t;
+            constant case_name   : string
+        ) is
+            variable index_word : std_logic_vector(31 downto 0) :=
+                (others => '0');
+            variable actual : std_logic_vector(31 downto 0);
+        begin
+            index_word(3 downto 0) := x"7";
+            if active_view then
+                index_word(C_GPX_IMAGE_VIEW_ACTIVE_BIT) := '1';
+            end if;
+            axi_write(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_INDEX), index_word);
+            axi_read(fn_ctl_byte_offset(C_CTL_GPX_IMAGE_DATA), actual);
+            assert actual = fn_gpx_ctl_word(expected)
+                report case_name & ": Reg7 image view mismatch"
+                severity failure;
+        end procedure check_reg7_view;
+
+        procedure capture_physical_register(
+            constant chip_index : natural;
+            constant address    : natural;
+            constant expected   : gpx_bus_data_t;
+            constant case_name  : string
+        ) is
+            variable diag_index : natural;
+            variable control_expected : std_logic_vector(31 downto 0) :=
+                (others => '0');
+            variable actual : std_logic_vector(31 downto 0);
+            variable complete : boolean := false;
+        begin
+            assert chip_index < C_CHIPS and address < 16
+                report case_name & ": invalid physical register selection"
+                severity failure;
+            diag_index := C_DIAG_GPX_REGISTER_FIRST +
+                chip_index * 16 + address;
+            axi_write(fn_ctl_byte_offset(C_CTL_DIAG_INDEX),
+                std_logic_vector(to_unsigned(16#100# + diag_index, 32)));
+            for attempt in 0 to 400 loop
+                axi_read(fn_ctl_byte_offset(C_CTL_DIAG_INDEX), actual);
+                if actual(C_DIAG_VALID_BIT) = '1' then
+                    complete := true;
+                    exit;
+                end if;
+            end loop;
+            assert complete
+                report case_name & ": physical GPX read timeout"
+                severity failure;
+
+            diag_sequence := diag_sequence + 1;
+            control_expected(C_DIAG_INDEX_MSB downto C_DIAG_INDEX_LSB) :=
+                std_logic_vector(to_unsigned(diag_index, 8));
+            control_expected(C_DIAG_VALID_BIT) := '1';
+            control_expected(C_DIAG_SEQUENCE_MSB downto
+                C_DIAG_SEQUENCE_LSB) :=
+                std_logic_vector(to_unsigned(diag_sequence, 16));
+            assert actual = control_expected
+                report case_name & ": diagnostic control mismatch"
+                severity failure;
+            axi_read(fn_ctl_byte_offset(C_CTL_DIAG_DATA), actual);
+            assert actual = fn_pack_gpx_register_read_word(
+                std_logic_vector(to_unsigned(address, 4)), expected)
+                report case_name & ": physical GPX data mismatch"
+                severity failure;
+        end procedure capture_physical_register;
+
         procedure wait_operation_bit(
             constant bit_index : natural;
             constant expected : std_logic;
@@ -729,34 +919,131 @@ begin
         for index in 1 to C_CTL_ECHO_DELAY_PROFILE loop
             axi_write(fn_ctl_byte_offset(index), C_WORDS(index));
         end loop;
+
+        -- K1-2 A: staging에는 software가 쓴 수동 MTimer가 그대로 보여야
+        -- 한다. 아직 성공 COMMIT이 없어 ACTIVE_VALID=0이므로 Active view는
+        -- 내부 reset image를 노출하지 않고 0을 반환해야 한다.
+        stage_reg7(C_STAGED_REG7_A);
+        check_reg7_view(false, C_STAGED_REG7_A,
+            "V2-K12 initial staging");
+        check_reg7_view(true, gpx_bus_data_t'(others => '0'),
+            "V2-K12 reset active");
+
+        -- 첫 COMMIT이 진행 중일 때 TARGET_RANGE와 Reg7 staging을 B 후보로
+        -- 바꾼다. 진행 transaction은 A snapshot을 끝까지 사용하고 B는
+        -- 다음 COMMIT 소유가 되어야 한다.
         command(C_CMD_COMMIT_BIT);
-
-        for cycle in 0 to 10000 loop
-            wait_proc(1);
-            exit when rise_cfg_valid = '1' and fall_cfg_valid = '1';
-        end loop;
-        assert rise_cfg_valid = '1' and fall_cfg_valid = '1'
-            report "V2-K05-TOP VDMA profile request timeout"
-            severity failure;
-        rise_cfg_ready <= '1';
-        fall_cfg_ready <= '1';
-        wait_proc(1);
-        rise_cfg_ready <= '0';
-        fall_cfg_ready <= '0';
-
-        for cycle in 0 to 2000 loop
+        for cycle in 0 to 200 loop
             axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), status_word);
-            exit when status_word(C_TXN_BUSY_BIT) = '0' and
-                status_word(C_TXN_DONE_STICKY_BIT) = '1';
+            exit when status_word(C_TXN_BUSY_BIT) = '1';
         end loop;
-        assert status_word(C_TXN_SUCCESS_STICKY_BIT) = '1' and
-               status_word(C_TXN_ACTIVE_VALID_BIT) = '1'
-            report "V2-K05-TOP deferred GPX configuration failed"
+        assert status_word(C_TXN_BUSY_BIT) = '1'
+            report "V2-K12 first COMMIT never entered BUSY"
             severity failure;
+        axi_write(fn_ctl_byte_offset(C_CTL_TARGET_RANGE),
+            std_logic_vector(to_unsigned(C_TARGET_B_5NS, 32)));
+        stage_reg7(C_STAGED_REG7_B);
+        accept_vdma_profile("V2-K12 first COMMIT");
+        wait_transaction_done("V2-K12 first COMMIT");
+        assert status_word(C_TXN_SUCCESS_STICKY_BIT) = '1' and
+               status_word(C_TXN_ACTIVE_VALID_BIT) = '1' and
+               status_word(C_TXN_SHADOW_DIRTY_BIT) = '1'
+            report "V2-K12 first snapshot/dirty contract failed"
+            severity failure;
+        axi_read(fn_ctl_byte_offset(C_CTL_TARGET_RANGE), status_word);
+        assert unsigned(status_word) = C_TARGET_B_5NS
+            report "V2-K12 next Shadow target was not preserved"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE +
+            C_CTL_TARGET_RANGE - 1), status_word);
+        assert unsigned(status_word) = C_TARGET_A_5NS
+            report "V2-K12 in-flight Shadow edit polluted Active source"
+            severity failure;
+        check_reg7_view(false, C_STAGED_REG7_B,
+            "V2-K12 next staging after first COMMIT");
+        check_reg7_view(true, C_EFFECTIVE_REG7_A,
+            "V2-K12 first Active image");
         for index in 0 to C_CHIPS - 1 loop
             assert write_count(index) > 0
                 report "V2-K05-TOP missing physical GPX configuration writes"
                 severity failure;
+            capture_physical_register(index, 7, C_EFFECTIVE_REG7_A,
+                "V2-K12 first physical Reg7 Chip " & integer'image(index));
+        end loop;
+
+        -- K1-2 B: 다음 COMMIT은 B Shadow를 원자 적용한다. staging에는
+        -- 수동 MTimer가 남고 Active/두 물리 Chip에는 ceil(53/5)=11만 보인다.
+        command(C_CMD_CLEAR_STATUS_BIT);
+        command(C_CMD_COMMIT_BIT);
+        accept_vdma_profile("V2-K12 second COMMIT");
+        wait_transaction_done("V2-K12 second COMMIT");
+        assert status_word(C_TXN_SUCCESS_STICKY_BIT) = '1' and
+               status_word(C_TXN_SHADOW_DIRTY_BIT) = '0'
+            report "V2-K12 second COMMIT did not consume the Shadow revision"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE +
+            C_CTL_TARGET_RANGE - 1), status_word);
+        assert unsigned(status_word) = C_TARGET_B_5NS
+            report "V2-K12 second Active source target mismatch"
+            severity failure;
+        check_reg7_view(false, C_STAGED_REG7_B,
+            "V2-K12 second staging");
+        check_reg7_view(true, C_EFFECTIVE_REG7_B,
+            "V2-K12 second Active image");
+        for index in 0 to C_CHIPS - 1 loop
+            capture_physical_register(index, 7, C_EFFECTIVE_REG7_B,
+                "V2-K12 second physical Reg7 Chip " & integer'image(index));
+        end loop;
+
+        -- K1-2 C: 13-bit MTimer 상한을 한 tick 넘는 요청은 0x33으로
+        -- 거절되고 Active image와 실제 Chip을 절대로 바꾸지 않아야 한다.
+        writes_before_invalid := write_count;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), status_word);
+        active_version_before_invalid := unsigned(status_word(15 downto 0));
+        command(C_CMD_CLEAR_STATUS_BIT);
+        axi_write(fn_ctl_byte_offset(C_CTL_TARGET_RANGE),
+            std_logic_vector(to_unsigned(
+                C_GPX_MTIMER_MAX * C_GPX_REFERENCE_TICK_5NS + 1, 32)));
+        command(C_CMD_COMMIT_BIT);
+        wait_transaction_done("V2-K12 invalid MTimer COMMIT");
+        assert status_word(C_TXN_ERROR_STICKY_BIT) = '1' and
+               status_word(23 downto 16) =
+                   fn_cfg_error_code(CFG_RUNTIME_GPX_MTIMER_RANGE) and
+               status_word(C_TXN_SHADOW_DIRTY_BIT) = '1'
+            report "V2-K12 MTimer overflow error contract mismatch"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), status_word);
+        assert unsigned(status_word(15 downto 0)) =
+                   active_version_before_invalid
+            report "V2-K12 failed COMMIT changed Active version"
+            severity failure;
+        check_reg7_view(true, C_EFFECTIVE_REG7_B,
+            "V2-K12 failed-COMMIT Active image");
+        for index in 0 to C_CHIPS - 1 loop
+            assert write_count(index) = writes_before_invalid(index)
+                report "V2-K12 failed COMMIT reached physical GPX Chip"
+                severity failure;
+            capture_physical_register(index, 7, C_EFFECTIVE_REG7_B,
+                "V2-K12 preserved physical Reg7 Chip " & integer'image(index));
+        end loop;
+
+        -- 잘못된 Shadow를 원래 B 값으로 복구하고 성공 COMMIT하여 이후
+        -- acquisition이 clean Shadow/Active 상태에서 시작하도록 한다.
+        command(C_CMD_CLEAR_STATUS_BIT);
+        axi_write(fn_ctl_byte_offset(C_CTL_TARGET_RANGE),
+            std_logic_vector(to_unsigned(C_TARGET_B_5NS, 32)));
+        command(C_CMD_COMMIT_BIT);
+        accept_vdma_profile("V2-K12 recovery COMMIT");
+        wait_transaction_done("V2-K12 recovery COMMIT");
+        assert status_word(C_TXN_SUCCESS_STICKY_BIT) = '1' and
+               status_word(C_TXN_SHADOW_DIRTY_BIT) = '0'
+            report "V2-K12 recovery COMMIT failed"
+            severity failure;
+        check_reg7_view(true, C_EFFECTIVE_REG7_B,
+            "V2-K12 recovered Active image");
+        for index in 0 to C_CHIPS - 1 loop
+            capture_physical_register(index, 7, C_EFFECTIVE_REG7_B,
+                "V2-K12 recovered physical Reg7 Chip " & integer'image(index));
         end loop;
 
         fifo_load <= '1';
@@ -855,6 +1142,9 @@ begin
         end if;
 
         report "LIDAR_V2_TOP_K05_GPX_B5_B8_PASS proc_mhz=" &
+            positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
+            positive'image(G_TDC_CLK_MHZ) severity note;
+        report "LIDAR_V2_K12_REG7_SHADOW_ACTIVE_PHYSICAL_PASS proc_mhz=" &
             positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
             positive'image(G_TDC_CLK_MHZ) severity note;
         report "LIDAR_V2_TOP_K06_AXIS_PASS proc_mhz=" &

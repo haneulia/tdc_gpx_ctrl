@@ -114,7 +114,7 @@
 |---|---|---|---|---|
 | `tb_tdc_gpx_lidar_ctrl_v2_k03.vhd` | Top config/VDMA activation 및 command CDC | v2 Top + K0-3 계층 | `run_v2_k03_integration.ps1` | public port/generic 누락을 확인한다. |
 | `tb_tdc_gpx_lidar_ctrl_v2_k04.vhd` | Top Processing/Echo, physical/simulation source | v2 Top + K0-4 계층 | `run_v2_k04_integration.ps1` | simulation이 physical 출력을 내지 않게 한다. |
-| `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` | K0-5 B5~B8와 K0-6 AXIS 출력 | v2 Top + data/output 계층 | `run_v2_k05_integration.ps1`, `run_v2_k06_axis_integration.ps1` | 파일 안 K05/K06 top을 모두 유지한다. |
+| `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` | K0-5 B5~B8, K0-6 AXIS 출력, K1-2 Reg7 Shadow/Active/Physical 연속 계약 | v2 Top + config/physical GPX/data/output 전체 계층 | `run_v2_k05_integration.ps1`, `run_v2_k06_axis_integration.ps1` | 파일 안 K05/K06 top을 모두 유지하고, K1-2 marker와 두 물리 Chip readback을 삭제하지 않는다. |
 
 ## 4. Profile wrapper 인벤토리
 
@@ -187,7 +187,7 @@ powershell -ExecutionPolicy Bypass -File system_integration/v2/scripts/check_v2_
 | 우선순위 | 공백 | 현재 상태 | 필요한 회귀 |
 |---|---|---|---|
 | P0 | K1 RTL/HTML 전체 operating matrix | 일부 Golden profile만 완료 | RPM/각분해능/거리/Return/폭/topology/clock matrix 자동 비교 |
-| P1 | Reg7 Shadow/Active/Physical 3계층 단일 시나리오 | 개별 기능은 있으나 한 시퀀스 비교가 부족 | staging MTimer write→COMMIT 자동 대체→active view→physical readback |
+| Closed K1-2 | Reg7 Shadow/Active/Physical 3계층 단일 시나리오 | Top 연속 시나리오로 완료 | 잘못된 staging MTimer→진행 중 Shadow 수정→두 번의 성공 COMMIT→두 Chip 물리 readback→`0x33` 실패 rollback→복구 COMMIT |
 | P1 | 같은 sticky가 high인 동안 반복된 사건 | IRQ bit만으로 횟수 구분 불가 | 관련 진단 count 증가/clear/new-event-wins 검증 |
 | P2 | 실제 AXI VDMA, HP port, DDR cache coherency | RTL/Golden 모델 범위 밖 | Stage L parent/보드에서 DMA API와 cache invalidate 포함 측정 |
 | P2 | 실제 PCB GPX timing, LVDS와 laser safety | simulation/implementation만으로 불충분 | laser-disabled capture 후 제한된 physical laser/GPX 보드 시험 |
@@ -198,6 +198,20 @@ powershell -ExecutionPolicy Bypass -File system_integration/v2/scripts/check_v2_
 legacy TDC sticky의 `CLEAR_STATUS` 통일은 K1-1에서 완료했다. lane fault
 `[2],[3],[4],[10],[11],[12]`, clear, 같은 clock 새 fault 우선, 통합 IRQ source와
 W1C 순서를 owner-level 회귀와 K08 회귀로 각각 검증했다.
+
+K1-2 Reg7 시나리오는 `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` 안에서 다음 순서를
+중간 reset 없이 한 번에 수행한다.
+
+1. 첫 성공 COMMIT 전 `ACTIVE_VALID=0`과 Active view `0` 확인;
+2. A 설정 COMMIT이 BUSY인 동안 B Shadow와 staging Reg7 기록;
+3. A Active source, 자동 계산 MTimer, 두 Chip 실제 Reg7, `SHADOW_DIRTY=1` 확인;
+4. B COMMIT 뒤 staging 수동값과 Active/물리 자동 계산값의 의도적 차이 확인;
+5. MTimer 상한 초과 요청의 `0x33`, 물리 write 0회, Active version/image 보존 확인;
+6. 유효한 B로 복구 COMMIT하고 acquisition/AXIS 회귀 계속 수행.
+
+따라서 K1-2 marker는 CSR portal만 흉내 낸 단위 테스트가 아니라 실제 Top의
+28-bit GPX pin write/read 모델을 통과했다는 의미다. 이 순서 중 하나를 분리하거나
+중간 reset으로 상태를 지우면 COMMIT snapshot 격리 커버가 사라진다.
 
 ## 8. 테스트벤치 유지보수 체크리스트
 

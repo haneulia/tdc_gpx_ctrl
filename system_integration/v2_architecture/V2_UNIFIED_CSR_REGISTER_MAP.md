@@ -402,6 +402,23 @@ software 원본을 그대로 보존하므로 staging Reg7과 active Reg7이 다�
 6. 보드 검증이나 고장 분석에서는 CTL23/24로 같은 Chip의 실제 Reg7을 읽어
    Active image와 비교한다.
 
+첫 성공 COMMIT 전에는 `ACTIVE_VALID=0`이고 Active view의 모든 word가 `0`이다.
+이는 reset 기본 image가 실제 Chip에 적용됐다고 오인하지 않게 하는 안전 동작이다.
+COMMIT 실패 시에도 직전 성공 Active image와 물리 Chip 값은 유지된다.
+
+K1-2에서 고정한 연속 검증 예는 다음과 같다.
+
+| 단계 | CTL12 요청 | Staging MTimer | Active MTimer | 물리 Chip Reg7 | 판정 |
+|---|---:|---:|---:|---:|---|
+| Reset | - | 기본 후보 | 0/invalid | reset model | Active로 해석 금지 |
+| A COMMIT | 48 ticks | 1 | `ceil(48/5)=10` | 10 | 비-MTimer bit 보존 |
+| A 진행 중 B write | 53 ticks | 8191 | 10 | 10 | B는 다음 transaction 소유 |
+| B COMMIT | 53 ticks | 8191 | `ceil(53/5)=11` | 11 | Shadow clean |
+| 범위 오류 | 40,956 ticks | 유지 | 11 | 11 | `0x33`, version/write 불변 |
+
+표의 물리 값은 Chip 0과 Chip 1에서 각각 CTL23/24로 읽어 비교했다. Staging의
+수동 MTimer와 Active MTimer가 다른 것은 오류가 아니라 CTL12 단일 원본 계약이다.
+
 ### 3.9 Shadow, Active, Derived, Physical의 관계
 
 설정값은 다음 순서로 이동한다.

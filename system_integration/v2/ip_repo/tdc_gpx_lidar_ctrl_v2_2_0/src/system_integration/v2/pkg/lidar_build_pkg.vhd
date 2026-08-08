@@ -16,6 +16,10 @@ package lidar_build_pkg is
     -- 보드 검증 GPX acquisition watchdog와 Shot capture budget의 16-bit 상한.
     -- COMMIT 검증이 더 큰 TDC-clock window를 거부하므로 승인값은 잘리지 않는다.
     constant C_GPX_CAPTURE_COUNTER_MAX_CLKS : positive := 65_535;
+    -- 모든 Runtime 시간 CSR의 공통 단위는 5 ns이며, 주파수로는 200 MHz다.
+    -- GPX reference-clock 환산도 이 단일 기준에서 파생해 두 상수가 서로
+    -- 어긋나는 유지보수 오류를 막는다.
+    constant C_5NS_TICK_RATE_MHZ          : positive := 200;
     -- 필수 PCB/HW 계약: 모든 외부 TDC-GPX의 reference-clock pin에는 반드시
     -- 40 MHz를 공급한다. 이는 PL의 GPX bus/acquisition clock인 G_TDC_CLK_MHZ와
     -- 서로 다른 clock이다. RTL은 외부 reference clock을 생성하거나 측정하지
@@ -23,7 +27,8 @@ package lidar_build_pkg is
     -- Reg7.MTimer는 이 40 MHz reference를 세므로 1 tick=25 ns이며, 공통 CSR
     -- 5 ns tick 5개와 같다. Runtime에서 변경할 수 있는 설정값이 아니다.
     constant C_GPX_REFERENCE_CLK_MHZ       : positive := 40;
-    constant C_GPX_REFERENCE_TICK_5NS      : positive := 5;
+    constant C_GPX_REFERENCE_TICK_5NS      : positive :=
+        C_5NS_TICK_RATE_MHZ / C_GPX_REFERENCE_CLK_MHZ;
     constant C_GPX_MTIMER_WIDTH            : positive := 13;
     constant C_GPX_MTIMER_MAX              : positive :=
         (2 ** C_GPX_MTIMER_WIDTH) - 1;

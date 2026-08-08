@@ -102,6 +102,11 @@ CTL22는 staging view에서 R/W, Active view에서 RO다. Reg7.MTimer를 staging
 쓰면 저장되고 staging read에도 보이지만, COMMIT 때 CTL12 파생값으로 대체되므로
 Active/물리 Chip에 그 수동값이 적용되지는 않는다.
 
+첫 성공 COMMIT 전에는 `STAT2.ACTIVE_VALID=0`이며 Active view는 `0`을 반환한다.
+이 값은 적용된 GPX 기본 image가 아니다. `ACTIVE_VALID=1`과 COMMIT 성공을 확인한
+뒤에만 Active view를 실제 승인값으로 해석한다. COMMIT 실패 시에는 직전 성공
+Active image와 물리 Chip 설정이 유지된다.
+
 W1S(Write One to Set/Start)는 write 의미다. 1을 쓰면 일회성 command를
 시작하고 0은 no-op이라는 뜻이며, Register가 read 불가라는 뜻은 아니다.
 CTL0은 read하면 0이고, CTL23 bit 8은 write할 때 CAPTURE W1S지만 read할 때는
@@ -125,6 +130,11 @@ CTL12에서 파생한 값으로 덮어쓴다. 기본 요청값 288 ticks는 1,44
 
 13-bit MTimer 때문에 CTL12 최대값은 40,955 ticks, 즉 204.775 us이다. 이를
 초과한 COMMIT은 error code `0x33`으로 거부된다.
+
+유지보수 회귀는 48 ticks를 MTimer 10으로, 53 ticks를 MTimer 11로 올림 변환한
+뒤 CTL22 Active view와 두 외부 Chip의 Reg7 readback이 같은지 확인한다. COMMIT
+진행 중 다음 Shadow를 써도 현재 물리 Chip에는 섞이지 않으며, 40,956 ticks의
+실패 COMMIT은 물리 write를 발생시키지 않는다.
 
 ### 5.2 요청 광학각 후보점 우선 정책
 

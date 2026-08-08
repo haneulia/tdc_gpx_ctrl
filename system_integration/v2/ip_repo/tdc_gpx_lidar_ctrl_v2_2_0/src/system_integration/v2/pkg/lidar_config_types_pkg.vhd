@@ -11,7 +11,6 @@ use work.lidar_build_pkg.all;
 package lidar_config_types_pkg is
 
     constant C_MAX_CPR                 : positive := 8191;
-    constant C_5NS_TICK_RATE_MHZ       : positive := 200;
     constant C_ANGLE_UDEG_PER_DEG      : positive := 1_000_000;
     constant C_FULL_MECHANICAL_UDEG    : positive := 360_000_000;
     constant C_MIRROR_OPTICAL_GAIN     : positive := 2;

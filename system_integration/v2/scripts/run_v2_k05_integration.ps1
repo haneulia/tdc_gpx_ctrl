@@ -107,6 +107,11 @@ try {
         if ($Text -notmatch [regex]::Escape($Marker)) {
             throw "$Stem did not report its PASS marker"
         }
+        $Reg7Marker = "LIDAR_V2_K12_REG7_SHADOW_ACTIVE_PHYSICAL_PASS " +
+            "proc_mhz=$($Profile.proc) tdc_mhz=$($Profile.tdc)"
+        if ($Text -notmatch [regex]::Escape($Reg7Marker)) {
+            throw "$Stem did not close the K1-2 Reg7 contract"
+        }
         if ($Text -match "Failure:|Fatal:") {
             throw "$Stem reported a failure"
         }
@@ -126,6 +131,8 @@ $Scenario = [ordered]@{
     )
     checks = @(
         "deferred GPX register-image activation",
+        "Reg7 staging MTimer override, in-flight Shadow snapshot and active view",
+        "failed MTimer-range COMMIT rollback and physical two-Chip Reg7 readback",
         "physical write/data/address pin mapping",
         "two Chips by eight STOPs by seven Returns IFIFO drain",
         "Processing RUN level CDC into TDC domain",

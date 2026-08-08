@@ -108,6 +108,16 @@ architecture rtl of lidar_config_validator_seq is
 
 begin
 
+    -- synthesis translate_off
+    -- 5 ns 공통 시간축과 외부 GPX Tref가 정수비가 아니면 MTimer 환산은
+    -- 정확한 단일 카운트로 표현될 수 없다. 현재 HW 계약은 200/40=5다.
+    assert C_5NS_TICK_RATE_MHZ mod C_GPX_REFERENCE_CLK_MHZ = 0 and
+           C_GPX_REFERENCE_TICK_5NS * C_GPX_REFERENCE_CLK_MHZ =
+               C_5NS_TICK_RATE_MHZ
+        report "V2-CFG GPX 40 MHz Tref is not an exact 5 ns tick ratio"
+        severity failure;
+    -- synthesis translate_on
+
     o_busy               <= r_busy;
     o_done               <= r_done;
     o_error              <= r_error;

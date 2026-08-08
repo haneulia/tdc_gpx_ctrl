@@ -71,6 +71,19 @@ GPX bus/acquisition clock이며 Tref와 다른 신호다. RTL은 외부 referenc
 보드 제약 검토가 소유한다. 40 MHz가 아니면 `CTL12`의 5 ns 단위에서
 `Reg7.MTimer`로 변환하는 `/5` 계약이 성립하지 않는다.
 
+이 시간 계약의 RTL 단일 소유자는 `lidar_build_pkg`다.
+
+| 상수 | 값 | 의미 |
+|---|---:|---|
+| `C_5NS_TICK_RATE_MHZ` | 200 | 모든 Runtime 시간 CSR의 공통 5 ns 기준 주파수 |
+| `C_GPX_REFERENCE_CLK_MHZ` | 40 | PCB가 외부 GPX에 공급해야 하는 Tref 주파수 |
+| `C_GPX_REFERENCE_TICK_5NS` | `200/40=5` | GPX MTimer 1 tick에 포함되는 5 ns tick 수 |
+
+`C_GPX_REFERENCE_TICK_5NS`를 별도 숫자 `5`로 다시 정의하지 않는다. 위 두
+주파수로부터 파생하고, validator의 simulation assertion이 정확한 정수비인지
+확인한다. GPX 기준 클럭 계약을 바꿀 때는 상수 하나만 고치는 것이 아니라 PCB,
+datasheet 운용 조건, 변환 범위, 테스트 예상값을 함께 재검증해야 한다.
+
 ## 3. 설정 소유권
 
 | 종류 | 예 | 변경 시점 | 적용 방법 |
@@ -366,6 +379,11 @@ read-only다. Reg7.MTimer는 staging에 쓴 값이 아니라 CTL12에서 자동 
 image이지 물리 pin을 통한 readback은 아니므로, 실제 Chip 확인은 CTL23/24를
 사용한다.
 
+Reset 뒤 첫 성공 COMMIT 전에는 `ACTIVE_VALID=0`이며 CTL21/22 Active view는
+기본 GPX image를 유효한 적용값처럼 노출하지 않고 `0`을 반환한다. software는
+이 0을 실제 Chip 설정으로 해석하지 말고 반드시 `STAT2.ACTIVE_VALID=1`을 먼저
+확인해야 한다.
+
 Reg7.MTimer write가 무시되어 저장조차 안 되는 것은 아니다. CTL22 staging
 write는 28 bit 전체를 기록하므로 `VIEW_ACTIVE=0` read에서는 software가 쓴
 MTimer가 보인다. 다만 COMMIT prepare에서 MTimer 13 bit만 CTL12 파생값으로
@@ -383,6 +401,10 @@ MTimer가 보인다. 다만 COMMIT prepare에서 MTimer 13 bit만 CTL12 파생�
 
 읽기 동안 RTL은 GPX acquisition RUN만 자동 pause하고 safe를 기다린다. CSR과
 Processing clock은 멈추지 않는다. COMMIT/RUN/ARM은 완료 전까지 거부한다.
+
+K1-2 회귀는 위 세 층을 한 transaction 흐름에서 비교한다. COMMIT 도중 다음
+Shadow를 써도 진행 중 snapshot과 Active/물리 Chip은 바뀌지 않으며, 범위 오류
+`0x33`도 Active version과 실제 Chip에 write를 발생시키지 않아야 한다.
 
 ## 9. IRQ 분류
 
