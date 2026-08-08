@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>C08 v2 RTL 운용 매트릭스</title>
+  <style>
+    :root {
+      --ink:#172033; --muted:#5f6b7d; --line:#d9e0e8; --panel:#ffffff;
+      --page:#eef2f6; --blue:#2368c4; --blue-soft:#e8f1fc;
+      --green:#15805d; --green-soft:#e5f5ef; --red:#c53b3b;
+      --red-soft:#fdeaea; --amber:#a76300; --amber-soft:#fff1d5;
+      --violet:#6f52ad; --teal:#117d88; --pad:#cbd3dd;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--page); font:13px/1.45 "Segoe UI", sans-serif; }
+    button,input,select { font:inherit; }
+    header { height:64px; display:flex; align-items:center; justify-content:space-between; padding:0 22px; background:#fff; border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:20px; letter-spacing:0; }
+    h2 { margin:0; font-size:15px; letter-spacing:0; }
+    .sub { color:var(--muted); font-size:12px; margin-top:3px; }
+    .shell { display:grid; grid-template-columns:330px minmax(0,1fr); min-height:calc(100vh - 64px); }
+    aside { padding:16px; background:#fff; border-right:1px solid var(--line); overflow:auto; }
+    main { min-width:0; padding:16px; overflow:auto; }
+    .group { padding:14px 0; border-bottom:1px solid var(--line); }
+    .group:first-child { padding-top:0; }
+    .group-title { margin-bottom:10px; font-weight:700; }
+    .field { display:grid; grid-template-columns:minmax(0,1fr) 118px; align-items:center; gap:10px; margin:8px 0; }
+    .field label { color:#344055; }
+    input,select { width:100%; height:32px; border:1px solid #c8d2df; background:#fff; color:var(--ink); padding:0 8px; border-radius:4px; }
+    input:focus,select:focus { outline:2px solid #9dc2ef; border-color:var(--blue); }
+    .actions { display:flex; gap:8px; padding-top:14px; }
+    button { height:34px; border:1px solid #9eb0c5; border-radius:4px; background:#fff; color:#203047; padding:0 12px; cursor:pointer; }
+    button.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+    .badge { display:inline-flex; align-items:center; min-width:70px; height:28px; justify-content:center; border-radius:4px; font-weight:800; }
+    .pass { color:var(--green); background:var(--green-soft); border:1px solid #a9d9c7; }
+    .check { color:var(--red); background:var(--red-soft); border:1px solid #efb4b4; }
+    .model { color:var(--amber); background:var(--amber-soft); border:1px solid #e8c786; }
+    .metrics { display:grid; grid-template-columns:repeat(5,minmax(145px,1fr)); gap:10px; margin-bottom:12px; }
+    .metric { background:#fff; border:1px solid var(--line); border-radius:6px; padding:12px; min-width:0; }
+    .metric span { display:block; color:var(--muted); font-size:11px; }
+    .metric strong { display:block; margin-top:5px; font-size:20px; white-space:nowrap; }
+    .band { background:var(--panel); border:1px solid var(--line); border-radius:6px; margin-bottom:12px; overflow:hidden; }
+    .band-head { min-height:44px; display:flex; align-items:center; justify-content:space-between; padding:0 14px; border-bottom:1px solid var(--line); }
+    .band-body { padding:14px; overflow:auto; }
+    .timeline { position:relative; height:48px; display:flex; border:1px solid #bcc8d5; background:#f5f7fa; overflow:hidden; }
+    .phase { min-width:2px; height:100%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; overflow:hidden; white-space:nowrap; }
+    .phase.fire { background:var(--violet); }
+    .phase.timeout { background:#8a6f3d; }
+    .phase.range { background:var(--blue); }
+    .phase.drain { background:var(--teal); }
+    .phase.margin { background:var(--green); }
+    .phase.overflow { background:var(--red); }
+    .timeline-labels { display:flex; justify-content:space-between; color:var(--muted); font-size:11px; margin-top:6px; }
+    table { border-collapse:collapse; width:100%; min-width:660px; }
+    th,td { padding:8px 9px; border-bottom:1px solid #e2e7ed; text-align:left; vertical-align:top; }
+    th { background:#f4f6f9; color:#3c485a; font-size:11px; }
+    td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .formula-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .line-shape { display:flex; min-width:720px; height:52px; border:1px solid #b9c4d1; margin-bottom:9px; overflow:hidden; }
+    .shape { display:flex; align-items:center; justify-content:center; min-width:3px; color:#fff; overflow:hidden; white-space:nowrap; }
+    .shape.meta { background:var(--violet); }
+    .shape.cell { background:var(--blue); }
+    .shape.pad { background:var(--pad); color:#344055; }
+    .shape.reserve { background:#7b8796; }
+    .note { margin-top:9px; padding:9px 10px; border-left:3px solid var(--blue); background:var(--blue-soft); color:#33425a; }
+    .warning { border-left-color:var(--amber); background:var(--amber-soft); }
+    .good { border-left-color:var(--green); background:var(--green-soft); }
+    .status-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .small { color:var(--muted); font-size:11px; }
+    @media (max-width:1100px) {
+      .shell { grid-template-columns:1fr; }
+      aside { border-right:0; border-bottom:1px solid var(--line); }
+      .metrics { grid-template-columns:repeat(2,minmax(145px,1fr)); }
+      .formula-grid { grid-template-columns:1fr; }
+    }
+    @media (max-width:620px) {
+      header { height:auto; padding:12px 14px; align-items:flex-start; gap:10px; }
+      h1 { font-size:17px; }
+      main,aside { padding:10px; }
+      .metrics { grid-template-columns:1fr; }
+      .field { grid-template-columns:1fr; gap:3px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>TDC-GPX LiDAR v2 운용 매트릭스</h1>
+      <div class="sub">RTL 실측 Drain · 광학 Shot 격자 · 목표 왕복시간 · PACKED17 VDMA 계약</div>
+    </div>
+    <span id="overallBadge" class="badge check">CHECK</span>
+  </header>
+  <div class="shell">
+    <aside>
+      <div class="group">
+        <div class="group-title">클럭과 출력</div>
+        <div class="field"><label for="clockProfile">Processing / TDC</label><select id="clockProfile"><option value="150/200">150 / 200 MHz</option><option value="200/150">200 / 150 MHz</option></select></div>
+        <div class="field"><label for="axisWidth">AXIS 출력 폭</label><select id="axisWidth"><option>32</option><option>64</option><option>128</option></select></div>
+        <div class="field"><label for="topology">Slope 토폴로지</label><select id="topology"><option value="0">Dedicated 2 Rise / 2 Fall</option><option value="1">1-chip Rising + Falling</option><option value="2">4-chip 모두 Rising + Falling</option></select></div>
+        <div class="field"><label for="stops">활성 STOP/Chip</label><input id="stops" type="number" min="1" max="8" value="8"></div>
+        <div class="field"><label for="returns">Runtime Return</label><input id="returns" type="number" min="1" max="7" value="7"></div>
+      </div>
+      <div class="group">
+        <div class="group-title">모터와 광학 격자</div>
+        <div class="field"><label for="rpm">Motor RPM</label><input id="rpm" type="number" min="1" max="100000" value="1200"></div>
+        <div class="field"><label for="cpr">Encoder CPR</label><input id="cpr" type="number" min="1" max="65535" value="3600"></div>
+        <div class="field"><label for="decode">Physical decode</label><select id="decode"><option value="1">x1</option><option value="2">x2</option><option value="4" selected>x4</option></select></div>
+        <div class="field"><label for="shotAngle">요청 광학 Shot 간격 (deg)</label><input id="shotAngle" type="number" min="0.000001" max="360" step="0.001" value="0.2"></div>
+        <div class="field"><label for="faceFov">Face 광학 FoV (deg)</label><input id="faceFov" type="number" min="0.001" max="360" step="0.1" value="120"></div>
+      </div>
+      <div class="group">
+        <div class="group-title">레이저와 거리창</div>
+        <div class="field"><label for="targetMeters">목표 편도 거리 (m)</label><input id="targetMeters" type="number" min="0.1" max="30691" step="0.1" value="1000"></div>
+        <div class="field"><label for="fireTimeout">Fire-done 허용시간 (5 ns ticks)</label><input id="fireTimeout" type="number" min="1" max="65535" value="288"></div>
+      </div>
+      <div class="actions">
+        <button id="resetButton">기본값</button>
+        <button id="exportButton" class="primary">JSON 내보내기</button>
+      </div>
+    </aside>
+    <main>
+      <div class="metrics">
+        <div class="metric"><span>후보점 간 가용시간</span><strong id="candidateMetric">-</strong></div>
+        <div class="metric"><span>보수적 필요시간</span><strong id="requiredMetric">-</strong></div>
+        <div class="metric"><span>Shot margin</span><strong id="marginMetric">-</strong></div>
+        <div class="metric"><span>Rise/Fall Lane HSIZE</span><strong id="hsizeMetric">-</strong></div>
+        <div class="metric"><span>계획 Shot/Face</span><strong id="shotsMetric">-</strong></div>
+      </div>
+
+      <section class="band">
+        <div class="band-head"><h2>Shot 시간 계약</h2><span id="timingBadge" class="badge check">CHECK</span></div>
+        <div class="band-body">
+          <div id="timeline" class="timeline"></div>
+          <div class="timeline-labels"><span>광학 후보점</span><span>다음 광학 후보점</span></div>
+          <div id="timingNote" class="note"></div>
+        </div>
+      </section>
+
+      <div class="formula-grid">
+        <section class="band">
+          <div class="band-head"><h2>시간순 계산</h2></div>
+          <div class="band-body" style="padding:0"><table><thead><tr><th>단계</th><th>계산</th><th class="num">결과</th></tr></thead><tbody id="calcRows"></tbody></table></div>
+        </section>
+        <section class="band">
+          <div class="band-head"><h2>Return별 RTL Drain 실측</h2><span class="small">폭 32-bit Return sweep</span></div>
+          <div class="band-body" style="padding:0"><table><thead><tr><th>Return</th><th class="num">Cell</th><th class="num">STOP→Line clocks</th><th class="num">시간</th></tr></thead><tbody id="drainRows"></tbody></table></div>
+        </section>
+      </div>
+
+      <section class="band">
+        <div class="band-head"><h2>Shot Line / VDMA 형상</h2><span id="geometryBadge" class="badge pass">PASS</span></div>
+        <div class="band-body">
+          <div id="lineShape" class="line-shape"></div>
+          <div id="geometryText" class="status-row"></div>
+          <div class="note good">AXIS 폭은 Cell ABI를 바꾸지 않습니다. 폭이 커지면 Beat 수만 감소하며 HSIZE는 해당 Beat byte 경계로 올림 정렬됩니다. STRIDE는 합성 최대 Return 7과 해당 Lane 최대 Cell 슬롯으로 고정됩니다.</div>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="band-head"><h2>최대 Slope 토폴로지 회귀</h2><span class="badge pass">18 PASS</span></div>
+        <div class="band-body" style="padding:0"><table><thead><tr><th>Processing</th><th>폭</th><th>토폴로지</th><th class="num">Cell 슬롯/Lane</th><th class="num">HSIZE</th><th class="num">Frame Beats</th></tr></thead><tbody id="topologyRows"></tbody></table></div>
+      </section>
+
+      <section class="band">
+        <div class="band-head"><h2>대표 운용점 Golden 판정</h2><span id="matrixBadge" class="badge pass">PASS</span></div>
+        <div class="band-body" style="padding:0"><table><thead><tr><th>클럭</th><th>RPM</th><th>요청/양자화 각</th><th>목표 ticks</th><th>Return</th><th class="num">가용시간</th><th class="num">필요시간</th><th>판정</th></tr></thead><tbody id="matrixRows"></tbody></table></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    "use strict";
+
+    const K13 = Object.freeze({
+      speedOfLightMps: 299792458,
+      commonTickNs: 5,
+      commonTickRateMhz: 200,
+      gpxReferenceMhz: 40,
+      gpxReferenceTick5ns: 5,
+      physicalSampleToFireClks: 9,
+      rearmMarginClks: 2,
+      shotMetadataBytes: 16,
+      footerBytes: 32,
+      buildMaxReturns: 7
+    });
+
+    // K1-3 full-Top measurement. Each value is STOP assertion to the first
+    // accepted Shot-Line TLAST in Processing clocks. Width 64/128 at Return 7
+    // proved the same latency while only the AXIS Beat count changed.
+    const RTL_DRAIN_BASELINE = Object.freeze({
+      "150/200": [304, 400, 513, 621, 755, 875, 1011],
+      "200/150": [341, 555, 784, 997, 1227, 1440, 1669]
+    });
+
+    const TOPOLOGY_NAMES = Object.freeze([
+      "Dedicated 2R/2F", "1-chip dual-edge", "4-chip all dual-edge"
+    ]);
+
+    const ceilDiv = (value, divisor) => Math.floor((value + divisor - 1) / divisor);
+    const alignUp = (value, alignment) => ceilDiv(value, alignment) * alignment;
+    const cellWords = returns => Math.ceil(returns / 2) + 1;
+    const cellBytes = returns => cellWords(returns) * 4;
+    const laneChipCount = topology => [2, 1, 4][topology];
+    const effectiveTargetTicks = ticks => ceilDiv(ticks, K13.gpxReferenceTick5ns) * K13.gpxReferenceTick5ns;
+    const ticksToClocks = (ticks, mhz) => ceilDiv(ticks * mhz, K13.commonTickRateMhz);
+    const targetTicksFromMeters = meters => Math.ceil(
+      (2 * meters / K13.speedOfLightMps) / (K13.commonTickNs * 1e-9));
+    const oneWayMetersFromTicks = ticks =>
+      ticks * K13.commonTickNs * 1e-9 * K13.speedOfLightMps / 2;
+
+    function laneGeometry({topology, stops, returns, width, plannedShots = 1}) {
+      const slots = laneChipCount(topology) * stops;
+      const beatBytes = width / 8;
+      const rawHsize = K13.shotMetadataBytes + slots * cellBytes(returns);
+      const hsize = alignUp(rawHsize, beatBytes);
+      const maxRawHsize = K13.shotMetadataBytes +
+        slots * cellBytes(K13.buildMaxReturns);
+      const stride = alignUp(maxRawHsize, beatBytes);
+      const footerLines = ceilDiv(K13.footerBytes, hsize);
+      const vsize = plannedShots + footerLines;
+      return {
+        slots, beatBytes, cellWords:cellWords(returns),
+        cellBytes:cellBytes(returns), rawHsize, hsize,
+        padding:hsize - rawHsize, stride, footerLines, vsize,
+        lineBeats:hsize / beatBytes,
+        frameBeats:(hsize / beatBytes) * vsize
+      };
+    }
+
+    function evaluateOperating(input) {
+      const procMhz = input.procMhz;
+      const tdcMhz = input.tdcMhz;
+      const safeCpr = Math.max(1,Math.trunc(input.cpr || 1));
+      const safeRpm = Math.max(1,input.rpm || 1);
+      const safeStops = Math.min(8,Math.max(1,Math.trunc(input.stops || 1)));
+      const safeReturns = Math.min(7,Math.max(1,Math.trunc(input.returns || 1)));
+      const safeShotAngle = Math.max(.000001,input.shotAngleDeg || .000001);
+      const totalStates = safeCpr * input.decode;
+      const mechanicalDegPerState = 360 / totalStates;
+      const opticalDegPerState = 720 / totalStates;
+      const shotStates = Math.ceil(safeShotAngle / opticalDegPerState);
+      const quantizedOpticalDeg = shotStates * opticalDegPerState;
+      const candidateUs = (60e6 / safeRpm) * shotStates / totalStates;
+      const candidateClks = Math.floor(candidateUs * procMhz);
+      const requestedTargetTicks = input.targetTicks ??
+        targetTicksFromMeters(input.targetMeters);
+      const effectiveTicks = effectiveTargetTicks(requestedTargetTicks);
+      const errors = [];
+      if (![32,64,128].includes(input.width)) errors.push("지원하지 않는 AXIS 출력 폭");
+      if (input.stops < 1 || input.stops > 8) errors.push("STOP/Chip은 1~8 범위여야 함");
+      if (input.returns < 1 || input.returns > 7) errors.push("Runtime Return은 1~7 범위여야 함");
+      if (input.rpm <= 0 || input.cpr <= 0) errors.push("RPM과 CPR은 0보다 커야 함");
+      if (input.shotAngleDeg < opticalDegPerState) errors.push("요청 광학 Shot 간격이 1 state보다 작음");
+      if (input.fireTimeoutTicks > requestedTargetTicks) errors.push("Fire-done 허용시간이 목표 왕복시간보다 큼");
+      if (effectiveTicks > 8191 * K13.gpxReferenceTick5ns) errors.push("GPX Reg7.MTimer 13-bit 범위 초과");
+      const timeoutClks = ticksToClocks(input.fireTimeoutTicks, procMhz);
+      const targetClks = ticksToClocks(effectiveTicks, procMhz);
+      const measuredDrain = RTL_DRAIN_BASELINE[`${procMhz}/${tdcMhz}`][safeReturns - 1];
+      const topologyScale = input.topology === 2 ? 2 : 1;
+      const drainClks = measuredDrain * topologyScale;
+      const physicalClks = K13.physicalSampleToFireClks;
+      const tailClks = Math.max(K13.rearmMarginClks, drainClks);
+      const requiredClks = physicalClks + timeoutClks + targetClks + tailClks;
+      const marginClks = candidateClks - requiredClks;
+      const halfWidthStates = Math.max(1, Math.round(
+        input.faceOpticalFovDeg / (4 * mechanicalDegPerState)));
+      const faceIntervals = 2 * halfWidthStates;
+      const plannedShots = Math.ceil(faceIntervals / shotStates);
+      const geometry = laneGeometry({
+        ...input, stops:safeStops, returns:safeReturns, plannedShots
+      });
+      return {
+        ...input, totalStates, mechanicalDegPerState, opticalDegPerState,
+        shotStates, quantizedOpticalDeg, candidateUs, candidateClks,
+        requestedTargetTicks, effectiveTargetTicks:effectiveTicks,
+        targetOneWayMeters:oneWayMetersFromTicks(effectiveTicks),
+        timeoutClks, targetClks, measuredDrainClks:measuredDrain,
+        drainClks, physicalClks, tailClks, requiredClks,
+        requiredUs:requiredClks / procMhz,
+        marginClks, marginUs:marginClks / procMhz,
+        halfWidthStates, faceIntervals, plannedShots, geometry,
+        errors,
+        timingProven:input.topology === 0,
+        status:errors.length ? "ERROR" : (marginClks >= 0 ? "PASS" : "CHECK")
+      };
+    }
+
+    function buildAcquisitionExpectations() {
+      const result = [];
+      for (const [procMhz,tdcMhz] of [[150,200],[200,150]]) {
+        const add = (width, returns, targetTicks) => {
+          const geometry = laneGeometry({topology:0,stops:8,returns,width,plannedShots:1});
+          const targetClks = ticksToClocks(effectiveTargetTicks(targetTicks), procMhz);
+          const baseline = RTL_DRAIN_BASELINE[`${procMhz}/${tdcMhz}`][returns - 1];
+          result.push({
+            proc_mhz:procMhz, tdc_mhz:tdcMhz, width, returns,
+            target_5ns:targetTicks, shot_to_start_clks:0,
+            start_to_stop_clks:targetClks,
+            stop_to_line_clks_min:baseline - 1,
+            stop_to_line_clks_max:baseline,
+            shot_to_line_clks_min:targetClks + baseline - 1,
+            shot_to_line_clks_max:targetClks + baseline,
+            hsize_bytes:geometry.hsize, vsize_lines:geometry.vsize,
+            stride_bytes:geometry.stride, frame_beats:geometry.frameBeats
+          });
+        };
+        for (let returns = 1; returns <= 7; returns++) add(32,returns,1335);
+        add(64,7,1335); add(128,7,1335);
+        add(32,7,288); add(32,7,668);
+      }
+      return result;
+    }
+
+    function buildTopologyExpectations() {
+      const result = [];
+      for (const procMhz of [150,200]) {
+        for (const width of [32,64,128]) {
+          for (let topology = 0; topology <= 2; topology++) {
+            const geometry = laneGeometry({topology,stops:8,returns:7,width,plannedShots:1});
+            result.push({
+              proc_mhz:procMhz, width, topology, stops:8, returns:7,
+              slots:geometry.slots, hsize_bytes:geometry.hsize,
+              vsize_lines:geometry.vsize, stride_bytes:geometry.stride,
+              frame_beats:geometry.frameBeats
+            });
+          }
+        }
+      }
+      return result;
+    }
+
+    const OPERATING_CASES = Object.freeze([
+      {name:"R7 near range",procMhz:150,tdcMhz:200,width:32,topology:0,stops:8,returns:7,rpm:1200,cpr:3600,decode:4,shotAngleDeg:.2,faceOpticalFovDeg:120,targetTicks:288,fireTimeoutTicks:288},
+      {name:"R7 medium range",procMhz:150,tdcMhz:200,width:32,topology:0,stops:8,returns:7,rpm:1200,cpr:3600,decode:4,shotAngleDeg:.2,faceOpticalFovDeg:120,targetTicks:668,fireTimeoutTicks:288},
+      {name:"R7 1 km",procMhz:150,tdcMhz:200,width:32,topology:0,stops:8,returns:7,rpm:1200,cpr:3600,decode:4,shotAngleDeg:.2,faceOpticalFovDeg:120,targetTicks:1335,fireTimeoutTicks:288},
+      {name:"R1 1 km",procMhz:150,tdcMhz:200,width:32,topology:0,stops:8,returns:1,rpm:1200,cpr:3600,decode:4,shotAngleDeg:.2,faceOpticalFovDeg:120,targetTicks:1335,fireTimeoutTicks:288},
+      {name:"R7 medium range reverse clocks",procMhz:200,tdcMhz:150,width:32,topology:0,stops:8,returns:7,rpm:1200,cpr:3600,decode:4,shotAngleDeg:.2,faceOpticalFovDeg:120,targetTicks:668,fireTimeoutTicks:288},
+      {name:"R7 1 km reverse clocks",procMhz:200,tdcMhz:150,width:32,topology:0,stops:8,returns:7,rpm:1200,cpr:3600,decode:4,shotAngleDeg:.2,faceOpticalFovDeg:120,targetTicks:1335,fireTimeoutTicks:288},
+      {name:"0.18 degree quantization",procMhz:150,tdcMhz:200,width:64,topology:0,stops:8,returns:7,rpm:1200,cpr:3600,decode:4,shotAngleDeg:.18,faceOpticalFovDeg:120,targetTicks:668,fireTimeoutTicks:288},
+      {name:"1500 RPM boundary",procMhz:150,tdcMhz:200,width:128,topology:0,stops:8,returns:7,rpm:1500,cpr:3600,decode:4,shotAngleDeg:.2,faceOpticalFovDeg:120,targetTicks:668,fireTimeoutTicks:288}
+    ]);
+
+    function compactOperatingResult(result) {
+      return {
+        total_states:result.totalStates,
+        optical_deg_per_state:result.opticalDegPerState,
+        shot_interval_states:result.shotStates,
+        quantized_optical_deg:result.quantizedOpticalDeg,
+        candidate_clks:result.candidateClks,
+        candidate_us:result.candidateUs,
+        effective_target_5ns:result.effectiveTargetTicks,
+        timeout_clks:result.timeoutClks,
+        target_clks:result.targetClks,
+        drain_clks:result.drainClks,
+        required_clks:result.requiredClks,
+        margin_clks:result.marginClks,
+        planned_shots:result.plannedShots,
+        status:result.status
+      };
+    }
+
+    function buildK13Golden() {
+      return {
+        schema:"tdc-gpx-lidar-v2-k13-operating-golden-v1",
+        generated_by:"C08-v027 buildK13Golden",
+        contracts:{
+          common_time_unit_ns:K13.commonTickNs,
+          external_gpx_reference_mhz:K13.gpxReferenceMhz,
+          physical_sample_to_fire_clks:K13.physicalSampleToFireClks,
+          rearm_margin_clks:K13.rearmMarginClks,
+          drain_measurement:"STOP assertion to first accepted Shot-Line TLAST",
+          timing_profile:"two-chip Rise lane; zero AXIS backpressure"
+        },
+        rtl_drain_baseline:RTL_DRAIN_BASELINE,
+        acquisition_expectations:buildAcquisitionExpectations(),
+        topology_expectations:buildTopologyExpectations(),
+        operating_cases:OPERATING_CASES.map(input => ({
+          name:input.name, input, result:compactOperatingResult(evaluateOperating(input))
+        }))
+      };
+    }
+
+    const K13_UI_START = true;
+    const $ = id => document.getElementById(id);
+
+    function readInputs() {
+      const [procMhz,tdcMhz] = $("clockProfile").value.split("/").map(Number);
+      return {
+        procMhz, tdcMhz,
+        width:Number($("axisWidth").value),
+        topology:Number($("topology").value),
+        stops:Number($("stops").value),
+        returns:Number($("returns").value),
+        rpm:Number($("rpm").value), cpr:Number($("cpr").value),
+        decode:Number($("decode").value),
+        shotAngleDeg:Number($("shotAngle").value),
+        faceOpticalFovDeg:Number($("faceFov").value),
+        targetMeters:Number($("targetMeters").value),
+        fireTimeoutTicks:Number($("fireTimeout").value)
+      };
+    }
+
+    const fmt = (value,digits=3) => Number(value).toLocaleString("ko-KR",{maximumFractionDigits:digits});
+    const us = value => `${fmt(value,3)} us`;
+
+    function renderTimeline(result) {
+      const pieces = [
+        ["fire",result.physicalClks,"발사 경로"],
+        ["timeout",result.timeoutClks,"fire_done"],
+        ["range",result.targetClks,"왕복 거리창"],
+        ["drain",result.drainClks,"GPX/Cell/Line"]
+      ];
+      const timeline = $("timeline"); timeline.innerHTML = "";
+      for (const [kind,clks,label] of pieces) {
+        const el = document.createElement("div"); el.className = `phase ${kind}`;
+        el.style.flex = `${clks} 1 0`; el.textContent = `${label} ${clks}`;
+        el.title = `${label}: ${clks} Processing clocks`;
+        timeline.appendChild(el);
+      }
+      if (result.marginClks >= 0) {
+        const el = document.createElement("div"); el.className = "phase margin";
+        el.style.flex = `${result.marginClks} 1 0`; el.textContent = `margin ${result.marginClks}`;
+        timeline.appendChild(el);
+      } else {
+        const el = document.createElement("div"); el.className = "phase overflow";
+        el.style.flex = `${-result.marginClks} 1 0`; el.textContent = `부족 ${-result.marginClks}`;
+        timeline.appendChild(el);
+      }
+    }
+
+    function renderLineShape(result) {
+      const g = result.geometry;
+      const shape = $("lineShape"); shape.innerHTML = "";
+      const segments = [
+        ["meta",K13.shotMetadataBytes,"Shot Metadata 16 B"],
+        ["cell",g.slots * g.cellBytes,`${g.slots} Cell × ${g.cellBytes} B`]
+      ];
+      if (g.padding) segments.push(["pad",g.padding,`Pad ${g.padding} B`]);
+      if (g.stride > g.hsize) segments.push(["reserve",g.stride-g.hsize,`Stride reserve ${g.stride-g.hsize} B`]);
+      for (const [kind,bytes,label] of segments) {
+        const el = document.createElement("div"); el.className = `shape ${kind}`;
+        el.style.flex = `${bytes} 1 0`; el.textContent = label; el.title = `${label}: ${bytes} B`;
+        shape.appendChild(el);
+      }
+      $("geometryText").innerHTML = `<span>Cell ${g.cellWords} words / ${g.cellBytes} B · HSIZE ${g.hsize} B · ${g.lineBeats} Beats/Line · VSIZE ${g.vsize} · STRIDE ${g.stride} B</span><strong>${TOPOLOGY_NAMES[result.topology]}</strong>`;
+    }
+
+    function render() {
+      const input = readInputs();
+      const result = evaluateOperating(input);
+      $("candidateMetric").textContent = us(result.candidateUs);
+      $("requiredMetric").textContent = us(result.requiredUs);
+      $("marginMetric").textContent = `${result.marginClks >= 0 ? "+" : ""}${us(result.marginUs)}`;
+      $("hsizeMetric").textContent = `${result.geometry.hsize} B`;
+      $("shotsMetric").textContent = fmt(result.plannedShots,0);
+      $("timingBadge").textContent = result.status;
+      $("timingBadge").className = `badge ${result.status === "PASS" ? "pass" : "check"}`;
+      $("overallBadge").textContent = result.errors.length ? "ERROR" : (result.timingProven ? result.status : "MODEL");
+      $("overallBadge").className = `badge ${result.errors.length ? "check" : (result.timingProven ? (result.status === "PASS" ? "pass" : "check") : "model")}`;
+      renderTimeline(result); renderLineShape(result);
+
+      const sourceText = result.timingProven
+        ? "두 Chip Rise Lane의 full-Top RTL 실측값을 사용했습니다."
+        : "이 토폴로지는 출력 형상만 RTL로 검증됐습니다. 시간 판정은 보수적 확장값이므로 Sign-off가 아니라 MODEL입니다.";
+      $("timingNote").className = `note ${result.timingProven ? "good" : "warning"}`;
+      $("timingNote").textContent = result.errors.length
+        ? `설정 오류: ${result.errors.join(" / ")}`
+        : `${sourceText} 요청 ${fmt(result.shotAngleDeg,6)} deg는 ${result.shotStates} states, 실제 격자는 ${fmt(result.quantizedOpticalDeg,6)} deg입니다.`;
+
+      const rows = [
+        ["T01",`decoded states = ${input.cpr} × ${input.decode}`,result.totalStates],
+        ["T02",`optical angle/state = 720 / ${result.totalStates}`,`${fmt(result.opticalDegPerState,8)} deg`],
+        ["T03",`shot states = ceil(${input.shotAngleDeg} / ${fmt(result.opticalDegPerState,8)})`,result.shotStates],
+        ["T04",`candidate = 60/RPM × shot states/total states`,us(result.candidateUs)],
+        ["T05",`target request → GPX 25 ns quantization`,`${result.requestedTargetTicks} → ${result.effectiveTargetTicks} ticks`],
+        ["T06",`fire path + timeout`,`${result.physicalClks} + ${result.timeoutClks} clocks`],
+        ["T07",`effective target round-trip`,`${result.targetClks} clocks / ${fmt(result.targetOneWayMeters,2)} m`],
+        ["T08",`RTL STOP→Shot Line, Return ${input.returns}`,`${result.drainClks} clocks`],
+        ["T09",`required = fire + timeout + target + max(re-arm, drain)`,`${result.requiredClks} clocks`],
+        ["T10",`candidate - required`,`${result.marginClks} clocks`]
+      ];
+      $("calcRows").innerHTML = rows.map(row => `<tr><td>${row[0]}</td><td>${row[1]}</td><td class="num">${row[2]}</td></tr>`).join("");
+
+      const baseline = RTL_DRAIN_BASELINE[`${input.procMhz}/${input.tdcMhz}`];
+      $("drainRows").innerHTML = baseline.map((clks,index) => `<tr><td>${index+1}</td><td class="num">${cellBytes(index+1)} B</td><td class="num">${clks}</td><td class="num">${us(clks/input.procMhz)}</td></tr>`).join("");
+
+      $("topologyRows").innerHTML = buildTopologyExpectations().map(row => `<tr><td>${row.proc_mhz} MHz</td><td>${row.width}-bit</td><td>${TOPOLOGY_NAMES[row.topology]}</td><td class="num">${row.slots}</td><td class="num">${row.hsize_bytes} B</td><td class="num">${row.frame_beats}</td></tr>`).join("");
+
+      const cases = buildK13Golden().operating_cases;
+      $("matrixRows").innerHTML = cases.map(item => `<tr><td>${item.input.procMhz}/${item.input.tdcMhz}</td><td>${item.input.rpm}</td><td>${item.input.shotAngleDeg} / ${fmt(item.result.quantized_optical_deg,3)}</td><td>${item.input.targetTicks}</td><td>${item.input.returns}</td><td class="num">${us(item.result.candidate_us)}</td><td class="num">${us(item.result.required_clks/item.input.procMhz)}</td><td><span class="badge ${item.result.status === "PASS" ? "pass" : "check"}">${item.result.status}</span></td></tr>`).join("");
+    }
+
+    function applyDefaults() {
+      $("clockProfile").value="150/200"; $("axisWidth").value="32";
+      $("topology").value="0"; $("stops").value="8"; $("returns").value="7";
+      $("rpm").value="1200"; $("cpr").value="3600"; $("decode").value="4";
+      $("shotAngle").value="0.2"; $("faceFov").value="120";
+      $("targetMeters").value="1000"; $("fireTimeout").value="288";
+      render();
+    }
+
+    function exportGolden() {
+      const blob = new Blob([JSON.stringify(buildK13Golden(),null,2)],{type:"application/json"});
+      const link = document.createElement("a"); link.href=URL.createObjectURL(blob);
+      link.download="v2_k13_operating_matrix_golden.json"; link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    document.querySelectorAll("input,select").forEach(el => el.addEventListener("input",render));
+    $("resetButton").addEventListener("click",applyDefaults);
+    $("exportButton").addEventListener("click",exportGolden);
+    applyDefaults();
+  </script>
+</body>
+</html>

@@ -1,8 +1,9 @@
 -- ============================================================================
--- 테스트 자산 목적: Rise/Fall Shot/Hole/Footer/width-packer 전체 AXIS 출력 체인을 검증한다.
--- 핵심 검증 계약: dual-lane 독립 stall, SOF/EOL/TKEEP/TLAST, geometry와 Frame 완료이다.
+-- 테스트 자산 목적: Rise/Fall Shot/Hole/Footer/width-packer와 topology geometry를 검증한다.
+-- 핵심 검증 계약: dual-lane 독립 stall, SOF/EOL/TKEEP/TLAST, 최대 STOP/Return,
+--                  한 chip 또는 4 chip 양 edge의 슬롯/Frame 완료이다.
 -- 관련 RTL: lidar_gpx_axis_output_subsystem과 Stage J 출력 하위 블록.
--- 실행 회귀: scripts/run_v2_k06_axis_dual_lane.ps1
+-- 실행 회귀: run_v2_k06_axis_dual_lane.ps1, run_v2_k13_operating_matrix.ps1
 -- 유지보수 주의: 한 lane stall이 다른 lane 데이터나 Footer 소유권을 오염시키지 않아야 한다.
 -- ============================================================================
 library ieee;
@@ -25,6 +26,8 @@ entity tb_lidar_gpx_axis_output_subsystem is
         -- 1: one chip contributes to both slopes
         -- 2: all four chips contribute to both slopes
         G_TOPOLOGY          : natural range 0 to 2 := 0;
+        G_ACTIVE_STOPS      : positive range 1 to 8 := 1;
+        G_ACTIVE_RETURNS    : positive range 1 to 7 := 1;
         G_FOOTER_STALL_CLKS : positive := 11
     );
 end entity tb_lidar_gpx_axis_output_subsystem;
@@ -37,7 +40,7 @@ architecture sim of tb_lidar_gpx_axis_output_subsystem is
         result.proc_clk_mhz := G_PROC_MHZ;
         result.tdc_clk_mhz := 200;
         result.stream_clock_mode := STREAM_CLOCK_ASYNC;
-        result.stops_per_chip := 1;
+        result.stops_per_chip := G_ACTIVE_STOPS;
         result.max_returns_per_stop := 7;
         result.output_width := G_OUTPUT_WIDTH;
         result.num_faces := 1;
@@ -61,9 +64,9 @@ architecture sim of tb_lidar_gpx_axis_output_subsystem is
     function fn_slot_count return positive is
     begin
         case G_TOPOLOGY is
-            when 0      => return 2;
-            when 1      => return 1;
-            when others => return 4;
+            when 0      => return 2 * G_ACTIVE_STOPS;
+            when 1      => return G_ACTIVE_STOPS;
+            when others => return 4 * G_ACTIVE_STOPS;
         end case;
     end function fn_slot_count;
 
@@ -71,11 +74,13 @@ architecture sim of tb_lidar_gpx_axis_output_subsystem is
         rise_lane : boolean;
         slot      : natural
     ) return natural is
+        variable chip_slot : natural;
     begin
+        chip_slot := slot / G_ACTIVE_STOPS;
         if G_TOPOLOGY = 0 and not rise_lane then
-            return slot + 2;
+            return chip_slot + 2;
         end if;
-        return slot;
+        return chip_slot;
     end function fn_chip_index;
 
     constant C_BUILD_CONFIG : lidar_build_config_t := fn_build_config;
@@ -83,11 +88,12 @@ architecture sim of tb_lidar_gpx_axis_output_subsystem is
     constant C_CLK_PERIOD : time := 1 us / G_PROC_MHZ;
     constant C_BEAT_BYTES : positive := G_OUTPUT_WIDTH / 8;
     constant C_WORDS_PER_BEAT : positive := G_OUTPUT_WIDTH / 32;
-    constant C_CELL_WORDS : positive := fn_gpx_vdma_cell_word_count(1);
+    constant C_CELL_WORDS : positive :=
+        fn_gpx_vdma_cell_word_count(G_ACTIVE_RETURNS);
     constant C_RAW_LINE_WORDS : positive :=
         C_GPX_VDMA_SHOT_META_WORDS + C_SLOT_COUNT * C_CELL_WORDS;
     constant C_HSIZE_BYTES : positive := fn_gpx_vdma_shot_hsize_bytes(
-        C_SLOT_COUNT, 1, G_OUTPUT_WIDTH);
+        C_SLOT_COUNT, G_ACTIVE_RETURNS, G_OUTPUT_WIDTH);
     constant C_FOOTER_LINES : positive := fn_gpx_vdma_footer_lines(
         C_HSIZE_BYTES);
     constant C_VSIZE_LINES : positive := 1 + C_FOOTER_LINES;
@@ -104,7 +110,7 @@ architecture sim of tb_lidar_gpx_axis_output_subsystem is
         result.slot_count := to_unsigned(
             C_SLOT_COUNT, result.slot_count'length);
         result.visible_returns := to_unsigned(
-            1, result.visible_returns'length);
+            G_ACTIVE_RETURNS, result.visible_returns'length);
         result.cell_word_count := to_unsigned(
             C_CELL_WORDS, result.cell_word_count'length);
         result.planned_shots := to_unsigned(
@@ -132,13 +138,15 @@ architecture sim of tb_lidar_gpx_axis_output_subsystem is
         variable result : gpx_frame_cell_event_t :=
             C_GPX_FRAME_CELL_EVENT_IDLE;
         variable chip : natural;
+        variable stop_index : natural;
         variable hit_value : natural;
     begin
         chip := fn_chip_index(rise_lane, slot);
+        stop_index := slot mod G_ACTIVE_STOPS;
         if rise_lane then
-            hit_value := 16#10001# + slot;
+            hit_value := 16#10001# + slot * 8;
         else
-            hit_value := 16#18001# + slot;
+            hit_value := 16#18001# + slot * 8;
         end if;
 
         result.valid := '1';
@@ -146,18 +154,22 @@ architecture sim of tb_lidar_gpx_axis_output_subsystem is
         result.cell.kind := GPX_CELL_DATA;
         result.cell.chip_index := to_unsigned(
             chip, result.cell.chip_index'length);
-        result.cell.stop_index := (others => '0');
+        result.cell.stop_index := to_unsigned(
+            stop_index, result.cell.stop_index'length);
         if rise_lane then
             result.cell.slope := GPX_SLOPE_RISE;
         else
             result.cell.slope := GPX_SLOPE_FALL;
         end if;
         result.cell.hit_count := to_unsigned(
-            1, result.cell.hit_count'length);
+            G_ACTIVE_RETURNS, result.cell.hit_count'length);
         result.cell.max_hits := to_unsigned(
-            1, result.cell.max_hits'length);
-        result.cell.hits(0) := to_unsigned(
-            hit_value, result.cell.hits(0)'length);
+            G_ACTIVE_RETURNS, result.cell.max_hits'length);
+        for return_index in 0 to G_ACTIVE_RETURNS - 1 loop
+            result.cell.hits(return_index) := to_unsigned(
+                hit_value + return_index,
+                result.cell.hits(return_index)'length);
+        end loop;
         result.cell.shot_context.valid := '1';
         result.cell.shot_context.request.valid := '1';
         result.cell.shot_context.request.face_index := (others => '0');
@@ -538,6 +550,18 @@ begin
             integer'image(G_PROC_MHZ) & " width=" &
             integer'image(G_OUTPUT_WIDTH) & " topology=" &
             integer'image(G_TOPOLOGY) severity note;
+        report "LIDAR_V2_K13_TOPOLOGY_METRIC proc_mhz=" &
+            positive'image(G_PROC_MHZ) & " width=" &
+            positive'image(G_OUTPUT_WIDTH) & " topology=" &
+            natural'image(G_TOPOLOGY) & " stops=" &
+            positive'image(G_ACTIVE_STOPS) & " returns=" &
+            positive'image(G_ACTIVE_RETURNS) & " slots=" &
+            positive'image(C_SLOT_COUNT) & " hsize_bytes=" &
+            positive'image(C_HSIZE_BYTES) & " vsize_lines=" &
+            positive'image(C_VSIZE_LINES) & " stride_bytes=" &
+            positive'image(to_integer(C_PROFILE.stride_bytes)) &
+            " frame_beats=" & positive'image(C_EXPECTED_BEATS)
+            severity note;
         finish;
         wait;
     end process p_test;

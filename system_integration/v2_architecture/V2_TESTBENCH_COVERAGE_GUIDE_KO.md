@@ -105,7 +105,7 @@
 | `tb_lidar_gpx_vdma_profile_manager.vhd` | HSIZE/VSIZE/STRIDE/Footer line 및 safe activation | VDMA profile manager | `run_v2_gpx_face_footer.ps1` | 최소/최대 geometry를 모두 본다. |
 | `tb_lidar_gpx_face_footer_builder.vhd` | 32-byte Face Footer field와 폭별 전송 | Footer builder/profile manager | `run_v2_gpx_face_footer.ps1` | version과 Viewer decoder를 같이 바꾼다. |
 | `tb_lidar_gpx_frame_close_fork.vhd` | Rise/Fall Footer fork와 독립 stall | Frame close fork | `run_v2_gpx_face_footer.ps1` | disabled lane 교착을 막는다. |
-| `tb_lidar_gpx_axis_output_subsystem.vhd` | dual-lane Shot/Hole/Footer/packer 통합 | AXIS output subsystem | `run_v2_k06_axis_dual_lane.ps1` | 한 lane stall의 격리를 확인한다. |
+| `tb_lidar_gpx_axis_output_subsystem.vhd` | dual-lane Shot/Hole/Footer/packer 통합과 K1-3 최대 STOP/Return topology geometry telemetry | AXIS output subsystem | `run_v2_k06_axis_dual_lane.ps1`, `run_v2_k13_operating_matrix.ps1` | 한 lane stall의 격리와 세 topology의 슬롯/HSIZE/VSIZE/STRIDE/Beat 수를 함께 보존한다. |
 | `tb_lidar_gpx_ddr_golden.vhd` | STRIDE-aware DDR 모든 word와 HTML/PS Golden 비교 | 전체 data/output chain | `run_v2_gpx_ddr_golden.ps1` | capture와 외부 비교까지 성공해야 한다. |
 
 ### 3.6 Public Top 통합
@@ -114,7 +114,7 @@
 |---|---|---|---|---|
 | `tb_tdc_gpx_lidar_ctrl_v2_k03.vhd` | Top config/VDMA activation 및 command CDC | v2 Top + K0-3 계층 | `run_v2_k03_integration.ps1` | public port/generic 누락을 확인한다. |
 | `tb_tdc_gpx_lidar_ctrl_v2_k04.vhd` | Top Processing/Echo, physical/simulation source | v2 Top + K0-4 계층 | `run_v2_k04_integration.ps1` | simulation이 physical 출력을 내지 않게 한다. |
-| `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` | K0-5 B5~B8, K0-6 AXIS 출력, K1-2 Reg7 Shadow/Active/Physical 연속 계약 | v2 Top + config/physical GPX/data/output 전체 계층 | `run_v2_k05_integration.ps1`, `run_v2_k06_axis_integration.ps1` | 파일 안 K05/K06 top을 모두 유지하고, K1-2 marker와 두 물리 Chip readback을 삭제하지 않는다. |
+| `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` | K0-5 B5~B8, K0-6 AXIS 출력, K1-2 Reg7 3계층 계약과 K1-3 Return/거리/clock/width 시간 telemetry | v2 Top + config/physical GPX/data/output 전체 계층 | `run_v2_k05_integration.ps1`, `run_v2_k06_axis_integration.ps1`, `run_v2_k13_operating_matrix.ps1` | K05/K06 top, K1-2 물리 readback과 K1-3 사건 순서/geometry assertion을 삭제하지 않는다. |
 
 ## 4. Profile wrapper 인벤토리
 
@@ -186,7 +186,7 @@ powershell -ExecutionPolicy Bypass -File system_integration/v2/scripts/check_v2_
 
 | 우선순위 | 공백 | 현재 상태 | 필요한 회귀 |
 |---|---|---|---|
-| P0 | K1 RTL/HTML 전체 operating matrix | 일부 Golden profile만 완료 | RPM/각분해능/거리/Return/폭/topology/clock matrix 자동 비교 |
+| Closed K1-3 | K1 RTL/HTML 전체 operating matrix | 40개 RTL profile과 실행 가능한 HTML/Golden 자동 비교 완료 | Return 1~7, 32/64/128-bit, 목표거리, topology와 두 routine clock 관계를 유지 회귀 |
 | Closed K1-2 | Reg7 Shadow/Active/Physical 3계층 단일 시나리오 | Top 연속 시나리오로 완료 | 잘못된 staging MTimer→진행 중 Shadow 수정→두 번의 성공 COMMIT→두 Chip 물리 readback→`0x33` 실패 rollback→복구 COMMIT |
 | P1 | 같은 sticky가 high인 동안 반복된 사건 | IRQ bit만으로 횟수 구분 불가 | 관련 진단 count 증가/clear/new-event-wins 검증 |
 | P2 | 실제 AXI VDMA, HP port, DDR cache coherency | RTL/Golden 모델 범위 밖 | Stage L parent/보드에서 DMA API와 cache invalidate 포함 측정 |
@@ -212,6 +212,13 @@ K1-2 Reg7 시나리오는 `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` 안에서 다음 �
 따라서 K1-2 marker는 CSR portal만 흉내 낸 단위 테스트가 아니라 실제 Top의
 28-bit GPX pin write/read 모델을 통과했다는 의미다. 이 순서 중 하나를 분리하거나
 중간 reset으로 상태를 지우면 COMMIT snapshot 격리 커버가 사라진다.
+
+K1-3은 `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd`에서 Shot 승인, TDC 측정 시작 신호(T0),
+STOP_TDC와 첫 Shot Line의 마지막 handshake를 계측한다. 별도의 AXIS output TB는
+전용 Rise/Fall, 한 chip 양 edge, 4 chip 양 edge의 슬롯 수와 geometry를 계측한다.
+두 TB의 구조화된 marker를 HTML 실행 모델 및 체크인된 Golden JSON과 비교하므로,
+marker 이름이나 사건 기준을 바꿀 때는 검증기와 K1-3 계약 문서를 같은 커밋에서
+갱신해야 한다. 실제 VDMA/HP/cache와 장기 backpressure는 이 PASS에 포함되지 않는다.
 
 ## 8. 테스트벤치 유지보수 체크리스트
 

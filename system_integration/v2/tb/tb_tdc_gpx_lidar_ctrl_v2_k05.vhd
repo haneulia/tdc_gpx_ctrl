@@ -1,9 +1,10 @@
 -- ============================================================================
--- 테스트 자산 목적: v2 Top의 K0-5/K0-6 경계와 K1-2 Reg7 적용 계약을 검증한다.
+-- 테스트 자산 목적: v2 Top의 K0-5/K0-6, K1-2 Reg7과 K1-3 운용시간 계약을 검증한다.
 -- 핵심 검증 계약: GPX identity, Reg7 Shadow/Active/Physical, Rise/Fall lane,
--- Hole/T0/Footer와 32/64/128 폭 출력을 한 실제 Top 흐름에서 확인한다.
+-- Hole/T0/Footer, Runtime Return/목표거리와 32/64/128 폭을 실제 Top에서 확인한다.
 -- 관련 RTL: tdc_gpx_lidar_ctrl_v2_top과 acquisition/data/AXIS 전체 계층.
--- 실행 회귀: scripts/run_v2_k05_integration.ps1, run_v2_k06_axis_integration.ps1
+-- 실행 회귀: run_v2_k05_integration.ps1, run_v2_k06_axis_integration.ps1,
+--              run_v2_k13_operating_matrix.ps1
 -- 유지보수 주의: 이 파일의 K05/K06 top을 구분하고 routine 두 clock 관계를 모두 유지한다.
 -- ============================================================================
 library ieee;
@@ -29,7 +30,9 @@ entity tb_tdc_gpx_lidar_ctrl_v2_axis_core is
         G_PROC_CLK_MHZ : positive := 150;
         G_TDC_CLK_MHZ  : positive := 200;
         G_OUTPUT_WIDTH : positive := 32;
-        G_AXIS_STALL_CLKS : natural := 0
+        G_AXIS_STALL_CLKS : natural := 0;
+        G_ACTIVE_RETURNS : positive range 1 to 7 := 7;
+        G_TARGET_RANGE_5NS : positive := 53
     );
 end entity tb_tdc_gpx_lidar_ctrl_v2_axis_core;
 
@@ -39,7 +42,7 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     constant C_STOPS_PER_CHIP : positive := 8;
     constant C_RETURNS_PER_STOP : positive := 7;
     constant C_WORDS_PER_IFIFO : positive :=
-        (C_STOPS_PER_CHIP / 2) * C_RETURNS_PER_STOP;
+        (C_STOPS_PER_CHIP / 2) * G_ACTIVE_RETURNS;
     constant C_WORDS_PER_CHIP : positive := 2 * C_WORDS_PER_IFIFO;
 
     function fn_build_config return lidar_build_config_t is
@@ -62,7 +65,7 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
 
     constant C_BUILD_CONFIG : lidar_build_config_t := fn_build_config;
     constant C_TARGET_A_5NS : positive := 48;
-    constant C_TARGET_B_5NS : positive := 53;
+    constant C_TARGET_B_5NS : positive := G_TARGET_RANGE_5NS;
 
     -- Software가 CTL22 staging view에 쓴 MTimer는 의도적으로 틀리게
     -- 만든다. COMMIT 뒤에는 CTL12 파생값으로 바뀌고, HSDiv/RefClkDiv 등
@@ -145,7 +148,7 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
         result.echo.channel_step_5ns := to_unsigned(1, 16);
         result.tdc.active_chip_mask := "0011";
         result.tdc.falling_enable := '0';
-        result.tdc.max_hits_per_stop := to_unsigned(7, 3);
+        result.tdc.max_hits_per_stop := to_unsigned(G_ACTIVE_RETURNS, 3);
         return result;
     end function fn_runtime_config;
 
@@ -194,13 +197,16 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
         C_CHIPS * C_STOPS_PER_CHIP;
     constant C_EXPECTED_HSIZE_BYTES : positive :=
         fn_gpx_vdma_shot_hsize_bytes(
-            C_RISE_SLOT_COUNT, C_RETURNS_PER_STOP, G_OUTPUT_WIDTH);
+            C_RISE_SLOT_COUNT, G_ACTIVE_RETURNS, G_OUTPUT_WIDTH);
     constant C_EXPECTED_LINES : positive :=
         to_integer(C_DERIVED.columns_per_face) +
         fn_gpx_vdma_footer_lines(C_EXPECTED_HSIZE_BYTES);
+    constant C_EXPECTED_STRIDE_BYTES : positive :=
+        fn_gpx_vdma_stride_bytes(
+            C_RISE_SLOT_COUNT, C_RETURNS_PER_STOP, G_OUTPUT_WIDTH);
     constant C_EXPECTED_BEATS : positive := C_EXPECTED_LINES *
         fn_gpx_vdma_shot_line_beats(
-            C_RISE_SLOT_COUNT, C_RETURNS_PER_STOP, G_OUTPUT_WIDTH);
+            C_RISE_SLOT_COUNT, G_ACTIVE_RETURNS, G_OUTPUT_WIDTH);
     constant C_CSR_PERIOD : time := 10 ns;
     constant C_PROC_PERIOD : time := 1 us / G_PROC_CLK_MHZ;
     constant C_TDC_PERIOD : time := 1 us / G_TDC_CLK_MHZ;
@@ -304,6 +310,18 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     signal axis_stall_injected : std_logic := '0';
     signal previous_shot_r : std_logic := '0';
     signal shot_count : natural := 0;
+    signal proc_cycle_count : natural := 0;
+    signal first_shot_cycle : natural := 0;
+    signal first_start_cycle : natural := 0;
+    signal first_stop_cycle : natural := 0;
+    signal first_line_done_cycle : natural := 0;
+    signal first_shot_seen : std_logic := '0';
+    signal first_start_seen : std_logic := '0';
+    signal first_stop_seen : std_logic := '0';
+    signal first_line_done_seen : std_logic := '0';
+    signal accepted_hsize_bytes : natural := 0;
+    signal accepted_vsize_lines : natural := 0;
+    signal accepted_stride_bytes : natural := 0;
 
 begin
 
@@ -559,9 +577,37 @@ begin
             if proc_rst_n = '0' then
                 previous_shot_r <= '0';
                 shot_count <= 0;
+                proc_cycle_count <= 0;
+                first_shot_cycle <= 0;
+                first_start_cycle <= 0;
+                first_stop_cycle <= 0;
+                first_shot_seen <= '0';
+                first_start_seen <= '0';
+                first_stop_seen <= '0';
+                accepted_hsize_bytes <= 0;
+                accepted_vsize_lines <= 0;
+                accepted_stride_bytes <= 0;
             else
+                proc_cycle_count <= proc_cycle_count + 1;
+                if rise_cfg_valid = '1' and rise_cfg_ready = '1' then
+                    accepted_hsize_bytes <= to_integer(rise_hsize_bytes);
+                    accepted_vsize_lines <= to_integer(rise_vsize_lines);
+                    accepted_stride_bytes <= to_integer(rise_stride_bytes);
+                end if;
                 if shot_start = '1' and previous_shot_r = '0' then
                     shot_count <= shot_count + 1;
+                    if first_shot_seen = '0' then
+                        first_shot_cycle <= proc_cycle_count;
+                        first_shot_seen <= '1';
+                    end if;
+                end if;
+                if start_tdc = '1' and first_start_seen = '0' then
+                    first_start_cycle <= proc_cycle_count;
+                    first_start_seen <= '1';
+                end if;
+                if stop_tdc = '1' and first_stop_seen = '0' then
+                    first_stop_cycle <= proc_cycle_count;
+                    first_stop_seen <= '1';
                 end if;
                 previous_shot_r <= shot_start;
                 assert fire_pulse = '0'
@@ -585,6 +631,8 @@ begin
                 rise_footer_magic_count <= 0;
                 rise_footer_commit_count <= 0;
                 rise_all_hole_footer_count <= 0;
+                first_line_done_cycle <= 0;
+                first_line_done_seen <= '0';
                 footer_active_v := false;
                 footer_word_index_v := 0;
             elsif rise_tvalid = '1' and rise_tready = '1' then
@@ -595,6 +643,10 @@ begin
                     severity failure;
                 if rise_tlast = '1' then
                     rise_line_count <= rise_line_count + 1;
+                    if first_line_done_seen = '0' then
+                        first_line_done_cycle <= proc_cycle_count;
+                        first_line_done_seen <= '1';
+                    end if;
                 end if;
                 if rise_tuser(0) = '1' then
                     rise_sof_count <= rise_sof_count + 1;
@@ -1135,6 +1187,18 @@ begin
                 " all_hole=" & natural'image(
                     rise_all_hole_footer_count)
             severity failure;
+        assert first_shot_seen = '1' and first_start_seen = '1' and
+               first_stop_seen = '1' and first_line_done_seen = '1' and
+               first_shot_cycle <= first_start_cycle and
+               first_start_cycle <= first_stop_cycle and
+               first_stop_cycle <= first_line_done_cycle
+            report "V2-K13-TOP timing observation sequence mismatch"
+            severity failure;
+        assert accepted_hsize_bytes = C_EXPECTED_HSIZE_BYTES and
+               accepted_vsize_lines = C_EXPECTED_LINES and
+               accepted_stride_bytes = C_EXPECTED_STRIDE_BYTES
+            report "V2-K13-TOP accepted VDMA geometry mismatch"
+            severity failure;
         if G_AXIS_STALL_CLKS > 0 then
             assert axis_stall_injected = '1'
                 report "V2-K06-TOP requested Footer stall was not injected"
@@ -1152,6 +1216,27 @@ begin
             positive'image(G_TDC_CLK_MHZ) & " output_width=" &
             positive'image(G_OUTPUT_WIDTH) & " stall_clks=" &
             natural'image(G_AXIS_STALL_CLKS) severity note;
+        -- K1-3 자동 비교기가 읽는 단일 행 형식이다. 시간 차이는 모두
+        -- Processing clock 수이며 목표 시간만 공통 5 ns tick 단위이다.
+        report "LIDAR_V2_K13_METRIC proc_mhz=" &
+            positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
+            positive'image(G_TDC_CLK_MHZ) & " width=" &
+            positive'image(G_OUTPUT_WIDTH) & " returns=" &
+            positive'image(G_ACTIVE_RETURNS) & " target_5ns=" &
+            positive'image(G_TARGET_RANGE_5NS) &
+            " shot_to_start_clks=" & natural'image(
+                first_start_cycle - first_shot_cycle) &
+            " start_to_stop_clks=" & natural'image(
+                first_stop_cycle - first_start_cycle) &
+            " stop_to_line_clks=" & natural'image(
+                first_line_done_cycle - first_stop_cycle) &
+            " shot_to_line_clks=" & natural'image(
+                first_line_done_cycle - first_shot_cycle) &
+            " hsize_bytes=" & natural'image(accepted_hsize_bytes) &
+            " vsize_lines=" & natural'image(accepted_vsize_lines) &
+            " stride_bytes=" & natural'image(accepted_stride_bytes) &
+            " frame_beats=" & natural'image(rise_beat_count)
+            severity note;
         done <= true;
         stop;
         wait;
@@ -1162,7 +1247,9 @@ end architecture sim;
 entity tb_tdc_gpx_lidar_ctrl_v2_k05 is
     generic (
         G_PROC_CLK_MHZ : positive := 150;
-        G_TDC_CLK_MHZ  : positive := 200
+        G_TDC_CLK_MHZ  : positive := 200;
+        G_ACTIVE_RETURNS : positive range 1 to 7 := 7;
+        G_TARGET_RANGE_5NS : positive := 53
     );
 end entity tb_tdc_gpx_lidar_ctrl_v2_k05;
 
@@ -1173,7 +1260,9 @@ begin
             G_PROC_CLK_MHZ => G_PROC_CLK_MHZ,
             G_TDC_CLK_MHZ => G_TDC_CLK_MHZ,
             G_OUTPUT_WIDTH => 32,
-            G_AXIS_STALL_CLKS => 0
+            G_AXIS_STALL_CLKS => 0,
+            G_ACTIVE_RETURNS => G_ACTIVE_RETURNS,
+            G_TARGET_RANGE_5NS => G_TARGET_RANGE_5NS
         );
 end architecture sim;
 
@@ -1182,7 +1271,9 @@ entity tb_tdc_gpx_lidar_ctrl_v2_k06 is
         G_PROC_CLK_MHZ : positive := 150;
         G_TDC_CLK_MHZ  : positive := 200;
         G_OUTPUT_WIDTH : positive := 32;
-        G_AXIS_STALL_CLKS : natural := 13
+        G_AXIS_STALL_CLKS : natural := 13;
+        G_ACTIVE_RETURNS : positive range 1 to 7 := 7;
+        G_TARGET_RANGE_5NS : positive := 53
     );
 end entity tb_tdc_gpx_lidar_ctrl_v2_k06;
 
@@ -1193,6 +1284,8 @@ begin
             G_PROC_CLK_MHZ => G_PROC_CLK_MHZ,
             G_TDC_CLK_MHZ => G_TDC_CLK_MHZ,
             G_OUTPUT_WIDTH => G_OUTPUT_WIDTH,
-            G_AXIS_STALL_CLKS => G_AXIS_STALL_CLKS
+            G_AXIS_STALL_CLKS => G_AXIS_STALL_CLKS,
+            G_ACTIVE_RETURNS => G_ACTIVE_RETURNS,
+            G_TARGET_RANGE_5NS => G_TARGET_RANGE_5NS
         );
 end architecture sim;

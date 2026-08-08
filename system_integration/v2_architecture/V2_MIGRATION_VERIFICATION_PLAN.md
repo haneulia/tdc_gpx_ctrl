@@ -585,11 +585,12 @@ K1은 K0의 통합 RTL을 바로 HTML에 연결하기 전에, 이번 CSR 의미 
 | K1-0 | Complete | Shadow/Active/Derived/Physical 용어와 CLEAR_STATUS 실제 범위를 문서화하고 70개 테스트 자산의 한글 계약 header 및 coverage guide를 고정한다. |
 | K1-1 | Complete | legacy TDC sticky owner 전체에 CLEAR_STATUS를 전달했다. lane fault `[2],[3],[4],[10],[11],[12]`, 같은-cycle 새 fault 우선, 살아 있는 bus-fatal 격리 보존, IRQ W1C 순서를 owner/K08 회귀로 검증했다. TDC 150/200 MHz 구현 WNS는 각각 `+1.532 ns`, `+0.541 ns`다. |
 | K1-2 | Complete | Reg7 staging에 의도적으로 잘못된 MTimer를 기록하고, COMMIT 자동 대체, Active effective image, 두 물리 Chip readback을 한 연속 Top 시나리오에서 비교했다. 진행 중 Shadow 수정은 다음 transaction으로 격리됐고, 표현 범위 초과 COMMIT은 `0x33`으로 거부되어 Active version, image, 물리 Chip을 보존했다. 처리 150/TDC 200 및 처리 200/TDC 150 MHz와 AXIS 32/64/128-bit를 모두 통과했다. |
-| K1-3 | Pending | RPM, 광학 Shot 간격, 목표 왕복시간, runtime Return 1~7, 32/64/128-bit, slope topology와 clock 관계를 RTL 결과와 HTML Golden model로 자동 비교한다. |
+| K1-3 | Complete | RPM, 광학 Shot 간격, 목표 왕복시간, runtime Return 1~7, 32/64/128-bit, 세 slope topology와 두 routine clock 관계를 40개 RTL profile로 측정했다. 실행 가능한 HTML 모델, 체크인된 Golden JSON과 RTL telemetry를 자동 비교하여 geometry와 비동기 1-clock 시간 범위를 모두 통과했다. |
 | K1-4 | Pending | routine 두 clock profile 전체 회귀, 필요한 extreme/sync CDC profile, DDR/PS/HTML byte 비교, package/XGUI/OOC 검사를 다시 수행해 K1 Sign-off 문서를 만든다. |
 
-K1-1과 K1-2 동작 계약 closure가 완료되었으므로 다음 단계는 K1-3이다. K1-3의
-HTML PASS는 이 두 상태/설정 계약을 대체하지 않으며, K1-2의 상세 근거는
-`V2_CHECKPOINT_K1_2_REG7_SHADOW_ACTIVE_PHYSICAL_KO.md`에 기록한다. 실제 VDMA,
+K1-1부터 K1-3까지의 동작 및 RTL/HTML 운용 계약 closure가 완료되었으므로 다음
+단계는 K1-4 최종 회귀와 package/XGUI/OOC 재검사이다. K1-3의 HTML PASS는 앞선
+상태/설정 계약을 대체하지 않으며, 상세 근거는
+`V2_CHECKPOINT_K1_3_RTL_HTML_OPERATING_MATRIX_KO.md`에 기록한다. 실제 VDMA,
 HP port, DDR cache와 PCB GPX/LVDS/laser 검증은 Stage 9 L0에 남으며 K1 Sign-off
 범위에 포함하지 않는다.

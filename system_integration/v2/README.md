@@ -133,9 +133,11 @@ now close the focused B9 geometry and Footer boundary. J9 and J10 close the
 DDR image and host PS/Viewer comparison. K0-6/K0-7 now connect that formatter
 chain to the public Top and close the modeled DDR/HTML plus portable
   PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly, K0-9
-  final implementation and K0-10 v2 packaging are complete. K1 closes the
-  full RTL/HTML operating matrix
-before L0 attaches the parent VDMA/HP-port and real cache/board measurement.
+  final implementation and K0-10 v2 packaging are complete. K1-1/K1-2 close
+  status ownership and Reg7 Shadow/Active/Physical behavior. K1-3 closes the
+  40-profile RTL/HTML operating matrix. K1-4 is the final package/XGUI/OOC and
+  regression gate before L0 attaches the parent VDMA/HP-port and real
+  cache/board measurement.
 
 Run the current package regression with:
 
@@ -543,3 +545,17 @@ The project contains three real IP Integrator Block Designs and their completed
 IP synthesis runs. Its final marker is
 `LIDAR_V2_K010_GUI_PROJECT_SIGNOFF_PASS`. See
 `system_integration/v2_architecture/V2_K010_GUI_PROJECT_GUIDE_KO.md`.
+
+Run the K1-3 RTL/HTML operating-matrix regression with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k13_operating_matrix.ps1
+```
+
+The script measures 22 full-Top acquisition profiles and 18 output-topology
+profiles, then compares the RTL telemetry with the checked Golden JSON and the
+executable HTML model. The full regression marker is
+`LIDAR_V2_K13_OPERATING_MATRIX_PASS`; the standalone verifier marker is
+`LIDAR_V2_K13_RTL_HTML_OPERATING_MATRIX_PASS`. See
+`system_integration/v2_architecture/V2_CHECKPOINT_K1_3_RTL_HTML_OPERATING_MATRIX_KO.md`.

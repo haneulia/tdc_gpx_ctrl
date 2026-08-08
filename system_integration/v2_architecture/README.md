@@ -27,8 +27,8 @@
 > connect Processing/Echo, physical GPX B5-B8 and the complete dual-lane
 > AXIS/VDMA output. K0-8 closes status/IRQ ownership, K0-9 closes the final
 > implementation/Golden matrix and K0-10 closes the self-contained v2 package.
-> K1 full RTL/HTML alignment comes before L0 parent
-> VDMA/HP/cache and board evidence.
+> K1-3 closes the 40-profile RTL/HTML operating matrix. K1-4 is the final
+> regression/package gate before L0 parent VDMA/HP/cache and board evidence.
 
 ## 1. Purpose
 
@@ -75,6 +75,7 @@ The redesign has four goals:
 | [V2_UNIFIED_CSR_REGISTER_MAP.md](V2_UNIFIED_CSR_REGISTER_MAP.md) | Korean bit-level CTL/STAT/IRQ software ABI and defaults |
 | [V2_RUNTIME_GPX_RECONFIG_SHOT_TIMING_CLOSURE_KO.md](V2_RUNTIME_GPX_RECONFIG_SHOT_TIMING_CLOSURE_KO.md) | DISARM 기반 Runtime GPX 재설정, Reg7.MTimer 단일 원본 및 광학 후보점 hard-deadline 검증 |
 | [V2_CHECKPOINT_K1_2_REG7_SHADOW_ACTIVE_PHYSICAL_KO.md](V2_CHECKPOINT_K1_2_REG7_SHADOW_ACTIVE_PHYSICAL_KO.md) | Reg7 Shadow snapshot, MTimer 자동 대체, Active image, 두 물리 Chip readback 및 실패 rollback 종결 근거 |
+| [V2_CHECKPOINT_K1_3_RTL_HTML_OPERATING_MATRIX_KO.md](V2_CHECKPOINT_K1_3_RTL_HTML_OPERATING_MATRIX_KO.md) | Return/거리/폭/topology/clock 40개 RTL profile과 실행 가능한 HTML Golden 운용 판정의 자동 비교 근거 |
 | [V2_STAGE3_F0_PROCESSING_ORACLE.md](V2_STAGE3_F0_PROCESSING_ORACLE.md) | Frozen B0..B3 event, safety and latency comparison contract for Checkpoint F |
 | [V2_CHECKPOINT_F1_MOTOR_POSITION.md](V2_CHECKPOINT_F1_MOTOR_POSITION.md) | B0 motor position, virtual source, latency and 150/200 MHz route result |
 | [V2_CHECKPOINT_F2_FACE_TRACKER.md](V2_CHECKPOINT_F2_FACE_TRACKER.md) | B1 Face membership, traversal, 1..5-Face and 150/200 MHz route result |
