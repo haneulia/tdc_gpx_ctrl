@@ -110,6 +110,7 @@ architecture rtl of lidar_gpx_b5_b8_subsystem_impl is
     signal close_c : face_close_event_t := C_FACE_CLOSE_EVENT_IDLE;
     signal d_in_c : gpx_bus_data_array_t;
     signal d_out_c : gpx_bus_data_array_t;
+    signal d_tri_c : gpx_bus_data_array_t;
     signal adr_c : gpx_bus_address_array_t;
     signal active_mask_c : chip_mask_t;
     signal terminal_mask_c : chip_mask_t;
@@ -151,6 +152,7 @@ begin
         d_in_c(index) <= i_d((index + 1) * 28 - 1 downto index * 28);
         o_d((index + 1) * 28 - 1 downto index * 28) <= d_out_c(index);
         o_adr((index + 1) * 4 - 1 downto index * 4) <= adr_c(index);
+        o_d_tri(index) <= d_tri_c(index)(0);
     end generate gen_flatten;
 
     p_fault_or : process (all)
@@ -237,7 +239,7 @@ begin
             o_oen => o_oen,
             i_d => d_in_c,
             o_d => d_out_c,
-            o_d_tri => o_d_tri,
+            o_d_tri => d_tri_c,
             i_ef1 => i_ef1,
             i_ef2 => i_ef2,
             i_lf1 => i_lf1,

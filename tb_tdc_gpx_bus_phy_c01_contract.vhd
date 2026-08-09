@@ -53,7 +53,7 @@ architecture sim of tb_tdc_gpx_bus_phy_c01_contract is
     signal s_dyn_oen         : std_logic;
     signal s_dyn_d           : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_dyn_d_out       : std_logic_vector(c_DATA_W - 1 downto 0);
-    signal s_dyn_d_tri       : std_logic;
+    signal s_dyn_d_tri       : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_dyn_tvalid      : std_logic;
     signal s_dyn_tdata       : std_logic_vector(31 downto 0);
     signal s_dyn_tkeep       : std_logic_vector(3 downto 0);
@@ -78,7 +78,7 @@ architecture sim of tb_tdc_gpx_bus_phy_c01_contract is
     signal s_pu_oen         : std_logic;
     signal s_pu_d           : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_pu_d_out       : std_logic_vector(c_DATA_W - 1 downto 0);
-    signal s_pu_d_tri       : std_logic;
+    signal s_pu_d_tri       : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_pu_tvalid      : std_logic;
     signal s_pu_tdata       : std_logic_vector(31 downto 0);
     signal s_pu_tkeep       : std_logic_vector(3 downto 0);
@@ -88,8 +88,8 @@ begin
 
     s_clk <= not s_clk after c_CLK_PERIOD / 2 when s_done = '0' else s_clk;
 
-    s_dyn_d <= s_dyn_d_out when s_dyn_d_tri = '0' else (others => 'Z');
-    s_pu_d  <= s_pu_d_out when s_pu_d_tri = '0' else (others => 'Z');
+    s_dyn_d <= s_dyn_d_out when s_dyn_d_tri(0) = '0' else (others => 'Z');
+    s_pu_d  <= s_pu_d_out when s_pu_d_tri(0) = '0' else (others => 'Z');
 
     p_dyn_tick_gen : process(s_clk)
         variable v_cnt : natural range 0 to 63 := 0;

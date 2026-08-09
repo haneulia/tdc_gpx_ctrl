@@ -65,7 +65,7 @@ entity lidar_gpx_acquisition_lane is
         o_oen              : out std_logic;
         i_d                : in  gpx_bus_data_t;
         o_d                : out gpx_bus_data_t;
-        o_d_tri            : out std_logic;
+        o_d_tri            : out gpx_bus_data_t;
         i_ef1              : in  std_logic;
         i_ef2              : in  std_logic;
         i_lf1              : in  std_logic;

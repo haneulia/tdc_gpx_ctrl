@@ -18,6 +18,8 @@ if {![file exists $project_path]} {
 }
 file mkdir $result_dir
 
+source [file join [file dirname [info script]] verify_v2_l0_gpx_iob.tcl]
+
 proc l0_expect_run_complete {run_name} {
     set status [get_property STATUS [get_runs $run_name]]
     if {![string match {*Complete*} $status]} {
@@ -265,6 +267,8 @@ wait_on_run synth_1
 set synth_status [l0_expect_run_complete synth_1]
 open_run synth_1
 set service_pin_count [l0_verify_service_pins $result_dir]
+set synth_gpx_iob_register_count [l0_verify_gpx_iob_contract \
+    $result_dir post_synth false]
 set timing_endpoints [l0_verify_timing_contract $result_dir]
 set reviewed_waiver_counts [l0_apply_reviewed_waivers \
     [lindex $timing_endpoints 0] [lindex $timing_endpoints 1]]
@@ -283,6 +287,7 @@ set route_whs {NA}
 set route_drc_error_count {NA}
 set bitstream_path {NA}
 set bitstream_size_bytes {NA}
+set route_gpx_iob_register_count {NA}
 if {$run_mode eq {IMPL}} {
     reset_run impl_1
     set_property strategy Performance_Explore [get_runs impl_1]
@@ -293,6 +298,8 @@ if {$run_mode eq {IMPL}} {
     set timing_endpoints [l0_verify_timing_contract $result_dir]
     set reviewed_waiver_counts [l0_apply_reviewed_waivers \
         [lindex $timing_endpoints 0] [lindex $timing_endpoints 1]]
+    set route_gpx_iob_register_count [l0_verify_gpx_iob_contract \
+        $result_dir post_route true]
     l0_report_design post_route $result_dir
     report_route_status -file [file join $result_dir post_route_status.rpt]
     set route_wns [l0_worst_slack max]
@@ -329,6 +336,8 @@ puts $summary "synth_status=$synth_status"
 puts $summary "synth_wns_ns=$synth_wns"
 puts $summary "synth_whs_ns=$synth_whs"
 puts $summary "service_pin_count=$service_pin_count"
+puts $summary "synth_gpx_iob_register_count=$synth_gpx_iob_register_count"
+puts $summary "route_gpx_iob_register_count=$route_gpx_iob_register_count"
 puts $summary "reviewed_cdc_waiver_count=[lindex $reviewed_waiver_counts 0]"
 puts $summary "reviewed_async_status_waiver_count=[lindex $reviewed_waiver_counts 1]"
 puts $summary "synth_active_cdc_critical_count=[lindex $synth_report_gate_counts 0]"

@@ -55,7 +55,7 @@ architecture sim of tb_lidar_gpx_bus_engine is
     signal dut_oen : std_logic;
     signal dut_d_in : gpx_bus_data_t;
     signal dut_d_out : gpx_bus_data_t;
-    signal dut_d_tri : std_logic;
+    signal dut_d_tri : gpx_bus_data_t;
     signal dut_response : gpx_bus_response_t;
     signal dut_status : gpx_pin_status_t;
     signal dut_effective_ticks : unsigned(2 downto 0);
@@ -69,7 +69,7 @@ architecture sim of tb_lidar_gpx_bus_engine is
     signal ref_oen : std_logic;
     signal ref_d_in : gpx_bus_data_t;
     signal ref_d_out : gpx_bus_data_t;
-    signal ref_d_tri : std_logic;
+    signal ref_d_tri : gpx_bus_data_t;
     signal ref_response_valid : std_logic;
     signal ref_response_data : t_bus_rsp_tdata;
     signal ref_response_keep : std_logic_vector(3 downto 0);

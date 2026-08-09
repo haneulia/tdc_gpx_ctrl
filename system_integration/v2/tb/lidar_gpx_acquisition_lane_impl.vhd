@@ -97,6 +97,7 @@ architecture rtl of lidar_gpx_acquisition_lane_impl is
     signal event_c : gpx_raw_event_t;
     signal status_c : gpx_lane_status_t;
     signal faults_c : gpx_lane_faults_t;
+    signal d_tri_c : gpx_bus_data_t;
 
 begin
 
@@ -117,6 +118,7 @@ begin
     o_event_kind <= std_logic_vector(to_unsigned(
         gpx_raw_event_kind_t'pos(event_c.kind), 2));
     o_event_word <= event_c.raw_word;
+    o_d_tri <= d_tri_c(0);
     o_fault_any <= faults_c.drain_timeout_pulse or
         faults_c.sequence_pulse or
         faults_c.response_mismatch_sticky or
@@ -163,7 +165,7 @@ begin
             o_oen => o_oen,
             i_d => i_d,
             o_d => o_d,
-            o_d_tri => o_d_tri,
+            o_d_tri => d_tri_c,
             i_ef1 => i_ef1,
             i_ef2 => i_ef2,
             i_lf1 => i_lf1,

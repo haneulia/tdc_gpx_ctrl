@@ -316,7 +316,7 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
     signal gpx_oen_c : chip_mask_t;
     signal gpx_d_in_c : gpx_bus_data_array_t;
     signal gpx_d_out_c : gpx_bus_data_array_t;
-    signal gpx_d_tri_c : chip_mask_t;
+    signal gpx_d_tri_c : gpx_bus_data_array_t;
     signal gpx_ef1_c : chip_mask_t;
     signal gpx_ef2_c : chip_mask_t;
     signal gpx_lf1_c : chip_mask_t;
@@ -853,7 +853,7 @@ begin
                     IO => io_tdc_d(C_DATA_INDEX),
                     I  => gpx_d_out_c(index)(bit_index),
                     O  => gpx_d_in_c(index)(bit_index),
-                    T  => gpx_d_tri_c(index)
+                    T  => gpx_d_tri_c(index)(bit_index)
                 );
         end generate gen_gpx_data_iobuf;
 

@@ -137,7 +137,7 @@ architecture sim of tb_lidar_gpx_acquisition_lane is
     signal wrn : std_logic;
     signal oen : std_logic;
     signal d_from_lane : gpx_bus_data_t;
-    signal d_tri : std_logic;
+    signal d_tri : gpx_bus_data_t;
     signal d_bus : gpx_bus_data_t := (others => 'Z');
     signal chip_d_out : gpx_bus_data_t := (others => '0');
     signal chip_d_oe : std_logic := '0';
@@ -176,7 +176,7 @@ begin
     lf1 <= '1' when fifo1_fill >= 2 else '0';
     lf2 <= '1' when fifo2_fill >= 2 else '0';
 
-    d_bus <= d_from_lane when d_tri = '0' else (others => 'Z');
+    d_bus <= d_from_lane when d_tri(0) = '0' else (others => 'Z');
     d_bus <= chip_d_out when chip_d_oe = '1' else (others => 'Z');
 
     u_dut : entity work.lidar_gpx_acquisition_lane

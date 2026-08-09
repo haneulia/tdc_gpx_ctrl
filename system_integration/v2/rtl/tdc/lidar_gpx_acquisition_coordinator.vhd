@@ -65,7 +65,7 @@ entity lidar_gpx_acquisition_coordinator is
         o_oen              : out chip_mask_t;
         i_d                : in  gpx_bus_data_array_t;
         o_d                : out gpx_bus_data_array_t;
-        o_d_tri            : out chip_mask_t;
+        o_d_tri            : out gpx_bus_data_array_t;
         i_ef1              : in  chip_mask_t;
         i_ef2              : in  chip_mask_t;
         i_lf1              : in  chip_mask_t;
@@ -107,6 +107,7 @@ architecture rtl of lidar_gpx_acquisition_coordinator is
     signal lane_register_read_c : gpx_register_read_request_array_t :=
         (others => C_GPX_REGISTER_READ_REQUEST_IDLE);
     signal lane_register_ready_c : chip_mask_t := (others => '0');
+    signal lane_register_ready_r : chip_mask_t := (others => '0');
     signal lane_register_response_c : gpx_register_read_response_array_t :=
         (others => C_GPX_REGISTER_READ_RESPONSE_IDLE);
     signal lane_register_response_ready_c : chip_mask_t := (others => '0');
@@ -121,7 +122,8 @@ architecture rtl of lidar_gpx_acquisition_coordinator is
     signal wrn_c : chip_mask_t := (others => '1');
     signal oen_c : chip_mask_t := (others => '1');
     signal d_out_c : gpx_bus_data_array_t := (others => (others => '0'));
-    signal d_tri_c : chip_mask_t := (others => '1');
+    signal d_tri_c : gpx_bus_data_array_t :=
+        (others => (others => '1'));
     signal stopdis_c : chip_mask_t := (others => '1');
     signal alutrigger_c : chip_mask_t := (others => '0');
     signal puresn_c : chip_mask_t := (others => '1');
@@ -201,7 +203,7 @@ begin
     register_read_accept_c <= i_register_read.valid and
         register_read_ready_c;
     register_lane_accept_c <= register_request_pending_r and
-        lane_register_ready_c(to_integer(register_request_r.chip));
+        lane_register_ready_r(to_integer(register_request_r.chip));
 
     o_shot_ready <= shot_ready_c;
     o_config_ready <= config_ready_c;
@@ -287,9 +289,26 @@ begin
                       i_register_read_response_ready = '1' then
                     register_read_outstanding_r <= '0';
                 end if;
+
             end if;
         end if;
     end process p_register_owner;
+
+    -- Lane의 Register-read 준비상태를 먼저 등록해 Lane/BUS 상태가
+    -- coordinator 요청 소유권까지 한 사이클에 전파되는 200 MHz 경로를 끊는다.
+    -- register_request_r가 요청 payload를 보존하므로 GPX 버스 동작 순서는 바뀌지 않는다.
+    p_register_ready_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_soft_reset = '1' or
+               i_force_reinit = '1' then
+                lane_register_ready_r <= (others => '0');
+            else
+                lane_register_ready_r <= lane_register_ready_c;
+            end if;
+        end if;
+    end process p_register_ready_pipeline;
+
 
     p_shot_broadcast : process (all)
         variable value : shot_array_t;
@@ -484,7 +503,7 @@ begin
             wrn_c(index) <= '1';
             oen_c(index) <= '1';
             d_out_c(index) <= (others => '0');
-            d_tri_c(index) <= '1';
+            d_tri_c(index) <= (others => '1');
             stopdis_c(index) <= '1';
             alutrigger_c(index) <= '0';
             puresn_c(index) <= '1';

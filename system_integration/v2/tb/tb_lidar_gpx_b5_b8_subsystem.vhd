@@ -288,7 +288,7 @@ architecture sim of tb_lidar_gpx_b5_b8_subsystem is
     signal wrn : chip_mask_t;
     signal oen : chip_mask_t;
     signal d_from_dut : gpx_bus_data_array_t;
-    signal d_tri : chip_mask_t;
+    signal d_tri : gpx_bus_data_array_t;
     signal d_bus : gpx_bus_data_array_t := (others => (others => 'Z'));
     signal chip_d_out : gpx_bus_data_array_t := (others => (others => '0'));
     signal chip_d_oe : chip_mask_t := (others => '0');
@@ -338,7 +338,7 @@ begin
         lf2(index) <= '1' when fifo2_fill(index) >= 2 else '0';
 
         d_bus(index) <= d_from_dut(index)
-            when d_tri(index) = '0' else (others => 'Z');
+            when d_tri(index)(0) = '0' else (others => 'Z');
         d_bus(index) <= chip_d_out(index)
             when chip_d_oe(index) = '1' else (others => 'Z');
     end generate gen_pin_models;

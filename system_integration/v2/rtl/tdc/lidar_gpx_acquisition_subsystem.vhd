@@ -70,7 +70,7 @@ entity lidar_gpx_acquisition_subsystem is
         o_oen        : out chip_mask_t;
         i_d          : in  gpx_bus_data_array_t;
         o_d          : out gpx_bus_data_array_t;
-        o_d_tri      : out chip_mask_t;
+        o_d_tri      : out gpx_bus_data_array_t;
         i_ef1        : in  chip_mask_t;
         i_ef2        : in  chip_mask_t;
         i_lf1        : in  chip_mask_t;

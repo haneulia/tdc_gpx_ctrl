@@ -166,7 +166,7 @@ architecture sim of tb_tdc_gpx_chip_ctrl is
     signal s_oen                : std_logic;
     signal s_io_d               : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_d_out              : std_logic_vector(c_DATA_W - 1 downto 0);
-    signal s_d_tri              : std_logic;
+    signal s_d_tri              : std_logic_vector(c_DATA_W - 1 downto 0);
 
     -- Status pins (driven by chip model)
     signal s_ef1_pin            : std_logic := '1';
@@ -551,7 +551,7 @@ begin
     end process p_chip_model;
 
     -- D-bus drive
-    s_io_d <= s_d_out when s_d_tri = '0' else (others => 'Z');
+    s_io_d <= s_d_out when s_d_tri(0) = '0' else (others => 'Z');
     s_io_d <= s_chip_d_out when s_chip_d_oe = '1' else (others => 'Z');
 
     -- =========================================================================

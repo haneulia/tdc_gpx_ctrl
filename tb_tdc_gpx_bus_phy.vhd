@@ -91,7 +91,7 @@ architecture sim of tb_tdc_gpx_bus_phy is
     signal s_oen            : std_logic;
     signal s_io_d           : std_logic_vector(c_DATA_W - 1 downto 0);
     signal s_d_out          : std_logic_vector(c_DATA_W - 1 downto 0);
-    signal s_d_tri          : std_logic;
+    signal s_d_tri          : std_logic_vector(c_DATA_W - 1 downto 0);
 
     -- Status pins (directly driven by TB)
     signal s_ef1_pin        : std_logic := '1';   -- empty at start
@@ -153,7 +153,7 @@ architecture sim of tb_tdc_gpx_bus_phy is
 
 begin
 
-    s_io_d <= s_d_out when s_d_tri = '0' else (others => 'Z');
+    s_io_d <= s_d_out when s_d_tri(0) = '0' else (others => 'Z');
 
     -- Convenience aliases: extract rsp from AXI-Stream for existing test code
     s_rsp_valid <= s_axis_tvalid;
@@ -344,13 +344,13 @@ begin
         variable v_data_drive_time : time := 0 ns;
         variable v_wrn_rise_time   : time := 0 ns;
     begin
-        wait until s_d_tri = '0';
+        wait until s_d_tri(0) = '0';
         v_data_drive_time := now;
         wait until s_wrn = '0';
         s_last_wr_setup <= now - v_data_drive_time;
         wait until s_wrn = '1';
         v_wrn_rise_time := now;
-        wait until s_d_tri = '1';
+        wait until s_d_tri(0) = '1';
         s_last_wr_hold <= now - v_wrn_rise_time;
     end process p_write_timing;
 

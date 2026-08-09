@@ -447,7 +447,9 @@ architecture rtl of tdc_gpx_config_ctrl is
     -- =========================================================================
     signal s_tdc_d_in        : t_tdc_bus_array;
     signal s_tdc_d_out       : t_tdc_bus_array;
-    signal s_tdc_d_tri       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+    -- Per-data-pin tri-state controls are kept as a full bus so each bit can
+    -- be packed into its own OLOGIC TFF beside the matching IOBUF.
+    signal s_tdc_d_tri       : t_tdc_bus_array;
     signal s_tdc_adr         : t_tdc_adr_array;
     signal s_tdc_csn         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
     signal s_tdc_rdn         : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
@@ -825,7 +827,7 @@ begin
                         IO => io_tdc_d(c_PHYSICAL_CHIP * c_TDC_BUS_WIDTH + bit_index),
                         I  => s_tdc_d_out(logical_chip)(bit_index),
                         O  => s_tdc_d_in(logical_chip)(bit_index),
-                        T  => s_tdc_d_tri(logical_chip)
+                        T  => s_tdc_d_tri(logical_chip)(bit_index)
                     );
             end generate gen_data_iobuf;
         end generate gen_present_pin;

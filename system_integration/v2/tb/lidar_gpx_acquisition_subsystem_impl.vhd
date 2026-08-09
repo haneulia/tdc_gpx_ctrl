@@ -99,6 +99,7 @@ architecture rtl of lidar_gpx_acquisition_subsystem_impl is
     signal result_c : gpx_raw_event_t;
     signal d_in_c : gpx_bus_data_array_t;
     signal d_out_c : gpx_bus_data_array_t;
+    signal d_tri_c : gpx_bus_data_array_t;
     signal adr_c : gpx_bus_address_array_t;
     signal status_c : gpx_lane_status_array_t;
     signal faults_c : gpx_lane_faults_array_t;
@@ -121,6 +122,7 @@ begin
         d_in_c(index) <= i_d((index + 1) * 28 - 1 downto index * 28);
         o_d((index + 1) * 28 - 1 downto index * 28) <= d_out_c(index);
         o_adr((index + 1) * 4 - 1 downto index * 4) <= adr_c(index);
+        o_d_tri(index) <= d_tri_c(index)(0);
     end generate gen_flatten;
 
     o_result_valid <= result_c.valid;
@@ -187,7 +189,7 @@ begin
             o_oen => o_oen,
             i_d => d_in_c,
             o_d => d_out_c,
-            o_d_tri => o_d_tri,
+            o_d_tri => d_tri_c,
             i_ef1 => i_ef1,
             i_ef2 => i_ef2,
             i_lf1 => i_lf1,

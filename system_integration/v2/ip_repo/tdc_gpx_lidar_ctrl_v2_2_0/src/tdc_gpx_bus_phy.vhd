@@ -131,7 +131,11 @@ entity tdc_gpx_bus_phy is
         o_oen           : out std_logic;
         i_d             : in  std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
         o_d             : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
-        o_d_tri         : out std_logic;
+        -- One registered tri-state control per physical data pin.  Keeping
+        -- this vector bitwise allows Vivado to pack every control into the
+        -- matching OLOGIC TFF instead of routing one high-fanout fabric FF to
+        -- all IOBUF.T inputs.
+        o_d_tri         : out std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
 
         -- Async status pins (from TDC-GPX, active HIGH)
         i_ef1_pin       : in  std_logic;
@@ -233,7 +237,8 @@ architecture rtl of tdc_gpx_bus_phy is
 
     -- D-bus IOBUF control
     signal s_d_out_r         : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
-    signal s_d_tri_r         : std_logic := '1';    -- '1'=Hi-Z, '0'=drive
+    signal s_d_tri_r         : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) :=
+        (others => '1'); -- Per-pin: '1'=Hi-Z, '0'=drive
 
     -- IOB FF for read data capture
     signal s_d_in_ff_r       : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
@@ -247,6 +252,7 @@ architecture rtl of tdc_gpx_bus_phy is
     attribute IOB of s_wrn_r      : signal is "TRUE";
     attribute IOB of s_oen_r      : signal is c_OEN_IOB_ATTRIBUTE;
     attribute IOB of s_d_out_r    : signal is "TRUE";
+    attribute IOB of s_d_tri_r    : signal is "TRUE";
 
     -- =========================================================================
     -- Response
@@ -368,7 +374,7 @@ begin
                 s_wrn_r             <= '1';
                 s_oen_r             <= '1';
                 s_d_out_r           <= (others => '0');
-                s_d_tri_r           <= '1';             -- Hi-Z [INV-3]
+                s_d_tri_r           <= (others => '1'); -- Hi-Z [INV-3]
                 s_sample_en         <= '0';
                 s_rsp_valid_r       <= '0';
                 s_rsp_rdata_r       <= (others => '0');
@@ -446,7 +452,7 @@ begin
                         s_csn_r   <= '1';
                         s_rdn_r   <= '1';
                         s_wrn_r   <= '1';
-                        s_d_tri_r <= '1';               -- Hi-Z [INV-3]
+                        s_d_tri_r <= (others => '1');   -- Hi-Z [INV-3]
                         s_busy_r  <= '0';
 
                         -- OEN: dynamic mode may hold OEN low during burst.
@@ -527,7 +533,7 @@ begin
                         s_csn_r   <= '1';
                         s_rdn_r   <= '1';
                         s_wrn_r   <= '1';
-                        s_d_tri_r <= '1';
+                        s_d_tri_r <= (others => '1');
                         s_oen_r   <= '1';
                         s_busy_r  <= '1';
 
@@ -540,7 +546,7 @@ begin
                                     s_adr_r       <= s_req_addr_r;
                                     s_csn_r       <= '0';
                                     s_d_out_r     <= s_req_wdata_r;
-                                    s_d_tri_r     <= '0';
+                                    s_d_tri_r     <= (others => '0');
                                     s_tick_r      <= to_unsigned(0, 3);
                                     s_state_r     <= ST_WRITE_SETUP;
                                 end if;
@@ -571,7 +577,7 @@ begin
                         s_csn_r   <= '1';
                         s_rdn_r   <= '1';
                         s_wrn_r   <= '1';
-                        s_d_tri_r <= '1';               -- Hi-Z
+                        s_d_tri_r <= (others => '1');   -- Hi-Z
                         s_oen_r   <= '1';               -- OEN high during gap
 
                         if i_tick_en = '1' then
@@ -581,7 +587,7 @@ begin
                                 s_csn_r   <= '0';
                                 s_oen_r   <= '1';       -- [INV-1]
                                 s_d_out_r <= s_req_wdata_r;
-                                s_d_tri_r <= '0';       -- drive
+                                s_d_tri_r <= (others => '0'); -- drive
                                 s_wrn_r   <= '1';
                                 -- Same guarded setup path as direct entry.
                                 s_tick_r  <= to_unsigned(0, 3);
@@ -595,7 +601,7 @@ begin
                                 else
                                     s_oen_r <= '1';     -- pull-up/NC: RDN gates output
                                 end if;
-                                s_d_tri_r <= '1';       -- Hi-Z [INV-2]
+                                s_d_tri_r <= (others => '1'); -- Hi-Z [INV-2]
                                 s_rdn_r   <= '1';
                                 s_tick_r  <= to_unsigned(1, 3);
                                 s_state_r <= ST_READ;
@@ -613,7 +619,7 @@ begin
                     when ST_WRITE_SETUP =>
                         s_wrn_r   <= '1';
                         s_oen_r   <= '1';
-                        s_d_tri_r <= '0';
+                        s_d_tri_r <= (others => '0');
                         s_busy_r  <= '1';
 
                         if i_tick_en = '1' then
@@ -751,7 +757,7 @@ begin
                                 -- ST_WRITE_HOLD releases it on the next
                                 -- guarded phase counter below, providing
                                 -- 15 ns before pad skew at 200 MHz, div=1.
-                                s_d_tri_r          <= '0';
+                                s_d_tri_r          <= (others => '0');
                                 s_tick_r           <= (others => '0');
                                 s_state_r          <= ST_WRITE_HOLD;
                             else
@@ -770,12 +776,12 @@ begin
                     when ST_WRITE_HOLD =>
                         s_wrn_r   <= '1';
                         s_oen_r   <= '1';
-                        s_d_tri_r <= '0';
+                        s_d_tri_r <= (others => '0');
                         s_busy_r  <= '1';
 
                         if i_tick_en = '1' then
                             if s_tick_r >= to_unsigned(2, s_tick_r'length) then
-                                s_d_tri_r           <= '1';
+                                s_d_tri_r           <= (others => '1');
                                 s_busy_r            <= '0';
                                 s_state_r           <= ST_IDLE;
                                 s_rsp_valid_r       <= '1';

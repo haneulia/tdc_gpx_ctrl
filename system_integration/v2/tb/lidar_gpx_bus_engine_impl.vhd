@@ -67,6 +67,7 @@ architecture rtl of lidar_gpx_bus_engine_impl is
     signal response_c : gpx_bus_response_t;
     signal status_c : gpx_pin_status_t;
     signal effective_ticks_c : unsigned(2 downto 0);
+    signal d_tri_c : gpx_bus_data_t;
 
 begin
 
@@ -94,6 +95,7 @@ begin
     o_irflag             <= status_c.irflag;
     o_errflag            <= status_c.errflag;
     o_effective_ticks    <= std_logic_vector(effective_ticks_c);
+    o_d_tri              <= d_tri_c(0);
 
     u_dut : entity work.lidar_gpx_bus_engine
         generic map (
@@ -115,7 +117,7 @@ begin
             o_oen              => o_oen,
             i_d                => i_d,
             o_d                => o_d,
-            o_d_tri            => o_d_tri,
+            o_d_tri            => d_tri_c,
             i_ef1              => i_ef1,
             i_ef2              => i_ef2,
             i_lf1              => i_lf1,
