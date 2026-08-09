@@ -72,6 +72,22 @@ typedef struct {
     uint32_t hole_sample_count;
 } lidar_ps_decode_summary_t;
 
+typedef struct {
+    uint32_t face_frame_id;
+    uint16_t active_config_version;
+    uint16_t planned_shots;
+    uint16_t completed_shots;
+    uint16_t hsize_bytes;
+    uint16_t vsize_lines;
+    uint16_t footer_status_flags;
+    uint8_t face_index;
+    uint8_t slope_rise;
+    uint8_t direction_ccw;
+    uint8_t source_simulation;
+    uint8_t cell_slots;
+    uint8_t visible_returns;
+} lidar_ps_frame_info_t;
+
 /*
  * The platform cache API must run before this function. Passing false is an
  * explicit contract failure; this library never pretends to invalidate a DMA
@@ -82,6 +98,11 @@ lidar_ps_status_t lidar_ps_publish_cpu_owned(
     bool platform_cache_sync_completed);
 
 void lidar_ps_release_to_dma(lidar_ps_ddr_frame_t *frame);
+
+/* Read only the committed Face Footer before selecting Face-specific bounds. */
+lidar_ps_status_t lidar_ps_inspect_frame(
+    const lidar_ps_ddr_frame_t *frame,
+    lidar_ps_frame_info_t *frame_info);
 
 lidar_ps_status_t lidar_ps_decode_and_packetize(
     const lidar_ps_ddr_frame_t *frame,

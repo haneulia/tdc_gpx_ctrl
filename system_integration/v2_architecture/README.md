@@ -120,6 +120,7 @@ The redesign has four goals:
 | [V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md](V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md) | Self-contained v2 VLNV, XGUI/source synchronization, catalog coexistence and package-only OOC evidence |
 | [V2_K010_GUI_PROJECT_GUIDE_KO.md](V2_K010_GUI_PROJECT_GUIDE_KO.md) | Persistent Vivado Block Designs, completed synthesis Runs and GUI inspection procedure |
 | [V2_CHECKPOINT_L0_PARENT_IMPLEMENTATION_KO.md](V2_CHECKPOINT_L0_PARENT_IMPLEMENTATION_KO.md) | Zynq-7000 Parent VDMA/HP integration, endpoint-scoped CDC, routed timing and bitstream evidence |
+| [V2_CHECKPOINT_L1_IOB_PS_REFERENCE_KO.md](V2_CHECKPOINT_L1_IOB_PS_REFERENCE_KO.md) | 4-chip GPX IOB physical contract, 200 MHz register-read pipeline closure and Zynq PS VDMA/Ethernet reference |
 
 ## 4. Target Top-Level Shape
 

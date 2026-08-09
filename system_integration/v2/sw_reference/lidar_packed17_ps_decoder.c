@@ -538,6 +538,48 @@ void lidar_ps_release_to_dma(lidar_ps_ddr_frame_t *frame)
     }
 }
 
+lidar_ps_status_t lidar_ps_inspect_frame(
+    const lidar_ps_ddr_frame_t *frame,
+    lidar_ps_frame_info_t *frame_info)
+{
+    lidar_ps_footer_t footer;
+    lidar_ps_status_t status;
+    uint32_t required_bytes;
+
+    if (frame == NULL || frame_info == NULL || frame->base == NULL) {
+        return LIDAR_PS_ERR_ARGUMENT;
+    }
+    if (frame->owner != LIDAR_PS_BUFFER_CPU_OWNED) {
+        return LIDAR_PS_ERR_BUFFER_OWNER;
+    }
+    required_bytes = (uint32_t)frame->stride_bytes * frame->vsize_lines;
+    if (required_bytes > frame->allocation_bytes) {
+        return LIDAR_PS_ERR_FRAME_BOUNDS;
+    }
+
+    memset(&footer, 0, sizeof(footer));
+    status = read_footer(frame, &footer);
+    if (status != LIDAR_PS_OK) {
+        return status;
+    }
+
+    memset(frame_info, 0, sizeof(*frame_info));
+    frame_info->face_frame_id = footer.frame_id;
+    frame_info->active_config_version = footer.active_config_version;
+    frame_info->planned_shots = footer.planned_shots;
+    frame_info->completed_shots = footer.completed_shots;
+    frame_info->hsize_bytes = footer.hsize_bytes;
+    frame_info->vsize_lines = footer.vsize_lines;
+    frame_info->footer_status_flags = footer.status_flags;
+    frame_info->face_index = footer.face_index;
+    frame_info->slope_rise = footer.slope_rise;
+    frame_info->direction_ccw = footer.direction_ccw;
+    frame_info->source_simulation = footer.source_simulation;
+    frame_info->cell_slots = footer.cell_slots;
+    frame_info->visible_returns = footer.visible_returns;
+    return LIDAR_PS_OK;
+}
+
 lidar_ps_status_t lidar_ps_decode_and_packetize(
     const lidar_ps_ddr_frame_t *frame,
     const lidar_ps_view_config_t *view_config,

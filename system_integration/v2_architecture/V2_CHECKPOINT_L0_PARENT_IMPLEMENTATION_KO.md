@@ -1,5 +1,9 @@
 # V2 Checkpoint L0 Parent 구현 Sign-off
 
+> 이 문서는 최초 L0 Parent 구현의 이력을 보존한다. 최신 4-chip IOB 고정,
+> Register-read 200 MHz 경로 보완, PS VDMA/Ethernet 참조 및 `WNS +0.240 ns`
+
+
 ## 1. 결론
 
 `tdc_gpx_lidar_ctrl_v2:2.0`을 Zynq-7000 `xc7z020clg484-2` Parent에 넣고

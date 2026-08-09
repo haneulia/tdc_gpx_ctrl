@@ -91,7 +91,36 @@ PS DDR/FIXED_IO를 제외한 LiDAR 서비스 핀은 정확히 171개다. TDC0/1�
 - 동적 OEN과 LF/ERRFLAG 배선이 필요한 다른 PCB는 IP Generic과 Parent 배선/XDC를
   바꿔야 하며, IP 공개 포트는 그대로 재사용할 수 있다.
 
-## 5. VDMA Profile 적용 절차
+## 5. TDC-GPX 병렬 버스 IOB 고정 계약
+
+합성 결과가 매번 다른 내부 배선으로 TDC-GPX 병렬 버스의 지연을 바꾸지 않도록,
+PACKAGE_PIN과 버스 경계 레지스터를 함께 고정한다. XDC가 물리 핀을 소유하고,
+`tdc_gpx_bus_phy`의 `IOB=TRUE` 속성이 다음 레지스터를 해당 핀의
+ILOGIC/OLOGIC에 배치한다.
+
+| 경계 기능 | 수 | 필수 물리 자원 |
+|---|---:|---|
+| GPX D 입력 capture | 112 | `ILOGICE2.IFF` |
+| GPX D 출력 | 112 | `OLOGICE2.OUTFF` |
+| GPX D tri-state | 112 | `OLOGICE2.TFF` |
+| GPX ADR 출력 | 16 | `OLOGICE2.OUTFF` |
+| GPX CSN 출력 | 4 | `OLOGICE2.OUTFF` |
+| GPX RDN 출력 | 4 | `OLOGICE2.OUTFF` |
+| GPX WRN 출력 | 4 | `OLOGICE2.OUTFF` |
+| **합계** | **364** | 모든 cell `IOB=TRUE`, routed LOC/BEL 할당 |
+
+`verify_v2_l0_gpx_iob.tcl`은 합성 후 cell 수와 `IOB=TRUE`를 검사하고, 배치·배선
+후에는 각 cell의 LOC/BEL이 위 역할과 일치하는지 다시 검사한다. 하나라도 누락되면
+Parent Sign-off를 실패시킨다. 최신 4-chip 구현은 364개 모두 통과했다.
+
+현재 VT Parent는 `G_OEN_MODE=PULLUP_OR_NOT_CONNECTED`이므로 OEN을 외부 핀으로
+내보내지 않으며 위 364개에 포함하지 않는다. 동적 OEN PCB에서는 OEN 출력 FF도
+IOB 계약과 XDC 검사 대상에 추가해야 한다. `STOPDIS/ALUTRIGGER/PURESN`은 GPX
+제어 출력이지만 28-bit 병렬 Read/Write 데이터 경계가 아니므로 별도 출력 지연
+계약으로 검사한다. `EF1/EF2/IRFLAG`는 비동기 상태 입력이므로 IOB 저지연보다
+명시적 CDC 동기화 안전성이 우선이다.
+
+## 6. VDMA Profile 적용 절차
 
 통합 IP가 Rise/Fall별 `HSIZE/VSIZE/STRIDE/enable` 후보값을 Processing
 도메인에서 만들고, 통합 IP 내부 `lidar_vdma_profile_cdc`가 49-bit payload를
@@ -110,7 +139,7 @@ profile 변경 중 VDMA를 계속 실행하면 안 된다.
 `tb_lidar_vdma_profile_cdc`와 K0-3 통합 회귀는 49-bit payload 원자성, 지연
 ACK, 오래된 HIGH ACK 거부 및 두 비동기 클럭 방향을 검증한다.
 
-## 6. Reset과 CDC 계약
+## 7. Reset과 CDC 계약
 
 세 clock 전체를 `set_clock_groups -asynchronous`로 묶지 않는다. 그렇게 하면
 설정 handshake, 진단 mailbox, XPM FIFO가 소유한 물리적 max-delay와 bus-skew
@@ -140,51 +169,52 @@ RDN 뒤 데이터를 안정화하고, Runtime TDC-GPX 버스 읽기 타이밍
 
 최신 회귀 세션은 `260809190043_v2_stream_gateway_reset`이다.
 
-## 7. 타이밍 계약과 4-chip 구현 결과
+## 8. 타이밍 계약과 4-chip 구현 결과
 
 TDC 제어 출력은 반환 clock이 없는 외부 장치 인터페이스다. false path로 숨기지
-않고 register-to-pad에 8 ns max-delay를 적용한다. 실제 TDC-GPX 버스 상태는
-최소 25 ns 유지되므로 8 ns 안에 핀에 도달하면 최소 17 ns의 안정 구간이 남는다.
+않고 register-to-pad에 8 ns max-delay를 적용한다. GPX D 입력은 RDN 이후 외부
+데이터가 안정된다는 계약과 Runtime TDC-GPX 버스 읽기 타이밍
+(`BUS_CLK_DIV/BUS_TICKS`)의 최소 25 ns 유지시간을 함께 사용한다.
 
-아래 값은 4-chip Parent 세션 `260809_l0_parent_4chip_synth02`와
-`260809_l0_parent_4chip_impl01`의 최종 결과다.
+최종 4-chip Parent 구현 세션은 `260809_iob_ps_ref_l0_impl_v2`이다.
 
 | 항목 | 결과 |
 |---|---:|
-| Synthesis WNS/WHS | `+0.355 / +0.036 ns` |
-| Route WNS/WHS | `+0.082 / +0.023 ns` |
-| CSR 100 MHz 내부 WNS | `+0.747 ns` |
-| Processing 150 MHz 내부 WNS | `+0.595 ns` |
-| TDC 200 MHz 내부 WNS | `+0.082 ns` |
-| 최악 TDC 내부 경로 | TDC0 `tick[2]` → IOB `WRN`, 2 LUT, 배선 85.252% |
-| 최악 TDC 출력 | `o_tdc_stopdis[3]`, `7.717 ns` |
-| 최소 핀 안정 여유 | `25 - 7.717 = 17.283 ns` |
+| Synthesis WNS/WHS | `+0.357 / +0.036 ns` |
+| Route WNS/WHS | `+0.240 / +0.030 ns` |
+| CSR 100 MHz 내부 WNS | `+1.021 ns` |
+| Processing 150 MHz 내부 WNS | `+0.686 ns` |
+| TDC 200 MHz 내부 WNS | `+0.240 ns` |
+| 최악 TDC 내부 경로 | GPX bus FSM → D tri-state IOB FF, 2 LUT |
+| 최악 경로 배선 비중 | `85.363%` |
+| GPX 병렬 버스 IOB 계약 | `364 / 364 PASS` |
 | Active critical CDC | 0 |
 | Bus-skew 위반 | 0 |
 | Blocking DRC | 0 |
 | Critical Warning | 0 |
 | 비트스트림 | 4,045,708 bytes |
 
-패키지 최종 세션 `260809_220426_k010_ip_package`는 32-bit 150/200 MHz,
+첫 4-chip 구현에서는 Lane 상태와 BUS ready가 coordinator의 Register-read 요청
+소유권 enable까지 한 사이클에 이어져 `WNS -0.007 ns`가 발생했다.
+`lane_register_ready_r` 파이프라인을 추가해 요청 payload는 기존 1-entry 버퍼에
+그대로 보존하면서 승인 경로만 끊었다. coordinator, acquisition subsystem,
+B5-B8 회귀와 최종 Parent 구현을 모두 다시 실행한 결과 위 양수 여유를 확보했다.
+
+최신 K0-10 패키지 runner는 32-bit 150/200 MHz,
 128-bit 200/150 MHz Echo 비활성, 64-bit 150/150 MHz SYNC의 세 OOC profile을
-`Critical Warning 0 / Error 0`으로 통과했다. 현재 패키지는 88개 RTL,
-XGUI 1개, 한글 가이드 3개인 총 92개
-package 자산의 source/XGUI/guide 동기화까지 같은 runner에서 검사했다.
-또한 초기 IP 추론 및 OOC 최적화에서 허용한 Warning ID와 최대 수를
-`WARNING_AUDIT.txt`에 기록하며, 새 ID 또는 발생 수 증가 시 Sign-off를 거부한다.
+통과했다. Parent 최종 결과는 4 chips, 8 STOP/chip, 최대 7 Return,
+Rising `0011`, Falling `1100`, 32-bit AXIS 출력 조건이다.
 
-4-chip Parent는 GPX 데이터 112개, IOB capture FF 112개, TDC 출력 152개,
-비동기 서비스 입력 16개와 보드 서비스 핀 171개를 모두 정적 검사한다.
-합성/구현 세션 모두 Critical Warning 0, blocking DRC 0이며 구현 세션은
-4,045,708-byte bitstream까지 생성했다.
+TDC 200 MHz의 `+0.240 ns`는 Sign-off 기준을 통과했지만 장기 PCB 운용 여유까지
+보장하는 값은 아니다. 실제 PCB 초도 검증은 150 MHz부터 시작해 Runtime
+TDC-GPX 버스 읽기 타이밍(`BUS_CLK_DIV/BUS_TICKS`), 외부 GPX Register readback,
+IFIFO Drain과 데이터 무결성을 확인한 뒤 200 MHz로 올린다. 핀맵, bus PHY,
+합성 전략 또는 주변 로직이 바뀌면 이 Parent 구현 검사를 반드시 다시 실행한다.
 
-TDC 200 MHz의 `+0.082 ns`는 도구 기준으로는 PASS지만 변경 여유가 큰 값은
-아니다. 해당 최악 경로는 기능 조합 깊이보다 서로 떨어진 IOB까지의 물리 배선이
-지배한다. 200 MHz는 상한 스트레스 프로파일로 유지하고, 실제 PCB 초도 검증은
-150 MHz부터 시작해 Runtime TDC-GPX 버스 읽기 타이밍(`BUS_CLK_DIV/BUS_TICKS`),
-Register readback 및 IFIFO Drain을 확인한 뒤 올린다.
+PS의 CSR, VDMA, PACKED17 복원 및 Ethernet 전송 예제는
 
-## 8. 재생성과 Sign-off 실행
+
+## 9. 재생성과 Sign-off 실행
 
 프로젝트를 다시 만들 때 기존 대상 폴더 삭제는 `-Recreate`를 명시한 경우에만
 허용된다.
@@ -211,7 +241,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Mode IMPL -SessionTag <unique_session>
 ```
 
-## 9. 아직 남은 보드 Sign-off
+## 10. 아직 남은 보드 Sign-off
 
 다음 항목은 현재 PASS에 포함되지 않는다.
 
@@ -223,7 +253,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 6. 실제 레이저 안전 인터록과 `fire_done` 응답시간 검증
 7. DDR H-Line을 Viewer Ethernet ABI로 전송하는 지속 처리량 검증
 
-현재 4-chip 200 MHz 구현은 timing을 통과했지만 setup 여유가 `+0.082 ns`다.
+현재 4-chip 200 MHz 구현은 timing을 통과했지만 setup 여유가 `+0.240 ns`다.
 핀맵, bus PHY, 합성 전략 또는 주변 로직이 바뀌면 Parent 구현을 반드시 다시
 판정한다. 200 MHz 여유가 음수가 되면 외부 버스 파형을 바꾸는 임의 파이프라인보다
 먼저 bus PHY register 복제, IOB 인접 배치 및 150 MHz 운용 프로파일을 검토한다.
