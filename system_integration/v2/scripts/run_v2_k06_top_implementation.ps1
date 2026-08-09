@@ -98,7 +98,19 @@ foreach ($Profile in $Profiles) {
             "lappend ::auto_path {C:/AMDDesignTools/2025.2.1/Vivado/data/XilinxTclStore/tclapp/aldec/activehdl}",
             "package require ::tclapp::aldec::activehdl 1.42",
             "read_vhdl -vhdl2008 [list $ReadFiles]",
-            "synth_design -top tdc_gpx_lidar_ctrl_v2_top -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy rebuilt -generic G_PROC_CLK_MHZ=$($Profile.proc) -generic G_TDC_CLK_MHZ=$($Profile.tdc) -generic G_OUTPUT_WIDTH=$Width -generic G_ENABLE_ECHO_SIMULATION=false",
+            # The xc7z020 Parent has 200 PL pins and uses the external GPX bus
+            # profile with the Echo LVDS frontend disabled. Echo-on timing is
+            # covered by its dedicated subsystem regression; enabling both
+            # 32 LVDS pairs and the 4-chip GPX bus here exceeds the part pins.
+            "synth_design -top tdc_gpx_lidar_ctrl_v2_top -part xc7z020clg484-2 -mode out_of_context -flatten_hierarchy rebuilt -generic G_PROC_CLK_MHZ=$($Profile.proc) -generic G_TDC_CLK_MHZ=$($Profile.tdc) -generic G_OUTPUT_WIDTH=$Width -generic G_ENABLE_ECHO_RECEIVER=false -generic G_ENABLE_ECHO_SIMULATION=false",
+            # This OOC gate owns internal Top timing/CDC, not board pin placement.
+            # The 4-chip Parent with its real XDC separately requires and checks
+            # all GPX ILOGIC/OLOGIC registers. Relax only those IOB attributes
+            # here so unconstrained OOC ports do not create a false IO-placer
+            # failure after the bus PHY gained deterministic per-pin registers.
+            "set gpx_iob_cells [get_cells -quiet -hier -filter {NAME =~ *u_proven_bus_phy* && IOB == TRUE}]",
+            "if {[llength `$gpx_iob_cells] == 0} { error {No GPX IOB-attributed cell found before OOC relaxation} }",
+            "set_property IOB FALSE `$gpx_iob_cells",
             "create_clock -name csr_clk -period 10.000 [get_ports s_axi_csr_aclk]",
             "create_clock -name proc_clk -period $($Profile.proc_period) [get_ports proc_aclk]",
             "create_clock -name tdc_clk -period $($Profile.tdc_period) [get_ports i_tdc_clk]",
@@ -126,6 +138,7 @@ foreach ($Profile in $Profiles) {
             "puts `$fp [format {LATCH_COUNT=%d} [llength `$latches]]",
             "puts `$fp [format {BLACK_BOX_COUNT=%d} [llength `$black_boxes]]",
             "puts `$fp [format {ASYNC_REG_COUNT=%d} [llength `$async_regs]]",
+            "puts `$fp [format {GPX_IOB_RELAXED_COUNT=%d} [llength `$gpx_iob_cells]]",
             "close `$fp",
             "if {`$wns < 0.100} { error [format {WNS below +0.100 ns: %.3f ns} `$wns] }",
             "if {[llength `$latches] != 0} { error {Inferred latch detected} }",
@@ -186,12 +199,14 @@ $Scenario = [ordered]@{
         "Processing $($_.proc) / TDC $($_.tdc) MHz"
     })
     output_widths_bits = $Widths
+    echo_receiver = "disabled to match the 4-chip xc7z020 Parent pin profile"
     gates = @(
         "WNS is at least +0.100 ns after route",
         "zero inferred latches",
         "zero black boxes",
         "zero critical CDC paths",
-        "zero unexpected blocking DRC categories"
+        "zero unexpected blocking DRC categories",
+        "GPX IOB attributes relaxed only in OOC; physical Parent owns IOB closure"
     )
     parent_xdc_drc_exclusions = @(
         "IOSTDTYPE-1 board-specific I/O standard type",

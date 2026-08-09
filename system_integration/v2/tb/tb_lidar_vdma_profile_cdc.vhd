@@ -1,10 +1,12 @@
 -- ==========================================================================
--- Test purpose: verify the coherent VDMA profile transfer used inside the
--- integrated IP. The test covers delayed ACK, stale-high ACK rejection, a
--- one-cycle processing-domain ready pulse, and consecutive profile snapshots.
--- Related RTL: lidar_vdma_profile_cdc.
--- Maintenance rule: if the profile payload changes, update every snapshot
--- comparison here so torn-field CDC regressions remain observable.
+-- 테스트 자산 목적: 통합 IP 내부 Processing->CSR VDMA profile CDC 전송을 검증한다.
+-- 핵심 검증 계약: 49-bit payload 원자성, 지연 ACK, stale-high ACK 거부,
+-- 1-cycle Processing ready pulse 및 연속 profile snapshot 분리를 검증한다.
+-- 실행 회귀: run_v2_k03_integration.ps1의 150/200 및 200/150 MHz 조합과
+-- K1-4 통합 Sign-off에서 실행한다.
+-- 관련 RTL: lidar_vdma_profile_cdc.vhd
+-- 유지보수 주의: profile payload field가 바뀌면 모든 snapshot 비교와 두 비동기
+-- clock 방향을 함께 갱신해 torn-field CDC 회귀가 계속 관측되게 한다.
 -- ==========================================================================
 library ieee;
 use ieee.std_logic_1164.all;

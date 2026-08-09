@@ -94,6 +94,7 @@ architecture rtl of laser_executor_core is
     signal simulation_delay_r  : unsigned(31 downto 0) := (others => '0');
     signal simulation_delay_last_r : std_logic := '0';
     signal range_count_r       : unsigned(31 downto 0) := (others => '0');
+    signal range_last_r        : std_logic := '0';
     signal fire_to_t0_count_r  : unsigned(31 downto 0) := (others => '0');
     signal fire_to_t0_value_r  : unsigned(31 downto 0) := (others => '0');
     signal resolve_count_r     : natural range 0 to C_FIRE_DONE_SYNC_CLKS := 0;
@@ -137,8 +138,11 @@ begin
         (state_r = EXEC_WAIT_SIMULATION_T0 and
          i_simulation_enable = '1' and
          simulation_delay_last_r = '1') else '0';
+    -- range_last_r is prepared one cycle before the terminal count. This keeps
+    -- the externally observed stop_tdc cycle unchanged while preventing the
+    -- 32-bit range comparator from extending into the pulse-width counter.
     range_end_c <= '1' when state_r = EXEC_RANGE_WINDOW and
-        range_count_r <= 1 else '0';
+        range_last_r = '1' else '0';
 
     o_executor_ready      <= executor_ready_c;
     o_request_accept      <= request_accept_r;
@@ -195,6 +199,7 @@ begin
                 simulation_delay_r  <= (others => '0');
                 simulation_delay_last_r <= '0';
                 range_count_r       <= (others => '0');
+                range_last_r        <= '0';
                 fire_to_t0_count_r  <= (others => '0');
                 fire_to_t0_value_r  <= (others => '0');
                 resolve_count_r     <= 0;
@@ -248,6 +253,11 @@ begin
                                 shot_start_r.t0_timestamp_valid <= '1';
                                 shot_start_r.t0_time_sync_valid <= '0';
                                 range_count_r <= i_target_range_clks;
+                                if i_target_range_clks <= 1 then
+                                    range_last_r <= '1';
+                                else
+                                    range_last_r <= '0';
+                                end if;
                                 state_r <= EXEC_RANGE_WINDOW;
                             else
                                 state_r <= EXEC_WAIT_SIMULATION_T0;
@@ -269,6 +279,11 @@ begin
                                 i_physical_t0_timestamp_valid;
                             shot_start_r.t0_time_sync_valid <= '0';
                             range_count_r <= target_range_r;
+                            if target_range_r <= 1 then
+                                range_last_r <= '1';
+                            else
+                                range_last_r <= '0';
+                            end if;
                             state_r <= EXEC_RANGE_WINDOW;
                         elsif i_physical_fire_enable /= '1' then
                             physical_arm_r  <= '0';
@@ -311,6 +326,11 @@ begin
                             shot_start_r.t0_timestamp_valid <= '1';
                             shot_start_r.t0_time_sync_valid <= '0';
                             range_count_r <= target_range_r;
+                            if target_range_r <= 1 then
+                                range_last_r <= '1';
+                            else
+                                range_last_r <= '0';
+                            end if;
                             state_r <= EXEC_RANGE_WINDOW;
                         end if;
 
@@ -326,6 +346,11 @@ begin
                                 i_physical_t0_timestamp_valid;
                             shot_start_r.t0_time_sync_valid <= '0';
                             range_count_r <= target_range_r;
+                            if target_range_r <= 1 then
+                                range_last_r <= '1';
+                            else
+                                range_last_r <= '0';
+                            end if;
                             state_r <= EXEC_RANGE_WINDOW;
                         elsif resolve_count_r > 1 then
                             resolve_count_r <= resolve_count_r - 1;
@@ -350,8 +375,12 @@ begin
                         -- TimerFlag보다 먼저 발생하지 않는다.
                         if range_count_r > 1 then
                             range_count_r <= range_count_r - 1;
+                            if range_count_r = 2 then
+                                range_last_r <= '1';
+                            end if;
                         else
                             range_count_r <= (others => '0');
+                            range_last_r  <= '0';
                             shot_result_r.valid   <= '1';
                             shot_result_r.timeout <= '0';
                             shot_result_r.aborted <= '0';
