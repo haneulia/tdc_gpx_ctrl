@@ -140,7 +140,8 @@ C:\Projects\my_sp\ALINX\Logic\project_4_lidar_v2_l0\project_4_lidar_v2_l0.xpr
 ```
 
 최신 IP package로 프로젝트를 재생성한 뒤 합성부터 bitstream까지 다시 실행했다.
-세션은 `260809_preboard_parent_impl_v1`이다.
+세션은 `260809_preboard_parent_impl_commit_v1`이며, 자동 manifest는 검증 소스를
+커밋 `4fb97303828462d14fe23a52e65a27cb768ff33a`으로 고정한다.
 
 | 항목 | 결과 |
 |---|---:|
