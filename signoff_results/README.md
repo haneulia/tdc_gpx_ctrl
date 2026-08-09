@@ -41,3 +41,19 @@ timing. Board pin constraints, I/O delays, clock generation, and top-level
 false-path policy remain the responsibility of the parent FPGA design. Vivado
 is run with `synth_design -mode out_of_context`, so top-level I/O buffers and
 pin-count DRCs are not part of these IP-level results.
+
+The v2 Zynq-7000 Parent closes those top-level responsibilities separately:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/parent_l0/run_v2_l0_parent_signoff.ps1 `
+  -Mode IMPL -SessionTag <unique_session>
+```
+
+The runner checks exact CDC endpoint counts, reviewed GPX capture waivers,
+bus-skew, methodology, DRC, service-pin constraints, routed WNS/WHS and the
+generated bitstream. See `system_integration/v2/parent_l0/README_KO.md`.
+
+The K0-10 package runner also applies a reviewed warning contract. A new
+Vivado Warning ID or an increase above the stored per-ID maximum fails the
+run, while each session records the observed counts in `WARNING_AUDIT.txt`.

@@ -533,7 +533,9 @@ The final marker is `LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS`. The gate checks
 87 production RTL files plus XGUI and the Korean Product Guide against their
 canonical sources, verifies v1/v2 catalog coexistence, exercises three
 Customize IP profiles and synthesizes the same profiles from package-local
-sources only. See
+sources only. It also rejects every new Vivado Warning ID and any increase
+above the reviewed per-ID warning maxima; the observed counts are archived in
+`WARNING_AUDIT.txt`. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md`.
 
 Create or re-verify the persistent Vivado GUI project with:
@@ -582,3 +584,27 @@ earlier result. Its input snapshot is
 minimum routed public-Top WNS is `+0.133 ns`. This is RTL/IP release evidence;
 physical VDMA/HP-port traffic, DMA cache maintenance, PCB TDC-GPX/LVDS timing,
 laser safety and sustained Ethernet remain Stage L0 board evidence.
+
+Create or recreate the Zynq-7000 Stage L0 Parent GUI project with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/parent_l0/run_v2_l0_parent.ps1 `
+  -OutputWidth 32 -Recreate
+```
+
+Run routed Parent timing/CDC/DRC and bitstream Sign-off with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/parent_l0/run_v2_l0_parent_signoff.ps1 `
+  -Mode IMPL -SessionTag <unique_session>
+```
+
+The final Parent implementation session
+`260809_l0_parent_release_impl04` has route WNS/WHS
+`+0.174/+0.018 ns`, zero active critical CDC, zero blocking DRC and a
+4,045,708-byte bitstream. This closes Parent implementation only; physical
+DDR/cache/PCB/laser/Ethernet evidence remains open. See
+`system_integration/v2/parent_l0/README_KO.md` and
+`system_integration/v2_architecture/V2_CHECKPOINT_L0_PARENT_IMPLEMENTATION_KO.md`.

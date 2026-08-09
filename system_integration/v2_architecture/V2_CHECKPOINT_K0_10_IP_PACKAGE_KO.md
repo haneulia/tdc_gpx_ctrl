@@ -84,7 +84,7 @@ Block Design에서 숨겨지고 simulation Echo option도 false로 고정된다.
 
 | 항목 | 결과 |
 |---|---|
-| 원본 대 package source 동기화: 87 RTL + XGUI + Product Guide | PASS |
+| 원본 대 package source 동기화: 87 RTL + XGUI + 한글 가이드 3개 | PASS |
 | VLNV, core revision, generic 범위/기본값 | PASS |
 | AXI4-Lite/AXIS clock association과 `FREQ_HZ` dependency | PASS |
 | active-low reset, level-high IRQ metadata | PASS |
@@ -137,7 +137,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 최종 세션:
 
-`signoff_results/sessions/260807_205247_k010_ip_package`
+`signoff_results/sessions/260809_185237_k010_ip_package`
 
 GUI 재개방 검증 세션:
 
@@ -147,25 +147,35 @@ Top shell 재회귀 세션:
 
 `signoff_results/sessions/260807_k010_package_top_recheck3_v2_top_shell`
 
-## 7. 경고 분류
+## 7. 경고 계약
 
-| 메시지 | 판정 |
-|---|---|
-| `Common 17-1297` | 사용자 Tcl Store catalog 손상 경고. 설치 영역 Tcl Store로 자동 우회했으며 package 결과와 무관한 PC 환경 항목 |
-| package 초기 merge 경고 | script가 최종 interface association과 Product Guide group을 설정하기 전에 Vivado가 내는 중간 경고. 최종 `ipx::check_integrity`와 component 검사 PASS |
-| `Synth 8-5799` | OOC 내부의 물리 TDC tri-state가 logic으로 변환되는 경고. K0-9에도 존재하며 parent I/O wrapper/핀 단계에서 다시 판정 |
-| `Constraints 18-5572` | OOC에서는 실제 I/O pad가 없어 내부 IOB 속성을 적용할 수 없다는 경고. L0 parent implementation에서 종료 |
+최종 세션은 `Critical Warning 0 / Error 0`이며, 일반 Warning은 다음 ID만
+허용한다. 실행기는 새 Warning ID가 생기거나 아래 최대 발생 수가 증가하면
+`LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS`를 내지 않는다. 실제 관측값은 세션의
+`WARNING_AUDIT.txt`에 저장한다.
 
-위 두 OOC I/O 경고는 숨기거나 성공으로 오인하지 않는다. package 내부 논리의
-black box/latch 문제는 아니지만, 실제 핀과 IOBUF를 포함하는 L0 보드 Sign-off의
-미결 항목이다.
+| 단계 | 메시지 ID | 최대 수 | 판정 근거 |
+|---|---|---:|---|
+| 초기 package 추론 | `IP_Flow 19-11770` | 3 | Generic 의존 `FREQ_HZ`를 설정하기 전의 clock 추론 경고 |
+| 초기 package 추론 | `IP_Flow 19-3158` | 3 | AXIS와 Processing clock을 연계하기 전의 추론 경고 |
+| 초기 package 추론 | `IP_Flow 19-5661` | 3 | clock의 `ASSOCIATED_BUSIF`를 설정하기 전의 추론 경고 |
+| 초기 package 추론 | `IP_Flow 19-2187` | 1 | 한글 Product Guide file group을 추가하기 전의 추론 경고 |
+| 초기 package 추론 | `IP_Flow 19-11888` | 1 | 최종 IP 설명을 설정하기 전의 기본 설명 경고 |
+| OOC 3-profile 합계 | `Synth 8-7129` | 300 | 폭/프로파일별로 사용하지 않는 record 필드 또는 port 제거 |
+| OOC 3-profile 합계 | `Synth 8-6014` | 287 | 사용하지 않는 순차요소 제거 |
+| OOC 3-profile 합계 | `Synth 8-3917` | 123 | Generic profile에서 상수로 확정된 공개 출력 |
+| OOC 3-profile 합계 | `Synth 8-3332` | 6 | 도달할 수 없는 one-hot FSM state 제거 |
+| OOC 3-profile 합계 | `Constraints 18-5572` | 15 | 외부 pad가 없는 OOC에서 내부 IOB 속성 적용 불가 |
+
+초기 package 경고 뒤에는 `ipx::check_integrity`, clock/reset association,
+Product Guide 및 component 정적 검사를 다시 수행한다. OOC IOB 경고는 실제
+`IOBUF`, Package Pin과 I/O Standard를 가진 L0 Parent 구현에서 재검증했고
+Critical CDC, blocking DRC 및 unconstrained service pin이 모두 0임을 확인했다.
 
 ## 8. 다음 Gate
 
-K0-1부터 K0-10까지 완료되었으므로 다음 단계는 **K1 full RTL/HTML alignment**다.
-K1은 Return 1..7, STOP 1..8, Face 1..5, slope topology, RPM/각분해능/거리,
-Hole/timeout/abort/backpressure 조합에서 RTL 계측값과 HTML 판단을 맞춘다.
-
-K1 완료 전에는 L0 결과를 전체 시스템 Sign-off로 선언하지 않는다. L0에서는 실제
-VDMA/HP/DDR, FreeRTOS 또는 PetaLinux cache API, Ethernet 및 보드 핀을 포함해
-K0-9의 두 Golden 비교를 물리 경로에서 다시 수행한다.
+K1-4 통합 RTL/IP Sign-off와 L0 Parent 합성·배치·배선·bitstream은 완료됐다.
+다음 단계는 **Stage L1 물리 보드 Runtime 증거**다. 실제 TDC-GPX 40 MHz Tref와
+Register readback, VDMA/HP/DDR byte 무결성, FreeRTOS/PetaLinux DMA cache 관리,
+레이저 안전 인터록 및 지속 Ethernet 처리량을 확인해야 전체 시스템 Release
+Sign-off를 선언할 수 있다.

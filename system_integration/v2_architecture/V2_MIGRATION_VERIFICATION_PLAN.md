@@ -307,7 +307,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
 | 7 | J | Complete | J0-J10; `V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` | AXIS/VDMA/PS formatter chain |
 | 8 | K | Complete | K0-1 through K1-4; `V2_CHECKPOINT_K1_4_FINAL_SIGNOFF_KO.md` | Integrated RTL, Golden, implementation and IP package Sign-off complete |
-| 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
+| 9 | L | In progress | `V2_CHECKPOINT_L0_PARENT_IMPLEMENTATION_KO.md`; Parent bitstream PASS, board runtime pending | Parent implementation closed; DDR/cache/PCB/laser/Ethernet evidence pending |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
 closed at Checkpoint F and Stage 4 is closed at Checkpoint G. F0a/F0b through
@@ -591,7 +591,8 @@ K1은 K0의 통합 RTL을 바로 HTML에 연결하기 전에, 이번 CSR 의미 
 | K1-4 | Complete | 입력 snapshot을 고정하고 과거 결과 재사용 없이 11개 Gate를 통과했다. 두 routine clock×32/64/128-bit 공개 Top 구현의 최소 WNS는 `+0.133 ns`이고, 동일 물리 150 MHz 및 ASYNC 200/50, 50/200, 150/100 MHz 직접 CDC, DDR/PS/HTML byte 비교, package/XGUI/OOC를 모두 재검증했다. 상세 근거는 `V2_CHECKPOINT_K1_4_FINAL_SIGNOFF_KO.md`와 세션 `260809_k14_final13_v2_k14_signoff`다. |
 
 K1-1부터 K1-4까지의 동작, RTL/HTML 운용 계약과 IP package closure가 완료됐다.
-K1-3의 HTML PASS는 앞선 상태/설정 계약을 대체하지 않고, K1-4의 package PASS도
-실제 보드 검증을 대체하지 않는다. 다음 단계는 Stage 9 L0에서 실제 VDMA, HP port,
-FreeRTOS/PetaLinux DMA cache, PCB GPX/LVDS와 laser/Ethernet을 순서대로 검증하는
-것이다.
+Stage 9 L0에서는 Zynq-7000 Parent Block Design, Rise/Fall VDMA, HP0/HP1,
+핀 89개, endpoint-scoped CDC, 배치·배선과 bitstream 생성을 닫았다. 상세 근거는
+`V2_CHECKPOINT_L0_PARENT_IMPLEMENTATION_KO.md`다. 이 PASS는 실제 DDR byte,
+FreeRTOS/PetaLinux DMA cache, PCB GPX/LVDS, laser safety 및 Ethernet 지속 처리량을
+대체하지 않는다. 다음 단계는 Stage 9 L1 보드 Runtime 증거 수집이다.

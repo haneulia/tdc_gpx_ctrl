@@ -215,51 +215,57 @@ begin
         end if;
     end process p_proc_request_sync;
 
-    p_proc_sink : process (i_proc_clk, i_proc_rst_n)
+    -- 이 FSM의 출력 펄스는 Processing-domain RAM/FIFO 제어까지 전파된다.
+    -- 비동기 리셋 플롭이 RAM write-enable을 직접 구동하지 않도록 리셋도
+    -- Processing 클럭에서 순차 적용한다.
+    p_proc_sink : process (i_proc_clk)
     begin
-        if i_proc_rst_n = '0' then
-            proc_ack_r <= '0';
-            proc_ready_r <= '0';
-            proc_state_r <= SINK_IDLE;
-            proc_init_count_r <= 0;
-            proc_clear_r <= '0';
-            proc_reset_r <= '0';
-        elsif rising_edge(i_proc_clk) then
-            proc_clear_r <= '0';
-            proc_reset_r <= '0';
-            if proc_ready_r = '0' then
+        if rising_edge(i_proc_clk) then
+            if i_proc_rst_n = '0' then
                 proc_ack_r <= '0';
-                if proc_init_count_r = 3 then
-                    proc_ready_r <= '1';
-                else
-                    proc_init_count_r <= proc_init_count_r + 1;
-                end if;
+                proc_ready_r <= '0';
+                proc_state_r <= SINK_IDLE;
+                proc_init_count_r <= 0;
+                proc_clear_r <= '0';
+                proc_reset_r <= '0';
             else
-                case proc_state_r is
-                    when SINK_IDLE =>
-                        if proc_request_sync_r = '1' then
-                            proc_state_r <= SINK_SETTLE;
-                        end if;
-
-                    when SINK_SETTLE =>
-                        if proc_request_sync_r = '0' then
-                            proc_state_r <= SINK_IDLE;
-                        else
-                            if proc_payload_sync_r = C_COMMAND_SOFT_RESET then
-                                proc_reset_r <= '1';
-                            else
-                                proc_clear_r <= '1';
+                proc_clear_r <= '0';
+                proc_reset_r <= '0';
+                if proc_ready_r = '0' then
+                    proc_ack_r <= '0';
+                    if proc_init_count_r = 3 then
+                        proc_ready_r <= '1';
+                    else
+                        proc_init_count_r <= proc_init_count_r + 1;
+                    end if;
+                else
+                    case proc_state_r is
+                        when SINK_IDLE =>
+                            if proc_request_sync_r = '1' then
+                                proc_state_r <= SINK_SETTLE;
                             end if;
-                            proc_ack_r <= '1';
-                            proc_state_r <= SINK_ACK;
-                        end if;
 
-                    when SINK_ACK =>
-                        if proc_request_sync_r = '0' then
-                            proc_ack_r <= '0';
-                            proc_state_r <= SINK_IDLE;
-                        end if;
-                end case;
+                        when SINK_SETTLE =>
+                            if proc_request_sync_r = '0' then
+                                proc_state_r <= SINK_IDLE;
+                            else
+                                if proc_payload_sync_r =
+                                   C_COMMAND_SOFT_RESET then
+                                    proc_reset_r <= '1';
+                                else
+                                    proc_clear_r <= '1';
+                                end if;
+                                proc_ack_r <= '1';
+                                proc_state_r <= SINK_ACK;
+                            end if;
+
+                        when SINK_ACK =>
+                            if proc_request_sync_r = '0' then
+                                proc_ack_r <= '0';
+                                proc_state_r <= SINK_IDLE;
+                            end if;
+                    end case;
+                end if;
             end if;
         end if;
     end process p_proc_sink;
@@ -279,51 +285,55 @@ begin
         end if;
     end process p_tdc_request_sync;
 
-    p_tdc_sink : process (i_tdc_clk, i_tdc_rst_n)
+    -- Processing sink와 같은 순차 리셋 계약을 TDC sink에도 적용한다.
+    p_tdc_sink : process (i_tdc_clk)
     begin
-        if i_tdc_rst_n = '0' then
-            tdc_ack_r <= '0';
-            tdc_ready_r <= '0';
-            tdc_state_r <= SINK_IDLE;
-            tdc_init_count_r <= 0;
-            tdc_clear_r <= '0';
-            tdc_reset_r <= '0';
-        elsif rising_edge(i_tdc_clk) then
-            tdc_clear_r <= '0';
-            tdc_reset_r <= '0';
-            if tdc_ready_r = '0' then
+        if rising_edge(i_tdc_clk) then
+            if i_tdc_rst_n = '0' then
                 tdc_ack_r <= '0';
-                if tdc_init_count_r = 3 then
-                    tdc_ready_r <= '1';
-                else
-                    tdc_init_count_r <= tdc_init_count_r + 1;
-                end if;
+                tdc_ready_r <= '0';
+                tdc_state_r <= SINK_IDLE;
+                tdc_init_count_r <= 0;
+                tdc_clear_r <= '0';
+                tdc_reset_r <= '0';
             else
-                case tdc_state_r is
-                    when SINK_IDLE =>
-                        if tdc_request_sync_r = '1' then
-                            tdc_state_r <= SINK_SETTLE;
-                        end if;
-
-                    when SINK_SETTLE =>
-                        if tdc_request_sync_r = '0' then
-                            tdc_state_r <= SINK_IDLE;
-                        else
-                            if tdc_payload_sync_r = C_COMMAND_SOFT_RESET then
-                                tdc_reset_r <= '1';
-                            else
-                                tdc_clear_r <= '1';
+                tdc_clear_r <= '0';
+                tdc_reset_r <= '0';
+                if tdc_ready_r = '0' then
+                    tdc_ack_r <= '0';
+                    if tdc_init_count_r = 3 then
+                        tdc_ready_r <= '1';
+                    else
+                        tdc_init_count_r <= tdc_init_count_r + 1;
+                    end if;
+                else
+                    case tdc_state_r is
+                        when SINK_IDLE =>
+                            if tdc_request_sync_r = '1' then
+                                tdc_state_r <= SINK_SETTLE;
                             end if;
-                            tdc_ack_r <= '1';
-                            tdc_state_r <= SINK_ACK;
-                        end if;
 
-                    when SINK_ACK =>
-                        if tdc_request_sync_r = '0' then
-                            tdc_ack_r <= '0';
-                            tdc_state_r <= SINK_IDLE;
-                        end if;
-                end case;
+                        when SINK_SETTLE =>
+                            if tdc_request_sync_r = '0' then
+                                tdc_state_r <= SINK_IDLE;
+                            else
+                                if tdc_payload_sync_r =
+                                   C_COMMAND_SOFT_RESET then
+                                    tdc_reset_r <= '1';
+                                else
+                                    tdc_clear_r <= '1';
+                                end if;
+                                tdc_ack_r <= '1';
+                                tdc_state_r <= SINK_ACK;
+                            end if;
+
+                        when SINK_ACK =>
+                            if tdc_request_sync_r = '0' then
+                                tdc_ack_r <= '0';
+                                tdc_state_r <= SINK_IDLE;
+                            end if;
+                    end case;
+                end if;
             end if;
         end if;
     end process p_tdc_sink;

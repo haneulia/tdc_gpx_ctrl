@@ -176,6 +176,21 @@ architecture rtl of tdc_gpx_bus_phy is
     constant c_OEN_DYNAMIC_CONNECTED : boolean := g_OEN_MODE = "DYNAMIC_CONNECTED";
     constant c_OEN_PULLUP_OR_NC      : boolean := g_OEN_MODE = "PULLUP_OR_NOT_CONNECTED";
 
+    -- OEN이 PCB에 실제 연결된 구성에서만 출력 FF의 IOB 배치를 요구한다.
+    -- Pull-up/미연결 구성은 Parent에서 OEN 포트를 외부화하지 않으므로 TRUE를
+    -- 강제하면 Vivado REQP-1618 경고가 발생한다. 두 구성의 물리 계약을 이
+    -- 속성 값으로 구분하되 OEN 상태기계 자체의 동작은 바꾸지 않는다.
+    function fn_oen_iob_attribute(mode : string) return string is
+    begin
+        if mode = "DYNAMIC_CONNECTED" then
+            return "TRUE";
+        end if;
+        return "FALSE";
+    end function fn_oen_iob_attribute;
+
+    constant c_OEN_IOB_ATTRIBUTE : string :=
+        fn_oen_iob_attribute(g_OEN_MODE);
+
     function fn_min_ticks_for_div(div_value : unsigned(5 downto 0)) return unsigned is
         variable v_min_ticks : natural;
     begin
@@ -230,7 +245,7 @@ architecture rtl of tdc_gpx_bus_phy is
     attribute IOB of s_csn_r      : signal is "TRUE";
     attribute IOB of s_rdn_r      : signal is "TRUE";
     attribute IOB of s_wrn_r      : signal is "TRUE";
-    attribute IOB of s_oen_r      : signal is "TRUE";
+    attribute IOB of s_oen_r      : signal is c_OEN_IOB_ATTRIBUTE;
     attribute IOB of s_d_out_r    : signal is "TRUE";
 
     -- =========================================================================

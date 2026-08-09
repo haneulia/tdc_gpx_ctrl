@@ -1,7 +1,8 @@
 param(
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [switch]$SkipSimulation,
-    [switch]$SkipImplementation
+    [switch]$SkipImplementation,
+    [switch]$RoutineClockProfiles
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +70,14 @@ $SimulationProfiles = @(
     "tb_lidar_gpx_event_gateway_async_50_200",
     "tb_lidar_gpx_event_gateway_async_150_100"
 )
+if ($RoutineClockProfiles) {
+    # 일상 RTL 통합 회귀는 실제 운용 후보인 150/200 MHz 두 방향만
+    # 실행한다. 4:1 극단 조합과 SYNC 조합은 전체 Sign-off 때 유지한다.
+    $SimulationProfiles = @(
+        "tb_lidar_gpx_event_gateway_async_150_200",
+        "tb_lidar_gpx_event_gateway_async_200_150"
+    )
+}
 
 if (-not $SkipSimulation) {
     Push-Location $Work
@@ -171,6 +180,11 @@ $ImplementationProfiles = @(
         expect_async = 1
     }
 )
+if ($RoutineClockProfiles) {
+    $ImplementationProfiles = @($ImplementationProfiles | Where-Object {
+        $_.name -in @("async_proc150_tdc200", "async_proc200_tdc150")
+    })
+}
 
 if (-not $SkipImplementation) {
     foreach ($Profile in $ImplementationProfiles) {

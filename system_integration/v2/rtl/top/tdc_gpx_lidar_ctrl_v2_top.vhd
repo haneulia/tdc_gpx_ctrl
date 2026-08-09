@@ -2,6 +2,9 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+library unisim;
+use unisim.vcomponents.all;
+
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
 use work.lidar_event_types_pkg.all;
@@ -767,13 +770,25 @@ begin
 
     gen_gpx_active_pins : for index in 0 to G_NUM_CHIPS - 1 generate
         constant C_DATA_LO : natural := index * 28;
-        constant C_DATA_HI : natural := (index + 1) * 28 - 1;
         constant C_ADR_LO : natural := index * 4;
         constant C_ADR_HI : natural := (index + 1) * 4 - 1;
     begin
-        gpx_d_in_c(index) <= io_tdc_d(C_DATA_HI downto C_DATA_LO);
-        io_tdc_d(C_DATA_HI downto C_DATA_LO) <= gpx_d_out_c(index)
-            when gpx_d_tri_c(index) = '0' else (others => 'Z');
+        -- Packaged-IP 경계에서도 양방향 GPX 데이터 핀의 I/O/T 경로가
+        -- 보존되도록 보드 검증된 v1과 같은 명시적 IOBUF를 사용한다.
+        -- 공개 io_tdc_d 포트와 논리 chip 순서는 바뀌지 않는다.
+        gen_gpx_data_iobuf : for bit_index in
+                0 to C_GPX_BUS_DATA_WIDTH - 1 generate
+            constant C_DATA_INDEX : natural := C_DATA_LO + bit_index;
+        begin
+            u_gpx_data_iobuf : IOBUF
+                port map (
+                    IO => io_tdc_d(C_DATA_INDEX),
+                    I  => gpx_d_out_c(index)(bit_index),
+                    O  => gpx_d_in_c(index)(bit_index),
+                    T  => gpx_d_tri_c(index)
+                );
+        end generate gen_gpx_data_iobuf;
+
         o_tdc_adr(C_ADR_HI downto C_ADR_LO) <= gpx_adr_c(index);
         gpx_ef1_c(index) <= i_tdc_ef1(index);
         gpx_ef2_c(index) <= i_tdc_ef2(index);

@@ -106,21 +106,18 @@ begin
     end generate gen_sync;
 
     gen_async : if G_CLOCK_MODE = STREAM_CLOCK_ASYNC generate
+        constant C_DEST_RESET_SYNC_STAGES : positive := 4;
         constant C_RESET_HOLD_CLKS : positive := 8;
         signal fifo_full : std_logic;
         signal fifo_empty : std_logic;
         signal fifo_dout : std_logic_vector(G_WIDTH - 1 downto 0);
         signal fifo_rst : std_logic;
+        signal fifo_rst_r : std_logic := '1';
         signal wr_rst_busy : std_logic;
         signal rd_rst_busy : std_logic;
-        signal destination_reset_meta_r : std_logic := '0';
-        signal destination_reset_sync_r : std_logic := '0';
+        signal destination_reset_n_sync_s : std_logic := '0';
         signal reset_count_r : natural range 0 to C_RESET_HOLD_CLKS :=
             C_RESET_HOLD_CLKS;
-
-        attribute ASYNC_REG : string;
-        attribute ASYNC_REG of destination_reset_meta_r : signal is "TRUE";
-        attribute ASYNC_REG of destination_reset_sync_r : signal is "TRUE";
     begin
         source_ready_c <= not fifo_full and not wr_rst_busy and not fifo_rst;
         destination_valid_c <= not fifo_empty and not rd_rst_busy
@@ -130,29 +127,51 @@ begin
         destination_reset_busy_c <= rd_rst_busy or not i_destination_rst_n;
         reset_busy_c <= source_reset_busy_c or destination_reset_busy_c;
 
-        -- XPM reset is owned by the source clock. Destination reset asserts
-        -- this stretcher asynchronously, then deasserts through two source
-        -- clock stages so a destination restart cannot expose stale payload.
-        p_fifo_reset : process (
-            i_source_clk, i_source_rst_n, i_destination_rst_n)
+        -- 목적지 리셋은 데이터처럼 4단 XPM 동기화기를 거쳐 소스 클럭
+        -- 도메인으로 전달한다. 리셋 입력은 최소 4개의 소스 클럭 주기 동안
+        -- LOW를 유지해야 하며, 시스템의 proc_sys_reset은 이 조건을 만족한다.
+        -- 목적지 출력 valid는 원래 리셋으로 즉시 차단되므로 동기화 지연 중
+        -- 오래된 payload가 소비되지 않는다.
+        u_destination_reset_sync : xpm_cdc_single
+            generic map (
+                DEST_SYNC_FF   => C_DEST_RESET_SYNC_STAGES,
+                INIT_SYNC_FF   => 1,
+                SIM_ASSERT_CHK => 1,
+                -- 같은 목적지 리셋이 여러 Gateway로 분기되더라도 각 XPM이
+                -- 원래 클럭에서 먼저 등록한 단일 launch 경로만 교차시킨다.
+                SRC_INPUT_REG  => 1
+            )
+            port map (
+                src_clk  => i_destination_clk,
+                src_in   => i_destination_rst_n,
+                dest_clk => i_source_clk,
+                dest_out => destination_reset_n_sync_s
+            );
+
+        -- xpm_fifo_async.rst는 wr_clk에 동기여야 한다. 따라서 FIFO 리셋과
+        -- 유지 카운터는 소스 클럭 순차회로만으로 구동한다. 목적지 또는
+        -- 소스 리셋을 감지하면 기존 payload를 폐기하고 8클럭을 더 유지한
+        -- 뒤 새 전송을 허용한다.
+        p_fifo_reset : process (i_source_clk)
         begin
-            if i_source_rst_n = '0' or i_destination_rst_n = '0' then
-                destination_reset_meta_r <= '0';
-                destination_reset_sync_r <= '0';
-                reset_count_r <= C_RESET_HOLD_CLKS;
-            elsif rising_edge(i_source_clk) then
-                destination_reset_meta_r <= '1';
-                destination_reset_sync_r <= destination_reset_meta_r;
-                if destination_reset_sync_r = '0' then
+            if rising_edge(i_source_clk) then
+                if i_source_rst_n = '0' or
+                   destination_reset_n_sync_s = '0' then
+                    fifo_rst_r <= '1';
                     reset_count_r <= C_RESET_HOLD_CLKS;
-                elsif reset_count_r > 0 then
+                elsif reset_count_r > 1 then
+                    fifo_rst_r <= '1';
                     reset_count_r <= reset_count_r - 1;
+                elsif reset_count_r = 1 then
+                    fifo_rst_r <= '0';
+                    reset_count_r <= 0;
+                else
+                    fifo_rst_r <= '0';
                 end if;
             end if;
         end process p_fifo_reset;
 
-        fifo_rst <= '1' when reset_count_r > 0 or
-            destination_reset_sync_r = '0' else '0';
+        fifo_rst <= fifo_rst_r;
 
         u_async_fifo : xpm_fifo_async
             generic map (

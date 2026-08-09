@@ -64,6 +64,7 @@
 | `tb_lidar_echo_subsystem.vhd` | physical/simulation/disabled, 16/32 lane, Return 1~7, delay, 10-bank 등록형 Shot 시작/채널 초기화, 등록된 any-event와 Shot snapshot finalize | `lidar_echo_subsystem` | `run_v2_echo.ps1` | physical STOP에는 CSR/AXIS/진단 파이프라인 지연을 넣지 않는다. 등록된 Shot 시작과 같은 cycle의 첫 Echo도 수락하며, 단계 분리 뒤에도 snapshot cycle과 32채널 count가 같아야 한다. |
 | `tb_lidar_gpx_bus_engine.vhd` | typed wrapper와 v1 PHY의 pin/cycle/28-bit 등가 | GPX bus engine/legacy PHY | `run_v2_gpx_bus.ps1` | 물리 FSM 변경은 oracle 비교가 먼저다. |
 | `tb_lidar_gpx_event_gateway.vhd` | SYNC/ASYNC command/result CDC, reset/stall과 K1-4 여섯 clock profile | GPX event gateways | `run_v2_gpx_event_gateway.ps1`, `run_v2_k14_signoff.ps1` | SYNC는 같은 주파수가 아니라 동일한 물리 clock을 사용한다. ASYNC 150/200, 200/150, 200/50, 50/200, 150/100 MHz를 보존한다. |
+| `tb_lidar_stream_gateway_reset.vhd` | 200 MHz Source→150 MHz Destination 비동기 FIFO에서 Source/Destination Reset 전 보류 payload 폐기, Reset 중 ready/valid 차단, 복구 후 첫 새 payload 일치 | `lidar_stream_gateway` | `run_v2_stream_gateway_reset.ps1` | Destination Reset은 4단 XPM으로 Source에 전달된다. Reset pulse를 줄이거나 FIFO Reset 소유 clock을 바꾸면 stale payload와 Reset busy를 함께 재검증한다. |
 | `tb_lidar_gpx_event_merge.vhd` | multi-lane ordered merge, terminal, backpressure | `lidar_gpx_event_merge` | `run_v2_gpx_acquisition_coordinator.ps1` | starvation과 terminal 누락을 검사한다. |
 | `tb_lidar_gpx_acquisition_lane.vhd` | 한 Chip IFIFO1/2 drain, timeout, cap/purge | acquisition lane/chip run | `run_v2_gpx_acquisition_lane.ps1` | EF 정상 종료와 fault 종료를 분리한다. |
 | `tb_lidar_gpx_acquisition_coordinator.vhd` | Shot fanout, runtime mask, terminal merge, 등록된 lane config-ready, config와 부팅 중 외부 GPX Register Read 보존 | acquisition coordinator | `run_v2_gpx_acquisition_coordinator.ps1`, `run_v2_k14_signoff.ps1` | inactive lane 무동작, config-ready의 1클럭 보수적 상승, 전역/강제 리셋 중 `ready=0`, 리셋 해제 후 held-valid 단일 수락, 1-entry 요청 버퍼와 응답 stall 안정성을 함께 확인한다. |
@@ -167,7 +168,8 @@ top 이름을 제공한다.
 8. Golden: `run_v2_gpx_ddr_golden.ps1`와 PS/HTML byte 비교
 9. Public Top: K03, K04, K05/K06, K08 순서
 10. K1-4 최종 Gate: `run_v2_k14_signoff.ps1`
-11. IP package와 OOC implementation
+11. 비동기 stream Reset 폐기 계약: `run_v2_stream_gateway_reset.ps1`
+12. IP package와 OOC implementation
 
 예시:
 

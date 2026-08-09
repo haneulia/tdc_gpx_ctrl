@@ -166,25 +166,32 @@ begin
             dest_out => tdc_shot_ready_sync_r
         );
 
-    p_shot_ingress : process (i_proc_clk, i_proc_rst_n)
+    -- shot_pending_r.valid는 Shot CDC FIFO의 write-enable 경로를 구동한다.
+    -- RAM 제어 경로에 비동기 리셋 플롭이 전파되지 않도록 이 보류 슬롯은
+    -- Processing 클럭에서 순차 리셋한다. 리셋 중 Shot 승인은 위에서 즉시
+    -- 차단되므로 외부 동작 계약은 유지된다.
+    p_shot_ingress : process (i_proc_clk)
     begin
-        if i_proc_rst_n = '0' then
-            shot_pending_r <= C_SHOT_START_EVENT_IDLE;
-            shot_drop_r <= '0';
-        elsif rising_edge(i_proc_clk) then
-            if shot_pending_r.valid = '1' and shot_source_ready_c = '1' then
+        if rising_edge(i_proc_clk) then
+            if i_proc_rst_n = '0' then
                 shot_pending_r <= C_SHOT_START_EVENT_IDLE;
-            end if;
-
-            if i_proc_clear_status = '1' then
                 shot_drop_r <= '0';
-            end if;
+            else
+                if shot_pending_r.valid = '1' and
+                   shot_source_ready_c = '1' then
+                    shot_pending_r <= C_SHOT_START_EVENT_IDLE;
+                end if;
 
-            if i_proc_shot.valid = '1' then
-                if shot_ingress_ready_c = '1' then
-                    shot_pending_r <= i_proc_shot;
-                else
-                    shot_drop_r <= '1';
+                if i_proc_clear_status = '1' then
+                    shot_drop_r <= '0';
+                end if;
+
+                if i_proc_shot.valid = '1' then
+                    if shot_ingress_ready_c = '1' then
+                        shot_pending_r <= i_proc_shot;
+                    else
+                        shot_drop_r <= '1';
+                    end if;
                 end if;
             end if;
         end if;
