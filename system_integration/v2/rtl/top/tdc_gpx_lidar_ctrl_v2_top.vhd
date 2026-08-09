@@ -154,20 +154,7 @@ entity tdc_gpx_lidar_ctrl_v2_top is
         m_axis_fall_tuser  : out std_logic_vector(0 downto 0);
         m_axis_fall_tvalid : out std_logic;
         m_axis_fall_tlast  : out std_logic;
-        m_axis_fall_tready : in  std_logic := '0';
-
-        o_vdma_rise_cfg_valid  : out std_logic;
-        i_vdma_rise_cfg_ready  : in  std_logic := '0';
-        o_vdma_rise_cfg_enable : out std_logic;
-        o_vdma_rise_hsize_bytes  : out unsigned(15 downto 0);
-        o_vdma_rise_vsize_lines  : out unsigned(15 downto 0);
-        o_vdma_rise_stride_bytes : out unsigned(15 downto 0);
-        o_vdma_fall_cfg_valid  : out std_logic;
-        i_vdma_fall_cfg_ready  : in  std_logic := '0';
-        o_vdma_fall_cfg_enable : out std_logic;
-        o_vdma_fall_hsize_bytes  : out unsigned(15 downto 0);
-        o_vdma_fall_vsize_lines  : out unsigned(15 downto 0);
-        o_vdma_fall_stride_bytes : out unsigned(15 downto 0)
+        m_axis_fall_tready : in  std_logic := '0'
     );
 
 end entity tdc_gpx_lidar_ctrl_v2_top;
@@ -261,6 +248,35 @@ architecture rtl of tdc_gpx_lidar_ctrl_v2_top is
 
     signal rise_active_profile_c : gpx_vdma_lane_profile_t;
     signal fall_active_profile_c : gpx_vdma_lane_profile_t;
+
+    -- The processing-domain profile request is transported atomically into
+    -- the unified CSR. Software reads CTL25..29, programs the external VDMA,
+    -- and writes the matching ACK bit in CTL25.
+    signal rise_cfg_valid_proc_c : std_logic;
+    signal rise_cfg_ready_proc_c : std_logic;
+    signal rise_cfg_enable_proc_c : std_logic;
+    signal rise_hsize_proc_c : unsigned(15 downto 0);
+    signal rise_vsize_proc_c : unsigned(15 downto 0);
+    signal rise_stride_proc_c : unsigned(15 downto 0);
+    signal fall_cfg_valid_proc_c : std_logic;
+    signal fall_cfg_ready_proc_c : std_logic;
+    signal fall_cfg_enable_proc_c : std_logic;
+    signal fall_hsize_proc_c : unsigned(15 downto 0);
+    signal fall_vsize_proc_c : unsigned(15 downto 0);
+    signal fall_stride_proc_c : unsigned(15 downto 0);
+
+    signal rise_cfg_valid_csr_c : std_logic;
+    signal rise_cfg_enable_csr_c : std_logic;
+    signal rise_hsize_csr_c : unsigned(15 downto 0);
+    signal rise_vsize_csr_c : unsigned(15 downto 0);
+    signal rise_stride_csr_c : unsigned(15 downto 0);
+    signal rise_cfg_ack_csr_c : std_logic;
+    signal fall_cfg_valid_csr_c : std_logic;
+    signal fall_cfg_enable_csr_c : std_logic;
+    signal fall_hsize_csr_c : unsigned(15 downto 0);
+    signal fall_vsize_csr_c : unsigned(15 downto 0);
+    signal fall_stride_csr_c : unsigned(15 downto 0);
+    signal fall_cfg_ack_csr_c : std_logic;
 
     signal tdc_run_sync_c : std_logic;
     signal tdc_run_enable_c : std_logic;
@@ -391,6 +407,18 @@ begin
             i_system_command_ready => system_command_ready_c,
             i_system_command_rejected => system_command_rejected_c,
             i_runtime_irq => runtime_irq_c,
+            i_vdma_rise_cfg_valid => rise_cfg_valid_csr_c,
+            i_vdma_rise_cfg_enable => rise_cfg_enable_csr_c,
+            i_vdma_rise_hsize_bytes => rise_hsize_csr_c,
+            i_vdma_rise_vsize_lines => rise_vsize_csr_c,
+            i_vdma_rise_stride_bytes => rise_stride_csr_c,
+            o_vdma_rise_cfg_ack => rise_cfg_ack_csr_c,
+            i_vdma_fall_cfg_valid => fall_cfg_valid_csr_c,
+            i_vdma_fall_cfg_enable => fall_cfg_enable_csr_c,
+            i_vdma_fall_hsize_bytes => fall_hsize_csr_c,
+            i_vdma_fall_vsize_lines => fall_vsize_csr_c,
+            i_vdma_fall_stride_bytes => fall_stride_csr_c,
+            o_vdma_fall_cfg_ack => fall_cfg_ack_csr_c,
             o_diag_request_valid => diag_request_valid_c,
             i_diag_request_ready => diag_request_ready_c,
             o_diag_request_index => diag_request_index_c,
@@ -444,6 +472,46 @@ begin
             i_tdc_rst_n => i_tdc_aresetn,
             o_tdc_clear_status => tdc_clear_status_c,
             o_tdc_soft_reset => tdc_soft_reset_c
+        );
+
+    u_rise_vdma_profile_cdc : entity work.lidar_vdma_profile_cdc
+        port map (
+            i_proc_clk => proc_aclk,
+            i_proc_rst_n => proc_aresetn,
+            i_proc_cfg_valid => rise_cfg_valid_proc_c,
+            i_proc_cfg_enable => rise_cfg_enable_proc_c,
+            i_proc_hsize_bytes => rise_hsize_proc_c,
+            i_proc_vsize_lines => rise_vsize_proc_c,
+            i_proc_stride_bytes => rise_stride_proc_c,
+            o_proc_cfg_ready => rise_cfg_ready_proc_c,
+            i_csr_clk => s_axi_csr_aclk,
+            i_csr_rst_n => s_axi_csr_aresetn,
+            o_csr_cfg_valid => rise_cfg_valid_csr_c,
+            o_csr_cfg_enable => rise_cfg_enable_csr_c,
+            o_csr_hsize_bytes => rise_hsize_csr_c,
+            o_csr_vsize_lines => rise_vsize_csr_c,
+            o_csr_stride_bytes => rise_stride_csr_c,
+            i_csr_cfg_ack => rise_cfg_ack_csr_c
+        );
+
+    u_fall_vdma_profile_cdc : entity work.lidar_vdma_profile_cdc
+        port map (
+            i_proc_clk => proc_aclk,
+            i_proc_rst_n => proc_aresetn,
+            i_proc_cfg_valid => fall_cfg_valid_proc_c,
+            i_proc_cfg_enable => fall_cfg_enable_proc_c,
+            i_proc_hsize_bytes => fall_hsize_proc_c,
+            i_proc_vsize_lines => fall_vsize_proc_c,
+            i_proc_stride_bytes => fall_stride_proc_c,
+            o_proc_cfg_ready => fall_cfg_ready_proc_c,
+            i_csr_clk => s_axi_csr_aclk,
+            i_csr_rst_n => s_axi_csr_aresetn,
+            o_csr_cfg_valid => fall_cfg_valid_csr_c,
+            o_csr_cfg_enable => fall_cfg_enable_csr_c,
+            o_csr_hsize_bytes => fall_hsize_csr_c,
+            o_csr_vsize_lines => fall_vsize_csr_c,
+            o_csr_stride_bytes => fall_stride_csr_c,
+            i_csr_cfg_ack => fall_cfg_ack_csr_c
         );
 
     processing_safe_c <= processing_pipeline_idle_c and echo_idle_c and
@@ -610,18 +678,18 @@ begin
             i_echo_profile_ready => echo_profile_ready_c,
             i_echo_profile_busy => echo_profile_busy_c,
             i_echo_profile_version => echo_profile_version_c,
-            o_rise_cfg_valid => o_vdma_rise_cfg_valid,
-            i_rise_cfg_ready => i_vdma_rise_cfg_ready,
-            o_rise_cfg_enable => o_vdma_rise_cfg_enable,
-            o_rise_hsize_bytes => o_vdma_rise_hsize_bytes,
-            o_rise_vsize_lines => o_vdma_rise_vsize_lines,
-            o_rise_stride_bytes => o_vdma_rise_stride_bytes,
-            o_fall_cfg_valid => o_vdma_fall_cfg_valid,
-            i_fall_cfg_ready => i_vdma_fall_cfg_ready,
-            o_fall_cfg_enable => o_vdma_fall_cfg_enable,
-            o_fall_hsize_bytes => o_vdma_fall_hsize_bytes,
-            o_fall_vsize_lines => o_vdma_fall_vsize_lines,
-            o_fall_stride_bytes => o_vdma_fall_stride_bytes,
+            o_rise_cfg_valid => rise_cfg_valid_proc_c,
+            i_rise_cfg_ready => rise_cfg_ready_proc_c,
+            o_rise_cfg_enable => rise_cfg_enable_proc_c,
+            o_rise_hsize_bytes => rise_hsize_proc_c,
+            o_rise_vsize_lines => rise_vsize_proc_c,
+            o_rise_stride_bytes => rise_stride_proc_c,
+            o_fall_cfg_valid => fall_cfg_valid_proc_c,
+            i_fall_cfg_ready => fall_cfg_ready_proc_c,
+            o_fall_cfg_enable => fall_cfg_enable_proc_c,
+            o_fall_hsize_bytes => fall_hsize_proc_c,
+            o_fall_vsize_lines => fall_vsize_proc_c,
+            o_fall_stride_bytes => fall_stride_proc_c,
             o_rise_active_profile => rise_active_profile_c,
             o_fall_active_profile => fall_active_profile_c,
             o_activate_complete => proc_activate_complete_c,

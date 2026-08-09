@@ -94,11 +94,26 @@ architecture sim of tb_lidar_csr_bank is
     signal diag_response_ready : std_logic;
     signal diag_response : lidar_diag_response_t := (others => '0');
 
+    signal vdma_rise_valid : std_logic := '0';
+    signal vdma_rise_enable : std_logic := '0';
+    signal vdma_rise_hsize : unsigned(15 downto 0) := (others => '0');
+    signal vdma_rise_vsize : unsigned(15 downto 0) := (others => '0');
+    signal vdma_rise_stride : unsigned(15 downto 0) := (others => '0');
+    signal vdma_rise_ack : std_logic;
+    signal vdma_fall_valid : std_logic := '0';
+    signal vdma_fall_enable : std_logic := '0';
+    signal vdma_fall_hsize : unsigned(15 downto 0) := (others => '0');
+    signal vdma_fall_vsize : unsigned(15 downto 0) := (others => '0');
+    signal vdma_fall_stride : unsigned(15 downto 0) := (others => '0');
+    signal vdma_fall_ack : std_logic;
+
     signal commit_count : natural := 0;
     signal clear_count  : natural := 0;
     signal reset_count  : natural := 0;
     signal operation_command_count : natural := 0;
     signal last_operation_command  : operation_command_t := OP_COMMAND_NONE;
+    signal vdma_rise_ack_count : natural := 0;
+    signal vdma_fall_ack_count : natural := 0;
 
 begin
 
@@ -128,6 +143,12 @@ begin
             if operation_command_valid = '1' then
                 operation_command_count <= operation_command_count + 1;
                 last_operation_command <= operation_command;
+            end if;
+            if vdma_rise_ack = '1' then
+                vdma_rise_ack_count <= vdma_rise_ack_count + 1;
+            end if;
+            if vdma_fall_ack = '1' then
+                vdma_fall_ack_count <= vdma_fall_ack_count + 1;
             end if;
         end if;
     end process p_command_monitor;
@@ -198,6 +219,18 @@ begin
             i_operation_command_busy  => operation_command_busy,
             i_operation_command_rejected => operation_command_rejected,
             i_runtime_irq          => runtime_irq,
+            i_vdma_rise_cfg_valid => vdma_rise_valid,
+            i_vdma_rise_cfg_enable => vdma_rise_enable,
+            i_vdma_rise_hsize_bytes => vdma_rise_hsize,
+            i_vdma_rise_vsize_lines => vdma_rise_vsize,
+            i_vdma_rise_stride_bytes => vdma_rise_stride,
+            o_vdma_rise_cfg_ack => vdma_rise_ack,
+            i_vdma_fall_cfg_valid => vdma_fall_valid,
+            i_vdma_fall_cfg_enable => vdma_fall_enable,
+            i_vdma_fall_hsize_bytes => vdma_fall_hsize,
+            i_vdma_fall_vsize_lines => vdma_fall_vsize,
+            i_vdma_fall_stride_bytes => vdma_fall_stride,
+            o_vdma_fall_cfg_ack => vdma_fall_ack,
             o_diag_request_valid   => diag_request_valid,
             i_diag_request_ready   => diag_request_ready,
             o_diag_request_index   => diag_request_index,
@@ -363,13 +396,45 @@ begin
         axi_read(fn_ctl_byte_offset(C_CTL_COMMAND), x"00000000");
         axi_read(fn_ctl_byte_offset(C_CTL_MOTOR_PROFILE), x"00020E10");
         axi_read(fn_ctl_byte_offset(C_CTL_FACE_CENTER_0), x"000005A0");
-        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250206");
+        axi_read(fn_stat_byte_offset(C_STAT_CORE_INFO), x"3E250207");
         axi_read(fn_stat_byte_offset(C_STAT_BUILD_INFO), x"0C30C896");
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), x"00000100", 2);
         axi_read(fn_ctl_byte_offset(C_CTL_RESERVED_FIRST), x"00000000");
         assert shadow_cfg = fn_default_runtime_config(C_DEFAULT_BUILD_CONFIG)
             report "V2-CSR-BANK reset shadow mismatch"
             severity failure;
+
+        -- CTL25..29 expose one coherent profile per slope. Software reads
+        -- the geometry before acknowledging the external VDMA programming.
+        vdma_rise_valid <= '1';
+        vdma_rise_enable <= '1';
+        vdma_rise_hsize <= x"0102";
+        vdma_rise_vsize <= x"0708";
+        vdma_rise_stride <= x"0304";
+        vdma_fall_valid <= '1';
+        vdma_fall_enable <= '0';
+        vdma_fall_hsize <= x"090A";
+        vdma_fall_vsize <= x"0B0C";
+        vdma_fall_stride <= x"0D0E";
+        wait_cycles(2);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000007");
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_GEOMETRY),
+            x"07080102");
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_STRIDE),
+            x"00000304");
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_GEOMETRY),
+            x"0B0C090A");
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_STRIDE),
+            x"00000D0E");
+        axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000300");
+        wait_cycles(2);
+        assert vdma_rise_ack_count = 1 and vdma_fall_ack_count = 1
+            report "V2-CSR-BANK VDMA profile ACK pulse mismatch"
+            severity failure;
+        vdma_rise_valid <= '0';
+        vdma_fall_valid <= '0';
 
         -- CTL23/24 provide one request/response transaction at a time. The
         -- returned sequence increments only when a complete 33-bit response

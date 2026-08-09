@@ -1,5 +1,6 @@
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 use work.lidar_build_pkg.all;
 use work.lidar_config_types_pkg.all;
@@ -58,6 +59,25 @@ entity lidar_csr_config_subsystem is
         i_system_command_ready    : in std_logic := '1';
         i_system_command_rejected : in std_logic := '0';
         i_runtime_irq : in lidar_runtime_irq_t := C_RUNTIME_IRQ_CLEAR;
+
+        i_vdma_rise_cfg_valid    : in std_logic := '0';
+        i_vdma_rise_cfg_enable   : in std_logic := '0';
+        i_vdma_rise_hsize_bytes  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_rise_vsize_lines  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_rise_stride_bytes : in unsigned(15 downto 0) :=
+            (others => '0');
+        o_vdma_rise_cfg_ack      : out std_logic;
+        i_vdma_fall_cfg_valid    : in std_logic := '0';
+        i_vdma_fall_cfg_enable   : in std_logic := '0';
+        i_vdma_fall_hsize_bytes  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_fall_vsize_lines  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_fall_stride_bytes : in unsigned(15 downto 0) :=
+            (others => '0');
+        o_vdma_fall_cfg_ack      : out std_logic;
 
         o_diag_request_valid : out std_logic;
         i_diag_request_ready : in  std_logic := '0';
@@ -204,6 +224,18 @@ begin
             i_system_command_ready    => i_system_command_ready,
             i_system_command_rejected => i_system_command_rejected,
             i_runtime_irq          => i_runtime_irq,
+            i_vdma_rise_cfg_valid => i_vdma_rise_cfg_valid,
+            i_vdma_rise_cfg_enable => i_vdma_rise_cfg_enable,
+            i_vdma_rise_hsize_bytes => i_vdma_rise_hsize_bytes,
+            i_vdma_rise_vsize_lines => i_vdma_rise_vsize_lines,
+            i_vdma_rise_stride_bytes => i_vdma_rise_stride_bytes,
+            o_vdma_rise_cfg_ack => o_vdma_rise_cfg_ack,
+            i_vdma_fall_cfg_valid => i_vdma_fall_cfg_valid,
+            i_vdma_fall_cfg_enable => i_vdma_fall_cfg_enable,
+            i_vdma_fall_hsize_bytes => i_vdma_fall_hsize_bytes,
+            i_vdma_fall_vsize_lines => i_vdma_fall_vsize_lines,
+            i_vdma_fall_stride_bytes => i_vdma_fall_stride_bytes,
+            o_vdma_fall_cfg_ack => o_vdma_fall_cfg_ack,
             o_diag_request_valid   => o_diag_request_valid,
             i_diag_request_ready   => i_diag_request_ready,
             o_diag_request_index   => o_diag_request_index,

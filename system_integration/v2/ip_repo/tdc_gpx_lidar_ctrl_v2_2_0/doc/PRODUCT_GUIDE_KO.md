@@ -200,10 +200,24 @@ CTL23의 `BUSY=0`, `VALID=1`, `ERROR=0`, `SEQUENCE` 증가 뒤 CTL24를 읽는�
 
 - `m_axis_rise`, `m_axis_fall`: 합성 폭과 같은 `TDATA/TKEEP/TSTRB`
 - `m_axis_monitor`: 고정 64-bit 관측 스트림
-- `o_vdma_*_cfg_*`: Face 경계에서 원자적으로 승인되는
-  `HSIZE/VSIZE/STRIDE/enable` 프로파일
+- VDMA 프로파일은 통합 IP 내부에서 Processing clock domain에서 CSR clock
+  domain으로 원자적으로 전달된다. 별도 외부 profile bridge는 사용하지 않는다.
+- PS는 `CTL25~CTL29`에서 Rise/Fall `HSIZE/VSIZE/STRIDE/enable`을 읽어
+  Parent의 AXI VDMA를 설정한 뒤 `CTL25[8]` 또는 `CTL25[9]`에 W1S ACK를 쓴다.
 - Runtime Return 수 변경은 현재 Face 도중에 적용되지 않고, 승인된 다음
   Face 경계에서 출력 Geometry와 함께 전환된다.
+
+| 주소 | Register | 접근 | 의미 |
+|---:|---|---|---|
+| `0x064` | CTL25 | R/W1S | `[0]` Rise pending, `[1]` Rise enable, `[2]` Fall pending, `[3]` Fall enable, `[8]` Rise ACK, `[9]` Fall ACK |
+| `0x068` | CTL26 | RO | Rise `[15:0] HSIZE bytes`, `[31:16] VSIZE lines` |
+| `0x06C` | CTL27 | RO | Rise `[15:0] STRIDE bytes`, `[31:16] reserved=0` |
+| `0x070` | CTL28 | RO | Fall `[15:0] HSIZE bytes`, `[31:16] VSIZE lines` |
+| `0x074` | CTL29 | RO | Fall `[15:0] STRIDE bytes`, `[31:16] reserved=0` |
+
+`pending=1`인 동안 CTL26~29의 해당 Rise/Fall snapshot은 ACK 전까지 변하지
+않는다. PS가 VDMA 설정을 완료하기 전에 ACK하면 다음 Face 활성화가 잘못된
+Geometry로 진행될 수 있으므로, VDMA register write와 상태 확인을 마친 뒤 ACK한다.
 
 DDR Word 배열은 HTML Golden Vector와 Word 단위로 비교되고, PS reference
 decoder는 DMA cache ownership 전환 후 H-Line과 Ethernet Viewer packet을

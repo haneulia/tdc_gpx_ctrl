@@ -106,19 +106,6 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k03 is
     signal rise_axis_valid : std_logic;
     signal fall_axis_valid : std_logic;
 
-    signal rise_cfg_valid : std_logic;
-    signal rise_cfg_ready : std_logic := '0';
-    signal rise_cfg_enable : std_logic;
-    signal rise_hsize : unsigned(15 downto 0);
-    signal rise_vsize : unsigned(15 downto 0);
-    signal rise_stride : unsigned(15 downto 0);
-    signal fall_cfg_valid : std_logic;
-    signal fall_cfg_ready : std_logic := '0';
-    signal fall_cfg_enable : std_logic;
-    signal fall_hsize : unsigned(15 downto 0);
-    signal fall_vsize : unsigned(15 downto 0);
-    signal fall_stride : unsigned(15 downto 0);
-
 begin
 
     csr_clk <= not csr_clk after C_CSR_PERIOD / 2;
@@ -199,19 +186,7 @@ begin
             m_axis_fall_tuser => open,
             m_axis_fall_tvalid => fall_axis_valid,
             m_axis_fall_tlast => open,
-            m_axis_fall_tready => '1',
-            o_vdma_rise_cfg_valid => rise_cfg_valid,
-            i_vdma_rise_cfg_ready => rise_cfg_ready,
-            o_vdma_rise_cfg_enable => rise_cfg_enable,
-            o_vdma_rise_hsize_bytes => rise_hsize,
-            o_vdma_rise_vsize_lines => rise_vsize,
-            o_vdma_rise_stride_bytes => rise_stride,
-            o_vdma_fall_cfg_valid => fall_cfg_valid,
-            i_vdma_fall_cfg_ready => fall_cfg_ready,
-            o_vdma_fall_cfg_enable => fall_cfg_enable,
-            o_vdma_fall_hsize_bytes => fall_hsize,
-            o_vdma_fall_vsize_lines => fall_vsize,
-            o_vdma_fall_stride_bytes => fall_stride
+            m_axis_fall_tready => '1'
         );
 
     p_fail_safe : process (proc_clk)
@@ -234,6 +209,11 @@ begin
     p_test : process
         variable status_word : std_logic_vector(31 downto 0);
         variable profile_word : std_logic_vector(31 downto 0);
+        variable profile_control : std_logic_vector(31 downto 0);
+        variable rise_geometry : std_logic_vector(31 downto 0);
+        variable fall_geometry : std_logic_vector(31 downto 0);
+        variable rise_stride_word : std_logic_vector(31 downto 0);
+        variable fall_stride_word : std_logic_vector(31 downto 0);
         variable expected_hsize : natural;
         variable expected_vsize : natural;
 
@@ -313,26 +293,22 @@ begin
         end procedure command;
 
         procedure wait_profile_request is
+            variable value : std_logic_vector(31 downto 0);
         begin
             -- The approved sequential calculator takes about 1,118 CSR
             -- clocks for the default profile. Keep a bounded margin without
             -- turning configuration arithmetic into a combinational path.
             for cycle in 0 to 3000 loop
-                wait until rising_edge(proc_clk);
-                exit when rise_cfg_valid = '1' and fall_cfg_valid = '1';
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                    value);
+                exit when value(C_VDMA_RISE_PENDING_BIT) = '1' and
+                    value(C_VDMA_FALL_PENDING_BIT) = '1';
             end loop;
-            assert rise_cfg_valid = '1' and fall_cfg_valid = '1'
+            assert value(C_VDMA_RISE_PENDING_BIT) = '1' and
+                   value(C_VDMA_FALL_PENDING_BIT) = '1'
                 report "V2-K0-TOP-TB VDMA profile request timeout"
                 severity failure;
         end procedure wait_profile_request;
-
-        procedure pulse_ready(signal value : out std_logic) is
-        begin
-            wait until falling_edge(proc_clk);
-            value <= '1';
-            wait until falling_edge(proc_clk);
-            value <= '0';
-        end procedure pulse_ready;
 
         procedure wait_commit_done(
             variable value : out std_logic_vector(31 downto 0)
@@ -376,13 +352,29 @@ begin
             C_ACTIVE_RISE_SLOTS, 7, 32);
         expected_vsize := to_integer(C_DERIVED.columns_per_face) +
             fn_gpx_vdma_footer_lines(expected_hsize);
-        assert rise_cfg_enable = '1' and fall_cfg_enable = '1' and
-               to_integer(rise_hsize) = expected_hsize and
-               to_integer(fall_hsize) = fn_gpx_vdma_shot_hsize_bytes(
-                   C_ACTIVE_FALL_SLOTS, 7, 32) and
-               to_integer(rise_vsize) = expected_vsize and
-               to_integer(rise_stride) = C_RISE_STRIDE and
-               to_integer(fall_stride) = C_FALL_STRIDE
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            profile_control);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_GEOMETRY),
+            rise_geometry);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_STRIDE),
+            rise_stride_word);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_GEOMETRY),
+            fall_geometry);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_STRIDE),
+            fall_stride_word);
+        assert profile_control(C_VDMA_RISE_ENABLE_BIT) = '1' and
+               profile_control(C_VDMA_FALL_ENABLE_BIT) = '1' and
+               to_integer(unsigned(rise_geometry(15 downto 0))) =
+                   expected_hsize and
+               to_integer(unsigned(fall_geometry(15 downto 0))) =
+                   fn_gpx_vdma_shot_hsize_bytes(
+                       C_ACTIVE_FALL_SLOTS, 7, 32) and
+               to_integer(unsigned(rise_geometry(31 downto 16))) =
+                   expected_vsize and
+               to_integer(unsigned(rise_stride_word(15 downto 0))) =
+                   C_RISE_STRIDE and
+               to_integer(unsigned(fall_stride_word(15 downto 0))) =
+                   C_FALL_STRIDE
             report "V2-K0-TOP-TB Return7 VDMA geometry mismatch"
             severity failure;
 
@@ -392,11 +384,15 @@ begin
             report "V2-K0-TOP-TB config completed before VDMA ACK"
             severity failure;
 
-        pulse_ready(rise_cfg_ready);
-        for cycle in 0 to 4 loop
-            wait until rising_edge(proc_clk);
+        axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000100");
+        for cycle in 0 to 20 loop
+            axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                profile_control);
+            exit when profile_control(C_VDMA_RISE_PENDING_BIT) = '0';
         end loop;
-        assert rise_cfg_valid = '0' and fall_cfg_valid = '1'
+        assert profile_control(C_VDMA_RISE_PENDING_BIT) = '0' and
+               profile_control(C_VDMA_FALL_PENDING_BIT) = '1'
             report "V2-K0-TOP-TB independent lane ACK was not preserved"
             severity failure;
         axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), status_word);
@@ -405,7 +401,8 @@ begin
             report "V2-K0-TOP-TB Rise-only ACK released config"
             severity failure;
 
-        pulse_ready(fall_cfg_ready);
+        axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000200");
         wait_commit_done(status_word);
         assert status_word(8 downto 0) = "001000110"
             report "V2-K0-TOP-TB first transaction status mismatch"
@@ -439,20 +436,28 @@ begin
 
         expected_hsize := fn_gpx_vdma_shot_hsize_bytes(
             C_ACTIVE_RISE_SLOTS, 1, 32);
-        assert to_integer(rise_hsize) = expected_hsize and
-               to_integer(fall_hsize) = fn_gpx_vdma_shot_hsize_bytes(
-                   C_ACTIVE_FALL_SLOTS, 1, 32) and
-               to_integer(rise_stride) = C_RISE_STRIDE and
-               to_integer(fall_stride) = C_FALL_STRIDE
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_GEOMETRY),
+            rise_geometry);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_STRIDE),
+            rise_stride_word);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_GEOMETRY),
+            fall_geometry);
+        axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_STRIDE),
+            fall_stride_word);
+        assert to_integer(unsigned(rise_geometry(15 downto 0))) =
+                   expected_hsize and
+               to_integer(unsigned(fall_geometry(15 downto 0))) =
+                   fn_gpx_vdma_shot_hsize_bytes(
+                       C_ACTIVE_FALL_SLOTS, 1, 32) and
+               to_integer(unsigned(rise_stride_word(15 downto 0))) =
+                   C_RISE_STRIDE and
+               to_integer(unsigned(fall_stride_word(15 downto 0))) =
+                   C_FALL_STRIDE
             report "V2-K0-TOP-TB Return1 HSIZE/STRIDE contract mismatch"
             severity failure;
 
-        wait until falling_edge(proc_clk);
-        rise_cfg_ready <= '1';
-        fall_cfg_ready <= '1';
-        wait until falling_edge(proc_clk);
-        rise_cfg_ready <= '0';
-        fall_cfg_ready <= '0';
+        axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000300");
         wait_commit_done(status_word);
         assert status_word(8 downto 0) = "001000110"
             report "V2-K0-TOP-TB second transaction status mismatch"

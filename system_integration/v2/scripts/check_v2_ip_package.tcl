@@ -54,8 +54,8 @@ proc v2_require_file_equal {canonical packaged label} {
 
 source [file join $v2_dir ip_package v2_ip_package_manifest.tcl]
 set entries [lidar_v2_ip_package_manifest $hdl_root]
-if {[llength $entries] != 87} {
-    error "Expected 87 transitive production sources, got [llength $entries]"
+if {[llength $entries] != 88} {
+    error "Expected 88 transitive production sources, got [llength $entries]"
 }
 foreach entry $entries {
     lassign $entry canonical relative
@@ -71,7 +71,7 @@ v2_require_file_equal $canonical_testbench_guide \
 if {[string first {C_MAX_CHIPS} [v2_read_binary $component]] >= 0} {
     error {component.xml exposes unresolved C_MAX_CHIPS in a public HDL type}
 }
-puts {LIDAR_V2_K010_SOURCE_SYNC_PASS files=91 rtl=87 xgui=1 guides=3}
+puts {LIDAR_V2_K010_SOURCE_SYNC_PASS files=92 rtl=88 xgui=1 guides=3}
 
 # Avoid the damaged per-user Tcl Store on this workstation.
 set install_tcl_store [file normalize \
@@ -235,8 +235,8 @@ if {[get_property enablement_resolve_type $echo_sim] ne {dependent} ||
 set synth_group [v2_require_one [ipx::get_file_groups \
     xilinx_anylanguagesynthesis -of_objects $core] {synthesis file group}]
 set synth_files [ipx::get_files -of_objects $synth_group]
-if {[llength $synth_files] != 87} {
-    error "Packaged synthesis source count is [llength $synth_files], expected 87"
+if {[llength $synth_files] != 88} {
+    error "Packaged synthesis source count is [llength $synth_files], expected 88"
 }
 if {[get_property component_subcores $synth_group] ne {}} {
     error {Packaged v2 synthesis group must not contain child IP subcores}

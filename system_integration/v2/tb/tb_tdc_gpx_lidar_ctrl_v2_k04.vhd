@@ -138,11 +138,6 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_k04 is
     signal tdc_stop : std_logic_vector(15 downto 0);
     signal tdc_d : std_logic_vector(55 downto 0) := (others => 'Z');
 
-    signal rise_cfg_valid : std_logic;
-    signal rise_cfg_ready : std_logic := '0';
-    signal fall_cfg_valid : std_logic;
-    signal fall_cfg_ready : std_logic := '0';
-
     signal previous_fire_r : std_logic := '0';
     signal previous_start_r : std_logic := '0';
     signal previous_stop_r : std_logic := '0';
@@ -251,19 +246,7 @@ begin
             m_axis_fall_tuser => open,
             m_axis_fall_tvalid => open,
             m_axis_fall_tlast => open,
-            m_axis_fall_tready => '1',
-            o_vdma_rise_cfg_valid => rise_cfg_valid,
-            i_vdma_rise_cfg_ready => rise_cfg_ready,
-            o_vdma_rise_cfg_enable => open,
-            o_vdma_rise_hsize_bytes => open,
-            o_vdma_rise_vsize_lines => open,
-            o_vdma_rise_stride_bytes => open,
-            o_vdma_fall_cfg_valid => fall_cfg_valid,
-            i_vdma_fall_cfg_ready => fall_cfg_ready,
-            o_vdma_fall_cfg_enable => open,
-            o_vdma_fall_hsize_bytes => open,
-            o_vdma_fall_vsize_lines => open,
-            o_vdma_fall_stride_bytes => open
+            m_axis_fall_tready => '1'
         );
 
     p_observe : process (proc_clk)
@@ -400,10 +383,13 @@ begin
         procedure wait_profile_request is
         begin
             for cycle in 0 to 4000 loop
-                wait_proc(1);
-                exit when rise_cfg_valid = '1' and fall_cfg_valid = '1';
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                    status_word);
+                exit when status_word(C_VDMA_RISE_PENDING_BIT) = '1' and
+                    status_word(C_VDMA_FALL_PENDING_BIT) = '1';
             end loop;
-            assert rise_cfg_valid = '1' and fall_cfg_valid = '1'
+            assert status_word(C_VDMA_RISE_PENDING_BIT) = '1' and
+                   status_word(C_VDMA_FALL_PENDING_BIT) = '1'
                 report "V2-K04-TOP VDMA profile request timeout"
                 severity failure;
         end procedure wait_profile_request;
@@ -491,11 +477,8 @@ begin
         command(C_CMD_COMMIT_BIT);
         wait_profile_request;
 
-        rise_cfg_ready <= '1';
-        fall_cfg_ready <= '1';
-        wait_proc(1);
-        rise_cfg_ready <= '0';
-        fall_cfg_ready <= '0';
+        axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000300");
         wait_commit_done;
 
         axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), status_word);

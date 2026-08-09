@@ -175,7 +175,10 @@ if (-not (Select-String -LiteralPath $oocLog -SimpleMatch `
 $warningAudit += Assert-VivadoWarningContract -Name "03_packaged_ooc" `
     -Log $oocLog -AllowedMaximum @{
         "Synth 8-7129" = 300
-        "Synth 8-6014" = 287
+        # The internal profile CDC adds three XPM dest_req registers that are
+        # optimized in the OOC matrix; one legacy footer warning disappears.
+        # Net contract change: 287 -> 289, with no black boxes or lost ports.
+        "Synth 8-6014" = 289
         "Synth 8-3917" = 123
         "Constraints 18-5572" = 15
         "Synth 8-3332" = 6
@@ -188,7 +191,7 @@ Set-Content -LiteralPath (Join-Path $session "WARNING_AUDIT.txt") `
 $summary = @(
     "LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS",
     "package=$packageDir",
-    "source_sync=87 RTL + XGUI + 3 Korean guides",
+    "source_sync=88 RTL + XGUI + 3 Korean guides",
     "catalog=v1 tdc_gpx_top:1.0 + v2 tdc_gpx_lidar_ctrl_v2:2.0",
     "ooc_profiles=async32(150/200), async128(200/150, echo off), sync64(150/150)",
     "warning_contract=new warning IDs or count increases fail sign-off",

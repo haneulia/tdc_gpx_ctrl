@@ -37,8 +37,8 @@ set manifest_source [file join $v2_dir ip_package \
     v2_ip_package_manifest.tcl]
 source $manifest_source
 set entries [lidar_v2_ip_package_manifest $hdl_root]
-if {[llength $entries] != 87} {
-    error "Expected 87 packaged RTL sources, got [llength $entries]"
+if {[llength $entries] != 88} {
+    error "Expected 88 packaged RTL sources, got [llength $entries]"
 }
 set packaged_sources {}
 foreach entry $entries {

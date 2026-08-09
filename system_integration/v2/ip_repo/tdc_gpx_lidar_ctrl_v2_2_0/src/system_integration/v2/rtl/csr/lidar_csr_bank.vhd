@@ -63,6 +63,25 @@ entity lidar_csr_bank is
         i_system_command_rejected : in std_logic := '0';
         i_runtime_irq : in lidar_runtime_irq_t := C_RUNTIME_IRQ_CLEAR;
 
+        i_vdma_rise_cfg_valid    : in std_logic := '0';
+        i_vdma_rise_cfg_enable   : in std_logic := '0';
+        i_vdma_rise_hsize_bytes  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_rise_vsize_lines  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_rise_stride_bytes : in unsigned(15 downto 0) :=
+            (others => '0');
+        o_vdma_rise_cfg_ack      : out std_logic;
+        i_vdma_fall_cfg_valid    : in std_logic := '0';
+        i_vdma_fall_cfg_enable   : in std_logic := '0';
+        i_vdma_fall_hsize_bytes  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_fall_vsize_lines  : in unsigned(15 downto 0) :=
+            (others => '0');
+        i_vdma_fall_stride_bytes : in unsigned(15 downto 0) :=
+            (others => '0');
+        o_vdma_fall_cfg_ack      : out std_logic;
+
         o_diag_request_valid : out std_logic;
         i_diag_request_ready : in  std_logic := '0';
         o_diag_request_index : out lidar_diag_index_t;
@@ -120,6 +139,8 @@ architecture rtl of lidar_csr_bank is
     signal r_operation_command_valid : std_logic := '0';
     signal r_operation_command : operation_command_t := OP_COMMAND_NONE;
     signal r_access_error_event : std_logic := '0';
+    signal r_vdma_rise_ack_pulse : std_logic := '0';
+    signal r_vdma_fall_ack_pulse : std_logic := '0';
 
     signal r_done_sticky      : std_logic := '0';
     signal r_success_sticky   : std_logic := '0';
@@ -160,6 +181,8 @@ begin
     o_soft_reset_request <= r_soft_reset_pulse;
     o_operation_command_valid <= r_operation_command_valid;
     o_operation_command       <= r_operation_command;
+    o_vdma_rise_cfg_ack <= r_vdma_rise_ack_pulse;
+    o_vdma_fall_cfg_ack <= r_vdma_fall_ack_pulse;
     o_diag_request_valid <= r_diag_request_valid;
     o_diag_request_index <= r_diag_index;
     o_diag_response_ready <= r_diag_busy;
@@ -254,6 +277,7 @@ begin
         variable v_portal_control    : csr_word_t;
         variable v_image_word        : csr_word_t;
         variable v_diag_control      : csr_word_t;
+        variable v_vdma_control      : csr_word_t;
     begin
         if i_rst_n = '0' then
             r_shadow_words       <= C_DEFAULT_WORDS;
@@ -273,6 +297,8 @@ begin
             r_operation_command_valid <= '0';
             r_operation_command <= OP_COMMAND_NONE;
             r_access_error_event <= '0';
+            r_vdma_rise_ack_pulse <= '0';
+            r_vdma_fall_ack_pulse <= '0';
 
             r_done_sticky        <= '0';
             r_success_sticky     <= '0';
@@ -293,6 +319,8 @@ begin
             r_operation_command_valid <= '0';
             r_operation_command <= OP_COMMAND_NONE;
             r_access_error_event <= '0';
+            r_vdma_rise_ack_pulse <= '0';
+            r_vdma_fall_ack_pulse <= '0';
 
             if r_diag_request_valid = '1' and
                     i_diag_request_ready = '1' then
@@ -546,6 +574,43 @@ begin
                 elsif w_word_addr = C_CTL_DIAG_DATA then
                     r_access_error_sticky <= '1';
                     r_access_error_event  <= '1';
+                elsif w_word_addr = C_CTL_VDMA_PROFILE_CONTROL then
+                    -- Software first reads CTL25..29 and programs the
+                    -- external VDMA. A W1S ACK then releases only the profile
+                    -- whose pending bit is still asserted.
+                    v_vdma_control := (others => '0');
+                    for byte_index in 0 to 3 loop
+                        if w_strb(byte_index) = '1' then
+                            v_vdma_control(
+                                8 * byte_index + 7 downto 8 * byte_index) :=
+                                w_data(8 * byte_index + 7 downto
+                                    8 * byte_index);
+                        end if;
+                    end loop;
+                    if not fn_ctl_word_encoding_valid(
+                            C_CTL_VDMA_PROFILE_CONTROL,
+                            v_vdma_control) then
+                        r_access_error_sticky <= '1';
+                        r_access_error_event <= '1';
+                    elsif (v_vdma_control(C_VDMA_RISE_ACK_BIT) = '1' and
+                               i_vdma_rise_cfg_valid /= '1') or
+                          (v_vdma_control(C_VDMA_FALL_ACK_BIT) = '1' and
+                               i_vdma_fall_cfg_valid /= '1') then
+                        r_access_error_sticky <= '1';
+                        r_access_error_event <= '1';
+                    else
+                        if v_vdma_control(C_VDMA_RISE_ACK_BIT) = '1' then
+                            r_vdma_rise_ack_pulse <= '1';
+                        end if;
+                        if v_vdma_control(C_VDMA_FALL_ACK_BIT) = '1' then
+                            r_vdma_fall_ack_pulse <= '1';
+                        end if;
+                    end if;
+                elsif w_word_addr >= C_CTL_VDMA_RISE_GEOMETRY and
+                      w_word_addr <= C_CTL_VDMA_FALL_STRIDE then
+                    -- CTL26..29 are coherent read-only profile snapshots.
+                    r_access_error_sticky <= '1';
+                    r_access_error_event <= '1';
                 elsif w_word_addr = C_LIDAR_CTL_COUNT +
                         C_LIDAR_STAT_COUNT
                       or w_word_addr = C_LIDAR_CTL_COUNT +
@@ -756,6 +821,16 @@ begin
         r_diag_sequence,
         i_cfg_active_valid,
         i_cfg_active_gpx_image,
+        i_vdma_rise_cfg_valid,
+        i_vdma_rise_cfg_enable,
+        i_vdma_rise_hsize_bytes,
+        i_vdma_rise_vsize_lines,
+        i_vdma_rise_stride_bytes,
+        i_vdma_fall_cfg_valid,
+        i_vdma_fall_cfg_enable,
+        i_vdma_fall_hsize_bytes,
+        i_vdma_fall_vsize_lines,
+        i_vdma_fall_stride_bytes,
         w_status_words,
         w_intr_read_data,
         w_intr_read_hit
@@ -792,6 +867,31 @@ begin
                             r_diag_sequence);
                 elsif r_word_addr = C_CTL_DIAG_DATA then
                     w_read_data <= r_diag_data;
+                elsif r_word_addr = C_CTL_VDMA_PROFILE_CONTROL then
+                    w_read_data(C_VDMA_RISE_PENDING_BIT) <=
+                        i_vdma_rise_cfg_valid;
+                    w_read_data(C_VDMA_RISE_ENABLE_BIT) <=
+                        i_vdma_rise_cfg_enable;
+                    w_read_data(C_VDMA_FALL_PENDING_BIT) <=
+                        i_vdma_fall_cfg_valid;
+                    w_read_data(C_VDMA_FALL_ENABLE_BIT) <=
+                        i_vdma_fall_cfg_enable;
+                elsif r_word_addr = C_CTL_VDMA_RISE_GEOMETRY then
+                    w_read_data(15 downto 0) <= std_logic_vector(
+                        i_vdma_rise_hsize_bytes);
+                    w_read_data(31 downto 16) <= std_logic_vector(
+                        i_vdma_rise_vsize_lines);
+                elsif r_word_addr = C_CTL_VDMA_RISE_STRIDE then
+                    w_read_data(15 downto 0) <= std_logic_vector(
+                        i_vdma_rise_stride_bytes);
+                elsif r_word_addr = C_CTL_VDMA_FALL_GEOMETRY then
+                    w_read_data(15 downto 0) <= std_logic_vector(
+                        i_vdma_fall_hsize_bytes);
+                    w_read_data(31 downto 16) <= std_logic_vector(
+                        i_vdma_fall_vsize_lines);
+                elsif r_word_addr = C_CTL_VDMA_FALL_STRIDE then
+                    w_read_data(15 downto 0) <= std_logic_vector(
+                        i_vdma_fall_stride_bytes);
                 elsif r_word_addr /= C_CTL_COMMAND then
                     w_read_data <= r_shadow_words(r_word_addr);
                 end if;

@@ -32,8 +32,8 @@ foreach required [list $manifest_source $xgui_source $product_guide_source \
 }
 source $manifest_source
 set entries [lidar_v2_ip_package_manifest $hdl_root]
-if {[llength $entries] != 87} {
-    error "Expected 87 transitive production sources, got [llength $entries]"
+if {[llength $entries] != 88} {
+    error "Expected 88 transitive production sources, got [llength $entries]"
 }
 
 if {[file exists $package_dir]} {
@@ -415,10 +415,25 @@ foreach required_port {
     i_pd_lvds_p i_pd_lvds_n o_tdc_stop io_tdc_d o_tdc_adr o_tdc_csn
     o_tdc_oen i_tdc_ef1 i_tdc_ef2 i_tdc_lf1 i_tdc_lf2
     i_tdc_irflag i_tdc_errflag m_axis_rise_tdata m_axis_fall_tdata
-    o_vdma_rise_hsize_bytes o_vdma_fall_hsize_bytes
 } {
     if {[llength [ipx::get_ports -quiet $required_port -of_objects $core]] != 1} {
         error "Required packaged port is missing: $required_port"
+    }
+}
+
+# VDMA profile transport is an internal processing-to-CSR transaction. The
+# Parent reads CTL25..29, programs its VDMA, then acknowledges through CTL25.
+foreach removed_profile_port {
+    o_vdma_rise_cfg_valid i_vdma_rise_cfg_ready
+    o_vdma_rise_cfg_enable o_vdma_rise_hsize_bytes
+    o_vdma_rise_vsize_lines o_vdma_rise_stride_bytes
+    o_vdma_fall_cfg_valid i_vdma_fall_cfg_ready
+    o_vdma_fall_cfg_enable o_vdma_fall_hsize_bytes
+    o_vdma_fall_vsize_lines o_vdma_fall_stride_bytes
+} {
+    if {[llength [ipx::get_ports -quiet $removed_profile_port \
+            -of_objects $core]] != 0} {
+        error "Removed external VDMA profile port remains: $removed_profile_port"
     }
 }
 

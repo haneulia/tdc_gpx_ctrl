@@ -15,7 +15,7 @@ use work.lidar_status_pkg.all;
 package lidar_csr_map_pkg is
 
     constant C_LIDAR_CSR_ABI_MAJOR : natural := 2;
-    constant C_LIDAR_CSR_ABI_MINOR : natural := 6;
+    constant C_LIDAR_CSR_ABI_MINOR : natural := 7;
 
     constant C_LIDAR_CTL_COUNT          : positive := 32;
     constant C_LIDAR_STAT_COUNT         : positive := 32;
@@ -50,8 +50,24 @@ package lidar_csr_map_pkg is
     constant C_CTL_GPX_IMAGE_DATA      : natural := 22;
     constant C_CTL_DIAG_INDEX          : natural := 23;
     constant C_CTL_DIAG_DATA           : natural := 24;
-    constant C_CTL_RESERVED_FIRST      : natural := 25;
+    constant C_CTL_VDMA_PROFILE_CONTROL : natural := 25;
+    constant C_CTL_VDMA_RISE_GEOMETRY   : natural := 26;
+    constant C_CTL_VDMA_RISE_STRIDE     : natural := 27;
+    constant C_CTL_VDMA_FALL_GEOMETRY   : natural := 28;
+    constant C_CTL_VDMA_FALL_STRIDE     : natural := 29;
+    constant C_CTL_RESERVED_FIRST      : natural := 30;
     constant C_CTL_RESERVED_LAST       : natural := 31;
+
+    -- CTL25 read reports the two coherent profile snapshots waiting for PS
+    -- programming. Bits 8 and 9 are write-one-set acknowledgements. CTL26..29
+    -- are read-only geometry words associated with the pending snapshots.
+    constant C_VDMA_RISE_PENDING_BIT : natural := 0;
+    constant C_VDMA_RISE_ENABLE_BIT  : natural := 1;
+    constant C_VDMA_FALL_PENDING_BIT : natural := 2;
+    constant C_VDMA_FALL_ENABLE_BIT  : natural := 3;
+    constant C_VDMA_RISE_ACK_BIT     : natural := 8;
+    constant C_VDMA_FALL_ACK_BIT     : natural := 9;
+    constant C_VDMA_PROFILE_ACK_MASK : csr_word_t := x"00000300";
 
     constant C_GPX_IMAGE_INDEX_MSB       : natural := 3;
     constant C_GPX_IMAGE_INDEX_LSB       : natural := 0;
@@ -385,6 +401,14 @@ package body lidar_csr_map_pkg is
                 return (value and not C_DIAG_INDEX_WRITE_VALID_MASK) =
                     zero_word;
             when C_CTL_DIAG_DATA =>
+                return false;
+            when C_CTL_VDMA_PROFILE_CONTROL =>
+                return (value and not C_VDMA_PROFILE_ACK_MASK) =
+                    zero_word;
+            when C_CTL_VDMA_RISE_GEOMETRY |
+                 C_CTL_VDMA_RISE_STRIDE |
+                 C_CTL_VDMA_FALL_GEOMETRY |
+                 C_CTL_VDMA_FALL_STRIDE =>
                 return false;
             when others =>
                 return false;

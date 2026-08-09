@@ -293,13 +293,6 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     signal write_count : natural_array_t := (others => 0);
     signal fifo_load : std_logic := '0';
 
-    signal rise_cfg_valid : std_logic;
-    signal rise_cfg_ready : std_logic := '0';
-    signal fall_cfg_valid : std_logic;
-    signal fall_cfg_ready : std_logic := '0';
-    signal rise_hsize_bytes : unsigned(15 downto 0);
-    signal rise_vsize_lines : unsigned(15 downto 0);
-    signal rise_stride_bytes : unsigned(15 downto 0);
     signal rise_tdata : std_logic_vector(G_OUTPUT_WIDTH - 1 downto 0);
     signal rise_tkeep : std_logic_vector(G_OUTPUT_WIDTH / 8 - 1 downto 0);
     signal rise_tstrb : std_logic_vector(G_OUTPUT_WIDTH / 8 - 1 downto 0);
@@ -493,19 +486,7 @@ begin
             m_axis_fall_tuser => open,
             m_axis_fall_tvalid => fall_tvalid,
             m_axis_fall_tlast => open,
-            m_axis_fall_tready => '1',
-            o_vdma_rise_cfg_valid => rise_cfg_valid,
-            i_vdma_rise_cfg_ready => rise_cfg_ready,
-            o_vdma_rise_cfg_enable => open,
-            o_vdma_rise_hsize_bytes => rise_hsize_bytes,
-            o_vdma_rise_vsize_lines => rise_vsize_lines,
-            o_vdma_rise_stride_bytes => rise_stride_bytes,
-            o_vdma_fall_cfg_valid => fall_cfg_valid,
-            i_vdma_fall_cfg_ready => fall_cfg_ready,
-            o_vdma_fall_cfg_enable => open,
-            o_vdma_fall_hsize_bytes => open,
-            o_vdma_fall_vsize_lines => open,
-            o_vdma_fall_stride_bytes => open
+            m_axis_fall_tready => '1'
         );
 
     p_chip_models : process (tdc_clk)
@@ -605,16 +586,8 @@ begin
                 first_shot_seen <= '0';
                 first_start_seen <= '0';
                 first_stop_seen <= '0';
-                accepted_hsize_bytes <= 0;
-                accepted_vsize_lines <= 0;
-                accepted_stride_bytes <= 0;
             else
                 proc_cycle_count <= proc_cycle_count + 1;
-                if rise_cfg_valid = '1' and rise_cfg_ready = '1' then
-                    accepted_hsize_bytes <= to_integer(rise_hsize_bytes);
-                    accepted_vsize_lines <= to_integer(rise_vsize_lines);
-                    accepted_stride_bytes <= to_integer(rise_stride_bytes);
-                end if;
                 if shot_start = '1' and previous_shot_r = '0' then
                     shot_count <= shot_count + 1;
                     if first_shot_seen = '0' then
@@ -871,10 +844,15 @@ begin
 
         procedure accept_vdma_profile(constant case_name : string) is
             variable accepted : boolean := false;
+            variable profile_control : std_logic_vector(31 downto 0);
+            variable rise_geometry : std_logic_vector(31 downto 0);
+            variable rise_stride : std_logic_vector(31 downto 0);
         begin
             for cycle in 0 to 10000 loop
-                wait_proc(1);
-                if rise_cfg_valid = '1' and fall_cfg_valid = '1' then
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                    profile_control);
+                if profile_control(C_VDMA_RISE_PENDING_BIT) = '1' and
+                   profile_control(C_VDMA_FALL_PENDING_BIT) = '1' then
                     accepted := true;
                     exit;
                 end if;
@@ -882,11 +860,18 @@ begin
             assert accepted
                 report case_name & ": VDMA profile request timeout"
                 severity failure;
-            rise_cfg_ready <= '1';
-            fall_cfg_ready <= '1';
-            wait_proc(1);
-            rise_cfg_ready <= '0';
-            fall_cfg_ready <= '0';
+            axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_GEOMETRY),
+                rise_geometry);
+            axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_STRIDE),
+                rise_stride);
+            accepted_hsize_bytes <= to_integer(unsigned(
+                rise_geometry(15 downto 0)));
+            accepted_vsize_lines <= to_integer(unsigned(
+                rise_geometry(31 downto 16)));
+            accepted_stride_bytes <= to_integer(unsigned(
+                rise_stride(15 downto 0)));
+            axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                x"00000300");
         end procedure accept_vdma_profile;
 
         procedure wait_transaction_done(constant case_name : string) is
@@ -1233,9 +1218,9 @@ begin
                     natural'image(rise_all_hole_footer_count) &
                 " rise_tvalid=" & std_logic'image(rise_tvalid) &
                 " fall_tvalid=" & std_logic'image(fall_tvalid) &
-                " hsize=" & integer'image(to_integer(rise_hsize_bytes)) &
-                " vsize=" & integer'image(to_integer(rise_vsize_lines)) &
-                " stride=" & integer'image(to_integer(rise_stride_bytes))
+                " hsize=" & natural'image(accepted_hsize_bytes) &
+                " vsize=" & natural'image(accepted_vsize_lines) &
+                " stride=" & natural'image(accepted_stride_bytes)
             severity failure;
 
         -- 첫 정상 Frame 이후, 과속 회귀 프로파일에서 추가된 Frame은

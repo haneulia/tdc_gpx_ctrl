@@ -53,6 +53,8 @@ $SourceFiles += @(
     (Resolve-Path -LiteralPath (Join-Path $Hdl `
         "system_integration/v2/tb/tb_lidar_system_command_cdc.vhd")).Path,
     (Resolve-Path -LiteralPath (Join-Path $Hdl `
+        "system_integration/v2/tb/tb_lidar_vdma_profile_cdc.vhd")).Path,
+    (Resolve-Path -LiteralPath (Join-Path $Hdl `
         "system_integration/v2/tb/tb_tdc_gpx_lidar_ctrl_v2_k03.vhd")).Path
 )
 
@@ -80,6 +82,11 @@ $Tests = @(
         name = "system_command_cdc"
         unit = "tb_lidar_system_command_cdc"
         marker = "LIDAR_V2_SYSTEM_COMMAND_CDC_PASS"
+    },
+    [ordered]@{
+        name = "vdma_profile_cdc"
+        unit = "tb_lidar_vdma_profile_cdc"
+        marker = "LIDAR_V2_VDMA_PROFILE_CDC_PASS"
     },
     [ordered]@{
         name = "top_k03"

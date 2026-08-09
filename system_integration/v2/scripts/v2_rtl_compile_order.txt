@@ -24,6 +24,7 @@ tdc_gpx_chip_reg.vhd
 tdc_gpx_chip_ctrl.vhd
 system_integration/v2/rtl/common/lidar_stream_gateway.vhd
 system_integration/v2/rtl/common/lidar_system_command_cdc.vhd
+system_integration/v2/rtl/common/lidar_vdma_profile_cdc.vhd
 system_integration/v2/rtl/status/lidar_diag_snapshot_mailbox.vhd
 system_integration/v2/rtl/status/lidar_processing_status_source.vhd
 system_integration/v2/rtl/status/lidar_tdc_status_source.vhd
