@@ -6,10 +6,10 @@
 `xc7z020clg484-2` Parent에 실제로 배치하고, Rise/Fall AXI VDMA와 PS7 HP
 포트까지 연결한 재생성 가능한 Vivado 프로젝트를 소유한다.
 
-2026-08-09 4-chip Parent 구조 변경 직후 판정은 다음과 같다.
+2026-08-09 4-chip Parent 최종 구현 판정은 다음과 같다.
 
 - Parent Block Design 생성과 재개방 계약 검사: **PASS**
-- 4-chip 합성, 배치·배선, DRC와 비트스트림 생성: **검증 진행 중**
+- 4-chip 합성, 배치·배선, DRC와 비트스트림 생성: **PASS**
 - 물리 PCB의 TDC-GPX, 레이저, DDR cache 및 Ethernet 장시간 운용: **미검증**
 - 따라서 이 결과는 **Parent 구현 Sign-off**이며 최종 보드 Release Sign-off는 아니다.
 
@@ -140,31 +140,32 @@ RDN 뒤 데이터를 안정화하고, Runtime TDC-GPX 버스 읽기 타이밍
 
 최신 회귀 세션은 `260809190043_v2_stream_gateway_reset`이다.
 
-## 7. 타이밍 계약과 이전 기준 수치
+## 7. 타이밍 계약과 4-chip 구현 결과
 
 TDC 제어 출력은 반환 clock이 없는 외부 장치 인터페이스다. false path로 숨기지
 않고 register-to-pad에 8 ns max-delay를 적용한다. 실제 TDC-GPX 버스 상태는
 최소 25 ns 유지되므로 8 ns 안에 핀에 도달하면 최소 17 ns의 안정 구간이 남는다.
 
-아래 값은 구조 변경 전 2-chip Parent 세션 `260809_l0_parent_release_impl04`의
-기준값이다. 4-chip 구현 결과가 완료되면 새 값으로 교체한다.
+아래 값은 4-chip Parent 세션 `260809_l0_parent_4chip_synth02`와
+`260809_l0_parent_4chip_impl01`의 최종 결과다.
 
 | 항목 | 결과 |
 |---|---:|
-| Synthesis WNS/WHS | `+0.379 / +0.035 ns` |
-| Route WNS/WHS | `+0.174 / +0.018 ns` |
-| CSR 100 MHz 내부 WNS | `+0.77 ns` |
-| Processing 150 MHz 내부 WNS | `+0.66 ns` |
-| TDC 200 MHz 내부 WNS | `+0.23 ns` |
-| 최악 TDC 출력 | `o_tdc_stopdis[0]`, `7.826 ns` |
-| 최소 핀 안정 여유 | `25 - 7.826 = 17.174 ns` |
+| Synthesis WNS/WHS | `+0.355 / +0.036 ns` |
+| Route WNS/WHS | `+0.082 / +0.023 ns` |
+| CSR 100 MHz 내부 WNS | `+0.747 ns` |
+| Processing 150 MHz 내부 WNS | `+0.595 ns` |
+| TDC 200 MHz 내부 WNS | `+0.082 ns` |
+| 최악 TDC 내부 경로 | TDC0 `tick[2]` → IOB `WRN`, 2 LUT, 배선 85.252% |
+| 최악 TDC 출력 | `o_tdc_stopdis[3]`, `7.717 ns` |
+| 최소 핀 안정 여유 | `25 - 7.717 = 17.283 ns` |
 | Active critical CDC | 0 |
 | Bus-skew 위반 | 0 |
 | Blocking DRC | 0 |
 | Critical Warning | 0 |
 | 비트스트림 | 4,045,708 bytes |
 
-패키지 최종 세션 `260809_185237_k010_ip_package`는 32-bit 150/200 MHz,
+패키지 최종 세션 `260809_220426_k010_ip_package`는 32-bit 150/200 MHz,
 128-bit 200/150 MHz Echo 비활성, 64-bit 150/150 MHz SYNC의 세 OOC profile을
 `Critical Warning 0 / Error 0`으로 통과했다. 현재 패키지는 88개 RTL,
 XGUI 1개, 한글 가이드 3개인 총 92개
@@ -172,9 +173,16 @@ package 자산의 source/XGUI/guide 동기화까지 같은 runner에서 검사�
 또한 초기 IP 추론 및 OOC 최적화에서 허용한 Warning ID와 최대 수를
 `WARNING_AUDIT.txt`에 기록하며, 새 ID 또는 발생 수 증가 시 Sign-off를 거부한다.
 
-강화된 Parent runner와 격리된 Vivado 사용자 캐시의 재현성은
-`260809_l0_parent_isolated_cache_synth05`에서 다시 확인했다. 이 세션도
-Synthesis WNS/WHS `+0.379/+0.035 ns`, Critical Warning 0, Error 0이다.
+4-chip Parent는 GPX 데이터 112개, IOB capture FF 112개, TDC 출력 152개,
+비동기 서비스 입력 16개와 보드 서비스 핀 171개를 모두 정적 검사한다.
+합성/구현 세션 모두 Critical Warning 0, blocking DRC 0이며 구현 세션은
+4,045,708-byte bitstream까지 생성했다.
+
+TDC 200 MHz의 `+0.082 ns`는 도구 기준으로는 PASS지만 변경 여유가 큰 값은
+아니다. 해당 최악 경로는 기능 조합 깊이보다 서로 떨어진 IOB까지의 물리 배선이
+지배한다. 200 MHz는 상한 스트레스 프로파일로 유지하고, 실제 PCB 초도 검증은
+150 MHz부터 시작해 Runtime TDC-GPX 버스 읽기 타이밍(`BUS_CLK_DIV/BUS_TICKS`),
+Register readback 및 IFIFO Drain을 확인한 뒤 올린다.
 
 ## 8. 재생성과 Sign-off 실행
 
@@ -215,7 +223,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 6. 실제 레이저 안전 인터록과 `fire_done` 응답시간 검증
 7. DDR H-Line을 Viewer Ethernet ABI로 전송하는 지속 처리량 검증
 
-구조 변경 전 TDC 200 MHz 내부 WNS `+0.23 ns`와 전체 Hold `+0.018 ns`는
-PASS였지만 여유가 작았다. 4-chip 기능 변경 뒤에는 Parent 구현을 반드시 다시
-판정하고, 필요하면 해당 경로의 배치 또는 파이프라인 최적화를 별도 단계로
-수행한다.
+현재 4-chip 200 MHz 구현은 timing을 통과했지만 setup 여유가 `+0.082 ns`다.
+핀맵, bus PHY, 합성 전략 또는 주변 로직이 바뀌면 Parent 구현을 반드시 다시
+판정한다. 200 MHz 여유가 음수가 되면 외부 버스 파형을 바꾸는 임의 파이프라인보다
+먼저 bus PHY register 복제, IOB 인접 배치 및 150 MHz 운용 프로파일을 검토한다.
