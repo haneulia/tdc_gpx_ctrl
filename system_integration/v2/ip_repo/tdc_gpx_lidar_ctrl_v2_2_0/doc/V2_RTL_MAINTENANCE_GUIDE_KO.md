@@ -41,7 +41,7 @@
 | 용어 | 이 설계에서의 정확한 의미 |
 |---|---|
 | CSR | PS가 AXI4-Lite로 접근하는 제어·상태 Register 묶음(Control and Status Register) |
-| CTL / STAT | 각각 제어 주소 영역과 상태 주소 영역. CTL23은 R/W1S 진단 command/status이고 CTL24만 read-only 결과 |
+| CTL / STAT | 각각 제어 주소 영역과 상태 주소 영역. CTL23은 R/W1S 진단 command/status, CTL24와 CTL26~29는 read-only 결과이며 CTL25는 VDMA profile R/W1S ACK portal |
 | IRQ | 원인 source를 보존하고 PS에 알리는 Interrupt Request. 단일 level-high 출력이며 Shot 번호를 운반하지 않음 |
 | TDC | 시간차를 디지털 값으로 변환하는 외부 TDC-GPX와 그 획득 경로(Time-to-Digital Converter) |
 | GPX Register | 외부 TDC-GPX Chip 내부의 4-bit 주소/28-bit 값 Register 0..15 |

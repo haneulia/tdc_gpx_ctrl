@@ -317,7 +317,6 @@ begin
             else
                 if shot_dispatch_r.valid = '1' then
                     shot_dispatch_r <= C_SHOT_START_EVENT_IDLE;
-                    shot_dispatch_mask_r <= (others => '0');
                 end if;
 
                 if shot_accept_c = '1' then
@@ -325,6 +324,11 @@ begin
                     shot_dispatch_r.valid <= '1';
                     shot_dispatch_mask_r <= active_mask_c;
                 end if;
+
+                -- shot_dispatch_mask_r is meaningful only while
+                -- shot_dispatch_r.valid is asserted.  Keep the last mask while
+                -- idle so synthesis does not place the all-lane Shot-admission
+                -- cone on this register's synchronous reset input.
 
                 -- synthesis translate_off
                 if shot_dispatch_r.valid = '1' then

@@ -7,7 +7,7 @@
 
 | 종류 | 파일 수 | 의미 |
 |---|---:|---|
-| Primary self-checking TB | 46 | DUT를 구동하고 assertion 및 고유 PASS marker로 기능을 판정한다. |
+| Primary self-checking TB | 47 | DUT를 구동하고 assertion 및 고유 PASS marker로 기능을 판정한다. |
 | Profile wrapper | 11 | 공통 TB를 주파수, Face 수 또는 clock 관계별 top entity로 구체화한다. |
 | Implementation harness | 13 | 합성/구현 timing, CDC, DRC와 자원 사용을 재현한다. 기능 PASS를 대신하지 않는다. |
 
@@ -42,6 +42,7 @@
 | `tb_lidar_gpx_config_activation.vhd` | 모든 present Chip programming ACK 후 TDC enable | `lidar_gpx_config_activation` | `run_v2_unified_csr.ps1` | 조기 ACK와 fault activation을 유지한다. |
 | `tb_lidar_processing_activation_barrier.vhd` | Echo/VDMA ready, busy, version을 묶는 barrier | processing activation barrier | `run_v2_k04_integration.ps1` | 새 의존 block에는 negative test가 필요하다. |
 | `tb_lidar_system_command_cdc.vhd` | CLEAR/RESET one-shot CDC, busy/모호 명령 거부 | `lidar_system_command_cdc` | `run_v2_k03_integration.ps1` | destination pulse 폭과 reset 복구를 확인한다. |
+| `tb_lidar_vdma_profile_cdc.vhd` | Processing→CSR 49-bit VDMA profile 원자성, 지연 ACK, stale-high ACK 거부, 다음 snapshot 분리 | `lidar_vdma_profile_cdc` | `run_v2_k03_integration.ps1` | payload field를 추가하면 모든 snapshot 비교를 함께 늘리고 150/200, 200/150 MHz를 모두 유지한다. |
 | `tb_lidar_status_irq_integration.vhd` | native snapshot, CTL23/24, 물리 GPX read, 유지보수 pause-safe 2-edge 선행 조건, 상태 선택→응답 패킹 등록 경계, 모든 TDC lane fault, 같은-clock fault/clear, IRQ/CLEAR/W1C | CSR/status/command CDC | `run_v2_k08_status_irq.ps1` | GPX read는 pause 이전 safe 값으로 시작하면 안 된다. 상태 index 선택과 응답 word 패킹을 다시 한 조합 경로로 합치지 말고 owner clear는 아래 K1-1 전용 회귀와 함께 유지한다. |
 
 ### 3.2 모터, Face, Shot 및 레이저
