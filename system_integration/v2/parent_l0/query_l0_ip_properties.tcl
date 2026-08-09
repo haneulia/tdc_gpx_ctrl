@@ -22,7 +22,6 @@ update_ip_catalog -rebuild
 create_bd_design l0_property_query
 
 set vdma [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_vdma:6.3 vdma_q]
-set gpio [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 gpio_q]
 set protocol_converter [create_bd_cell -type ip \
     -vlnv xilinx.com:ip:axi_protocol_converter:2.1 protocol_converter_q]
 set ps7 [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 ps7_q]
@@ -33,11 +32,11 @@ set_property -dict [list \
     CONFIG.G_PROC_CLK_MHZ 150 \
     CONFIG.G_TDC_CLK_MHZ 200 \
     CONFIG.G_STREAM_CLK_MODE ASYNC \
-    CONFIG.G_NUM_CHIPS 2 \
+    CONFIG.G_NUM_CHIPS 4 \
     CONFIG.G_STOPS_PER_CHIP 8 \
     CONFIG.G_MAX_RETURNS_PER_STOP 7 \
     CONFIG.G_RISE_CAPABILITY_MASK 0011 \
-    CONFIG.G_FALL_CAPABILITY_MASK 0000 \
+    CONFIG.G_FALL_CAPABILITY_MASK 1100 \
     CONFIG.G_OUTPUT_WIDTH 32 \
     CONFIG.G_NUM_FACES 5 \
     CONFIG.G_ENABLE_ECHO_RECEIVER false \
@@ -49,8 +48,6 @@ foreach {label cell patterns} [list \
             CONFIG.*INCLUDE_SG* CONFIG.*DATA_WIDTH* CONFIG.*LINEBUFFER* \
             CONFIG.*s2mm* CONFIG.*mm2s* CONFIG.*fstore* \
             CONFIG.*include_sg* CONFIG.*data_width* CONFIG.*linebuffer*} \
-        AXI_GPIO $gpio {CONFIG.*GPIO_WIDTH* CONFIG.*ALL_INPUTS* \
-            CONFIG.*ALL_OUTPUTS* CONFIG.*DUAL* CONFIG.*DOUT_DEFAULT*} \
         AXI_PROTOCOL_CONVERTER $protocol_converter {CONFIG.*PROTOCOL* \
             CONFIG.*DATA_WIDTH* CONFIG.*ID_WIDTH* CONFIG.*THREAD*} \
         PS7 $ps7 {CONFIG.PCW_FPGA_FCLK* CONFIG.PCW_FPGA*_FREQMHZ \

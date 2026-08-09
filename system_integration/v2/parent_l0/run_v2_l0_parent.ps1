@@ -3,6 +3,8 @@ param(
         'C:\Projects\my_sp\ALINX\Logic\project_4_lidar_v2_l0',
     [string]$ReferenceBd =
         'C:\Projects\my_sp\ALINX\Logic\project_4\project_4.srcs\sources_1\bd\design_1_lidar_ctrl\design_1_lidar_ctrl.bd',
+    [string]$ExtensionPinXdc =
+        'C:\Projects\my_sp\ALINX\Logic\project_4_tdc_gpx_4chip\project_4.srcs\constrs_1\imports\XDC\project4_vt_hrl2_tdc23_extension.xdc',
     [ValidateSet(32, 64, 128)]
     [int]$OutputWidth = 32,
     [switch]$Recreate
@@ -24,7 +26,7 @@ $TimingXdc = Join-Path $ScriptDir 'constraints\l0_parent_timing.xdc'
 
 foreach ($Required in @(
         $Vivado, $CreateTcl, $ValidateTcl, $ReferenceBd, $PinXdc,
-        $TimingXdc)) {
+        $ExtensionPinXdc, $TimingXdc)) {
     if (-not (Test-Path -LiteralPath $Required)) {
         throw "Required L0 input is missing: $Required"
     }
@@ -95,6 +97,7 @@ try {
     $TclOutputRoot = $OutputRoot.Replace('\', '/')
     $TclPsConfigPath = $PsConfigPath.Replace('\', '/')
     $TclPinXdc = $PinXdc.Replace('\', '/')
+    $TclExtensionPinXdc = $ExtensionPinXdc.Replace('\', '/')
     $TclTimingXdc = $TimingXdc.Replace('\', '/')
     $TclHdlRoot = $HdlRoot.Replace('\', '/')
     $Arguments = @(
@@ -102,7 +105,8 @@ try {
         '-nolog', '-nojournal', '-notrace',
         '-source', $CreateTcl,
         '-tclargs', $TclOutputRoot, $TclPsConfigPath, $TclPinXdc,
-        $TclTimingXdc, ([string]$OutputWidth), $TclHdlRoot)
+        $TclExtensionPinXdc, $TclTimingXdc, ([string]$OutputWidth),
+        $TclHdlRoot)
     $Output = & $Vivado @Arguments 2>&1
     $Output | ForEach-Object { Write-Output $_ }
     if ($LASTEXITCODE -ne 0) {

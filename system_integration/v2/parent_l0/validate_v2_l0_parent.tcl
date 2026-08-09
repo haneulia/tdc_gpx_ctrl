@@ -15,9 +15,12 @@ set bd_path [file join $output_root project_4_lidar_v2_l0.srcs sources_1 bd \
     design_1_lidar_ctrl_v2 design_1_lidar_ctrl_v2.bd]
 set wrapper_path [file join $output_root project_4_lidar_v2_l0.gen sources_1 bd \
     design_1_lidar_ctrl_v2 hdl design_1_lidar_ctrl_v2_wrapper.vhd]
-set pin_xdc [file join $output_root constraints \
+set base_pin_xdc [file join $output_root constraints \
     project4_vt_hrl2_tdc01_service.xdc]
-foreach required [list $project_path $bd_path $wrapper_path $pin_xdc] {
+set ext_pin_xdc [file join $output_root constraints \
+    project4_vt_hrl2_tdc23_extension.xdc]
+foreach required [list $project_path $bd_path $wrapper_path $base_pin_xdc \
+        $ext_pin_xdc] {
     if {![file exists $required]} {
         error "Missing generated L0 artifact: $required"
     }
@@ -79,12 +82,16 @@ set fall_vdma [get_bd_cells axi_vdma_fall]
 set proc_clk_wiz [get_bd_cells proc_clk_wiz]
 set rise_converter [get_bd_cells rise_hp_axi4_to_axi3]
 set fall_converter [get_bd_cells fall_hp_axi4_to_axi3]
-set rise_profile_bridge [get_bd_cells rise_profile_bridge]
-set fall_profile_bridge [get_bd_cells fall_profile_bridge]
 l0_expect_count profile_bridge_sources \
-    [get_files -quiet -filter {NAME =~ "*l0_vdma_profile_bridge.vhd"}] 1
-l0_expect_count profile_bridge_instances \
-    [list $rise_profile_bridge $fall_profile_bridge] 2
+    [get_files -quiet -filter {NAME =~ "*l0_vdma_profile_bridge.vhd"}] 0
+foreach obsolete_cell {
+        rise_profile_bridge fall_profile_bridge vdma_profile_ctrl
+        vdma_rise_geometry vdma_fall_geometry prof_status_cat
+        vdma_rise_geometry_concat vdma_fall_geometry_concat
+        rise_cfg_ack_slice fall_cfg_ack_slice} {
+    l0_expect_count "removed Parent cell $obsolete_cell" \
+        [get_bd_cells -quiet $obsolete_cell] 0
+}
 
 l0_expect_equal v2_vlnv [get_property VLNV $lidar] \
     victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v2:2.0
@@ -93,11 +100,11 @@ foreach {property expected} [list \
         CONFIG.G_PROC_CLK_MHZ 150 \
         CONFIG.G_TDC_CLK_MHZ 200 \
         CONFIG.G_STREAM_CLK_MODE ASYNC \
-        CONFIG.G_NUM_CHIPS 2 \
+        CONFIG.G_NUM_CHIPS 4 \
         CONFIG.G_STOPS_PER_CHIP 8 \
         CONFIG.G_MAX_RETURNS_PER_STOP 7 \
         CONFIG.G_RISE_CAPABILITY_MASK 0011 \
-        CONFIG.G_FALL_CAPABILITY_MASK 0000 \
+        CONFIG.G_FALL_CAPABILITY_MASK 1100 \
         CONFIG.G_OUTPUT_WIDTH $output_width \
         CONFIG.G_ENABLE_ECHO_RECEIVER false \
         CONFIG.G_ENABLE_ECHO_SIMULATION false \
@@ -137,6 +144,8 @@ foreach cell [list $rise_converter $fall_converter] {
         [get_property CONFIG.MI_PROTOCOL $cell] AXI3
     l0_expect_equal "$cell data width" [get_property CONFIG.DATA_WIDTH $cell] 64
 }
+l0_expect_equal control_interconnect_masters \
+    [get_property CONFIG.NUM_MI [get_bd_cells axi_control_interconnect]] 3
 
 l0_expect_same_intf_net rise_stream \
     tdc_gpx_lidar_ctrl_v2_0/m_axis_rise axi_vdma_rise/S_AXIS_S2MM
@@ -153,36 +162,21 @@ l0_expect_same_intf_net fall_converter_to_hp1 \
 
 l0_expect_same_net processing_clock \
     proc_clk_wiz/clk_out1 tdc_gpx_lidar_ctrl_v2_0/proc_aclk
-l0_expect_same_net rise_profile_processing_clock \
-    proc_clk_wiz/clk_out1 rise_profile_bridge/i_proc_clk
-l0_expect_same_net fall_profile_processing_clock \
-    proc_clk_wiz/clk_out1 fall_profile_bridge/i_proc_clk
 l0_expect_same_net tdc_clock \
     processing_system7_0/FCLK_CLK2 tdc_gpx_lidar_ctrl_v2_0/i_tdc_clk
-l0_expect_same_net rise_profile_source_valid \
-    tdc_gpx_lidar_ctrl_v2_0/o_vdma_rise_cfg_valid \
-    rise_profile_bridge/i_proc_cfg_valid
-l0_expect_same_net fall_profile_source_valid \
-    tdc_gpx_lidar_ctrl_v2_0/o_vdma_fall_cfg_valid \
-    fall_profile_bridge/i_proc_cfg_valid
-l0_expect_same_net rise_profile_ack \
-    rise_cfg_ack_slice/Dout rise_profile_bridge/i_csr_cfg_ack
-l0_expect_same_net fall_profile_ack \
-    fall_cfg_ack_slice/Dout fall_profile_bridge/i_csr_cfg_ack
-l0_expect_same_net rise_profile_ready_return \
-    rise_profile_bridge/o_proc_cfg_ready \
-    tdc_gpx_lidar_ctrl_v2_0/i_vdma_rise_cfg_ready
-l0_expect_same_net fall_profile_ready_return \
-    fall_profile_bridge/o_proc_cfg_ready \
-    tdc_gpx_lidar_ctrl_v2_0/i_vdma_fall_cfg_ready
-l0_expect_same_net rise_profile_hsize_snapshot \
-    rise_profile_bridge/o_csr_hsize_bytes \
-    vdma_rise_geometry_concat/In0
-l0_expect_same_net fall_profile_hsize_snapshot \
-    fall_profile_bridge/o_csr_hsize_bytes \
-    vdma_fall_geometry_concat/In0
 l0_expect_same_net laser_safety_tieoff \
     const_zero_1/dout tdc_gpx_lidar_ctrl_v2_0/i_external_laser_permit
+
+foreach removed_pin {
+        o_vdma_rise_cfg_valid i_vdma_rise_cfg_ready
+        o_vdma_rise_cfg_enable o_vdma_rise_hsize_bytes
+        o_vdma_rise_vsize_lines o_vdma_rise_stride_bytes
+        o_vdma_fall_cfg_valid i_vdma_fall_cfg_ready
+        o_vdma_fall_cfg_enable o_vdma_fall_hsize_bytes
+        o_vdma_fall_vsize_lines o_vdma_fall_stride_bytes} {
+    l0_expect_count "internalized profile pin $removed_pin" \
+        [get_bd_pins -quiet tdc_gpx_lidar_ctrl_v2_0/$removed_pin] 0
+}
 
 foreach port {i_pd_lvds_p i_pd_lvds_n o_tdc_stop} {
     l0_expect_count "disabled Echo Receiver external port $port" \
@@ -202,7 +196,7 @@ foreach segment [get_bd_addr_segs -quiet] {
         lappend assigned_addresses [string toupper $offset]
     }
 }
-foreach address {0x40000000 0x41200000 0x41210000 0x41220000 0x43000000 0x43010000} {
+foreach address {0x40000000 0x43000000 0x43010000} {
     if {[lsearch -exact $assigned_addresses [string toupper $address]] < 0} {
         error "Expected AXI-Lite address is absent: $address"
     }

@@ -111,16 +111,16 @@ proc l0_verify_timing_contract {result_dir} {
         [list diag_response_destination \
             [l0_require_count diag_response_destination $diag_rsp_dst 66]] \
         [list gpx_data_ports \
-            [l0_require_count gpx_data_ports $gpx_data_ports 56]] \
+            [l0_require_count gpx_data_ports $gpx_data_ports 112]] \
         [list gpx_capture_registers \
-            [l0_require_count gpx_capture_registers $gpx_capture_d 56]] \
+            [l0_require_count gpx_capture_registers $gpx_capture_d 112]] \
         [list tdc_output_ports \
-            [l0_require_count tdc_output_ports $tdc_outputs 76]] \
+            [l0_require_count tdc_output_ports $tdc_outputs 152]] \
         [list processing_output_ports \
             [l0_require_count processing_output_ports $proc_outputs 3]] \
         [list asynchronous_service_inputs \
             [l0_require_count asynchronous_service_inputs \
-                $async_service_inputs 10]]]
+                $async_service_inputs 16]]]
 
     set channel [open [file join $result_dir timing_endpoint_contract.rpt] w]
     puts $channel {endpoint_group,count}
@@ -146,7 +146,7 @@ proc l0_apply_reviewed_waivers {gpx_data_ports gpx_capture_d} {
     # methodology entries.
     set gpx_async_status_ports [get_ports -quiet [list \
         {i_tdc_ef1[*]} {i_tdc_ef2[*]} {i_tdc_irflag[*]}]]
-    l0_require_count gpx_async_status_ports $gpx_async_status_ports 6
+    l0_require_count gpx_async_status_ports $gpx_async_status_ports 12
     create_waiver -quiet -type METHODOLOGY -id TIMING-18 \
         -user {Victek LiDAR V2} \
         -description {Reviewed asynchronous TDC-GPX status levels terminate in explicit first-stage synchronizer registers.} \
@@ -227,8 +227,8 @@ proc l0_verify_service_pins {result_dir} {
         set service_ports [concat $service_ports [get_ports -quiet $pattern]]
     }
     set service_ports [lsort -unique $service_ports]
-    if {[llength $service_ports] != 89} {
-        error "Service-pin count mismatch: expected=89 actual=[llength $service_ports]"
+    if {[llength $service_ports] != 171} {
+        error "Service-pin count mismatch: expected=171 actual=[llength $service_ports]"
     }
 
     set missing_loc {}
