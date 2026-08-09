@@ -28,6 +28,24 @@ end entity motor_virtual_source;
 
 architecture rtl of motor_virtual_source is
 
+    -- Z offset/width의 단위는 Processing clock이다. 한 encoder state의
+    -- LO/HI 유지시간보다 긴 폭은 해당 state 시간으로 제한한다. 이 계산은
+    -- 운용 중 매 phase마다 반복하지 않고 설정 정지 구간에서 두 경우를
+    -- 미리 등록한다.
+    function fn_clamp_z_width(
+        width : position_t;
+        ticks : u32_t
+    ) return position_t is
+    begin
+        if width = 0 or ticks = 0 then
+            return (width'range => '0');
+        elsif resize(width, ticks'length) > ticks then
+            return resize(ticks, width'length);
+        else
+            return width;
+        end if;
+    end function fn_clamp_z_width;
+
     signal remain_r      : u32_t := (others => '0');
     signal accumulator_r : u16_t := (others => '0');
     signal threshold_r   : u16_t := (others => '0');
@@ -37,6 +55,9 @@ architecture rtl of motor_virtual_source is
     signal ticks_hi_cfg_r : u32_t := (others => '0');
     signal hi_count_cfg_r : u16_t := (others => '0');
     signal ticks_next_r  : u32_t := (others => '0');
+    signal z_width_lo_limit_r : position_t := (others => '0');
+    signal z_width_hi_limit_r : position_t := (others => '0');
+    signal z_width_next_r : position_t := (others => '0');
     signal phase_tick_r  : std_logic := '0';
 
     signal phase_r          : unsigned(1 downto 0) := "11";
@@ -77,6 +98,9 @@ begin
                 ticks_hi_cfg_r <= (others => '0');
                 hi_count_cfg_r <= (others => '0');
                 ticks_next_r  <= (others => '0');
+                z_width_lo_limit_r <= (others => '0');
+                z_width_hi_limit_r <= (others => '0');
+                z_width_next_r <= (others => '0');
                 phase_tick_r  <= '0';
             elsif i_enable = '0' then
                 total_v := i_active_config.derived.total_states;
@@ -88,6 +112,12 @@ begin
                     i_active_config.source.motor.virtual_ticks_lo;
                 ticks_hi_cfg_r <=
                     i_active_config.derived.virtual_ticks_hi;
+                z_width_lo_limit_r <= fn_clamp_z_width(
+                    i_active_config.source.motor.z_width,
+                    i_active_config.source.motor.virtual_ticks_lo);
+                z_width_hi_limit_r <= fn_clamp_z_width(
+                    i_active_config.source.motor.z_width,
+                    i_active_config.derived.virtual_ticks_hi);
                 if i_active_config.source.motor.virtual_ticks_lo = 0 then
                     remain_r      <= (others => '0');
                     ticks_lo_m1_r <= (others => '0');
@@ -111,6 +141,9 @@ begin
                 end if;
                 ticks_next_r <=
                     i_active_config.source.motor.virtual_ticks_lo;
+                z_width_next_r <= fn_clamp_z_width(
+                    i_active_config.source.motor.z_width,
+                    i_active_config.source.motor.virtual_ticks_lo);
                 phase_tick_r <= '0';
             elsif remain_r = 0 then
                 phase_tick_r <= '1';
@@ -118,10 +151,12 @@ begin
                     accumulator_r <= accumulator_r - threshold_r;
                     remain_r <= ticks_hi_m1_r;
                     ticks_next_r <= ticks_hi_cfg_r;
+                    z_width_next_r <= z_width_hi_limit_r;
                 else
                     accumulator_r <= accumulator_r + hi_count_cfg_r;
                     remain_r <= ticks_lo_m1_r;
                     ticks_next_r <= ticks_lo_cfg_r;
+                    z_width_next_r <= z_width_lo_limit_r;
                 end if;
             else
                 phase_tick_r <= '0';
@@ -234,6 +269,7 @@ begin
             i_enable         => i_enable and i_active_valid,
             i_z_offset       => z_offset_cfg_r,
             i_z_width        => z_width_cfg_r,
+            i_width_clamped  => z_width_next_r,
             i_z_early        => z_early_cfg_r,
             i_phase_tick     => phase_tick_r,
             i_ticks_next     => ticks_next_r,

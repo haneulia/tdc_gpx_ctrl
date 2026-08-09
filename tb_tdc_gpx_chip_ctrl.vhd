@@ -34,6 +34,7 @@
 --   [19] PH_RESP_DRAIN stuck/fatal quarantine and auto-recover.
 --   [20] Forced pending response trips the secondary deadlock watchdog.
 --   [21] stop_tdc window-end semantics + max_range/drain-margin contract.
+--   [21c] Nonzero range budget fires once; zero keeps timeout disabled.
 --   [22] CLEAR_STATUS clears diagnostic history without resetting function.
 --   Negative modes:
 --     g_NEGATIVE_MODE=1: force empty IFIFO read monitor and fail intentionally.
@@ -2559,6 +2560,64 @@ begin
             pr_pass("[21b] pre-IrFlag stop_tdc raised sequence error");
         else
             pr_fail("[21b] pre-IrFlag stop_tdc was not diagnosed", v_fail);
+        end if;
+
+        s_irflag_pin <= '1';
+        wait_drain_done(c_TIMEOUT, v_found);
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+        pulse(s_cmd_stop);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+
+        -- Countdown implementation contract: a nonzero physical range budget
+        -- includes the fixed drain margin, must not fire early, and emits one
+        -- timeout pulse only. A zero budget keeps this watchdog disabled.
+        pr_info("[21c] range countdown one-shot and zero-disable contract");
+        s_cfg.max_range_5ns_ticks <= to_unsigned(1, 16);
+        fill_fifos(0, 0);
+        wait_clk(5);
+        v_drain_timeout_snap := s_err_drain_timeout_cnt;
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+
+        wait_clk(c_DEFAULT_DRAIN_MARGIN_CLKS);
+        if s_err_drain_timeout_cnt /= v_drain_timeout_snap then
+            pr_fail("[21c] nonzero range timeout fired before drain margin",
+                    v_fail);
+        end if;
+        wait_clk(16);
+        if s_err_drain_timeout_cnt /= v_drain_timeout_snap + 1 then
+            pr_fail("[21c] nonzero range timeout did not fire exactly once",
+                    v_fail);
+        else
+            wait_clk(16);
+            if s_err_drain_timeout_cnt = v_drain_timeout_snap + 1 then
+                pr_pass("[21c] nonzero range timeout remained one-shot");
+            else
+                pr_fail("[21c] nonzero range timeout repeated", v_fail);
+            end if;
+        end if;
+
+        s_irflag_pin <= '1';
+        wait_drain_done(c_TIMEOUT, v_found);
+        s_irflag_pin <= '0';
+        wait_clk(c_ALU_PULSE_CLKS + c_RECOVERY_CLKS + 10);
+        pulse(s_cmd_stop);
+        wait_ctrl_idle(c_TIMEOUT, v_found);
+
+        s_cfg.max_range_5ns_ticks <= (others => '0');
+        fill_fifos(0, 0);
+        wait_clk(5);
+        v_drain_timeout_snap := s_err_drain_timeout_cnt;
+        pulse(s_cmd_start);
+        wait_clk(2);
+        pulse(s_shot_start);
+        wait_clk(c_DEFAULT_DRAIN_MARGIN_CLKS + 32);
+        if s_err_drain_timeout_cnt = v_drain_timeout_snap then
+            pr_pass("[21c] zero range budget kept timeout disabled");
+        else
+            pr_fail("[21c] zero range budget unexpectedly timed out", v_fail);
         end if;
 
         s_irflag_pin <= '1';

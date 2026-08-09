@@ -28,6 +28,7 @@ function Invoke-Checked {
 }
 
 $CommonFiles = @(
+    "$Hdl/tdc_gpx_skid_buffer.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_build_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_event_types_pkg.vhd",
     "$Hdl/system_integration/v2/pkg/lidar_gpx_pkg.vhd",
@@ -63,7 +64,10 @@ $VerilogCompileLog = Join-Path $Work "xvlog.log"
 $SimulationProfiles = @(
     "tb_lidar_gpx_event_gateway_async_150_200",
     "tb_lidar_gpx_event_gateway_async_200_150",
-    "tb_lidar_gpx_event_gateway_sync_150"
+    "tb_lidar_gpx_event_gateway_sync_150",
+    "tb_lidar_gpx_event_gateway_async_200_50",
+    "tb_lidar_gpx_event_gateway_async_50_200",
+    "tb_lidar_gpx_event_gateway_async_150_100"
 )
 
 if (-not $SkipSimulation) {
@@ -135,6 +139,36 @@ $ImplementationProfiles = @(
         proc_period = "6.667"
         tdc_period = "6.667"
         expect_async = 0
+    },
+    [ordered]@{
+        name = "async_proc200_tdc50"
+        top = "lidar_gpx_event_gateway_async_impl"
+        mode = "async"
+        proc_mhz = 200
+        tdc_mhz = 50
+        proc_period = "5.000"
+        tdc_period = "20.000"
+        expect_async = 1
+    },
+    [ordered]@{
+        name = "async_proc50_tdc200"
+        top = "lidar_gpx_event_gateway_async_impl"
+        mode = "async"
+        proc_mhz = 50
+        tdc_mhz = 200
+        proc_period = "20.000"
+        tdc_period = "5.000"
+        expect_async = 1
+    },
+    [ordered]@{
+        name = "async_proc150_tdc100"
+        top = "lidar_gpx_event_gateway_async_impl"
+        mode = "async"
+        proc_mhz = 150
+        tdc_mhz = 100
+        proc_period = "6.667"
+        tdc_period = "10.000"
+        expect_async = 1
     }
 )
 
@@ -230,12 +264,44 @@ if (-not $SkipImplementation) {
             "-log", $VivadoLog,
             "-journal", $VivadoJournal
         )
+
+        $CdcText = Get-Content -Raw -LiteralPath $Cdc
+        $CriticalCdcCount = 0
+        foreach ($Match in [regex]::Matches($CdcText,
+                '(?m)^CDC-\d+\s+Critical\s+(\d+)')) {
+            $CriticalCdcCount += [int]$Match.Groups[1].Value
+        }
+
+        $DrcText = Get-Content -Raw -LiteralPath $Drc
+        $BlockingDrcNames = @(
+            [regex]::Matches($DrcText,
+                '(?m)^\|\s*(\S+)\s*\|\s*(Critical Warning|Error)\s*\|') |
+                ForEach-Object { $_.Groups[1].Value }
+        )
+        $ParentXdcExclusions = @("IOSTDTYPE-1", "NSTD-1", "UCIO-1")
+        $UnexpectedDrcNames = @($BlockingDrcNames | Where-Object {
+            $_ -notin $ParentXdcExclusions
+        })
+
+        Add-Content -Encoding ASCII -LiteralPath $Metrics -Value @(
+            "CDC_CRITICAL_COUNT=$CriticalCdcCount",
+            "DRC_CRITICAL_OR_ERROR_COUNT=$($BlockingDrcNames.Count)",
+            "DRC_PARENT_XDC_EXCLUDED_COUNT=$(($BlockingDrcNames | Where-Object { $_ -in $ParentXdcExclusions }).Count)",
+            "DRC_UNEXPECTED_BLOCKING_COUNT=$($UnexpectedDrcNames.Count)",
+            "DRC_UNEXPECTED_NAMES=$($UnexpectedDrcNames -join ',')"
+        )
+        if ($CriticalCdcCount -ne 0) {
+            throw "$Name has $CriticalCdcCount critical CDC paths"
+        }
+        if ($UnexpectedDrcNames.Count -ne 0) {
+            throw "$Name has blocking DRC categories: $($UnexpectedDrcNames -join ', ')"
+        }
     }
 }
 
 New-Item -ItemType Directory -Force -Path $Archive | Out-Null
 $Scenario = [ordered]@{
-    checkpoint = "H2A"
+    checkpoint = "H2A / K1-4 release CDC gate"
     transfer_count_per_direction = 64
     command_payload_bits = 95
     result_payload_bits = 149

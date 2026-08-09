@@ -1,5 +1,6 @@
 param(
-    [string]$Stamp = (Get-Date -Format "yyMMddHHmmss")
+    [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
+    [switch]$IncludeReleaseProfiles
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,9 +72,29 @@ $RunTcl = Join-Path $Work "run.tcl"
 @("run all", "quit") | Set-Content -Encoding ASCII -LiteralPath $RunTcl
 
 $Profiles = @(
-    [ordered]@{ name = "proc150_tdc200"; proc = 150; tdc = 200 },
-    [ordered]@{ name = "proc200_tdc150"; proc = 200; tdc = 150 }
+    [ordered]@{
+        name = "proc150_tdc200_async"; proc = 150; tdc = 200; mode = "ASYNC"
+    },
+    [ordered]@{
+        name = "proc200_tdc150_async"; proc = 200; tdc = 150; mode = "ASYNC"
+    }
 )
+if ($IncludeReleaseProfiles) {
+    $Profiles += @(
+        [ordered]@{
+            name = "proc150_tdc150_sync"; proc = 150; tdc = 150; mode = "SYNC"
+        },
+        [ordered]@{
+            name = "proc200_tdc50_async"; proc = 200; tdc = 50; mode = "ASYNC"
+        },
+        [ordered]@{
+            name = "proc50_tdc200_async"; proc = 50; tdc = 200; mode = "ASYNC"
+        },
+        [ordered]@{
+            name = "proc150_tdc100_async"; proc = 150; tdc = 100; mode = "ASYNC"
+        }
+    )
+}
 
 Push-Location $Work
 try {
@@ -94,6 +115,7 @@ try {
             "--snapshot", $Snapshot,
             "--generic_top", "G_PROC_CLK_MHZ=$($Profile.proc)",
             "--generic_top", "G_TDC_CLK_MHZ=$($Profile.tdc)",
+            "--generic_top", "G_STREAM_CLK_MODE=$($Profile.mode)",
             "xil_defaultlib.tb_tdc_gpx_lidar_ctrl_v2_k05",
             "xil_defaultlib.glbl",
             "-log", $ElabLog)
@@ -123,12 +145,12 @@ finally {
 
 New-Item -ItemType Directory -Force -Path $Archive | Out-Null
 $Scenario = [ordered]@{
-    checkpoint = "K0-5"
+    checkpoint = "K0-5 / K1-4 release clock gate"
     purpose = "Top-level GPX configuration, IFIFO drain and B5-B8 closure"
-    profiles = @(
-        "Processing 150 / TDC 200 MHz",
-        "Processing 200 / TDC 150 MHz"
-    )
+    release_profiles_included = [bool]$IncludeReleaseProfiles
+    profiles = @($Profiles | ForEach-Object {
+        "Processing $($_.proc) / TDC $($_.tdc) MHz / $($_.mode)"
+    })
     checks = @(
         "deferred GPX register-image activation",
         "Reg7 staging MTimer override, in-flight Shadow snapshot and active view",

@@ -306,7 +306,7 @@ and unified CSR boundaries. The authoritative mapping is therefore:
 | 5 | H | Complete | `V2_CHECKPOINT_H3_GPX_ACQUISITION_SUBSYSTEM.md`; sessions `260805_h3_capacity_fix_sim_v2_gpx_acquisition_subsystem`, `260805_h3_capacity_fix_impl_v2_gpx_acquisition_subsystem` | Proven GPX bus/acquisition wrapper |
 | 6 | I | Complete | `V2_CHECKPOINT_I4_GPX_B5_B8_INTEGRATION.md`; sessions `260806_i4_final_order_v2_gpx_b5_b8_subsystem`, `260806_i4_all_dual_sim_v2_gpx_b5_b8_subsystem` | Hit, Cell and Frame pipeline |
 | 7 | J | Complete | J0-J10; `V2_CHECKPOINT_J10_PS_HLINE_ETHERNET.md` | AXIS/VDMA/PS formatter chain |
-| 8 | K | In progress | K0-1 through K0-10; `V2_CHECKPOINT_K0_10_IP_PACKAGE_KO.md` | K0 integrated RTL/package complete; K1 full RTL/HTML alignment pending |
+| 8 | K | Complete | K0-1 through K1-4; `V2_CHECKPOINT_K1_4_FINAL_SIGNOFF_KO.md` | Integrated RTL, Golden, implementation and IP package Sign-off complete |
 | 9 | L | Pending | Parent/board evidence pending | Implementation, board sign-off and release tag |
 
 **Current migration state:** Stage 2 is closed at Checkpoint E, Stage 3 is
@@ -344,9 +344,11 @@ acquisition, the complete B5..B8 Hit/Cell/Frame-lane path and the dual-lane
   implementation matrix. K0-9 also repeats the DDR/HTML Word comparison and
   PS ownership/H-Line/Ethernet byte comparison against the frozen RTL. K0-10
   closes self-contained v2 packaging, XGUI dependencies, v1/v2 catalog
-  coexistence and package-source OOC synthesis. The only valid next step is
-  **K1 full RTL/HTML alignment**. Parent VDMA/HP/cache is
-Stage 9 L0 and must not begin against the current v1 parent IP.
+  coexistence and package-source OOC synthesis. K1-0 through K1-4 then close
+  diagnostic ownership, Reg7 Shadow/Active/Physical behavior, the 40-profile
+  RTL/HTML operating matrix and the final integrated release gate. The only
+  valid next step is **Stage 9 L0 parent VDMA/HP/cache and board evidence**;
+  it must instantiate the v2 IP rather than the current v1 parent IP.
 Checkpoint K or a later stage must not be treated as migrated merely because
 its v1 implementation exists or because an intermediate J sub-step passed.
 
@@ -571,11 +573,11 @@ remains in its owner domain and CTL23/24 transfers one atomic 32-bit page. It
 also closes runtime IRQ source 5..9 and destination-reset recovery. K0-9 closes
 the full 32/64/128-bit implementation matrix at both routine clock profiles,
 with minimum WNS `+0.103 ns`, and repeats both executable Golden comparisons.
-K0-10 closes the remaining K0 packaging gate. K0 is complete and K1 full
-RTL/HTML alignment is the active Stage 8 work. The physical parent is still
-outside this Checkpoint.
+K0-10 closed the remaining K0 packaging gate and handed Stage 8 to K1 full
+RTL/HTML alignment. Section 16 records that subsequent K1 closure. The physical
+parent remains outside the K0 Checkpoint.
 
-## 16. Active RTL Work Package: Stage 8 / Checkpoint K1
+## 16. Completed RTL Work Package: Stage 8 / Checkpoint K1
 
 K1은 K0의 통합 RTL을 바로 HTML에 연결하기 전에, 이번 CSR 의미 재검토에서
 드러난 상태 초기화와 관측 계층의 공백을 먼저 닫는다. 진행 순서는 다음과 같다.
@@ -585,12 +587,11 @@ K1은 K0의 통합 RTL을 바로 HTML에 연결하기 전에, 이번 CSR 의미 
 | K1-0 | Complete | Shadow/Active/Derived/Physical 용어와 CLEAR_STATUS 실제 범위를 문서화하고 70개 테스트 자산의 한글 계약 header 및 coverage guide를 고정한다. |
 | K1-1 | Complete | legacy TDC sticky owner 전체에 CLEAR_STATUS를 전달했다. lane fault `[2],[3],[4],[10],[11],[12]`, 같은-cycle 새 fault 우선, 살아 있는 bus-fatal 격리 보존, IRQ W1C 순서를 owner/K08 회귀로 검증했다. TDC 150/200 MHz 구현 WNS는 각각 `+1.532 ns`, `+0.541 ns`다. |
 | K1-2 | Complete | Reg7 staging에 의도적으로 잘못된 MTimer를 기록하고, COMMIT 자동 대체, Active effective image, 두 물리 Chip readback을 한 연속 Top 시나리오에서 비교했다. 진행 중 Shadow 수정은 다음 transaction으로 격리됐고, 표현 범위 초과 COMMIT은 `0x33`으로 거부되어 Active version, image, 물리 Chip을 보존했다. 처리 150/TDC 200 및 처리 200/TDC 150 MHz와 AXIS 32/64/128-bit를 모두 통과했다. |
-| K1-3 | Complete | RPM, 광학 Shot 간격, 목표 왕복시간, runtime Return 1~7, 32/64/128-bit, 세 slope topology와 두 routine clock 관계를 40개 RTL profile로 측정했다. 실행 가능한 HTML 모델, 체크인된 Golden JSON과 RTL telemetry를 자동 비교하여 geometry와 비동기 1-clock 시간 범위를 모두 통과했다. |
-| K1-4 | Pending | routine 두 clock profile 전체 회귀, 필요한 extreme/sync CDC profile, DDR/PS/HTML byte 비교, package/XGUI/OOC 검사를 다시 수행해 K1 Sign-off 문서를 만든다. |
+| K1-3 | Complete | RPM, 인접한 레이저 발사 후보점 사이의 요청 광학각 (`OPTICAL_SHOT_INTERVAL_UDEG`), 레이저 목표 왕복시간 (2R/c, `TARGET_RANGE_WINDOW_5NS`), runtime Return 1~7, 32/64/128-bit, 세 slope topology와 두 routine clock 관계를 40개 RTL profile로 측정했다. 실행 가능한 HTML 모델, 체크인된 Golden JSON과 RTL telemetry를 자동 비교하여 geometry와 두 비동기 경계의 `-2..+2 Processing clocks` 시간 범위를 모두 통과했다. |
+| K1-4 | Complete | 입력 snapshot을 고정하고 과거 결과 재사용 없이 11개 Gate를 통과했다. 두 routine clock×32/64/128-bit 공개 Top 구현의 최소 WNS는 `+0.133 ns`이고, 동일 물리 150 MHz 및 ASYNC 200/50, 50/200, 150/100 MHz 직접 CDC, DDR/PS/HTML byte 비교, package/XGUI/OOC를 모두 재검증했다. 상세 근거는 `V2_CHECKPOINT_K1_4_FINAL_SIGNOFF_KO.md`와 세션 `260809_k14_final13_v2_k14_signoff`다. |
 
-K1-1부터 K1-3까지의 동작 및 RTL/HTML 운용 계약 closure가 완료되었으므로 다음
-단계는 K1-4 최종 회귀와 package/XGUI/OOC 재검사이다. K1-3의 HTML PASS는 앞선
-상태/설정 계약을 대체하지 않으며, 상세 근거는
-`V2_CHECKPOINT_K1_3_RTL_HTML_OPERATING_MATRIX_KO.md`에 기록한다. 실제 VDMA,
-HP port, DDR cache와 PCB GPX/LVDS/laser 검증은 Stage 9 L0에 남으며 K1 Sign-off
-범위에 포함하지 않는다.
+K1-1부터 K1-4까지의 동작, RTL/HTML 운용 계약과 IP package closure가 완료됐다.
+K1-3의 HTML PASS는 앞선 상태/설정 계약을 대체하지 않고, K1-4의 package PASS도
+실제 보드 검증을 대체하지 않는다. 다음 단계는 Stage 9 L0에서 실제 VDMA, HP port,
+FreeRTOS/PetaLinux DMA cache, PCB GPX/LVDS와 laser/Ethernet을 순서대로 검증하는
+것이다.

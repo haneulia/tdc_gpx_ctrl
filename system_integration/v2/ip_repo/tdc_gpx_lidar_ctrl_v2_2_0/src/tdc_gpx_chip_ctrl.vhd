@@ -305,20 +305,25 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- registered at occupancy 4; two additional data slots absorb the raw
     -- valid/response-skid reaction latency before the source stops. Thus:
     --
-    --   8 total = 4 backlog + 2 backpressure reaction + 2 control reserve
+    --   9 total = 4 backlog + 2 backpressure reaction + 2 control reserve
+    --             + 1 registered-credit elasticity
     --
     -- The old shift-register implementation scanned every valid bit, shifted
     -- all entries on dequeue, and searched/compacted again for control-beat
     -- eviction. Besides being difficult to prove, it asserted source busy
     -- only at full even though data was rejected at occupancy 5. The circular
     -- FIFO below uses one read pointer, one write pointer, and one count.
-    constant c_RAW_FIFO_DEPTH : natural := 8;
+    -- The elasticity slot lets write admission use only the registered count.
+    -- A pop in the current cycle is deliberately not reused by a concurrent
+    -- push, which removes the downstream-ready-to-LUTRAM-WE timing path.
+    constant c_RAW_FIFO_DEPTH : natural := 9;
     constant c_RAW_CONTROL_RESERVE : natural := 2;
     constant c_RAW_BP_REACTION     : natural := 2;
+    constant c_RAW_CREDIT_ELASTICITY : natural := 1;
     constant c_RAW_DATA_LIMIT      : natural :=
         c_RAW_FIFO_DEPTH - c_RAW_CONTROL_RESERVE;
     constant c_RAW_BUSY_LEVEL      : natural :=
-        c_RAW_DATA_LIMIT - c_RAW_BP_REACTION;
+        c_RAW_DATA_LIMIT - c_RAW_BP_REACTION - c_RAW_CREDIT_ELASTICITY;
 
     type t_raw_fifo_mem is array (0 to c_RAW_FIFO_DEPTH - 1)
         of std_logic_vector(c_RAW_AXIS_PACK_WIDTH - 1 downto 0);
@@ -354,8 +359,9 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_run_rsp_valid   : std_logic;
     signal s_run_rsp_pending : std_logic;  -- "arrived at bus_phy/skid, not yet consumed"
     signal s_run_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
-    signal s_reg_rsp_valid   : std_logic;
-    signal s_reg_rsp_rdata   : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+    signal s_reg_rsp_valid_r : std_logic := '0';
+    signal s_reg_rsp_rdata_r : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0)
+                               := (others => '0');
     signal s_bus_rsp_fire    : std_logic;  -- valid AND ready: true "accepted" pulse
     signal s_bus_rsp_pending_i : std_logic;
     signal s_rsp_sk_sdata    : std_logic_vector(c_BUS_RSP_PACK_WIDTH - 1 downto 0);
@@ -384,11 +390,11 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     -- =========================================================================
     -- Range counter + error detection
     -- =========================================================================
-    signal s_range_cnt_r          : unsigned(15 downto 0) := (others => '0');
+    signal s_range_remaining_r    : unsigned(15 downto 0) := (others => '0');
     signal s_range_active_r       : std_logic := '0';
     signal s_range_active_prev_r  : std_logic := '0';
     signal s_err_drain_timeout_r  : std_logic := '0';
-    signal s_err_drain_to_fired_r : std_logic := '0';
+    signal s_range_timeout_armed_r : std_logic := '0';
     signal s_err_sequence_r       : std_logic := '0';
     signal s_err_rsp_mismatch_r   : std_logic := '0';  -- sticky: bus response tuser mismatch
     signal s_err_raw_overflow_r   : std_logic := '0';  -- sticky: FIFO credit violation
@@ -399,8 +405,6 @@ architecture coordinator of tdc_gpx_chip_ctrl is
     signal s_bus_fatal_event_c    : std_logic := '0';
     signal s_raw_push_c           : std_logic := '0';
     signal s_raw_control_c        : std_logic := '0';
-    signal s_raw_pop_c            : std_logic := '0';
-    signal s_raw_count_after_pop_c : natural range 0 to c_RAW_FIFO_DEPTH := 0;
     signal s_drain_done_faulted   : std_logic;  -- Round 13 axis 1a: from chip_run
     -- Round 13 axis 2: software-visible bus fatal sticky.
     -- Set when PH_RESP_DRAIN quarantine reaches saturation (~65K cycles
@@ -547,8 +551,8 @@ begin
             o_bus_req_rw    => s_reg_bus_rw,
             o_bus_req_addr  => s_reg_bus_addr,
             o_bus_req_wdata => s_reg_bus_wdata,
-            i_bus_rsp_valid => s_reg_rsp_valid,
-            i_bus_rsp_rdata => s_reg_rsp_rdata,
+            i_bus_rsp_valid => s_reg_rsp_valid_r,
+            i_bus_rsp_rdata => s_reg_rsp_rdata_r,
             o_err_req_overflow => o_err_reg_overflow,
             i_soft_clear       => i_soft_clear
         );
@@ -616,11 +620,33 @@ begin
     -- chip_run uses this to:
     --   - freeze EF1/EF2/BURST wait watchdogs on downstream backpressure
     --   - decide DRAIN_FLUSH / OVERRUN_FLUSH completion (Round 5 #1/#2)
-    s_run_rsp_pending <= s_bus_rsp_pending_i
-                         when s_phase_r = PH_RUN else '0';
+    -- chip_run is started only after PH_RUN ownership is granted, and the
+    -- coordinator cannot leave PH_RESP_DRAIN until this predicate is zero.
+    -- A second PH_RUN qualification is therefore redundant. Removing it keeps
+    -- the immediate pending observation needed to prevent duplicate IFIFO
+    -- reads while cutting s_phase_r out of the 200 MHz run-FSM timing cone.
+    s_run_rsp_pending <= s_bus_rsp_pending_i;
     s_run_rsp_rdata  <= s_rsp_sk_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
-    s_reg_rsp_valid  <= s_bus_rsp_fire when s_phase_r = PH_REG else '0';
-    s_reg_rsp_rdata  <= s_rsp_sk_tdata(g_BUS_DATA_WIDTH - 1 downto 0);
+    -- 개별 GPX 레지스터 응답은 한 단계 등록한 뒤 register sub-FSM에
+    -- 전달한다. 유지보수 트랜잭션만 1 TDC clock 늦어지며, PH_REG 상태
+    -- 선택에서 16-bit timeout counter까지 이어지던 긴 조합 경로를
+    -- 끊는다. STOP/IFIFO 실시간 획득 경로(PH_RUN)는 변경하지 않는다.
+    p_register_response_route : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if s_sub_rst_n = '0' then
+                s_reg_rsp_valid_r <= '0';
+                s_reg_rsp_rdata_r <= (others => '0');
+            else
+                s_reg_rsp_valid_r <= '0';
+                if s_bus_rsp_fire = '1' and s_phase_r = PH_REG then
+                    s_reg_rsp_valid_r <= '1';
+                    s_reg_rsp_rdata_r <= s_rsp_sk_tdata(
+                        g_BUS_DATA_WIDTH - 1 downto 0);
+                end if;
+            end if;
+        end if;
+    end process p_register_response_route;
 
     -- =========================================================================
     -- Tick enable generation (from bus_clk_div snapshot)
@@ -1051,10 +1077,10 @@ begin
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
-                s_range_cnt_r          <= (others => '0');
+                s_range_remaining_r    <= (others => '0');
                 s_range_active_prev_r  <= '0';
                 s_err_drain_timeout_r  <= '0';
-                s_err_drain_to_fired_r <= '0';
+                s_range_timeout_armed_r <= '0';
                 s_err_sequence_r       <= '0';
             else
                 s_err_drain_timeout_r <= '0';
@@ -1062,18 +1088,30 @@ begin
                 s_range_active_prev_r <= s_range_active_r;
 
                 if s_range_active_r = '1' and s_range_active_prev_r = '0' then
-                    s_range_cnt_r          <= (others => '0');
-                    s_err_drain_to_fired_r <= '0';
-                elsif s_range_active_r = '1' then
-                    if s_range_budget_tdc_snap_r /= 0
-                       and s_range_cnt_r >= s_range_budget_tdc_snap_r then
-                        if s_err_drain_to_fired_r = '0' then
-                            s_err_drain_timeout_r  <= '1';
-                            s_err_drain_to_fired_r <= '1';
-                        end if;
+                    -- 기존 up-counter의 timeout은 range 시작 뒤
+                    -- budget+1 번째 active edge에서 발생했다. Budget을
+                    -- 그대로 load하고 zero를 한 번 더 관찰해 같은 시점을
+                    -- 유지한다. 0은 timeout disable 계약이다.
+                    s_range_remaining_r <= s_range_budget_tdc_snap_r;
+                    if s_range_budget_tdc_snap_r = 0 then
+                        s_range_timeout_armed_r <= '0';
                     else
-                        s_range_cnt_r <= s_range_cnt_r + 1;
+                        s_range_timeout_armed_r <= '1';
                     end if;
+                elsif s_range_active_r = '1' and
+                      s_range_timeout_armed_r = '1' then
+                    -- zero cycle에서도 한 번 감산해 wrap되지만 같은 edge에
+                    -- armed를 내리므로 값은 다시 사용되지 않는다. 이 방식은
+                    -- zero comparator가 counter 자신의 CE/D 경로로 되먹임되는
+                    -- 것을 막아 200 MHz carry path를 단순화한다.
+                    s_range_remaining_r <= s_range_remaining_r - 1;
+                    if s_range_remaining_r = 0 then
+                        s_err_drain_timeout_r <= '1';
+                        s_range_timeout_armed_r <= '0';
+                    end if;
+                elsif s_range_active_r = '0' then
+                    s_range_remaining_r <= (others => '0');
+                    s_range_timeout_armed_r <= '0';
                 end if;
 
                 -- Sequence error: the Laser measurement window ended before
@@ -1126,20 +1164,18 @@ begin
     o_puresn         <= s_init_puresn;
     o_alutrigger     <= s_run_alutrigger;
 
-    -- Raw FIFO credit event uses the same pop-before-push occupancy contract
-    -- as p_raw_fifo. The named predicate is diagnostic-only and is also the
-    -- stable fault-injection point for the CLEAR_STATUS regression.
-    s_raw_pop_c <= '1' when
-        s_raw_count_r > 0 and i_m_raw_axis_tready = '1' else '0';
-    s_raw_count_after_pop_c <= s_raw_count_r - 1 when s_raw_pop_c = '1'
-                               else s_raw_count_r;
+    -- Push credit depends only on the registered occupancy. The extra
+    -- elasticity slot absorbs a same-cycle pop that is intentionally not
+    -- reused, so downstream ready cannot reach the LUTRAM write enable.
+    -- This named predicate is diagnostic-only and remains the stable
+    -- fault-injection point for the CLEAR_STATUS regression.
     s_raw_push_c <= s_run_drain_done or s_run_ififo1_beat or s_run_raw_valid;
     s_raw_control_c <= s_run_drain_done or s_run_ififo1_beat;
     s_raw_drop_event_c <= '1' when s_raw_push_c = '1' and (
         (s_raw_control_c = '1' and
-         s_raw_count_after_pop_c >= c_RAW_FIFO_DEPTH) or
+         s_raw_count_r >= c_RAW_FIFO_DEPTH) or
         (s_raw_control_c = '0' and
-         s_raw_count_after_pop_c >= c_RAW_DATA_LIMIT))
+         s_raw_count_r >= c_RAW_DATA_LIMIT))
         else '0';
 
     -- Sub-FSM diagnostics historically clear on a real sub-FSM reset as well
@@ -1165,9 +1201,11 @@ begin
         end if;
     end process p_subsystem_fault_status;
 
-    -- AXI-Stream raw word FIFO. Pop is applied before push in the variable
-    -- count snapshot, so a full FIFO can still sustain one pop + one push in
-    -- the same cycle. Memory contents are not reset; count=0 defines empty.
+    -- AXI-Stream raw word FIFO. Pop updates the next count before push, but
+    -- push admission uses the registered pre-pop count. The ninth elasticity
+    -- slot preserves lossless reaction capacity without a combinational
+    -- downstream-ready path into memory WE. Memory contents are not reset;
+    -- count=0 defines empty.
     p_raw_fifo : process(i_clk)
         variable v_rd_ptr  : natural range 0 to c_RAW_FIFO_DEPTH - 1;
         variable v_wr_ptr  : natural range 0 to c_RAW_FIFO_DEPTH - 1;
@@ -1237,9 +1275,9 @@ begin
 
                 if v_push then
                     if v_control then
-                        v_accept := v_count < c_RAW_FIFO_DEPTH;
+                        v_accept := s_raw_count_r < c_RAW_FIFO_DEPTH;
                     else
-                        v_accept := v_count < c_RAW_DATA_LIMIT;
+                        v_accept := s_raw_count_r < c_RAW_DATA_LIMIT;
                     end if;
 
                     if v_accept then

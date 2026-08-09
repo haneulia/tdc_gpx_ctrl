@@ -7,10 +7,13 @@
 --   Handles powerup sequence, cfg_write, and master reset for one TDC-GPX chip.
 --   Extracted from tdc_gpx_chip_ctrl to reduce FSM complexity.
 --
--- FSM States (9):
---   ST_POWERUP → ST_PU_RELEASE → ST_STOPDIS_HIGH → ST_CFG_WRITE →
---   ST_CFG_WR_WAIT → ST_MASTER_RESET → ST_MR_WAIT → ST_RECOVERY →
---   ST_STOPDIS_LOW → done
+-- Full-init path (12 active states):
+--   ST_POWERUP → ST_PU_RELEASE → ST_STOPDIS_HIGH → ST_CFG_PREFETCH →
+--   ST_CFG_PREPARE → ST_CFG_WRITE → ST_CFG_WR_WAIT →
+--   ST_MASTER_RESET → ST_MR_ISSUE →
+--   ST_MR_WAIT → ST_RECOVERY → ST_STOPDIS_LOW → done
+--   PREPARE/ISSUE 분리는 register-image mux와 valid 발행을 서로 다른
+--   TDC clock에 수행하여 200 MHz 초기화 경로의 조합 깊이를 제한한다.
 --
 -- Interface:
 --   Coordinator asserts i_start to begin init sequence.
@@ -96,9 +99,12 @@ architecture rtl of tdc_gpx_chip_init is
         ST_POWERUP,
         ST_PU_RELEASE,
         ST_STOPDIS_HIGH,
+        ST_CFG_PREFETCH,
+        ST_CFG_PREPARE,
         ST_CFG_WRITE,
         ST_CFG_WR_WAIT,
         ST_MASTER_RESET,
+        ST_MR_ISSUE,
         ST_MR_WAIT,
         ST_RECOVERY,
         ST_STOPDIS_LOW
@@ -122,6 +128,12 @@ architecture rtl of tdc_gpx_chip_init is
     signal s_req_rw_r        : std_logic := '0';
     signal s_req_addr_r      : std_logic_vector(3 downto 0) := (others => '0');
     signal s_req_wdata_r     : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_cfg_addr_prefetch_r : std_logic_vector(3 downto 0) :=
+        (others => '0');
+    signal s_cfg_wdata_prefetch_r :
+        std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
+    signal s_mr_wdata_prefetch_r :
+        std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0) := (others => '0');
     signal s_puresn_r        : std_logic := '0';
     signal s_stopdis_r       : std_logic := '1';
     signal s_busy_r          : std_logic := '0';
@@ -135,9 +147,49 @@ architecture rtl of tdc_gpx_chip_init is
 
 begin
 
-    p_fsm : process(i_clk)
+    -- 설정 image 선택과 Reg14 안전 보정을 FSM decode와 분리해 미리
+    -- 등록한다. s_cfg_idx_r 변경 뒤 ST_CFG_PREFETCH clock에서 이 값을
+    -- 갱신하고, ST_CFG_PREPARE가 request register로 옮긴 뒤 valid를 낸다.
+    p_request_prefetch : process(i_clk)
+        variable v_sequence_index : natural range 0 to c_CFG_WRITE_LAST;
         variable v_reg_num : natural range 0 to 15;
-        variable v_wr_data : std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        variable v_cfg_data :
+            std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+        variable v_mr_data :
+            std_logic_vector(g_BUS_DATA_WIDTH - 1 downto 0);
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                s_cfg_addr_prefetch_r <= (others => '0');
+                s_cfg_wdata_prefetch_r <= (others => '0');
+                s_mr_wdata_prefetch_r <= (others => '0');
+            else
+                if to_integer(s_cfg_idx_r) <= c_CFG_WRITE_LAST then
+                    v_sequence_index := to_integer(s_cfg_idx_r);
+                else
+                    v_sequence_index := 0;
+                end if;
+                v_reg_num := c_CFG_WRITE_SEQ(v_sequence_index);
+                v_cfg_data := i_cfg_image(v_reg_num)(
+                    g_BUS_DATA_WIDTH - 1 downto 0);
+                -- TDC-GPX 16-bit mode에는 CSN 오동작 erratum이 있으므로
+                -- 이 controller는 안전한 28-bit bus sequence만 허용한다.
+                if v_reg_num = 14 then
+                    v_cfg_data(4) := '0';
+                end if;
+                s_cfg_addr_prefetch_r <= std_logic_vector(
+                    to_unsigned(v_reg_num, 4));
+                s_cfg_wdata_prefetch_r <= v_cfg_data;
+
+                v_mr_data := i_cfg_image(4)(
+                    g_BUS_DATA_WIDTH - 1 downto 0);
+                v_mr_data(22) := '1';
+                s_mr_wdata_prefetch_r <= v_mr_data;
+            end if;
+        end if;
+    end process p_request_prefetch;
+
+    p_fsm : process(i_clk)
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
@@ -223,21 +275,19 @@ begin
                     when ST_STOPDIS_HIGH =>
                         s_stopdis_r <= '1';
                         s_cfg_idx_r <= (others => '0');
-                        s_state_r   <= ST_CFG_WRITE;
+                        s_state_r   <= ST_CFG_PREFETCH;
+
+                    when ST_CFG_PREFETCH =>
+                        s_state_r   <= ST_CFG_PREPARE;
+
+                    when ST_CFG_PREPARE =>
+                        s_req_rw_r    <= '1';
+                        s_req_addr_r  <= s_cfg_addr_prefetch_r;
+                        s_req_wdata_r <= s_cfg_wdata_prefetch_r;
+                        s_state_r     <= ST_CFG_WRITE;
 
                     when ST_CFG_WRITE =>
-                        v_reg_num     := c_CFG_WRITE_SEQ(to_integer(s_cfg_idx_r));
                         s_req_valid_r <= '1';
-                        s_req_rw_r    <= '1';
-                        s_req_addr_r  <= std_logic_vector(to_unsigned(v_reg_num, 4));
-                        v_wr_data     := i_cfg_image(v_reg_num)(g_BUS_DATA_WIDTH - 1 downto 0);
-                        -- Safety: force Reg14[4]=0 to block 16-bit mode.
-                        -- TDC-GPX 16-bit mode has CSN malfunction bug and requires
-                        -- workaround sequences not implemented in this RTL.
-                        if v_reg_num = 14 then
-                            v_wr_data(4) := '0';
-                        end if;
-                        s_req_wdata_r <= v_wr_data;
                         s_state_r     <= ST_CFG_WR_WAIT;
 
                     when ST_CFG_WR_WAIT =>
@@ -254,7 +304,7 @@ begin
                                 end if;
                             else
                                 s_cfg_idx_r <= s_cfg_idx_r + 1;
-                                s_state_r   <= ST_CFG_WRITE;
+                                s_state_r   <= ST_CFG_PREFETCH;
                             end if;
                         elsif s_rsp_timeout_r = x"FFFF" then
                             -- Timeout: force done with error (bus hung).
@@ -273,12 +323,13 @@ begin
                         end if;
 
                     when ST_MASTER_RESET =>
-                        v_wr_data     := i_cfg_image(4)(g_BUS_DATA_WIDTH - 1 downto 0);
-                        v_wr_data(22) := '1';
-                        s_req_valid_r <= '1';
                         s_req_rw_r    <= '1';
                         s_req_addr_r  <= c_TDC_REG4;
-                        s_req_wdata_r <= v_wr_data;
+                        s_req_wdata_r <= s_mr_wdata_prefetch_r;
+                        s_state_r     <= ST_MR_ISSUE;
+
+                    when ST_MR_ISSUE =>
+                        s_req_valid_r <= '1';
                         s_state_r     <= ST_MR_WAIT;
 
                     when ST_MR_WAIT =>

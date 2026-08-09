@@ -442,9 +442,13 @@ begin
         config_v := fn_test_config(210, 2, 2);
         load_config(config_v);
         acquisition_ready <= '0';
+        -- Admission은 200 MHz 요청 경로를 보호하기 위해 한 클럭 등록된다.
+        -- 따라서 해당 각도 후보보다 먼저 ready 상태를 안정시켜야 한다.
+        wait_clocks(1);
         apply_face(110, 0, DIRECTION_CW, '1', '1', '0', '0', '1',
             false, 0, '0', true, "V2-SCHED-P26 GPX busy col0");
         acquisition_ready <= '1';
+        wait_clocks(1);
         apply_face(111, 0, DIRECTION_CW, '1', '0', '0', '0', '1',
             false, 0, '0', false, "V2-SCHED-P26 no late retry");
         apply_face(112, 0, DIRECTION_CW, '1', '0', '0', '0', '1',

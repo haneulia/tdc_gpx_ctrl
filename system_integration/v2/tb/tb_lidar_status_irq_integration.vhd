@@ -156,6 +156,7 @@ architecture sim of tb_lidar_status_irq_integration is
         C_GPX_REGISTER_READ_RESPONSE_IDLE;
     signal register_read_response_ready : std_logic;
     signal register_read_count : natural := 0;
+    signal register_pause_age_r : natural range 0 to 3 := 0;
 
 begin
 
@@ -224,7 +225,14 @@ begin
                 register_read_response <=
                     C_GPX_REGISTER_READ_RESPONSE_IDLE;
                 register_read_count <= 0;
+                register_pause_age_r <= 0;
             else
+                if register_service_pause = '0' then
+                    register_pause_age_r <= 0;
+                elsif register_pause_age_r < 3 then
+                    register_pause_age_r <= register_pause_age_r + 1;
+                end if;
+
                 if register_read_response.valid = '1' and
                    register_read_response_ready = '1' then
                     register_read_response <=
@@ -233,6 +241,11 @@ begin
 
                 if register_read.valid = '1' and
                    register_read_ready = '1' then
+                    -- pause 적용 전의 오래된 safe 값으로 유지보수 read가
+                    -- 시작되지 않도록 두 번의 TDC edge가 지난 뒤 수락한다.
+                    assert register_pause_age_r >= 2
+                        report "K0-8 GPX read started before pause-safe pipeline"
+                        severity failure;
                     assert register_read.chip = 1 and
                            register_read.address = x"7"
                         report "K0-8 unexpected physical GPX register request"

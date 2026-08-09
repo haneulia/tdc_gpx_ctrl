@@ -144,7 +144,7 @@
         </section>
         <section class="band">
           <div class="band-head"><h2>Return별 RTL Drain 실측</h2><span class="small">폭 32-bit Return sweep</span></div>
-          <div class="band-body" style="padding:0"><table><thead><tr><th>Return</th><th class="num">Cell</th><th class="num">STOP→Line clocks</th><th class="num">시간</th></tr></thead><tbody id="drainRows"></tbody></table></div>
+          <div class="band-body" style="padding:0"><table><thead><tr><th>Return</th><th class="num">Cell</th><th class="num">실측 기준</th><th class="num">운용 예산</th><th class="num">예산 시간</th></tr></thead><tbody id="drainRows"></tbody></table></div>
         </section>
       </div>
 
@@ -180,17 +180,23 @@
       gpxReferenceTick5ns: 5,
       physicalSampleToFireClks: 9,
       rearmMarginClks: 2,
+      asyncCdcPhaseGuardClks: 2,
+      registeredCellLineDispatchClks: 2,
       shotMetadataBytes: 16,
       footerBytes: 32,
       buildMaxReturns: 7
     });
 
-    // K1-3 full-Top measurement. Each value is STOP assertion to the first
-    // accepted Shot-Line TLAST in Processing clocks. Width 64/128 at Return 7
-    // proved the same latency while only the AXIS Beat count changed.
+    // K1-4 full-Top measurement. Each value is STOP assertion to the first
+    // accepted Shot-Line TLAST in Processing clocks. The baseline includes
+    // one registered Cell dispatch and one registered Shot-Line dispatch
+    // (fixed +2 clocks). Width 64/128 at Return 7 proved the same latency while
+    // only the AXIS Beat count changed. The Processing-to-TDC and
+    // TDC-to-Processing crossings can each move an observation by one
+    // Processing clock, so the envelope remains baseline +/- two clocks.
     const RTL_DRAIN_BASELINE = Object.freeze({
-      "150/200": [304, 400, 513, 621, 755, 875, 1011],
-      "200/150": [341, 555, 784, 997, 1227, 1440, 1669]
+      "150/200": [306, 402, 515, 623, 757, 877, 1013],
+      "200/150": [343, 557, 786, 999, 1229, 1442, 1671]
     });
 
     const TOPOLOGY_NAMES = Object.freeze([
@@ -258,7 +264,9 @@
       const targetClks = ticksToClocks(effectiveTicks, procMhz);
       const measuredDrain = RTL_DRAIN_BASELINE[`${procMhz}/${tdcMhz}`][safeReturns - 1];
       const topologyScale = input.topology === 2 ? 2 : 1;
-      const drainClks = measuredDrain * topologyScale;
+      // Apply the CDC phase guard once after topology scaling. It is a boundary
+      // uncertainty, not per-chip work, so multiplying it would over-budget.
+      const drainClks = measuredDrain * topologyScale + K13.asyncCdcPhaseGuardClks;
       const physicalClks = K13.physicalSampleToFireClks;
       const tailClks = Math.max(K13.rearmMarginClks, drainClks);
       const requiredClks = physicalClks + timeoutClks + targetClks + tailClks;
@@ -297,10 +305,10 @@
             proc_mhz:procMhz, tdc_mhz:tdcMhz, width, returns,
             target_5ns:targetTicks, shot_to_start_clks:0,
             start_to_stop_clks:targetClks,
-            stop_to_line_clks_min:baseline - 1,
-            stop_to_line_clks_max:baseline,
-            shot_to_line_clks_min:targetClks + baseline - 1,
-            shot_to_line_clks_max:targetClks + baseline,
+            stop_to_line_clks_min:baseline - K13.asyncCdcPhaseGuardClks,
+            stop_to_line_clks_max:baseline + K13.asyncCdcPhaseGuardClks,
+            shot_to_line_clks_min:targetClks + baseline - K13.asyncCdcPhaseGuardClks,
+            shot_to_line_clks_max:targetClks + baseline + K13.asyncCdcPhaseGuardClks,
             hsize_bytes:geometry.hsize, vsize_lines:geometry.vsize,
             stride_bytes:geometry.stride, frame_beats:geometry.frameBeats
           });
@@ -369,8 +377,12 @@
           external_gpx_reference_mhz:K13.gpxReferenceMhz,
           physical_sample_to_fire_clks:K13.physicalSampleToFireClks,
           rearm_margin_clks:K13.rearmMarginClks,
+          async_cdc_phase_guard_clks:K13.asyncCdcPhaseGuardClks,
+          registered_cell_line_dispatch_clks:
+            K13.registeredCellLineDispatchClks,
           drain_measurement:"STOP assertion to first accepted Shot-Line TLAST",
-          timing_profile:"two-chip Rise lane; zero AXIS backpressure"
+          timing_profile:"two-chip Rise lane; zero AXIS backpressure",
+          async_phase_contract:"nominal RTL baseline +/- guard across two asynchronous CDC boundaries"
         },
         rtl_drain_baseline:RTL_DRAIN_BASELINE,
         acquisition_expectations:buildAcquisitionExpectations(),
@@ -476,14 +488,17 @@
         ["T05",`target request → GPX 25 ns quantization`,`${result.requestedTargetTicks} → ${result.effectiveTargetTicks} ticks`],
         ["T06",`fire path + timeout`,`${result.physicalClks} + ${result.timeoutClks} clocks`],
         ["T07",`effective target round-trip`,`${result.targetClks} clocks / ${fmt(result.targetOneWayMeters,2)} m`],
-        ["T08",`RTL STOP→Shot Line, Return ${input.returns}`,`${result.drainClks} clocks`],
+        ["T08",`RTL STOP→Shot Line, Return ${input.returns} (실측 ${result.measuredDrainClks} + CDC 여유 ${K13.asyncCdcPhaseGuardClks})`,`${result.drainClks} clocks`],
         ["T09",`required = fire + timeout + target + max(re-arm, drain)`,`${result.requiredClks} clocks`],
         ["T10",`candidate - required`,`${result.marginClks} clocks`]
       ];
       $("calcRows").innerHTML = rows.map(row => `<tr><td>${row[0]}</td><td>${row[1]}</td><td class="num">${row[2]}</td></tr>`).join("");
 
       const baseline = RTL_DRAIN_BASELINE[`${input.procMhz}/${input.tdcMhz}`];
-      $("drainRows").innerHTML = baseline.map((clks,index) => `<tr><td>${index+1}</td><td class="num">${cellBytes(index+1)} B</td><td class="num">${clks}</td><td class="num">${us(clks/input.procMhz)}</td></tr>`).join("");
+      $("drainRows").innerHTML = baseline.map((clks,index) => {
+        const budgetClks = clks + K13.asyncCdcPhaseGuardClks;
+        return `<tr><td>${index+1}</td><td class="num">${cellBytes(index+1)} B</td><td class="num">${clks}</td><td class="num">${budgetClks}</td><td class="num">${us(budgetClks/input.procMhz)}</td></tr>`;
+      }).join("");
 
       $("topologyRows").innerHTML = buildTopologyExpectations().map(row => `<tr><td>${row.proc_mhz} MHz</td><td>${row.width}-bit</td><td>${TOPOLOGY_NAMES[row.topology]}</td><td class="num">${row.slots}</td><td class="num">${row.hsize_bytes} B</td><td class="num">${row.frame_beats}</td></tr>`).join("");
 

@@ -135,9 +135,11 @@ chain to the public Top and close the modeled DDR/HTML plus portable
   PS/Ethernet L1 comparisons. K0-8 status/IRQ single-owner assembly, K0-9
   final implementation and K0-10 v2 packaging are complete. K1-1/K1-2 close
   status ownership and Reg7 Shadow/Active/Physical behavior. K1-3 closes the
-  40-profile RTL/HTML operating matrix. K1-4 is the final package/XGUI/OOC and
-  regression gate before L0 attaches the parent VDMA/HP-port and real
-  cache/board measurement.
+  40-profile RTL/HTML operating matrix. K1-4 closes the input-hashed final
+  regression, six-profile implementation matrix, direct sync/extreme CDC,
+  DDR/PS/Ethernet Golden and package/XGUI/OOC gate. Stage L0 is now the active
+  work for parent VDMA/HP-port and real cache/board measurement. See
+  `system_integration/v2_architecture/V2_CHECKPOINT_K1_4_FINAL_SIGNOFF_KO.md`.
 
 Run the current package regression with:
 
@@ -555,7 +557,28 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 The script measures 22 full-Top acquisition profiles and 18 output-topology
 profiles, then compares the RTL telemetry with the checked Golden JSON and the
-executable HTML model. The full regression marker is
+executable HTML model. One registered Cell-dispatch stage and one registered
+Shot-Line-dispatch stage add a fixed two Processing-clock latency, which is
+included in the HTML baseline without changing the one-item-per-clock steady
+state rate. The first complete Frame is compared exactly; any later Frame caused
+by the intentionally accelerated virtual motor must be a complete all-Hole
+Frame rather than a partial or duplicated data Frame. The full regression marker is
 `LIDAR_V2_K13_OPERATING_MATRIX_PASS`; the standalone verifier marker is
 `LIDAR_V2_K13_RTL_HTML_OPERATING_MATRIX_PASS`. See
 `system_integration/v2_architecture/V2_CHECKPOINT_K1_3_RTL_HTML_OPERATING_MATRIX_KO.md`.
+
+Run the input-hashed K1-4 integrated RTL/IP Sign-off with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/scripts/run_v2_k14_signoff.ps1 `
+  -Stamp <unique_stamp>
+```
+
+The final marker is `LIDAR_V2_K14_SIGNOFF_PASS`. The clean final session
+`260809_k14_final13_v2_k14_signoff` executed all 11 gates without reusing an
+earlier result. Its input snapshot is
+`E148F42982B51C40D89DE5594829D3C81C6A87B08421C3F0C679619360CC61AF`, and the
+minimum routed public-Top WNS is `+0.133 ns`. This is RTL/IP release evidence;
+physical VDMA/HP-port traffic, DMA cache maintenance, PCB TDC-GPX/LVDS timing,
+laser safety and sustained Ethernet remain Stage L0 board evidence.

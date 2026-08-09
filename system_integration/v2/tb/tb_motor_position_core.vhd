@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 테스트 자산 목적: 물리/가상 Encoder 상태를 하나의 모터 위치 event로 만드는 코어를 검증한다.
--- 핵심 검증 계약: CW/CCW, x1/x2/x4, virtual x4, Z/wrap과 측정 latency가 정확하다.
+-- 핵심 검증 계약: CW/CCW, x1/x2/x4, virtual x4, Z/wrap/폭 제한과 측정 latency가 정확하다.
 -- 관련 RTL: motor_position_core, quadrature/virtual encoder 하위 코어.
 -- 실행 회귀: scripts/run_v2_motor_position.ps1
 -- 유지보수 주의: decode 또는 방향 의미 변경 시 동일 원시 A/B/Z 벡터로 양 방향을 비교한다.
@@ -32,7 +32,8 @@ architecture sim of tb_motor_position_core is
         decode_mode   : decode_mode_t;
         direction     : direction_t;
         total_states  : positive;
-        ticks_lo      : positive
+        ticks_lo      : positive;
+        z_width_clks  : natural
     ) return lidar_active_config_t is
         variable result     : lidar_active_config_t;
         variable source_v   : lidar_runtime_config_t;
@@ -49,7 +50,8 @@ architecture sim of tb_motor_position_core is
             ticks_lo, source_v.motor.virtual_ticks_lo'length);
         source_v.motor.virtual_hi_count := (others => '0');
         source_v.motor.z_offset := (others => '0');
-        source_v.motor.z_width := (others => '0');
+        source_v.motor.z_width := to_unsigned(
+            z_width_clks, source_v.motor.z_width'length);
         source_v.motor.z_early := '0';
 
         result.version := to_unsigned(version_value, result.version'length);
@@ -64,19 +66,21 @@ architecture sim of tb_motor_position_core is
     end function fn_core_config;
 
     constant C_CFG_PHYS_X1 : lidar_active_config_t := fn_core_config(
-        11, '0', DECODE_X1, DIRECTION_CW, 8, 8);
+        11, '0', DECODE_X1, DIRECTION_CW, 8, 8, 0);
     constant C_CFG_PHYS_X2 : lidar_active_config_t := fn_core_config(
-        12, '0', DECODE_X2, DIRECTION_CW, 8, 8);
+        12, '0', DECODE_X2, DIRECTION_CW, 8, 8, 0);
     constant C_CFG_PHYS_X4 : lidar_active_config_t := fn_core_config(
-        13, '0', DECODE_X4, DIRECTION_CW, 8, 8);
+        13, '0', DECODE_X4, DIRECTION_CW, 8, 8, 0);
     constant C_CFG_PHYS_INV : lidar_active_config_t := fn_core_config(
-        14, '0', DECODE_X4, DIRECTION_CCW, 8, 8);
+        14, '0', DECODE_X4, DIRECTION_CCW, 8, 8, 0);
     constant C_CFG_SIM_SLOW : lidar_active_config_t := fn_core_config(
-        20, '1', DECODE_X4, DIRECTION_CW, 8, 8);
+        20, '1', DECODE_X4, DIRECTION_CW, 8, 8, 0);
     constant C_CFG_SIM_CW : lidar_active_config_t := fn_core_config(
-        21, '1', DECODE_X4, DIRECTION_CW, 4, 2);
+        21, '1', DECODE_X4, DIRECTION_CW, 4, 2, 0);
     constant C_CFG_SIM_CCW : lidar_active_config_t := fn_core_config(
-        22, '1', DECODE_X4, DIRECTION_CCW, 4, 2);
+        22, '1', DECODE_X4, DIRECTION_CCW, 4, 2, 0);
+    constant C_CFG_SIM_Z_CLAMP : lidar_active_config_t := fn_core_config(
+        23, '1', DECODE_X4, DIRECTION_CW, 4, 2, 3);
 
     signal clk           : std_logic := '0';
     signal rst_n         : std_logic := '0';
@@ -431,6 +435,35 @@ begin
         wait_virtual_transition('0', '0', 0, DIRECTION_CCW, '0',
             "V2-MOTOR-P04 virtual CCW first wrap");
         report "V2-MOTOR-P04 virtual source and latency: PASS" severity note;
+
+        -- P05: requested Z width 3 clocks exceeds the selected 2-clock
+        -- encoder-state interval. The source must use the precomputed LO
+        -- limit, so Z is low on the clock immediately after its second high
+        -- cycle. This guards the timing optimization as a functional contract.
+        reset_dut;
+        load_config(C_CFG_SIM_Z_CLAMP);
+        wait_virtual_transition('1', '0', 1, DIRECTION_CW, '0',
+            "V2-MOTOR-P05 virtual CW 0");
+        wait_virtual_transition('1', '1', 2, DIRECTION_CW, '0',
+            "V2-MOTOR-P05 virtual CW 1");
+        wait_virtual_transition('0', '1', 3, DIRECTION_CW, '0',
+            "V2-MOTOR-P05 virtual CW 2");
+        wait_virtual_transition('0', '0', 0, DIRECTION_CW, '0',
+            "V2-MOTOR-P05 first wrap guard");
+        wait_virtual_transition('1', '0', 1, DIRECTION_CW, '0',
+            "V2-MOTOR-P05 virtual CW 4");
+        wait_virtual_transition('1', '1', 2, DIRECTION_CW, '0',
+            "V2-MOTOR-P05 virtual CW 5");
+        wait_virtual_transition('0', '1', 3, DIRECTION_CW, '0',
+            "V2-MOTOR-P05 virtual CW 6");
+        wait_virtual_transition('0', '0', 0, DIRECTION_CW, '1',
+            "V2-MOTOR-P05 qualified Z");
+        check(virtual_z = '1',
+            "V2-MOTOR-P05 Z was not high on its second clamped cycle");
+        wait_clocks(1);
+        check(virtual_z = '0',
+            "V2-MOTOR-P05 Z width was not clamped from 3 to 2 clocks");
+        report "V2-MOTOR-P05 virtual Z width clamp: PASS" severity note;
 
         report "LIDAR_V2_MOTOR_POSITION_PASS proc_mhz=" &
             integer'image(G_PROC_CLK_MHZ) severity note;

@@ -101,6 +101,7 @@ architecture rtl of lidar_gpx_acquisition_coordinator is
         (others => C_GPX_RAW_EVENT_IDLE);
     signal lane_event_ready_c : chip_mask_t := (others => '0');
     signal lane_config_ready_c : chip_mask_t := (others => '0');
+    signal lane_config_ready_r : chip_mask_t := (others => '0');
     signal lane_config_done_c : chip_mask_t := (others => '0');
     signal lane_safe_c : chip_mask_t := (others => '1');
     signal lane_register_read_c : gpx_register_read_request_array_t :=
@@ -140,6 +141,10 @@ architecture rtl of lidar_gpx_acquisition_coordinator is
 
     signal register_read_ready_c : std_logic := '0';
     signal register_read_accept_c : std_logic := '0';
+    signal register_request_r : gpx_register_read_request_t :=
+        C_GPX_REGISTER_READ_REQUEST_IDLE;
+    signal register_request_pending_r : std_logic := '0';
+    signal register_lane_accept_c : std_logic := '0';
     signal register_read_outstanding_r : std_logic := '0';
     signal register_read_chip_r : gpx_chip_select_t := (others => '0');
     signal register_read_response_c : gpx_register_read_response_t :=
@@ -154,34 +159,49 @@ begin
     active_mask_c <=
         i_active_config.source.tdc.active_chip_mask and C_PRESENT_MASK
         when i_active_valid = '1' else (others => '0');
-    lane_run_enable_c <= active_mask_c when i_run_enable = '1' else
-        (others => '0');
+    lane_run_enable_c <= active_mask_c when i_rst_n = '1' and
+        i_soft_reset = '0' and i_force_reinit = '0' and
+        i_run_enable = '1' and
+        register_request_pending_r = '0' and
+        register_read_outstanding_r = '0' else (others => '0');
 
-    shot_ready_c <= '1' when i_active_valid = '1' and
+    shot_ready_c <= '1' when i_rst_n = '1' and
+        i_soft_reset = '0' and i_force_reinit = '0' and
+        i_active_valid = '1' and
         i_run_enable = '1' and active_mask_c /= (active_mask_c'range => '0') and
         (lane_shot_ready_c and active_mask_c) = active_mask_c and
+        register_request_pending_r = '0' and
+        register_read_outstanding_r = '0' and
         shot_dispatch_r.valid = '0' and
         merge_outstanding_c = '0' else '0';
     shot_accept_c <= i_shot.valid and shot_ready_c;
 
-    config_ready_c <= '1' when config_inflight_r = '0' and
+    config_ready_c <= '1' when i_rst_n = '1' and
+        i_soft_reset = '0' and i_force_reinit = '0' and
+        config_inflight_r = '0' and
+        register_request_pending_r = '0' and
         register_read_outstanding_r = '0' and
         shot_dispatch_r.valid = '0' and
         merge_outstanding_c = '0' and
-        (lane_config_ready_c and C_PRESENT_MASK) = C_PRESENT_MASK else '0';
+        (lane_config_ready_r and C_PRESENT_MASK) = C_PRESENT_MASK else '0';
     config_accept_c <= i_config_apply and config_ready_c;
 
     -- Register 주소의 상위 2 bit는 Chip 선택이다. present Chip만 허용하며
-    -- acquisition pause로 i_run_enable이 내려간 뒤 Lane이 IDLE일 때 수락한다.
+    -- acquisition pause로 i_run_enable이 내려간 뒤 요청 버퍼가 비었을 때
+    -- 수락한다. 선택 Lane의 ready는 외부 ready에 조합 연결하지 않는다.
+    -- 저장한 요청은 Lane이 실제로 IDLE이 될 때까지 valid를 유지한다.
     register_read_ready_c <= '1' when
+        i_rst_n = '1' and i_soft_reset = '0' and i_force_reinit = '0' and
+        register_request_pending_r = '0' and
         register_read_outstanding_r = '0' and
         config_inflight_r = '0' and shot_dispatch_r.valid = '0' and
         merge_outstanding_c = '0' and i_run_enable = '0' and
-        C_PRESENT_MASK(to_integer(i_register_read.chip)) = '1' and
-        lane_register_ready_c(to_integer(i_register_read.chip)) = '1'
+        C_PRESENT_MASK(to_integer(i_register_read.chip)) = '1'
         else '0';
     register_read_accept_c <= i_register_read.valid and
         register_read_ready_c;
+    register_lane_accept_c <= register_request_pending_r and
+        lane_register_ready_c(to_integer(register_request_r.chip));
 
     o_shot_ready <= shot_ready_c;
     o_config_ready <= config_ready_c;
@@ -189,6 +209,7 @@ begin
     o_register_read_ready <= register_read_ready_c;
     o_register_read_response <= register_read_response_c;
     o_safe <= '1' when config_inflight_r = '0' and
+                      register_request_pending_r = '0' and
                       register_read_outstanding_r = '0' and
                       shot_dispatch_r.valid = '0' and
                       merge_outstanding_c = '0' and
@@ -214,8 +235,8 @@ begin
         variable value : gpx_register_read_request_array_t;
     begin
         value := (others => C_GPX_REGISTER_READ_REQUEST_IDLE);
-        if register_read_accept_c = '1' then
-            value(to_integer(i_register_read.chip)) := i_register_read;
+        if register_request_pending_r = '1' then
+            value(to_integer(register_request_r.chip)) := register_request_r;
         end if;
         lane_register_read_c <= value;
     end process p_register_request_demux;
@@ -236,18 +257,32 @@ begin
         lane_register_response_ready_c <= ready_value;
     end process p_register_response_mux;
 
-    -- 요청 Chip을 transaction 동안 고정한다. Lane response의 valid/data는
-    -- ready까지 유지되므로 진단 소비자의 backpressure에도 결과가 보존된다.
+    -- 외부 요청을 먼저 1-entry 버퍼에 저장한다. 선택 Lane이 요청을 받는
+    -- 순간부터 outstanding 소유권으로 전환하며, 응답 valid/data는 소비자
+    -- ready까지 유지한다. 이 경계가 Lane ready의 긴 조합 경로를 끊는다.
     p_register_owner : process (i_clk)
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' then
+                register_request_r <= C_GPX_REGISTER_READ_REQUEST_IDLE;
+                register_request_pending_r <= '0';
+                register_read_outstanding_r <= '0';
+                register_read_chip_r <= (others => '0');
+            elsif i_soft_reset = '1' or i_force_reinit = '1' then
+                register_request_r <= C_GPX_REGISTER_READ_REQUEST_IDLE;
+                register_request_pending_r <= '0';
                 register_read_outstanding_r <= '0';
                 register_read_chip_r <= (others => '0');
             else
                 if register_read_accept_c = '1' then
+                    register_request_r <= i_register_read;
+                    register_request_r.valid <= '1';
+                    register_request_pending_r <= '1';
+                elsif register_lane_accept_c = '1' then
+                    register_request_r <= C_GPX_REGISTER_READ_REQUEST_IDLE;
+                    register_request_pending_r <= '0';
                     register_read_outstanding_r <= '1';
-                    register_read_chip_r <= i_register_read.chip;
+                    register_read_chip_r <= register_request_r.chip;
                 elsif register_read_response_c.valid = '1' and
                       i_register_read_response_ready = '1' then
                     register_read_outstanding_r <= '0';
@@ -302,6 +337,22 @@ begin
             end if;
         end if;
     end process p_shot_dispatch;
+
+    -- Lane별 config ready를 먼저 등록한 뒤 coordinator에서 축약한다.
+    -- GPX raw FIFO occupancy가 config_accept와 완료 레지스터의 200 MHz
+    -- enable 경로로 직접 전파되지 않게 하며, ready 상승은 한 clock
+    -- 보수적으로 늦어진다. reset/force는 config_ready_c에서 즉시 막는다.
+    p_config_ready_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_soft_reset = '1' or
+               i_force_reinit = '1' then
+                lane_config_ready_r <= (others => '0');
+            else
+                lane_config_ready_r <= lane_config_ready_c;
+            end if;
+        end if;
+    end process p_config_ready_pipeline;
 
     p_config_completion : process (i_clk)
         variable completed : chip_mask_t;

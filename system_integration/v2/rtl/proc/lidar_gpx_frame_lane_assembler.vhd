@@ -85,6 +85,7 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
 
     type assembler_state_t is (
         S_COLLECT,
+        S_FACE_CLOSE_CONTEXT,
         S_FACE_CLOSE_GEOMETRY,
         S_FACE_CLOSE_APPLY,
         S_EVENT_CHECK,
@@ -122,6 +123,8 @@ architecture rtl of lidar_gpx_frame_lane_assembler is
         C_FACE_CLOSE_EVENT_IDLE;
     signal pending_close_geometry_fault_r : std_logic := '0';
     signal pending_close_gap_fault_r : std_logic := '0';
+    signal pending_close_all_hole_r : std_logic := '0';
+    signal pending_close_history_match_r : std_logic := '0';
     signal pending_context_match_r : std_logic := '0';
     signal shot_context_r : shot_start_event_t := C_SHOT_START_EVENT_IDLE;
     signal shot_max_hits_r : unsigned(2 downto 0) := to_unsigned(1, 3);
@@ -529,6 +532,8 @@ begin
                 pending_face_close_r <= C_FACE_CLOSE_EVENT_IDLE;
                 pending_close_geometry_fault_r <= '0';
                 pending_close_gap_fault_r <= '0';
+                pending_close_all_hole_r <= '0';
+                pending_close_history_match_r <= '0';
                 pending_context_match_r <= '0';
                 shot_context_r <= C_SHOT_START_EVENT_IDLE;
                 shot_max_hits_r <= to_unsigned(1, 3);
@@ -601,6 +606,8 @@ begin
                     pending_face_close_r <= C_FACE_CLOSE_EVENT_IDLE;
                     pending_close_geometry_fault_r <= '0';
                     pending_close_gap_fault_r <= '0';
+                    pending_close_all_hole_r <= '0';
+                    pending_close_history_match_r <= '0';
                     pending_context_match_r <= '0';
                     shot_terminal_r <= (others => '0');
                     shot_faulted_r <= '0';
@@ -625,11 +632,50 @@ begin
                         pending_face_close_r <= i_face_close_event;
                         pending_close_geometry_fault_r <= '0';
                         pending_close_gap_fault_r <= '0';
-                        state_r <= S_FACE_CLOSE_GEOMETRY;
+                        pending_close_all_hole_r <= '0';
+                        pending_close_history_match_r <= '0';
+                        state_r <= S_FACE_CLOSE_CONTEXT;
                     elsif i_cell_event.valid = '1' then
                         pending_event_r <= i_cell_event;
                         state_r <= S_EVENT_CHECK;
                     end if;
+
+                elsif state_r = S_FACE_CLOSE_CONTEXT then
+                    -- 먼저 Face identity와 정적 geometry만 비교한다.
+                    -- history version 비교 결과를 등록하여 다음 단계의
+                    -- 16-bit trailing-gap 감산과 한 경로로 합쳐지지 않게
+                    -- 한다. Face 종료는 처리율 경로가 아니므로 1 clock의
+                    -- 추가 지연은 다음 Face 데이터율에 영향을 주지 않는다.
+                    pending_close_geometry_fault_r <= '0';
+                    if pending_face_close_r.active_version /=
+                           i_active_version or
+                       pending_face_close_r.columns_per_face /=
+                           i_columns_per_face or
+                       to_integer(pending_face_close_r.face_index) >=
+                           G_BUILD_CONFIG.num_faces or
+                       pending_face_close_r.columns_per_face = 0 then
+                        pending_close_geometry_fault_r <= '1';
+                    end if;
+
+                    if history_valid_r = '0' then
+                        pending_close_all_hole_r <= '1';
+                        pending_close_history_match_r <= '0';
+                    else
+                        pending_close_all_hole_r <= '0';
+                        if history_face_r =
+                               pending_face_close_r.face_index and
+                           history_direction_r =
+                               pending_face_close_r.direction and
+                           history_source_r =
+                               pending_face_close_r.source_sim and
+                           history_version_r =
+                               pending_face_close_r.active_version then
+                            pending_close_history_match_r <= '1';
+                        else
+                            pending_close_history_match_r <= '0';
+                        end if;
+                    end if;
+                    state_r <= S_FACE_CLOSE_GEOMETRY;
 
                 elsif state_r = S_FACE_CLOSE_GEOMETRY then
                     close_v := C_GPX_FRAME_CLOSE_EVENT_IDLE;
@@ -646,28 +692,15 @@ begin
                     trailing_gap_v := (others => '0');
                     close_fault_v := false;
 
-                    if pending_face_close_r.active_version /=
-                           i_active_version or
-                       pending_face_close_r.columns_per_face /=
-                           i_columns_per_face or
-                       to_integer(pending_face_close_r.face_index) >=
-                           G_BUILD_CONFIG.num_faces or
-                       pending_face_close_r.columns_per_face = 0 then
+                    if pending_close_geometry_fault_r = '1' then
                         close_fault_v := true;
                     end if;
 
-                    if history_valid_r = '0' then
+                    if pending_close_all_hole_r = '1' then
                         close_v.all_hole := '1';
                         trailing_gap_v :=
                             pending_face_close_r.columns_per_face;
-                    elsif history_face_r =
-                              pending_face_close_r.face_index and
-                          history_direction_r =
-                              pending_face_close_r.direction and
-                          history_source_r =
-                              pending_face_close_r.source_sim and
-                          history_version_r =
-                              pending_face_close_r.active_version then
+                    elsif pending_close_history_match_r = '1' then
                         if history_last_r = '1' then
                             trailing_gap_v := (others => '0');
                         elsif history_column_r <
@@ -707,6 +740,8 @@ begin
                     pending_face_close_r <= C_FACE_CLOSE_EVENT_IDLE;
                     pending_close_geometry_fault_r <= '0';
                     pending_close_gap_fault_r <= '0';
+                    pending_close_all_hole_r <= '0';
+                    pending_close_history_match_r <= '0';
                     history_valid_r <= '0';
                     history_last_r <= '0';
                     state_r <= S_COLLECT;

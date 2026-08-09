@@ -1,9 +1,10 @@
 -- ============================================================================
 -- 테스트 자산 목적: Processing↔TDC typed command/result gateway의 SYNC/ASYNC 경로를 검증한다.
--- 핵심 검증 계약: ready/valid 보존, 순서, reset 복구와 150/200·200/150 전달이다.
+-- 핵심 검증 계약: ready/valid 보존, 순서, reset 복구, routine/release clock 전달이다.
 -- 관련 RTL: lidar_gpx_shot_gateway, lidar_gpx_result_gateway.
 -- 실행 회귀: scripts/run_v2_gpx_event_gateway.ps1
 -- 유지보수 주의: payload 필드 추가 시 stall 중 안정성과 양 clock 관계를 함께 검사한다.
+--                  release gate는 150/150 shared, 200/50, 50/200, 150/100 MHz다.
 -- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
@@ -377,5 +378,56 @@ begin
             G_PROC_CLK_MHZ => 150,
             G_TDC_CLK_MHZ  => 150,
             G_CLOCK_MODE   => STREAM_CLOCK_SYNC
+        );
+end architecture;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use work.lidar_build_pkg.all;
+
+entity tb_lidar_gpx_event_gateway_async_200_50 is
+end entity;
+
+architecture sim of tb_lidar_gpx_event_gateway_async_200_50 is
+begin
+    u_test : entity work.tb_lidar_gpx_event_gateway
+        generic map (
+            G_PROC_CLK_MHZ => 200,
+            G_TDC_CLK_MHZ  => 50,
+            G_CLOCK_MODE   => STREAM_CLOCK_ASYNC
+        );
+end architecture;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use work.lidar_build_pkg.all;
+
+entity tb_lidar_gpx_event_gateway_async_50_200 is
+end entity;
+
+architecture sim of tb_lidar_gpx_event_gateway_async_50_200 is
+begin
+    u_test : entity work.tb_lidar_gpx_event_gateway
+        generic map (
+            G_PROC_CLK_MHZ => 50,
+            G_TDC_CLK_MHZ  => 200,
+            G_CLOCK_MODE   => STREAM_CLOCK_ASYNC
+        );
+end architecture;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use work.lidar_build_pkg.all;
+
+entity tb_lidar_gpx_event_gateway_async_150_100 is
+end entity;
+
+architecture sim of tb_lidar_gpx_event_gateway_async_150_100 is
+begin
+    u_test : entity work.tb_lidar_gpx_event_gateway
+        generic map (
+            G_PROC_CLK_MHZ => 150,
+            G_TDC_CLK_MHZ  => 100,
+            G_CLOCK_MODE   => STREAM_CLOCK_ASYNC
         );
 end architecture;

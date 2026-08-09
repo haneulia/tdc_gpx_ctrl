@@ -16,6 +16,7 @@ entity motor_virtual_index is
         i_enable         : in  std_logic;
         i_z_offset       : in  position_t;
         i_z_width        : in  position_t;
+        i_width_clamped  : in  position_t;
         i_z_early        : in  std_logic;
         i_phase_tick     : in  std_logic;
         i_ticks_next     : in  u32_t;
@@ -66,7 +67,6 @@ begin
     -- consumed. Keeping the wide subtract out of the FSM removes a long
     -- ticks_next-to-state-counter path without adding Z output latency.
     p_precompute : process (i_clk)
-        variable width_v  : position_t;
         variable offset_v : u32_t;
         variable delay_v  : u32_t;
     begin
@@ -80,12 +80,11 @@ begin
                 early_start_r    <= '0';
                 early_ok_r       <= '0';
             else
-                width_v := i_z_width;
-                if i_ticks_next /= 0 and
-                   resize(i_z_width, i_ticks_next'length) > i_ticks_next then
-                    width_v := resize(i_ticks_next, width_v'length);
-                end if;
-                width_clamped_r <= width_v;
+                -- LO/HI interval별 제한 폭은 virtual source가 설정 정지
+                -- 구간에서 미리 계산한다. 여기서는 선택 결과만 한 번 더
+                -- 등록하여 ticks_next에서 15-bit 비교기와 대형 MUX를 거쳐
+                -- Z FSM으로 이어지던 200 MHz 경로를 제거한다.
+                width_clamped_r <= i_width_clamped;
 
                 if i_z_offset = 0 then
                     offset_zero_r <= '1';

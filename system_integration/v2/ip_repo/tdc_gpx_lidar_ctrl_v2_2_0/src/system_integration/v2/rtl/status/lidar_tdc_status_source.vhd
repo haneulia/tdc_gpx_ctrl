@@ -72,6 +72,10 @@ architecture rtl of lidar_tdc_status_source is
     signal register_service_pause_r : std_logic := '0';
     signal register_service_count_r : natural range 0 to
         C_REGISTER_SERVICE_TIMEOUT_CLKS := 0;
+    -- GPX 유지보수 pause가 실제 적용된 뒤의 safe 조건만 등록한다.
+    -- pause 이전의 safe 값과 새 Shot이 겹쳐 register read가 허가되는 것을
+    -- 막고, lane occupancy에서 timeout counter까지의 긴 조합 경로를 끊는다.
+    signal register_service_safe_r : std_logic := '0';
     signal register_service_error_seen_r : std_logic := '0';
 
     signal drain_timeout_seen_r : chip_mask_t := (others => '0');
@@ -117,6 +121,7 @@ begin
             response_r <= (others => '0');
             register_service_pause_r <= '0';
             register_service_count_r <= 0;
+            register_service_safe_r <= '0';
             register_service_error_seen_r <= '0';
             drain_timeout_seen_r <= (others => '0');
             sequence_seen_r <= (others => '0');
@@ -125,6 +130,11 @@ begin
             irq_transport_r <= '0';
         elsif rising_edge(i_clk) then
             v_transport_fault := '0';
+            if register_service_pause_r = '1' then
+                register_service_safe_r <= i_tdc_safe;
+            else
+                register_service_safe_r <= '0';
+            end if;
             -- CLEAR_STATUS는 이력만 지우며 진행 중 portal transaction은
             -- 유지한다. Pulse형 새 사건은 같은 clock의 clear보다 우선한다.
             if i_clear_status = '1' then
@@ -294,7 +304,7 @@ begin
                     state_r <= SOURCE_RESPONSE;
 
                 when SOURCE_REGISTER_WAIT_SAFE =>
-                    if i_tdc_safe = '1' then
+                    if register_service_safe_r = '1' then
                         register_service_count_r <= 0;
                         state_r <= SOURCE_REGISTER_REQUEST;
                     elsif register_service_count_r =

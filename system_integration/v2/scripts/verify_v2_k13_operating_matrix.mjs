@@ -89,12 +89,12 @@ for (const actual of measurements.acquisition_profiles) {
   assert.ok(
     actual.stop_to_line_clks >= expected.stop_to_line_clks_min &&
       actual.stop_to_line_clks <= expected.stop_to_line_clks_max,
-    `${key}: STOP-to-Line latency escaped the one-clock async phase window`
+    `${key}: STOP-to-Line latency escaped the two-boundary async CDC phase envelope`
   );
   assert.ok(
     actual.shot_to_line_clks >= expected.shot_to_line_clks_min &&
       actual.shot_to_line_clks <= expected.shot_to_line_clks_max,
-    `${key}: Shot-to-Line latency escaped the one-clock async phase window`
+    `${key}: Shot-to-Line latency escaped the two-boundary async CDC phase envelope`
   );
   assert.equal(
     actual.shot_to_line_clks,
@@ -158,7 +158,7 @@ const comparison = {
   checks:[
     "HTML model equals checked Golden JSON",
     "RTL target-window conversion and VDMA geometry exact-match",
-    "RTL STOP-to-Line latency remains inside measured async phase window",
+    "RTL STOP-to-Line latency remains inside the two-boundary async CDC phase envelope",
     "32/64/128-bit maximum topology geometry exact-match",
     "Golden set contains both feasible and infeasible operating points"
   ]

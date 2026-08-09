@@ -92,6 +92,12 @@ architecture rtl of shot_scheduler is
     signal face_mask_r     : face_mask_t := (others => '0');
     signal simulation_mode_r : std_logic := '0';
     signal active_version_r  : u16_t := (others => '0');
+    -- Acquisition admission은 각도 후보점의 발사 허가 조건이며,
+    -- fire_done-to-START 저지연 경로가 아니다. 한 클럭 등록하여 CDC
+    -- reset-busy와 FIFO ready 조합논리가 200 MHz Shot request enable 경로에
+    -- 들어오지 않게 한다. Ready는 해당 면 위치 event보다 한 processing
+    -- clock 이상 먼저 안정되어야 한다.
+    signal acquisition_ready_r : std_logic := '0';
 
     signal session_active_r : std_logic := '0';
     signal enable_age_r     : natural range 0 to
@@ -142,6 +148,17 @@ begin
             end if;
         end if;
     end process p_config;
+
+    p_acquisition_ready_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' then
+                acquisition_ready_r <= '0';
+            else
+                acquisition_ready_r <= i_acquisition_ready;
+            end if;
+        end if;
+    end process p_acquisition_ready_pipeline;
 
     p_scheduler : process (i_clk)
         variable request_v       : shot_request_t;
@@ -239,7 +256,7 @@ begin
                             -- 오류를 남긴다. 그래야 실제 점 간 각도가
                             -- 흐트러지지 않는다.
                             if context_valid_v and i_executor_ready = '1' and
-                               i_acquisition_ready = '1' and
+                               acquisition_ready_r = '1' and
                                inflight_v = '0' then
                                 request_v := fn_make_request(
                                     i_face_event, column_v, columns_r);

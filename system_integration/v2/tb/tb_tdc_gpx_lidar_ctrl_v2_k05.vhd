@@ -1,11 +1,12 @@
 -- ============================================================================
--- 테스트 자산 목적: v2 Top의 K0-5/K0-6, K1-2 Reg7과 K1-3 운용시간 계약을 검증한다.
+-- 테스트 자산 목적: v2 Top의 K0-5/K0-6, K1-2/K1-3 계약과 K1-4 릴리스 클럭을 검증한다.
 -- 핵심 검증 계약: GPX identity, Reg7 Shadow/Active/Physical, Rise/Fall lane,
--- Hole/T0/Footer, Runtime Return/목표거리와 32/64/128 폭을 실제 Top에서 확인한다.
+-- Hole/T0/Footer, Runtime Return/목표거리, 폭과 SYNC/ASYNC 사건 보존을 실제 Top에서 확인한다.
 -- 관련 RTL: tdc_gpx_lidar_ctrl_v2_top과 acquisition/data/AXIS 전체 계층.
 -- 실행 회귀: run_v2_k05_integration.ps1, run_v2_k06_axis_integration.ps1,
---              run_v2_k13_operating_matrix.ps1
--- 유지보수 주의: 이 파일의 K05/K06 top을 구분하고 routine 두 clock 관계를 모두 유지한다.
+--              run_v2_k13_operating_matrix.ps1, run_v2_k14_signoff.ps1
+-- 유지보수 주의: K05/K06 top을 구분한다. routine 외 K1-4에서는 동일 물리 clock
+--                  150/150과 ASYNC 200/50, 50/200, 150/100 MHz도 유지한다.
 -- ============================================================================
 library ieee;
 use ieee.std_logic_1164.all;
@@ -32,7 +33,8 @@ entity tb_tdc_gpx_lidar_ctrl_v2_axis_core is
         G_OUTPUT_WIDTH : positive := 32;
         G_AXIS_STALL_CLKS : natural := 0;
         G_ACTIVE_RETURNS : positive range 1 to 7 := 7;
-        G_TARGET_RANGE_5NS : positive := 53
+        G_TARGET_RANGE_5NS : positive := 53;
+        G_STREAM_CLK_MODE : string := "ASYNC"
     );
 end entity tb_tdc_gpx_lidar_ctrl_v2_axis_core;
 
@@ -50,7 +52,11 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     begin
         result.proc_clk_mhz := G_PROC_CLK_MHZ;
         result.tdc_clk_mhz := G_TDC_CLK_MHZ;
-        result.stream_clock_mode := STREAM_CLOCK_ASYNC;
+        if G_STREAM_CLK_MODE = "SYNC" then
+            result.stream_clock_mode := STREAM_CLOCK_SYNC;
+        else
+            result.stream_clock_mode := STREAM_CLOCK_ASYNC;
+        end if;
         result.num_chips := C_CHIPS;
         result.stops_per_chip := C_STOPS_PER_CHIP;
         result.max_returns_per_stop := C_RETURNS_PER_STOP;
@@ -221,6 +227,7 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
     signal csr_clk : std_logic := '0';
     signal proc_clk : std_logic := '0';
     signal tdc_clk : std_logic := '0';
+    signal sync_clk : std_logic := '0';
     signal csr_rst_n : std_logic := '0';
     signal proc_rst_n : std_logic := '0';
     signal tdc_rst_n : std_logic := '0';
@@ -326,8 +333,22 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v2_axis_core is
 begin
 
     csr_clk <= not csr_clk after C_CSR_PERIOD / 2 when not done;
-    proc_clk <= not proc_clk after C_PROC_PERIOD / 2 when not done;
-    tdc_clk <= not tdc_clk after C_TDC_PERIOD / 2 when not done;
+
+    gen_sync_clocks : if G_STREAM_CLK_MODE = "SYNC" generate
+    begin
+        assert G_PROC_CLK_MHZ = G_TDC_CLK_MHZ
+            report "V2-K14-TOP SYNC mode requires equal clock frequencies"
+            severity failure;
+        sync_clk <= not sync_clk after C_PROC_PERIOD / 2 when not done;
+        proc_clk <= sync_clk;
+        tdc_clk <= sync_clk;
+    end generate gen_sync_clocks;
+
+    gen_async_clocks : if G_STREAM_CLK_MODE = "ASYNC" generate
+    begin
+        proc_clk <= not proc_clk after C_PROC_PERIOD / 2 when not done;
+        tdc_clk <= not tdc_clk after C_TDC_PERIOD / 2 when not done;
+    end generate gen_async_clocks;
 
     gen_no_axis_stall : if G_AXIS_STALL_CLKS = 0 generate
     begin
@@ -384,7 +405,7 @@ begin
             G_CSR_CLK_MHZ => 100,
             G_PROC_CLK_MHZ => G_PROC_CLK_MHZ,
             G_TDC_CLK_MHZ => G_TDC_CLK_MHZ,
-            G_STREAM_CLK_MODE => "ASYNC",
+            G_STREAM_CLK_MODE => G_STREAM_CLK_MODE,
             G_NUM_CHIPS => C_CHIPS,
             G_STOPS_PER_CHIP => C_STOPS_PER_CHIP,
             G_MAX_RETURNS_PER_STOP => C_RETURNS_PER_STOP,
@@ -728,12 +749,34 @@ begin
         end if;
     end process p_axis_hold_contract;
 
+    -- 외부 GPX의 MTimer 완료 인터럽트 모델이다. 검증 프로세스가 STOP_TDC를
+    -- 언제 관측했는지와 무관하게 실제 STOP 사건에 직접 반응해야 하므로,
+    -- 자극 생성과 관측용 sticky(first_stop_seen)를 서로 분리한다.
+    p_gpx_mtimer_irq_model : process
+    begin
+        irflag <= (others => '0');
+        wait until stop_tdc = '1';
+        wait until falling_edge(tdc_clk);
+        irflag <= (others => '1');
+        for cycle in 1 to 6 loop
+            wait until rising_edge(tdc_clk);
+        end loop;
+        irflag <= (others => '0');
+        wait;
+    end process p_gpx_mtimer_irq_model;
+
     p_test : process
         variable status_word : std_logic_vector(31 downto 0);
         variable diag_sequence : natural := 0;
         variable writes_before_invalid : natural_array_t := (others => 0);
         variable active_version_before_invalid : unsigned(15 downto 0) :=
             (others => '0');
+        variable first_frame_beats_v : natural := 0;
+        variable first_frame_lines_v : natural := 0;
+        variable first_frame_sof_v : natural := 0;
+        variable first_frame_magic_v : natural := 0;
+        variable first_frame_commit_v : natural := 0;
+        variable first_frame_all_hole_v : natural := 0;
 
         procedure wait_proc(count : positive) is
         begin
@@ -1112,24 +1155,20 @@ begin
 
         for cycle in 0 to 10000 loop
             wait_proc(1);
-            exit when shot_count >= 1 and start_tdc = '1';
+            exit when shot_count >= 1 and first_start_seen = '1';
         end loop;
-        assert shot_count >= 1 and shot_face_index = "000"
+        assert shot_count >= 1 and first_start_seen = '1' and
+               shot_face_index = "000"
             report "V2-K05-TOP first Shot missing"
             severity failure;
 
         for cycle in 0 to 10000 loop
             wait_proc(1);
-            exit when stop_tdc = '1';
+            exit when first_stop_seen = '1';
         end loop;
-        assert stop_tdc = '1'
+        assert first_stop_seen = '1'
             report "V2-K05-TOP target-range STOP missing"
             severity failure;
-
-        wait until falling_edge(tdc_clk);
-        irflag <= (others => '1');
-        wait_tdc(6);
-        irflag <= (others => '0');
 
         for cycle in 0 to 500000 loop
             wait_proc(1);
@@ -1144,6 +1183,36 @@ begin
                 report "V2-K05-TOP IFIFO drain count mismatch"
                 severity failure;
         end loop;
+
+        -- 첫 정상 Face Frame의 무결성을 다음 회전 재개와 분리해 판정한다.
+        -- 이 TB의 가상 모터는 회귀 시간을 줄이기 위해 실제 운용보다
+        -- 매우 빠르다. 따라서 첫 Frame을 닫는 동안 지나간 후보 Face는
+        -- 정책상 all-hole Frame으로 기록될 수 있지만, 첫 정상 Frame의
+        -- Word/Line/SOF/Footer 계약을 중복으로 오판해서는 안 된다.
+        for cycle in 0 to 500000 loop
+            wait_proc(1);
+            exit when rise_line_count >= C_EXPECTED_LINES and
+                rise_footer_commit_count >= 1;
+        end loop;
+        first_frame_beats_v := rise_beat_count;
+        first_frame_lines_v := rise_line_count;
+        first_frame_sof_v := rise_sof_count;
+        first_frame_magic_v := rise_footer_magic_count;
+        first_frame_commit_v := rise_footer_commit_count;
+        first_frame_all_hole_v := rise_all_hole_footer_count;
+        assert first_frame_beats_v = C_EXPECTED_BEATS and
+               first_frame_lines_v = C_EXPECTED_LINES and
+               first_frame_sof_v = 1 and
+               first_frame_magic_v = 1 and
+               first_frame_commit_v = 1 and
+               first_frame_all_hole_v = 0
+            report "V2-K06-TOP first Face frame contract mismatch; " &
+                "width=" & positive'image(G_OUTPUT_WIDTH) &
+                " beats=" & natural'image(first_frame_beats_v) &
+                "/" & positive'image(C_EXPECTED_BEATS) &
+                " lines=" & natural'image(first_frame_lines_v) &
+                "/" & positive'image(C_EXPECTED_LINES)
+            severity failure;
 
         -- A second revolution can produce a Shot only after B5-B8 completes
         -- the first Shot and acknowledges the held Face-close event.
@@ -1169,23 +1238,23 @@ begin
                 " stride=" & integer'image(to_integer(rise_stride_bytes))
             severity failure;
 
-        assert rise_beat_count = C_EXPECTED_BEATS and
-               rise_line_count = C_EXPECTED_LINES and
-               rise_sof_count = 1 and
-               rise_footer_magic_count = 1 and
-               rise_footer_commit_count = 1 and
-               rise_all_hole_footer_count = 0
-            report "V2-K06-TOP AXIS frame contract mismatch; " &
-                "width=" & positive'image(G_OUTPUT_WIDTH) &
+        -- 첫 정상 Frame 이후, 과속 회귀 프로파일에서 추가된 Frame은
+        -- 반드시 완결된 all-hole Frame이어야 한다. 부분 Footer나 동일
+        -- Face 데이터 중복은 이 등식들을 만족할 수 없다.
+        assert rise_footer_commit_count >= 1 and
+               rise_footer_magic_count = rise_footer_commit_count and
+               rise_sof_count = rise_footer_commit_count and
+               rise_line_count =
+                   C_EXPECTED_LINES * rise_footer_commit_count and
+               rise_beat_count =
+                   C_EXPECTED_BEATS * rise_footer_commit_count and
+               rise_all_hole_footer_count =
+                   rise_footer_commit_count - 1
+            report "V2-K06-TOP post-frame overload classification mismatch; " &
+                "frames=" & natural'image(rise_footer_commit_count) &
                 " beats=" & natural'image(rise_beat_count) &
-                "/" & positive'image(C_EXPECTED_BEATS) &
                 " lines=" & natural'image(rise_line_count) &
-                "/" & positive'image(C_EXPECTED_LINES) &
-                " sof=" & natural'image(rise_sof_count) &
-                " magic=" & natural'image(rise_footer_magic_count) &
-                " commit=" & natural'image(rise_footer_commit_count) &
-                " all_hole=" & natural'image(
-                    rise_all_hole_footer_count)
+                " all_hole=" & natural'image(rise_all_hole_footer_count)
             severity failure;
         assert first_shot_seen = '1' and first_start_seen = '1' and
                first_stop_seen = '1' and first_line_done_seen = '1' and
@@ -1235,7 +1304,7 @@ begin
             " hsize_bytes=" & natural'image(accepted_hsize_bytes) &
             " vsize_lines=" & natural'image(accepted_vsize_lines) &
             " stride_bytes=" & natural'image(accepted_stride_bytes) &
-            " frame_beats=" & natural'image(rise_beat_count)
+            " frame_beats=" & natural'image(first_frame_beats_v)
             severity note;
         done <= true;
         stop;
@@ -1249,7 +1318,8 @@ entity tb_tdc_gpx_lidar_ctrl_v2_k05 is
         G_PROC_CLK_MHZ : positive := 150;
         G_TDC_CLK_MHZ  : positive := 200;
         G_ACTIVE_RETURNS : positive range 1 to 7 := 7;
-        G_TARGET_RANGE_5NS : positive := 53
+        G_TARGET_RANGE_5NS : positive := 53;
+        G_STREAM_CLK_MODE : string := "ASYNC"
     );
 end entity tb_tdc_gpx_lidar_ctrl_v2_k05;
 
@@ -1262,7 +1332,8 @@ begin
             G_OUTPUT_WIDTH => 32,
             G_AXIS_STALL_CLKS => 0,
             G_ACTIVE_RETURNS => G_ACTIVE_RETURNS,
-            G_TARGET_RANGE_5NS => G_TARGET_RANGE_5NS
+            G_TARGET_RANGE_5NS => G_TARGET_RANGE_5NS,
+            G_STREAM_CLK_MODE => G_STREAM_CLK_MODE
         );
 end architecture sim;
 
@@ -1273,7 +1344,8 @@ entity tb_tdc_gpx_lidar_ctrl_v2_k06 is
         G_OUTPUT_WIDTH : positive := 32;
         G_AXIS_STALL_CLKS : natural := 13;
         G_ACTIVE_RETURNS : positive range 1 to 7 := 7;
-        G_TARGET_RANGE_5NS : positive := 53
+        G_TARGET_RANGE_5NS : positive := 53;
+        G_STREAM_CLK_MODE : string := "ASYNC"
     );
 end entity tb_tdc_gpx_lidar_ctrl_v2_k06;
 
@@ -1286,6 +1358,7 @@ begin
             G_OUTPUT_WIDTH => G_OUTPUT_WIDTH,
             G_AXIS_STALL_CLKS => G_AXIS_STALL_CLKS,
             G_ACTIVE_RETURNS => G_ACTIVE_RETURNS,
-            G_TARGET_RANGE_5NS => G_TARGET_RANGE_5NS
+            G_TARGET_RANGE_5NS => G_TARGET_RANGE_5NS,
+            G_STREAM_CLK_MODE => G_STREAM_CLK_MODE
         );
 end architecture sim;

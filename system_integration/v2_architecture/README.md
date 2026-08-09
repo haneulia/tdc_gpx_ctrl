@@ -27,8 +27,10 @@
 > connect Processing/Echo, physical GPX B5-B8 and the complete dual-lane
 > AXIS/VDMA output. K0-8 closes status/IRQ ownership, K0-9 closes the final
 > implementation/Golden matrix and K0-10 closes the self-contained v2 package.
-> K1-3 closes the 40-profile RTL/HTML operating matrix. K1-4 is the final
-> regression/package gate before L0 parent VDMA/HP/cache and board evidence.
+> K1-3 closes the 40-profile RTL/HTML operating matrix. K1-4 closes the final
+> input-hashed regression, six-profile implementation, direct sync/extreme
+> CDC, DDR/PS/Ethernet Golden and package/XGUI/OOC gate. Stage L0 parent
+> VDMA/HP/cache and board evidence is now the active work.
 
 ## 1. Purpose
 

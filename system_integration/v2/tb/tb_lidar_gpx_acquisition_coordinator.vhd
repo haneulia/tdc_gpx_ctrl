@@ -143,6 +143,7 @@ architecture sim of tb_lidar_gpx_acquisition_coordinator is
     signal config_ready : std_logic;
     signal config_done : std_logic;
     signal run_enable : std_logic := '0';
+    signal force_reinit : std_logic := '0';
     signal safe : std_logic;
     signal register_read : gpx_register_read_request_t :=
         C_GPX_REGISTER_READ_REQUEST_IDLE;
@@ -242,7 +243,7 @@ begin
             o_config_done => config_done,
             i_run_enable => run_enable,
             i_soft_reset => '0',
-            i_force_reinit => '0',
+            i_force_reinit => force_reinit,
             i_clear_status => '0',
             o_safe => safe,
             i_register_read => register_read,
@@ -467,6 +468,9 @@ begin
     begin
         rst_n <= '0';
         wait_clocks(8);
+        assert register_read_ready = '0'
+            report "V2-GPX-COORD-TB register ready asserted during reset"
+            severity failure;
         rst_n <= '1';
 
         for timeout in 0 to 40000 loop
@@ -588,14 +592,32 @@ begin
                 severity failure;
         end loop;
 
-        -- Runtime active mask와 관계없이 합성된 present Chip은 maintenance
-        -- read가 가능해야 한다. 여기서는 acquisition 비활성 Chip 2를 읽는다.
+        -- Lane이 재초기화 중이어도 coordinator는 요청을 먼저 저장해야 한다.
+        -- 이 검증은 Lane ready가 외부 ready까지 이어지던 긴 조합 경로가
+        -- 제거되고, 저장된 요청이 Lane IDLE 복귀까지 보존되는지 확인한다.
+        -- Reset과 겹친 valid는 handshake된 것으로 보이면 안 된다. 요청자는
+        -- valid를 유지하고, reset 해제 후 coordinator가 이를 한 번 수락한다.
         register_read <= (
             valid   => '1',
             chip    => to_unsigned(2, 2),
             address => x"5");
+        force_reinit <= '1';
+        wait_clocks(1);
+        assert register_read_ready = '0'
+            report "V2-GPX-COORD-TB register ready asserted during force reinit"
+            severity failure;
+        force_reinit <= '0';
+        assert status(2).initialized = '0'
+            report "V2-GPX-COORD-TB force reinit did not enter Lane boot"
+            severity failure;
+
+        -- Runtime active mask와 관계없이 합성된 present Chip은 maintenance
+        -- read가 가능해야 한다. 여기서는 acquisition 비활성 Chip 2를 읽는다.
         wait until rising_edge(clk) and register_read_ready = '1';
         wait for 1 ps;
+        assert safe = '0'
+            report "V2-GPX-COORD-TB buffered register request reported safe"
+            severity failure;
         register_read <= C_GPX_REGISTER_READ_REQUEST_IDLE;
         wait_until_high(register_read_response.valid,
             "V2-GPX-COORD-TB physical register read timeout");

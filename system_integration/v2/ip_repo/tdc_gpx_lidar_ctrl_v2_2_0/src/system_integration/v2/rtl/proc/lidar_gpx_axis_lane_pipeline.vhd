@@ -53,6 +53,9 @@ architecture rtl of lidar_gpx_axis_lane_pipeline is
     signal cell_input_read_sel_r : std_logic := '0';
     signal cell_input_write_sel_r : std_logic := '0';
     signal cell_input_ready_r : std_logic := '1';
+    signal cell_dispatch_r : gpx_frame_cell_event_t :=
+        C_GPX_FRAME_CELL_EVENT_IDLE;
+    signal cell_dispatch_valid_r : std_logic := '0';
     signal buffered_cell_event_c : gpx_frame_cell_event_t;
     signal buffered_cell_ready_c : std_logic;
     signal cell_input_empty_c : std_logic;
@@ -72,8 +75,21 @@ architecture rtl of lidar_gpx_axis_lane_pipeline is
     signal serializer_idle_c : std_logic;
 
     signal shot_line_word_c : gpx_vdma_line_word_event_t;
-    signal shot_line_ready_c : std_logic;
+    signal shot_line_ready_r : std_logic := '1';
     signal shot_builder_idle_c : std_logic;
+    signal line_input_0_r : gpx_vdma_line_word_event_t :=
+        C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
+    signal line_input_1_r : gpx_vdma_line_word_event_t :=
+        C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
+    signal line_input_count_r : natural range 0 to 2 := 0;
+    signal line_input_read_sel_r : std_logic := '0';
+    signal line_input_write_sel_r : std_logic := '0';
+    signal line_dispatch_r : gpx_vdma_line_word_event_t :=
+        C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
+    signal line_dispatch_valid_r : std_logic := '0';
+    signal buffered_line_word_c : gpx_vdma_line_word_event_t;
+    signal buffered_line_ready_c : std_logic;
+    signal line_input_empty_c : std_logic;
 
     signal hole_line_word_c : gpx_vdma_line_word_event_t;
     signal hole_line_ready_c : std_logic;
@@ -97,24 +113,35 @@ begin
         severity failure;
 
     o_cell_ready <= cell_input_ready_r;
-    cell_input_empty_c <= '1' when cell_input_count_r = 0 else '0';
+    cell_input_empty_c <= '1' when
+        cell_input_count_r = 0 and cell_dispatch_valid_r = '0' else '0';
     word_input_empty_c <= '1' when word_input_count_r = 0 else '0';
+    line_input_empty_c <= '1' when
+        line_input_count_r = 0 and line_dispatch_valid_r = '0' else '0';
     o_idle <= cell_input_empty_c and serializer_idle_c and
         word_input_empty_c and
-        shot_builder_idle_c and hole_idle_c and footer_idle_c and
+        shot_builder_idle_c and line_input_empty_c and
+        hole_idle_c and footer_idle_c and
         packer_idle_c;
 
-    -- The registered-ready two-entry boundary removes the complete
+    -- The registered-ready two-entry boundary plus one dispatch register
+    -- removes the complete
     -- serializer/Shot/Hole/Footer/TREADY cone from B8. Circular slot pointers
     -- avoid shifting the wide Cell record on pop, so downstream READY changes
     -- only the small count/read-pointer registers. It also absorbs the
     -- one-cycle stale-ready case without reducing a sustained one-Cell/cycle
-    -- source. Abort is handled synchronously inside the buffer and therefore
-    -- does not become a combinational qualifier on the B8 ready path.
+    -- source. The dispatch register also ends the wide circular-slot MUX
+    -- before the serializer hierarchy: a read-selector toggle can no longer
+    -- drive every Cell/context bit in the serializer capture bank during the
+    -- same 200 MHz cycle. Abort is handled synchronously inside the buffer and
+    -- therefore does not become a combinational qualifier on the B8 ready
+    -- path.
     p_cell_input_skid : process (i_clk)
         variable count_v : natural range 0 to 2;
         variable push_v : boolean;
-        variable pop_v : boolean;
+        variable dispatch_accept_v : boolean;
+        variable prefetch_v : boolean;
+        variable dispatch_valid_v : std_logic;
     begin
         if rising_edge(i_clk) then
             if i_rst_n = '0' or i_abort = '1' then
@@ -124,14 +151,30 @@ begin
                 cell_input_read_sel_r <= '0';
                 cell_input_write_sel_r <= '0';
                 cell_input_ready_r <= '1';
+                cell_dispatch_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
+                cell_dispatch_valid_r <= '0';
             else
                 count_v := cell_input_count_r;
                 push_v := i_cell_event.valid = '1' and
                     cell_input_ready_r = '1';
-                pop_v := cell_input_count_r /= 0 and
+                dispatch_accept_v := cell_dispatch_valid_r = '1' and
                     buffered_cell_ready_c = '1';
+                prefetch_v := cell_input_count_r /= 0 and
+                    (cell_dispatch_valid_r = '0' or
+                     buffered_cell_ready_c = '1');
+                dispatch_valid_v := cell_dispatch_valid_r;
 
-                if pop_v then
+                if dispatch_accept_v then
+                    dispatch_valid_v := '0';
+                end if;
+
+                if prefetch_v then
+                    if cell_input_read_sel_r = '0' then
+                        cell_dispatch_r <= cell_input_0_r;
+                    else
+                        cell_dispatch_r <= cell_input_1_r;
+                    end if;
+                    dispatch_valid_v := '1';
                     cell_input_read_sel_r <=
                         not cell_input_read_sel_r;
                     count_v := count_v - 1;
@@ -149,6 +192,7 @@ begin
                 end if;
 
                 cell_input_count_r <= count_v;
+                cell_dispatch_valid_r <= dispatch_valid_v;
                 if count_v = 2 then
                     cell_input_ready_r <= '0';
                 else
@@ -161,16 +205,8 @@ begin
     p_buffered_cell : process (all)
         variable value_v : gpx_frame_cell_event_t;
     begin
-        if cell_input_read_sel_r = '0' then
-            value_v := cell_input_0_r;
-        else
-            value_v := cell_input_1_r;
-        end if;
-        if cell_input_count_r = 0 then
-            value_v.valid := '0';
-        else
-            value_v.valid := '1';
-        end if;
+        value_v := cell_dispatch_r;
+        value_v.valid := cell_dispatch_valid_r;
         buffered_cell_event_c <= value_v;
     end process p_buffered_cell;
 
@@ -239,11 +275,87 @@ begin
         cell_word_c <= value_v;
     end process p_buffered_word;
 
+    -- Shot-Line builder와 Hole expander 사이에도 등록된 ready/dispatch
+    -- 경계를 둔다. Hole/Footer의 상태와 output backpressure가 Word FIFO의
+    -- count/valid를 거쳐 같은 clock에 다시 Hole counter CE로 돌아오지
+    -- 않으며, 3-entry 유효 용량은 연속 1 Word/clock 처리율을 유지한다.
+    p_line_input_skid : process (i_clk)
+        variable count_v : natural range 0 to 2;
+        variable push_v : boolean;
+        variable dispatch_accept_v : boolean;
+        variable prefetch_v : boolean;
+        variable dispatch_valid_v : std_logic;
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' then
+                line_input_0_r <= C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
+                line_input_1_r <= C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
+                line_input_count_r <= 0;
+                line_input_read_sel_r <= '0';
+                line_input_write_sel_r <= '0';
+                shot_line_ready_r <= '1';
+                line_dispatch_r <= C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
+                line_dispatch_valid_r <= '0';
+            else
+                count_v := line_input_count_r;
+                push_v := shot_line_word_c.valid = '1' and
+                    shot_line_ready_r = '1';
+                dispatch_accept_v := line_dispatch_valid_r = '1' and
+                    buffered_line_ready_c = '1';
+                prefetch_v := line_input_count_r /= 0 and
+                    (line_dispatch_valid_r = '0' or
+                     buffered_line_ready_c = '1');
+                dispatch_valid_v := line_dispatch_valid_r;
+
+                if dispatch_accept_v then
+                    dispatch_valid_v := '0';
+                end if;
+
+                if prefetch_v then
+                    if line_input_read_sel_r = '0' then
+                        line_dispatch_r <= line_input_0_r;
+                    else
+                        line_dispatch_r <= line_input_1_r;
+                    end if;
+                    dispatch_valid_v := '1';
+                    line_input_read_sel_r <= not line_input_read_sel_r;
+                    count_v := count_v - 1;
+                end if;
+
+                if push_v then
+                    if line_input_write_sel_r = '0' then
+                        line_input_0_r <= shot_line_word_c;
+                    else
+                        line_input_1_r <= shot_line_word_c;
+                    end if;
+                    line_input_write_sel_r <= not line_input_write_sel_r;
+                    count_v := count_v + 1;
+                end if;
+
+                line_input_count_r <= count_v;
+                line_dispatch_valid_r <= dispatch_valid_v;
+                if count_v = 2 then
+                    shot_line_ready_r <= '0';
+                else
+                    shot_line_ready_r <= '1';
+                end if;
+            end if;
+        end if;
+    end process p_line_input_skid;
+
+    p_buffered_line : process (all)
+        variable value_v : gpx_vdma_line_word_event_t;
+    begin
+        value_v := line_dispatch_r;
+        value_v.valid := line_dispatch_valid_r;
+        buffered_line_word_c <= value_v;
+    end process p_buffered_line;
+
     -- A B8 Cell may already be buffered or its canonical Words may still be
     -- inside the serializer/Shot-Line builder. Hold Face Close until all of
     -- them are empty so Footer can never overtake that Cell.
     close_upstream_idle_c <= cell_input_empty_c and serializer_idle_c and
-        word_input_empty_c and shot_builder_idle_c and
+        word_input_empty_c and shot_builder_idle_c and line_input_empty_c and
         not i_cell_event.valid;
     o_frame_close_ready <= close_input_ready_c and close_upstream_idle_c;
 
@@ -277,7 +389,7 @@ begin
             i_cell_word => cell_word_c,
             o_cell_word_ready => cell_word_ready_c,
             o_line_word => shot_line_word_c,
-            i_line_word_ready => shot_line_ready_c,
+            i_line_word_ready => shot_line_ready_r,
             o_idle => shot_builder_idle_c
         );
 
@@ -288,8 +400,8 @@ begin
             i_abort => i_abort,
             i_active_slot_count => i_active_profile.slot_count,
             i_active_cell_word_count => i_active_profile.cell_word_count,
-            i_real_line_word => shot_line_word_c,
-            o_real_line_word_ready => shot_line_ready_c,
+            i_real_line_word => buffered_line_word_c,
+            o_real_line_word_ready => buffered_line_ready_c,
             i_frame_close_event => close_input_event_c,
             o_frame_close_ready => close_input_ready_c,
             o_line_word => hole_line_word_c,

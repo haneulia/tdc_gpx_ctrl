@@ -286,8 +286,11 @@ begin
 
                 -- Return 1..7 are independent pulses per channel in seven
                 -- consecutive Shots. These counts remain pre-GPX diagnostics.
+                -- 진단 창은 물리 STOP 경로와 분리된 순차 관측 경계에서
+                -- Shot 시작보다 한 Processing clock 늦게 열린다.
                 for return_count in 1 to 7 loop
                     start_shot('0', return_count);
+                    wait_clocks(1);
                     assert window_active = '1'
                         report "physical Echo window did not open"
                         severity failure;

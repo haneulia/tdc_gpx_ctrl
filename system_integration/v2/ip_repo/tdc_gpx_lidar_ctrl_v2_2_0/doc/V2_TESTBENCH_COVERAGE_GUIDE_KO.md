@@ -42,16 +42,16 @@
 | `tb_lidar_gpx_config_activation.vhd` | 모든 present Chip programming ACK 후 TDC enable | `lidar_gpx_config_activation` | `run_v2_unified_csr.ps1` | 조기 ACK와 fault activation을 유지한다. |
 | `tb_lidar_processing_activation_barrier.vhd` | Echo/VDMA ready, busy, version을 묶는 barrier | processing activation barrier | `run_v2_k04_integration.ps1` | 새 의존 block에는 negative test가 필요하다. |
 | `tb_lidar_system_command_cdc.vhd` | CLEAR/RESET one-shot CDC, busy/모호 명령 거부 | `lidar_system_command_cdc` | `run_v2_k03_integration.ps1` | destination pulse 폭과 reset 복구를 확인한다. |
-| `tb_lidar_status_irq_integration.vhd` | native snapshot, CTL23/24, 물리 GPX read, 모든 TDC lane fault, 같은-clock fault/clear, IRQ/CLEAR/W1C | CSR/status/command CDC | `run_v2_k08_status_irq.ps1` | owner clear는 아래 K1-1 전용 회귀와 함께 유지한다. |
+| `tb_lidar_status_irq_integration.vhd` | native snapshot, CTL23/24, 물리 GPX read, 유지보수 pause-safe 2-edge 선행 조건, 상태 선택→응답 패킹 등록 경계, 모든 TDC lane fault, 같은-clock fault/clear, IRQ/CLEAR/W1C | CSR/status/command CDC | `run_v2_k08_status_irq.ps1` | GPX read는 pause 이전 safe 값으로 시작하면 안 된다. 상태 index 선택과 응답 word 패킹을 다시 한 조합 경로로 합치지 말고 owner clear는 아래 K1-1 전용 회귀와 함께 유지한다. |
 
 ### 3.2 모터, Face, Shot 및 레이저
 
 | 테스트벤치 | 생성 목적과 핵심 커버 | 관련 RTL | 실행 | 변경 시 주의 |
 |---|---|---|---|---|
-| `tb_motor_position_core.vhd` | CW/CCW, x1/x2/x4, virtual x4, Z/wrap, latency | `motor_position_core` | `run_v2_motor_position.ps1` | 동일 A/B/Z 벡터로 양 방향을 비교한다. |
+| `tb_motor_position_core.vhd` | CW/CCW, x1/x2/x4, virtual x4, Z/wrap, latency, LO/HI별 Z 폭 제한 사전 계산 | `motor_position_core` | `run_v2_motor_position.ps1` | 동일 A/B/Z 벡터로 양 방향을 비교한다. 선택된 `ticks_next`에서 Z 폭 비교기를 다시 만들지 않는다. |
 | `tb_face_tracker.vhd` | Face 1~5, lower/upper, wrap, 방향, overlap | `face_tracker` | `run_v2_face_tracker.ps1` | 경계의 inclusive 의미를 보존한다. |
 | `tb_lidar_operation_subsystem.vhd` | RUN/STOP/ARM/DISARM, permit, mode, fail-safe reset | operation manager/subsystem | `run_v2_operation.ps1` | 허용/금지 전이를 쌍으로 추가한다. |
-| `tb_shot_scheduler.vhd` | 광학각 간격, 방향/wrap, busy 억제, late-angle 금지 | `shot_scheduler` | `run_v2_shot_scheduler.ps1` | exact/overshoot 위치를 모두 확인한다. |
+| `tb_shot_scheduler.vhd` | 광학각 간격, 방향/wrap, 등록된 GPX admission(후보점 1클럭 전 안정), busy 억제, late-angle 금지 | `shot_scheduler` | `run_v2_shot_scheduler.ps1` | exact/overshoot 위치와 GPX busy 해제 후 off-grid 재시도 금지를 모두 확인한다. |
 | `tb_laser_executor.vhd` | fire, fire_done, start/stop TDC, timeout, sim/physical 배제 | `laser_executor` | `run_v2_laser_executor.ps1` | fire_done 경로는 cycle 정확도를 유지한다. |
 | `tb_v2_processing_control_chain.vhd` | operation→Face→scheduler B0~B2 직접 event 연결 | 세 Processing core | `run_v2_shot_scheduler.ps1` | AXIS monitor가 제어를 막지 않아야 한다. |
 | `tb_v2_laser_control_chain.vhd` | operation→Face→scheduler→executor B0~B3 | 네 Processing core | `run_v2_laser_executor.ps1` | 단위 latency 변경을 end-to-end에 반영한다. |
@@ -61,12 +61,12 @@
 
 | 테스트벤치 | 생성 목적과 핵심 커버 | 관련 RTL | 실행 | 변경 시 주의 |
 |---|---|---|---|---|
-| `tb_lidar_echo_subsystem.vhd` | physical/simulation/disabled, 16/32 lane, Return 1~7, delay | `lidar_echo_subsystem` | `run_v2_echo.ps1` | physical STOP에 CSR/AXIS 지연을 넣지 않는다. |
+| `tb_lidar_echo_subsystem.vhd` | physical/simulation/disabled, 16/32 lane, Return 1~7, delay, 10-bank 등록형 Shot 시작/채널 초기화, 등록된 any-event와 Shot snapshot finalize | `lidar_echo_subsystem` | `run_v2_echo.ps1` | physical STOP에는 CSR/AXIS/진단 파이프라인 지연을 넣지 않는다. 등록된 Shot 시작과 같은 cycle의 첫 Echo도 수락하며, 단계 분리 뒤에도 snapshot cycle과 32채널 count가 같아야 한다. |
 | `tb_lidar_gpx_bus_engine.vhd` | typed wrapper와 v1 PHY의 pin/cycle/28-bit 등가 | GPX bus engine/legacy PHY | `run_v2_gpx_bus.ps1` | 물리 FSM 변경은 oracle 비교가 먼저다. |
-| `tb_lidar_gpx_event_gateway.vhd` | SYNC/ASYNC command/result CDC와 reset/stall | GPX event gateways | `run_v2_gpx_event_gateway.ps1` | payload 추가 시 stall 안정성을 확인한다. |
+| `tb_lidar_gpx_event_gateway.vhd` | SYNC/ASYNC command/result CDC, reset/stall과 K1-4 여섯 clock profile | GPX event gateways | `run_v2_gpx_event_gateway.ps1`, `run_v2_k14_signoff.ps1` | SYNC는 같은 주파수가 아니라 동일한 물리 clock을 사용한다. ASYNC 150/200, 200/150, 200/50, 50/200, 150/100 MHz를 보존한다. |
 | `tb_lidar_gpx_event_merge.vhd` | multi-lane ordered merge, terminal, backpressure | `lidar_gpx_event_merge` | `run_v2_gpx_acquisition_coordinator.ps1` | starvation과 terminal 누락을 검사한다. |
 | `tb_lidar_gpx_acquisition_lane.vhd` | 한 Chip IFIFO1/2 drain, timeout, cap/purge | acquisition lane/chip run | `run_v2_gpx_acquisition_lane.ps1` | EF 정상 종료와 fault 종료를 분리한다. |
-| `tb_lidar_gpx_acquisition_coordinator.vhd` | Shot fanout, runtime mask, terminal merge, config | acquisition coordinator | `run_v2_gpx_acquisition_coordinator.ps1` | inactive lane 무동작을 확인한다. |
+| `tb_lidar_gpx_acquisition_coordinator.vhd` | Shot fanout, runtime mask, terminal merge, 등록된 lane config-ready, config와 부팅 중 외부 GPX Register Read 보존 | acquisition coordinator | `run_v2_gpx_acquisition_coordinator.ps1`, `run_v2_k14_signoff.ps1` | inactive lane 무동작, config-ready의 1클럭 보수적 상승, 전역/강제 리셋 중 `ready=0`, 리셋 해제 후 held-valid 단일 수락, 1-entry 요청 버퍼와 응답 stall 안정성을 함께 확인한다. |
 | `tb_lidar_gpx_acquisition_subsystem.vhd` | external pin부터 B5, 32 physical STOP lane, fault/CDC | acquisition subsystem | `run_v2_gpx_acquisition_subsystem.ps1` | routine 두 clock 관계를 모두 유지한다. |
 | `tb_lidar_face_close_owner.vhd` | trailing/all-hole Face close, overlap, exactly-once | `lidar_face_close_owner` | `run_v2_gpx_b5_b8_subsystem.ps1` | 조기 close와 누락 close를 함께 본다. |
 
@@ -74,10 +74,10 @@
 
 | 검증 자산 | 생성 목적과 핵심 커버 | 관련 RTL | 실행 | 변경 시 주의 |
 |---|---|---|---|---|
-| `tb_tdc_gpx_chip_init_cfg_owner.vhd` | init/config coalesced set/clear, busy 중 clear가 초기화를 취소하지 않음, clear와 새 사건 동시 발생 | `tdc_gpx_chip_init` | `run_v2_gpx_clear_status.ps1` | pending 초기화와 진단 sticky를 섞지 않는다. |
+| `tb_tdc_gpx_chip_init_cfg_owner.vhd` | prefetch→prepare→issue register 순서/값, init/config coalesced set/clear, busy 중 clear가 초기화를 취소하지 않음, clear와 새 사건 동시 발생 | `tdc_gpx_chip_init` | `run_v2_gpx_clear_status.ps1` | 다음 index prefetch가 이전 register 값을 재사용하지 않는지와 pending 초기화/진단 sticky 분리를 함께 확인한다. |
 | `tb_tdc_gpx_request_loss.vhd` | Register request overflow set/clear와 같은 clock 새 overflow 우선 | `tdc_gpx_chip_reg`, `tdc_gpx_cmd_arb` | `run_v2_gpx_clear_status.ps1` | queue/FSM은 clear 대상이 아니다. |
 | `v2_gpx_clear_status_fault_injection.tcl` | response mismatch, raw drop, drain cap, command collision, bus fatal을 이름 있는 사건점에 개별 주입 | `tdc_gpx_chip_ctrl` | `run_v2_gpx_clear_status.ps1` | 내부 상태를 임의로 바꾸지 말고 진단 event predicate만 force한다. |
-| `tb_tdc_gpx_chip_ctrl.vhd` | 기존 21개 기능 시나리오와 22번째 전체 진단 clear 무회귀 | Chip controller와 bus PHY | `run_v2_gpx_clear_status.ps1` | bus-fatal 기능 격리와 진단 이력을 별도 확인한다. |
+| `tb_tdc_gpx_chip_ctrl.vhd` | init/run/drain/backpressure/quarantine, range timeout one-shot, `0=disable`, 전체 진단 clear 무회귀 | Chip controller와 bus PHY | `run_v2_gpx_clear_status.ps1` | range countdown은 drain margin 전에 발화하지 않고 비영 예산당 한 번만 발화해야 한다. bus-fatal 기능 격리와 진단 이력도 별도 확인한다. |
 
 전용 스크립트는 위 네 층을 모두 실행하고
 `LIDAR_V2_K11_GPX_CLEAR_STATUS_REGRESSION_PASS`를 최종 표식으로 남긴다.
@@ -90,7 +90,7 @@
 | `tb_lidar_gpx_cell_collector.vhd` | Cell grouping, Return 1~7, visible filter, overflow | `lidar_gpx_cell_collector` | `run_v2_gpx_cell_collector.ps1` | 의도적 필터와 실제 손실을 구분한다. |
 | `tb_lidar_gpx_hit_cell_pipeline.vhd` | decoder→collector context/ready/Return 연결 | B6/B7 두 블록 | `run_v2_gpx_cell_collector.ps1` | pipeline 추가 시 latency와 identity를 본다. |
 | `tb_lidar_gpx_runtime_slope_masks.vhd` | one/four-Chip dual-edge와 runtime mask 부분집합 | decoder/collector | `run_v2_gpx_frame_lane_assembler.ps1` | inactive slope가 출력되지 않아야 한다. |
-| `tb_lidar_gpx_frame_lane_assembler.vhd` | Rise/Fall channel order, gap, topology, lane stall | frame lane assembler | `run_v2_gpx_frame_lane_assembler.ps1` | canonical B8 순서를 먼저 고정한다. |
+| `tb_lidar_gpx_frame_lane_assembler.vhd` | Rise/Fall channel order, gap, topology, lane stall, Face-close context/geometry 단계 분리 | frame lane assembler | `run_v2_gpx_frame_lane_assembler.ps1` | canonical B8 순서와 all-hole/trailing-gap/fault 결과를 단계 분리 전후 동일하게 유지한다. |
 | `tb_lidar_gpx_b5_b8_subsystem.vhd` | B5 raw부터 B8 Cell까지 identity와 Face close | B5~B8 subsystem | `run_v2_gpx_b5_b8_subsystem.ps1` | dedicated/all-dual 및 두 clock 관계를 본다. |
 
 ### 3.5 PACKED17, AXIS, VDMA 및 Golden
@@ -105,7 +105,7 @@
 | `tb_lidar_gpx_vdma_profile_manager.vhd` | HSIZE/VSIZE/STRIDE/Footer line 및 safe activation | VDMA profile manager | `run_v2_gpx_face_footer.ps1` | 최소/최대 geometry를 모두 본다. |
 | `tb_lidar_gpx_face_footer_builder.vhd` | 32-byte Face Footer field와 폭별 전송 | Footer builder/profile manager | `run_v2_gpx_face_footer.ps1` | version과 Viewer decoder를 같이 바꾼다. |
 | `tb_lidar_gpx_frame_close_fork.vhd` | Rise/Fall Footer fork와 독립 stall | Frame close fork | `run_v2_gpx_face_footer.ps1` | disabled lane 교착을 막는다. |
-| `tb_lidar_gpx_axis_output_subsystem.vhd` | dual-lane Shot/Hole/Footer/packer 통합과 K1-3 최대 STOP/Return topology geometry telemetry | AXIS output subsystem | `run_v2_k06_axis_dual_lane.ps1`, `run_v2_k13_operating_matrix.ps1` | 한 lane stall의 격리와 세 topology의 슬롯/HSIZE/VSIZE/STRIDE/Beat 수를 함께 보존한다. |
+| `tb_lidar_gpx_axis_output_subsystem.vhd` | dual-lane Shot/Hole/Footer/packer 통합, 등록된 Cell 1단계와 Shot-Line 1단계 dispatch, K1-3 최대 STOP/Return topology geometry telemetry | AXIS output subsystem | `run_v2_k06_axis_dual_lane.ps1`, `run_v2_k13_operating_matrix.ps1` | 한 lane stall의 격리와 세 topology의 슬롯/HSIZE/VSIZE/STRIDE/Beat 수를 함께 보존한다. 두 dispatch 단계의 고정 `+2 Processing clocks`를 K13 기준값에 포함하되 Cell/Word 순서와 정상상태 1개/clock 처리율은 유지한다. |
 | `tb_lidar_gpx_ddr_golden.vhd` | STRIDE-aware DDR 모든 word와 HTML/PS Golden 비교 | 전체 data/output chain | `run_v2_gpx_ddr_golden.ps1` | capture와 외부 비교까지 성공해야 한다. |
 
 ### 3.6 Public Top 통합
@@ -114,7 +114,7 @@
 |---|---|---|---|---|
 | `tb_tdc_gpx_lidar_ctrl_v2_k03.vhd` | Top config/VDMA activation 및 command CDC | v2 Top + K0-3 계층 | `run_v2_k03_integration.ps1` | public port/generic 누락을 확인한다. |
 | `tb_tdc_gpx_lidar_ctrl_v2_k04.vhd` | Top Processing/Echo, physical/simulation source | v2 Top + K0-4 계층 | `run_v2_k04_integration.ps1` | simulation이 physical 출력을 내지 않게 한다. |
-| `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` | K0-5 B5~B8, K0-6 AXIS 출력, K1-2 Reg7 3계층 계약과 K1-3 Return/거리/clock/width 시간 telemetry | v2 Top + config/physical GPX/data/output 전체 계층 | `run_v2_k05_integration.ps1`, `run_v2_k06_axis_integration.ps1`, `run_v2_k13_operating_matrix.ps1` | K05/K06 top, K1-2 물리 readback과 K1-3 사건 순서/geometry assertion을 삭제하지 않는다. |
+| `tb_tdc_gpx_lidar_ctrl_v2_k05.vhd` | K0-5 B5~B8, K0-6 AXIS 출력, K1-2 Reg7 3계층, K1-3 운용 telemetry와 K1-4 릴리스 clock 사건 보존 | v2 Top + config/physical GPX/data/output 전체 계층 | `run_v2_k05_integration.ps1`, `run_v2_k06_axis_integration.ps1`, `run_v2_k13_operating_matrix.ps1`, `run_v2_k14_signoff.ps1` | 첫 완성 Frame은 Beat/Line/SOF/Footer/비결측을 정확히 비교한다. 빠른 가상 모터로 뒤이은 Face가 겹치면 추가 출력은 완전한 결측 Frame만 허용하며 부분 Frame이나 데이터 중복은 금지한다. K1-4에서는 동일 물리 clock 150/150과 ASYNC 200/50, 50/200, 150/100 MHz도 실행한다. |
 
 ## 4. Profile wrapper 인벤토리
 
@@ -166,7 +166,8 @@ top 이름을 제공한다.
 7. Output: serializer, Shot/Hole, packer, Footer, dual lane 순서
 8. Golden: `run_v2_gpx_ddr_golden.ps1`와 PS/HTML byte 비교
 9. Public Top: K03, K04, K05/K06, K08 순서
-10. IP package와 OOC implementation
+10. K1-4 최종 Gate: `run_v2_k14_signoff.ps1`
+11. IP package와 OOC implementation
 
 예시:
 
@@ -186,14 +187,17 @@ powershell -ExecutionPolicy Bypass -File system_integration/v2/scripts/check_v2_
 
 | 우선순위 | 공백 | 현재 상태 | 필요한 회귀 |
 |---|---|---|---|
+| K1-4 Gate | 통합 RTL/IP release Gate | 입력 snapshot 기반 11개 Gate와 package OOC를 한 실행으로 판정 | routine 2개×폭 3개 구현, 직접 CDC 6개, Golden과 package 검사를 같은 runner로 유지한다. 최종 통과 세션은 K1-4 결과 문서에서 관리한다. |
 | Closed K1-3 | K1 RTL/HTML 전체 operating matrix | 40개 RTL profile과 실행 가능한 HTML/Golden 자동 비교 완료 | Return 1~7, 32/64/128-bit, 목표거리, topology와 두 routine clock 관계를 유지 회귀 |
 | Closed K1-2 | Reg7 Shadow/Active/Physical 3계층 단일 시나리오 | Top 연속 시나리오로 완료 | 잘못된 staging MTimer→진행 중 Shadow 수정→두 번의 성공 COMMIT→두 Chip 물리 readback→`0x33` 실패 rollback→복구 COMMIT |
 | P1 | 같은 sticky가 high인 동안 반복된 사건 | IRQ bit만으로 횟수 구분 불가 | 관련 진단 count 증가/clear/new-event-wins 검증 |
 | P2 | 실제 AXI VDMA, HP port, DDR cache coherency | RTL/Golden 모델 범위 밖 | Stage L parent/보드에서 DMA API와 cache invalidate 포함 측정 |
 | P2 | 실제 PCB GPX timing, LVDS와 laser safety | simulation/implementation만으로 불충분 | laser-disabled capture 후 제한된 physical laser/GPX 보드 시험 |
 
-이 표의 공백은 현재 PASS를 무효화하지 않는다. 다만 해당 범위를 검증했다고
-확대 해석해서는 안 되며, K1 또는 Stage L Sign-off 전 반드시 닫아야 한다.
+이 표의 공백은 K1 RTL/IP PASS를 무효화하지 않는다. 다만 해당 범위를 검증했다고
+확대 해석해서는 안 된다. 실제 VDMA/cache와 물리 신호 항목은 Stage L 보드
+Sign-off에서 닫고, 반복 sticky 사건 횟수는 운용 진단 요구가 확정될 때 counter
+coverage와 함께 보강한다.
 
 legacy TDC sticky의 `CLEAR_STATUS` 통일은 K1-1에서 완료했다. lane fault
 `[2],[3],[4],[10],[11],[12]`, clear, 같은 clock 새 fault 우선, 통합 IRQ source와
@@ -218,7 +222,24 @@ STOP_TDC와 첫 Shot Line의 마지막 handshake를 계측한다. 별도의 AXIS
 전용 Rise/Fall, 한 chip 양 edge, 4 chip 양 edge의 슬롯 수와 geometry를 계측한다.
 두 TB의 구조화된 marker를 HTML 실행 모델 및 체크인된 Golden JSON과 비교하므로,
 marker 이름이나 사건 기준을 바꿀 때는 검증기와 K1-3 계약 문서를 같은 커밋에서
-갱신해야 한다. 실제 VDMA/HP/cache와 장기 backpressure는 이 PASS에 포함되지 않는다.
+갱신해야 한다. Cell dispatch와 Shot-Line dispatch는 각각 한 Processing clock의
+등록 경계이며, 이 고정 `+2 Processing clocks`는 HTML 기준값에도 포함한다. 빠른
+가상 모터 때문에 첫 Frame 뒤에 다음 Face가 겹칠 수 있으므로 첫 Frame은 전체
+Beat/Line/SOF/Footer를 정확히 비교하고, 이후 출력은 완전한 결측 Frame만 허용한다.
+부분 Footer, 부분 Line 또는 중복 데이터는 계속 실패다. 실제 VDMA/HP/cache와 장기
+backpressure는 이 PASS에 포함되지 않는다.
+
+K1-4는 `run_v2_k14_signoff.ps1` 한 곳에서 테스트벤치 문서, GPX 유지보수,
+Release Top 기능, 공개 Top 구현, coordinator, 직접 CDC, AXIS, 상태/IRQ,
+RTL/HTML, DDR/PS/Ethernet, IP package를 순서대로 실행한다. Processing→TDC와
+TDC→Processing의 두 비동기 경계 때문에 K13 시간 telemetry는 nominal baseline의
+`-2..+2 Processing clocks`를 허용한다. `lidar_gpx_shot_gateway`의 TDC 출력
+스키드는 Shot 지연을 1 TDC clock 늘리지만 1 Shot/clock 처리량과 원자성은 유지한다.
+`tdc_gpx_chip_ctrl`의 등록형 Register 응답도 유지보수 응답만 1 TDC clock 늘리며
+STOP/IFIFO 획득 경로를 변경하지 않는다. 상태 응답은 진단 index 선택과 word 패킹을
+서로 다른 clock 단계로 나누고, Echo 진단은 Shot 시작과 채널 초기화를 10개 로컬
+뱅크로 등록한다. 두 변경 모두 관측/진단 경로의 배선 집중을 줄이기 위한 것이며,
+외부 LVDS STOP과 물리 fire_done→TDC 측정 시작 신호(T0) 경로에는 지연을 추가하지 않는다.
 
 ## 8. 테스트벤치 유지보수 체크리스트
 

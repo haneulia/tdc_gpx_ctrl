@@ -60,10 +60,17 @@ end entity lidar_processing_status_source;
 
 architecture rtl of lidar_processing_status_source is
 
-    type source_state_t is (SOURCE_IDLE, SOURCE_BUILD, SOURCE_RESPONSE);
+    type source_state_t is (
+        SOURCE_IDLE,
+        SOURCE_BUILD,
+        SOURCE_PACK,
+        SOURCE_RESPONSE
+    );
     signal state_r : source_state_t := SOURCE_IDLE;
     signal index_r : lidar_diag_index_t := (others => '0');
     signal response_r : lidar_diag_response_t := (others => '0');
+    signal response_data_r : lidar_diag_word_t := (others => '0');
+    signal response_error_r : std_logic := '0';
 
     signal source_switch_sticky_r : std_logic := '0';
     signal echo_timeout_sticky_r  : std_logic := '0';
@@ -111,6 +118,8 @@ begin
             state_r <= SOURCE_IDLE;
             index_r <= (others => '0');
             response_r <= (others => '0');
+            response_data_r <= (others => '0');
+            response_error_r <= '0';
             source_switch_sticky_r <= '0';
             echo_timeout_sticky_r <= '0';
             echo_aborted_sticky_r <= '0';
@@ -419,7 +428,17 @@ begin
                             v_error := '1';
                     end case;
 
-                    response_r <= fn_pack_diag_response(v_data, v_error);
+                    -- Indexed live-status MUX의 32-bit 결과를 먼저
+                    -- 등록한다. 응답 valid/error 포장은 다음 clock에서
+                    -- 수행하여 index decode, 대형 MUX와 mailbox 응답
+                    -- register가 한 200 MHz 경로에 합쳐지지 않게 한다.
+                    response_data_r <= v_data;
+                    response_error_r <= v_error;
+                    state_r <= SOURCE_PACK;
+
+                when SOURCE_PACK =>
+                    response_r <= fn_pack_diag_response(
+                        response_data_r, response_error_r);
                     state_r <= SOURCE_RESPONSE;
 
                 when SOURCE_RESPONSE =>
