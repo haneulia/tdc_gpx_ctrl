@@ -29,6 +29,7 @@ HLS로 단계 전환하는 항목:
 | `hls/common/include/` | HLS/RTL 경계의 고정 Bit Map |
 | `hls/gpx_hit_decoder/` | 첫 변환 대상 Raw28-to-Hit17 컴포넌트 |
 | `hls/gpx_cell_collector/` | Hit17-to-Cell 수집·필터·오류 분류 컴포넌트 |
+| `hls/gpx_frame_assembler/` | Cell-to-Frame Rise/Fall 정렬·gap·Face 종료 컴포넌트 |
 | `rtl/bridges/` | HLS와 V2 record 경계를 연결하는 Adapter |
 | `tb/` | V2/HLS 차등 및 구현 Timing Harness |
 | `scripts/` | Vitis HLS 재현 실행기 |
@@ -41,7 +42,8 @@ HLS로 단계 전환하는 항목:
 - Vitis HLS 2025.2
 - Vivado 2025.2 계열
 - Device: `xc7z020clg484-2`
-- HLS 처리 목표: 200 MHz
+- 제품 Processing clock 검증점: 150 MHz 및 200 MHz
+- H3 내부 HLS 스케줄 목표: 250 MHz 상당(4 ns), 200 MHz 실배선 여유 확보용
 - 제품 AXI4-Stream 폭: 합성 시 32 또는 64 bit
 - 데이터 ABI: PACKED17
 
@@ -60,7 +62,8 @@ HLS로 단계 전환하는 항목:
 | H0 실행 환경 | 완료 | Vitis HLS/Vivado 2025.2.1 재현 확인 |
 | H1 Raw28-to-Hit17 | 완료 | CSim, C/RTL co-sim, V2 차동 회귀, 150/200 MHz 배치·배선 PASS |
 | H2 Hit-to-Cell | 완료 | CSim, C/RTL co-sim, V2 차등, Abort, 150/200 MHz 배치·배선 PASS |
-| H3 Cell-to-Frame | 다음 단계 | Rise/Fall Cell 정렬과 Shot/Face 구조화 |
+| H3 Cell-to-Frame | 완료 | 5 topology C/RTL, V2 차등 10개, Abort, 150/200 MHz 배치·배선 PASS |
+| H4 Frame-to-Word | 다음 단계 | PACKED17, Shot Line Metadata, Face Footer의 V2 Word Golden 비교 |
 
 H1의 계약, 시험 행렬과 수치는
 [`docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md`](docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md)에
@@ -68,8 +71,12 @@ H1의 계약, 시험 행렬과 수치는
 [`docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md`](docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md)에
 기록하고, 테스트별 목적·수행 순서·유지보수 규칙은
 [`docs/V3_H2_TESTBENCH_GUIDE_KO.md`](docs/V3_H2_TESTBENCH_GUIDE_KO.md)에
-분리해 둔다. 각 단계 PASS는 해당 경계만 닫았다는 뜻이며 V3 통합 IP 또는
-Parent 프로젝트 전체 Sign-off를 뜻하지 않는다.
+분리해 둔다. H3의 역할·Bit 계약·타이밍 결과는
+[`docs/V3_H3_GPX_FRAME_ASSEMBLER_SIGNOFF_KO.md`](docs/V3_H3_GPX_FRAME_ASSEMBLER_SIGNOFF_KO.md),
+테스트 소유권과 유지보수 규칙은
+[`docs/V3_H3_TESTBENCH_GUIDE_KO.md`](docs/V3_H3_TESTBENCH_GUIDE_KO.md)에
+기록한다. 각 단계 PASS는 해당 경계만 닫았다는 뜻이며 V3 통합 IP 또는 Parent
+프로젝트 전체 Sign-off를 뜻하지 않는다.
 
 ## H1 재현 명령
 
@@ -95,4 +102,17 @@ Parent 프로젝트 전체 Sign-off를 뜻하지 않는다.
 
 # xc7z020clg484-2 실제 OOC 합성·배치·배선: 150/200 MHz
 ./system_integration/v3/scripts/run_v3_gpx_cell_collector_impl.ps1 -SkipHlsSynthesis
+```
+
+## H3 재현 명령
+
+```powershell
+# CSim + CSynth + 다섯 topology C/RTL co-sim
+./system_integration/v3/scripts/run_v3_hls_frame_assembler.ps1 -Step all
+
+# V2 RTL과 V3 HLS 혼합 시뮬레이션: 다섯 topology x 150/200 MHz
+./system_integration/v3/scripts/run_v3_gpx_frame_assembler_diff.ps1 -SkipHlsSynthesis
+
+# xc7z020clg484-2 실제 OOC 합성·배치·배선: 150/200 MHz
+./system_integration/v3/scripts/run_v3_gpx_frame_assembler_impl.ps1 -SkipHlsSynthesis
 ```

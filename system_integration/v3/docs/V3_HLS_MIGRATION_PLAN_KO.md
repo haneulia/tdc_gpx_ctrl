@@ -47,8 +47,8 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 | H0 | 완료 | 프로젝트/타입/실행 환경 | Vitis 2025.2 재현 실행 PASS |
 | H1 | 완료 | Raw28-to-Hit17 | 모든 topology와 fault C/RTL co-sim 및 V2 차동 회귀 PASS |
 | H2 | 완료 | Hit-to-Cell | Return 1~7, filter, overflow, timeout, abort PASS |
-| H3 | 다음 | Cell-to-Frame | 1-Chip dual-edge, 4-Chip all-dual, dedicated PASS |
-| H4 | 대기 | PACKED17/Shot/Hole/Footer | V2 Word Golden exact match |
+| H3 | 완료 | Cell-to-Frame | 5 topology, Rise/Fall 독립 stall, Face gap, abort, 150/200 MHz PASS |
+| H4 | 다음 | PACKED17/Shot Metadata/Face Footer | V2 Word Golden exact match |
 | H5 | 대기 | 혼합 RTL/HLS Top | Reset, abort, stall, 32/64-bit PASS |
 | H6 | 대기 | Parent Sign-off | 4-Chip OOC/Parent timing, CDC, DRC, bitstream PASS |
 
@@ -57,6 +57,8 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 - HLS 내부 Metadata scrub과 Cell 방출 메모리 loop의 initiation interval은 1이다.
 - 입력 승인 간격은 V2 상태 직렬 처리보다 시스템 처리율을 악화시키지 않아야 하며,
   H5에서 상위 FIFO 최대 점유율과 Shot 처리 여유를 실측한다.
+- H3의 Rise/Fall Cell Slot은 VDMA Line이 아니다. H4가 Slot을 canonical 32-bit
+  Word로 만들고 H5의 RTL packer가 32/64-bit AXI4-Stream Beat로 결합한다.
 - 출력 backpressure 동안 payload와 종료 정보는 변하지 않는다.
 - HLS 내부 FIFO 깊이는 추론 기본값에 맡기지 않고 명시한다.
 - Abort 또는 Reset 뒤 이전 Face payload가 다음 Face에 나타나지 않는다.

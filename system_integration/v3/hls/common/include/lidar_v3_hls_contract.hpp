@@ -9,6 +9,7 @@ namespace lidar_v3 {
 constexpr unsigned kMaxChips = 4;
 constexpr unsigned kMaxStopsPerChip = 8;
 constexpr unsigned kMaxReturnsPerStop = 7;
+constexpr unsigned kMaxFaces = 5;
 
 // AXI4-Stream TDATA is byte-aligned. The semantic Raw payload uses bits
 // [214:0]; bit 215 is reserved and must be driven to zero by the RTL adapter.
@@ -53,6 +54,106 @@ static_assert((kCellHitInputBits % 8U) == 0U,
               "Cell input AXIS width must be byte aligned");
 static_assert((kCollectorResultBits % 8U) == 0U,
               "Cell result AXIS width must be byte aligned");
+
+// H3 accepts either one H2 Cell or one Processing-owned Face close event.
+// input_kind=0 selects Cell bits [318:0], input_kind=1 selects the Face close
+// layout in bits [68:0]. reset_epoch is sampled with the accepted event.
+constexpr unsigned kFrameInputBits = 328;
+using frame_input_payload_t = ap_uint<kFrameInputBits>;
+constexpr unsigned kFrameInputKind = 319;
+constexpr unsigned kFrameInputResetEpochLo = 320;
+constexpr unsigned kFrameInputResetEpochHi = 327;
+
+constexpr unsigned kFaceCloseIdLo = 0;
+constexpr unsigned kFaceCloseIdHi = 31;
+constexpr unsigned kFaceCloseFaceLo = 32;
+constexpr unsigned kFaceCloseFaceHi = 34;
+constexpr unsigned kFaceCloseDirection = 35;
+constexpr unsigned kFaceCloseSourceSim = 36;
+constexpr unsigned kFaceCloseVersionLo = 37;
+constexpr unsigned kFaceCloseVersionHi = 52;
+constexpr unsigned kFaceCloseColumnsLo = 53;
+constexpr unsigned kFaceCloseColumnsHi = 68;
+constexpr unsigned kFaceCloseInputBits = 69;
+using face_close_input_payload_t = ap_uint<kFaceCloseInputBits>;
+
+// H3 stores only Cell fields that vary by Chip/STOP/slope. Shot context and
+// the active masks are stored once per Shot, matching the V2 LUTRAM layout.
+constexpr unsigned kLaneCellStorageBits = 148;
+using lane_cell_storage_t = ap_uint<kLaneCellStorageBits>;
+constexpr unsigned kLaneHitsLo = 0;
+constexpr unsigned kLaneHitsHi = 118;
+constexpr unsigned kLaneHitCountLo = 119;
+constexpr unsigned kLaneHitCountHi = 121;
+constexpr unsigned kLaneMaxHitsLo = 122;
+constexpr unsigned kLaneMaxHitsHi = 124;
+constexpr unsigned kLaneHitDropped = 125;
+constexpr unsigned kLaneReturnOverflow = 126;
+constexpr unsigned kLaneErrorFill = 127;
+constexpr unsigned kLaneFaulted = 128;
+constexpr unsigned kLaneTimeoutLo = 129;
+constexpr unsigned kLaneTimeoutHi = 131;
+constexpr unsigned kLaneSequenceLo = 132;
+constexpr unsigned kLaneSequenceHi = 147;
+
+// One H3 lane output is one canonical Frame Cell slot. It is independent of
+// the final 32/64-bit AXI width and does not contain PACKED17 or Footer words.
+constexpr unsigned kFrameCellBits = 360;
+using frame_cell_payload_t = ap_uint<kFrameCellBits>;
+constexpr unsigned kFrameCellCellLo = 0;
+constexpr unsigned kFrameCellCellHi = 318;
+constexpr unsigned kFrameCellSlotLo = 319;
+constexpr unsigned kFrameCellSlotHi = 324;
+constexpr unsigned kFrameCellSlotCountLo = 325;
+constexpr unsigned kFrameCellSlotCountHi = 330;
+constexpr unsigned kFrameCellLineStart = 331;
+constexpr unsigned kFrameCellLineEnd = 332;
+constexpr unsigned kFrameCellFirstColumn = 333;
+constexpr unsigned kFrameCellLastColumn = 334;
+constexpr unsigned kFrameCellGapLo = 335;
+constexpr unsigned kFrameCellGapHi = 350;
+constexpr unsigned kFrameCellBlank = 351;
+constexpr unsigned kFrameCellLineFaulted = 352;
+constexpr unsigned kFrameCellReservedLo = 353;
+constexpr unsigned kFrameCellReservedHi = 359;
+
+// Frame close adds the trailing/all-hole information calculated from Shot
+// history. The first 69 bits intentionally preserve the input Face identity.
+constexpr unsigned kFrameCloseOutputBits = 87;
+using frame_close_payload_t = ap_uint<kFrameCloseOutputBits>;
+constexpr unsigned kFrameCloseTrailingLo = 69;
+constexpr unsigned kFrameCloseTrailingHi = 84;
+constexpr unsigned kFrameCloseAllHole = 85;
+constexpr unsigned kFrameCloseFaulted = 86;
+
+// Exactly one control result follows every accepted H3 input. Lane Cells are
+// carried on separate streams, while this result owns fault pulses, optional
+// Face close output and Shot completion context.
+constexpr unsigned kFrameControlBits = 264;
+using frame_control_payload_t = ap_uint<kFrameControlBits>;
+constexpr unsigned kFrameFaultContext = 0;
+constexpr unsigned kFrameFaultUnexpected = 1;
+constexpr unsigned kFrameFaultDuplicateCell = 2;
+constexpr unsigned kFrameFaultDuplicateTerminal = 3;
+constexpr unsigned kFrameFaultMissingCell = 4;
+constexpr unsigned kFrameFaultGeometry = 5;
+constexpr unsigned kFrameFaultColumnGap = 6;
+constexpr unsigned kFrameFaultMaskedDrop = 7;
+constexpr unsigned kFrameControlEmitClose = 8;
+constexpr unsigned kFrameControlCloseLo = 9;
+constexpr unsigned kFrameControlCloseHi = 95;
+constexpr unsigned kFrameControlShotDone = 96;
+constexpr unsigned kFrameControlContextLo = 97;
+constexpr unsigned kFrameControlContextHi = 258;
+constexpr unsigned kFrameControlReservedLo = 259;
+constexpr unsigned kFrameControlReservedHi = 263;
+
+static_assert((kFrameInputBits % 8U) == 0U,
+              "Frame input AXIS width must be byte aligned");
+static_assert((kFrameCellBits % 8U) == 0U,
+              "Frame Cell AXIS width must be byte aligned");
+static_assert((kFrameControlBits % 8U) == 0U,
+              "Frame control AXIS width must be byte aligned");
 
 enum class raw_kind_t : std::uint8_t {
     data = 0,
