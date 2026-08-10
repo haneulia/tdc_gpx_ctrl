@@ -6,7 +6,7 @@
 -- 검증 범위:
 --   * 전용 Rise/Fall Chip, 한 Chip 양 Edge, Fall 비활성, 축소 구성,
 --     네 Chip 모두 Rise/Fall 구성
---   * Runtime Return 수 1~7이 섞인 Cell payload와 canonical slot 순서
+--   * Runtime 직렬화(전시) Return 슬롯 수 1~7이 섞인 Cell payload와 canonical slot 순서
 --   * Rise/Fall 독립 Backpressure, 누락 Cell blank-fill, 중복/마스크 오류
 --   * 내부 출력이 남은 상태의 Abort, Reset Epoch 복구 및 주소 재사용
 --   * Face 내부 column gap, trailing gap, all-hole Face 종료

@@ -110,7 +110,7 @@ cell_payload_t make_cell(cell_kind_t kind, std::uint8_t chip, std::uint8_t stop,
         cell, slope == static_cast<std::uint8_t>(slope_t::rise));
     lidar_v3::write_field<h2::cell_event_layout::visible_return_count>(
         cell, hit_count);
-    lidar_v3::write_field<h2::cell_event_layout::configured_return_capacity>(
+    lidar_v3::write_field<h2::cell_event_layout::serialized_return_slot_count>(
         cell, 2U);
     if (hit_count != 0U) {
         const unsigned first_hit_low_bit =

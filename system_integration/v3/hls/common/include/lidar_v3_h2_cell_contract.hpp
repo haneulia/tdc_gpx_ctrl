@@ -36,8 +36,10 @@ using collector_input_axis_t = ap_uint<kCollectorInputAxisTdataBits>;
 
 // One Cell is one Shot x one TDC-GPX Chip x one logical STOP channel x one
 // edge slope. All seven physical Return slots are structurally present.
-// visible_return_count says how many leading slots are exposed by the active
-// Runtime Return setting; configured_return_capacity is the build capacity.
+// visible_return_count is the number of valid leading Return values in this
+// Cell. serialized_return_slot_count is the active Runtime Return setting and
+// therefore owns the number of PACKED17 Hit slots serialized by H4. The
+// synthesized physical collection upper bound remains a separate H2 scalar.
 constexpr unsigned kPackedReturnHitBits =
     limits::kMaximumReturnCountPerStop * 17U;
 
@@ -50,10 +52,10 @@ struct cell_event_layout {
     using edge_slope_is_rise =
         bit_field_t<logical_stop_channel_index::end, 1U>;
     using visible_return_count = bit_field_t<edge_slope_is_rise::end, 3U>;
-    using configured_return_capacity =
+    using serialized_return_slot_count =
         bit_field_t<visible_return_count::end, 3U>;
     using packed_distance_hits_17bit =
-        bit_field_t<configured_return_capacity::end, kPackedReturnHitBits>;
+        bit_field_t<serialized_return_slot_count::end, kPackedReturnHitBits>;
     using hit_was_dropped =
         bit_field_t<packed_distance_hits_17bit::end, 1U>;
     using return_overflow = bit_field_t<hit_was_dropped::end, 1U>;

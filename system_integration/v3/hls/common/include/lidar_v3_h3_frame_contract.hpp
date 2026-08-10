@@ -55,10 +55,10 @@ struct lane_cell_storage_layout {
         bit_field_t<0U, h2::kPackedReturnHitBits>;
     using visible_return_count =
         bit_field_t<packed_distance_hits_17bit::end, 3U>;
-    using configured_return_capacity =
+    using serialized_return_slot_count =
         bit_field_t<visible_return_count::end, 3U>;
     using hit_was_dropped =
-        bit_field_t<configured_return_capacity::end, 1U>;
+        bit_field_t<serialized_return_slot_count::end, 1U>;
     using return_overflow = bit_field_t<hit_was_dropped::end, 1U>;
     using error_fill_inserted = bit_field_t<return_overflow::end, 1U>;
     using cell_is_faulted = bit_field_t<error_fill_inserted::end, 1U>;

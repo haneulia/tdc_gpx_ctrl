@@ -187,8 +187,8 @@ architecture rtl of lidar_gpx_frame_lane_assembler_hls_adapter is
         result(C_V3_H2_CELL_VISIBLE_RETURNS_HI downto
                C_V3_H2_CELL_VISIBLE_RETURNS_LO) :=
             std_logic_vector(value.hit_count);
-        result(C_V3_H2_CELL_RETURN_CAPACITY_HI downto
-               C_V3_H2_CELL_RETURN_CAPACITY_LO) :=
+        result(C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_HI downto
+               C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_LO) :=
             std_logic_vector(value.max_hits);
         for hit_index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
             bit_lo := C_V3_H2_CELL_PACKED_HITS_LO +
@@ -234,8 +234,8 @@ architecture rtl of lidar_gpx_frame_lane_assembler_hls_adapter is
             C_V3_H2_CELL_VISIBLE_RETURNS_HI downto
             C_V3_H2_CELL_VISIBLE_RETURNS_LO));
         result.max_hits := unsigned(value(
-            C_V3_H2_CELL_RETURN_CAPACITY_HI downto
-            C_V3_H2_CELL_RETURN_CAPACITY_LO));
+            C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_HI downto
+            C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_LO));
         for hit_index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
             bit_lo := C_V3_H2_CELL_PACKED_HITS_LO +
                       hit_index * C_GPX_HIT_WIDTH;

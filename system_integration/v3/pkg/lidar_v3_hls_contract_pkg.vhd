@@ -1,13 +1,13 @@
 library ieee;
 use ieee.std_logic_1164.all;
 
--- H0-H3 HLS 경계의 VHDL 측 단일 비트 ABI 계약이다.
--- C++의 lidar_v3_h1/h2/h3_*_contract.hpp와 같은 값이어야 하며,
+-- H0-H4 HLS 경계의 VHDL 측 단일 비트 ABI 계약이다.
+-- C++의 lidar_v3_h1/h2/h3/h4_*_contract.hpp와 같은 값이어야 하며,
 -- V2/HLS 차분 테스트가 두 언어 사이의 실제 Word 동일성을 검증한다.
 package lidar_v3_hls_contract_pkg is
 
     constant C_V3_HLS_CONTRACT_ABI_MAJOR : natural := 3;
-    constant C_V3_HLS_CONTRACT_ABI_MINOR : natural := 1;
+    constant C_V3_HLS_CONTRACT_ABI_MINOR : natural := 2;
 
     -- H1: Raw Event -> decoded Hit Event
     constant C_V3_H1_SHOT_CONTEXT_BITS       : positive := 162;
@@ -113,8 +113,10 @@ package lidar_v3_hls_contract_pkg is
     constant C_V3_H2_CELL_SLOPE_RISE_BIT        : natural := 8;
     constant C_V3_H2_CELL_VISIBLE_RETURNS_LO    : natural := 9;
     constant C_V3_H2_CELL_VISIBLE_RETURNS_HI    : natural := 11;
-    constant C_V3_H2_CELL_RETURN_CAPACITY_LO    : natural := 12;
-    constant C_V3_H2_CELL_RETURN_CAPACITY_HI    : natural := 14;
+    -- Active Runtime Return slots serialized by H4. This is not the
+    -- synthesized physical collection upper bound.
+    constant C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_LO : natural := 12;
+    constant C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_HI : natural := 14;
     constant C_V3_H2_CELL_PACKED_HITS_LO        : natural := 15;
     constant C_V3_H2_CELL_PACKED_HITS_HI        : natural := 133;
     constant C_V3_H2_CELL_HIT_DROPPED_BIT       : natural := 134;
@@ -195,5 +197,96 @@ package lidar_v3_hls_contract_pkg is
     constant C_V3_H3_CONTROL_SHOT_CONTEXT_HI    : natural := 258;
     constant C_V3_H3_CONTROL_RESERVED_LO        : natural := 259;
     constant C_V3_H3_CONTROL_RESERVED_HI        : natural := 263;
+
+    -- H4: ordered Lane Cell/Face close -> PACKED17/Shot Metadata/Footer Word.
+    -- 최종 AXI4-Stream 폭은 합성 시 32 또는 64 bit로 결정되지만, H4 출력은
+    -- 폭에 독립적인 32-bit Canonical Word로 유지한다.
+    constant C_V3_H4_FORMATTER_INPUT_AXIS_BITS : positive := 376;
+    constant C_V3_H4_LANE_PROFILE_BITS         : positive := 104;
+    constant C_V3_H4_LINE_WORD_AXIS_BITS       : positive := 248;
+    constant C_V3_H4_CONTROL_AXIS_BITS         : positive := 32;
+
+    constant C_V3_H4_INPUT_BODY_LO             : natural := 0;
+    constant C_V3_H4_INPUT_BODY_HI             : natural := 359;
+    constant C_V3_H4_INPUT_CLOSE_LO            : natural := 0;
+    constant C_V3_H4_INPUT_CLOSE_HI            : natural := 86;
+    constant C_V3_H4_INPUT_KIND_BIT            : natural := 360;
+    constant C_V3_H4_INPUT_RESET_EPOCH_LO      : natural := 361;
+    constant C_V3_H4_INPUT_RESET_EPOCH_HI      : natural := 368;
+    constant C_V3_H4_INPUT_RESERVED_LO         : natural := 369;
+    constant C_V3_H4_INPUT_RESERVED_HI         : natural := 375;
+
+    constant C_V3_H4_PROFILE_VALID_BIT         : natural := 0;
+    constant C_V3_H4_PROFILE_ENABLED_BIT       : natural := 1;
+    constant C_V3_H4_PROFILE_SLOPE_RISE_BIT    : natural := 2;
+    constant C_V3_H4_PROFILE_WIDTH_CODE_LO     : natural := 3;
+    constant C_V3_H4_PROFILE_WIDTH_CODE_HI     : natural := 4;
+    constant C_V3_H4_PROFILE_SLOT_COUNT_LO     : natural := 5;
+    constant C_V3_H4_PROFILE_SLOT_COUNT_HI     : natural := 10;
+    constant C_V3_H4_PROFILE_RETURN_SLOTS_LO   : natural := 11;
+    constant C_V3_H4_PROFILE_RETURN_SLOTS_HI   : natural := 13;
+    constant C_V3_H4_PROFILE_CELL_WORDS_LO     : natural := 14;
+    constant C_V3_H4_PROFILE_CELL_WORDS_HI     : natural := 16;
+    constant C_V3_H4_PROFILE_PLANNED_SHOTS_LO  : natural := 17;
+    constant C_V3_H4_PROFILE_PLANNED_SHOTS_HI  : natural := 32;
+    constant C_V3_H4_PROFILE_RAW_WORDS_LO      : natural := 33;
+    constant C_V3_H4_PROFILE_RAW_WORDS_HI      : natural := 41;
+    constant C_V3_H4_PROFILE_HSIZE_WORDS_LO    : natural := 42;
+    constant C_V3_H4_PROFILE_HSIZE_WORDS_HI    : natural := 50;
+    constant C_V3_H4_PROFILE_HSIZE_BYTES_LO    : natural := 51;
+    constant C_V3_H4_PROFILE_HSIZE_BYTES_HI    : natural := 66;
+    constant C_V3_H4_PROFILE_FOOTER_LINES_LO   : natural := 67;
+    constant C_V3_H4_PROFILE_FOOTER_LINES_HI   : natural := 68;
+    constant C_V3_H4_PROFILE_VSIZE_LINES_LO    : natural := 69;
+    constant C_V3_H4_PROFILE_VSIZE_LINES_HI    : natural := 84;
+    constant C_V3_H4_PROFILE_ACTIVE_VERSION_LO : natural := 85;
+    constant C_V3_H4_PROFILE_ACTIVE_VERSION_HI : natural := 100;
+    constant C_V3_H4_PROFILE_RESERVED_LO       : natural := 101;
+    constant C_V3_H4_PROFILE_RESERVED_HI       : natural := 103;
+
+    constant C_V3_H4_WORD_DATA_LO              : natural := 0;
+    constant C_V3_H4_WORD_DATA_HI              : natural := 31;
+    constant C_V3_H4_WORD_KIND_LO              : natural := 32;
+    constant C_V3_H4_WORD_KIND_HI              : natural := 33;
+    constant C_V3_H4_WORD_INDEX_LO             : natural := 34;
+    constant C_V3_H4_WORD_INDEX_HI             : natural := 42;
+    constant C_V3_H4_WORD_COUNT_LO             : natural := 43;
+    constant C_V3_H4_WORD_COUNT_HI             : natural := 51;
+    constant C_V3_H4_WORD_LINE_START_BIT       : natural := 52;
+    constant C_V3_H4_WORD_LINE_END_BIT         : natural := 53;
+    constant C_V3_H4_WORD_FRAME_END_BIT        : natural := 54;
+    constant C_V3_H4_WORD_FIRST_COLUMN_BIT     : natural := 55;
+    constant C_V3_H4_WORD_LAST_COLUMN_BIT      : natural := 56;
+    constant C_V3_H4_WORD_LINE_HOLE_BIT        : natural := 57;
+    constant C_V3_H4_WORD_LINE_FAULTED_BIT     : natural := 58;
+    constant C_V3_H4_WORD_UNEXPANDED_GAP_LO    : natural := 59;
+    constant C_V3_H4_WORD_UNEXPANDED_GAP_HI    : natural := 74;
+    constant C_V3_H4_WORD_SLOT_COUNT_LO        : natural := 75;
+    constant C_V3_H4_WORD_SLOT_COUNT_HI        : natural := 80;
+    constant C_V3_H4_WORD_CELL_WORDS_LO        : natural := 81;
+    constant C_V3_H4_WORD_CELL_WORDS_HI        : natural := 83;
+    constant C_V3_H4_WORD_SHOT_CONTEXT_LO      : natural := 84;
+    constant C_V3_H4_WORD_SHOT_CONTEXT_HI      : natural := 245;
+    constant C_V3_H4_WORD_RESERVED_LO          : natural := 246;
+    constant C_V3_H4_WORD_RESERVED_HI          : natural := 247;
+
+    constant C_V3_H4_FAULT_INVALID_PROFILE_BIT : natural := 0;
+    constant C_V3_H4_FAULT_SLOPE_BIT           : natural := 1;
+    constant C_V3_H4_FAULT_GEOMETRY_BIT        : natural := 2;
+    constant C_V3_H4_FAULT_SEQUENCE_BIT        : natural := 3;
+    constant C_V3_H4_FAULT_RETURN_SLOTS_BIT    : natural := 4;
+    constant C_V3_H4_FAULT_FACE_CLOSE_BIT      : natural := 5;
+    constant C_V3_H4_FAULT_RESERVED_INPUT_BIT  : natural := 6;
+    constant C_V3_H4_FAULT_RESERVED_ZERO_BIT   : natural := 7;
+    constant C_V3_H4_CONTROL_FOOTER_BIT        : natural := 8;
+    constant C_V3_H4_CONTROL_LINE_COUNT_LO     : natural := 9;
+    constant C_V3_H4_CONTROL_LINE_COUNT_HI     : natural := 25;
+    constant C_V3_H4_CONTROL_RESERVED_LO       : natural := 26;
+    constant C_V3_H4_CONTROL_RESERVED_HI       : natural := 31;
+
+    subtype lidar_gpx_word_formatter_faults_t is
+        std_logic_vector(7 downto 0);
+    constant C_LIDAR_GPX_WORD_FORMATTER_FAULTS_CLEAR :
+        lidar_gpx_word_formatter_faults_t := (others => '0');
 
 end package lidar_v3_hls_contract_pkg;

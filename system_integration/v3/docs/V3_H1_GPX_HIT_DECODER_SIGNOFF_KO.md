@@ -1,7 +1,7 @@
 # V3 H1 GPX Raw28-to-Hit17 체크포인트 결과
 
-> 현재 ABI 3.1의 전체 H0~H3 Header, Bit Map과 재검증 수치는
-> [`V3_H0_H3_HEADER_CONTRACT_KO.md`](V3_H0_H3_HEADER_CONTRACT_KO.md)를 기준으로 한다.
+> 현재 ABI 3.2의 전체 H0~H4 Header, Bit Map과 재검증 수치는
+> [`V3_H0_H4_HEADER_CONTRACT_KO.md`](V3_H0_H4_HEADER_CONTRACT_KO.md)를 기준으로 한다.
 > 이 문서의 수치는 H1 최초 체크포인트 이력으로 유지한다.
 
 ## 1. 판정
@@ -164,6 +164,7 @@ V2 차동 테스트에 단일 희소 이벤트 검사를 포함하여 재발을 
 ## 9. 다음 단계
 
 H2에서는 Hit17 이벤트를 Cell에 모으는 로직만 HLS로 옮긴다. 물리 IFIFO는
-Runtime 전시 Return 수와 무관하게 EF 완료까지 모두 Drain하고, H2는 Return 1~7
-보존, Runtime 전시 Return 초과분의 의도적 필터, 8번째 이상 `return_overflow`,
+Runtime 직렬화(전시) Return 슬롯 수와 무관하게 EF 완료까지 모두 Drain하고,
+H2는 Return 1~7 보존, Runtime 슬롯 초과분의 의도적 필터, 8번째 이상
+`return_overflow`,
 timeout과 abort를 V2 Golden 결과와 비교한다.

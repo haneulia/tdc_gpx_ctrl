@@ -163,7 +163,7 @@ h2::cell_event_record_t build_data_cell_event(
         cell_event, edge_slope_is_rise);
     lidar_v3::write_field<h2::cell_event_layout::visible_return_count>(
         cell_event, emitted_return_count);
-    lidar_v3::write_field<h2::cell_event_layout::configured_return_capacity>(
+    lidar_v3::write_field<h2::cell_event_layout::serialized_return_slot_count>(
         cell_event, visible_return_count);
 
     for (unsigned return_index = 0U;
@@ -217,7 +217,7 @@ h2::cell_event_record_t build_control_cell_event(
         cell_event, ififo_bank_select);
     lidar_v3::write_flag<h2::cell_event_layout::edge_slope_is_rise>(
         cell_event, first_enabled_slope_is_rise);
-    lidar_v3::write_field<h2::cell_event_layout::configured_return_capacity>(
+    lidar_v3::write_field<h2::cell_event_layout::serialized_return_slot_count>(
         cell_event, visible_return_count);
     lidar_v3::write_flag<h2::cell_event_layout::error_fill_inserted>(
         cell_event, insert_error_fill);

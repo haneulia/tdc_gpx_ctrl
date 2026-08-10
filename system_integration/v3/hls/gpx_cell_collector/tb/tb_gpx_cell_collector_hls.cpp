@@ -8,7 +8,7 @@
 #include "gpx_cell_collector_hls.hpp"
 
 // 검증 목적:
-//   물리 Return 7개 수집, Runtime 전시 Return 1~7 필터, 8번째 Return
+//   물리 Return 7개 수집, Runtime 직렬화(전시) Return 슬롯 1~7 필터, 8번째 Return
 //   overflow, timeout/error-fill과 Rise/Fall Cell 순서를 독립적으로 검증한다.
 //   V2 RTL과의 Clock 단위 차동 검증은 별도 VHDL 테스트가 담당한다.
 
@@ -201,7 +201,7 @@ void expect_data_cell(
     assert(lidar_v3::read_field<h2::cell_event_layout::visible_return_count>(
                cell) == hit_count);
     assert(lidar_v3::read_field<
-               h2::cell_event_layout::configured_return_capacity>(cell) ==
+               h2::cell_event_layout::serialized_return_slot_count>(cell) ==
            max_hits);
     assert(!lidar_v3::read_flag<h2::cell_event_layout::hit_was_dropped>(cell));
     assert(lidar_v3::read_flag<h2::cell_event_layout::return_overflow>(cell) ==
@@ -237,7 +237,7 @@ void expect_control_cell(
     assert(lidar_v3::read_field<h2::cell_event_layout::visible_return_count>(
                cell) == 0U);
     assert(lidar_v3::read_field<
-               h2::cell_event_layout::configured_return_capacity>(cell) ==
+               h2::cell_event_layout::serialized_return_slot_count>(cell) ==
            max_hits);
     assert(lidar_v3::read_flag<h2::cell_event_layout::error_fill_inserted>(
                cell) == error_fill);

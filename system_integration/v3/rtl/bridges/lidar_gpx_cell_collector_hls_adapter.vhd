@@ -217,8 +217,8 @@ begin
                 C_V3_H2_CELL_VISIBLE_RETURNS_HI downto
                 C_V3_H2_CELL_VISIBLE_RETURNS_LO));
             result.max_hits := unsigned(result_axis_data_c(
-                C_V3_H2_CELL_RETURN_CAPACITY_HI downto
-                C_V3_H2_CELL_RETURN_CAPACITY_LO));
+                C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_HI downto
+                C_V3_H2_CELL_SERIALIZED_RETURN_SLOTS_LO));
             for hit_index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
                 bit_lo := C_V3_H2_CELL_PACKED_HITS_LO +
                           hit_index * C_GPX_HIT_WIDTH;

@@ -1,7 +1,7 @@
 # V3 H2 GPX Hit-to-Cell 체크포인트 결과
 
-> 현재 ABI 3.1의 전체 H0~H3 Header, Bit Map과 재검증 수치는
-> [`V3_H0_H3_HEADER_CONTRACT_KO.md`](V3_H0_H3_HEADER_CONTRACT_KO.md)를 기준으로 한다.
+> 현재 ABI 3.2의 전체 H0~H4 Header, Bit Map과 재검증 수치는
+> [`V3_H0_H4_HEADER_CONTRACT_KO.md`](V3_H0_H4_HEADER_CONTRACT_KO.md)를 기준으로 한다.
 > 이 문서의 수치는 H2 최초 체크포인트 이력으로 유지한다.
 
 ## 1. 판정
@@ -11,8 +11,8 @@
 만족했다.
 
 - 물리 Return 1~7의 순서와 17-bit Hit 원본값 보존
-- Runtime 전시 Return 수 1~7 적용
-- Runtime 전시 Return 수를 넘는 물리 Return의 의도적 필터링
+- Runtime 직렬화(전시) Return 슬롯 수 1~7 적용
+- Runtime 직렬화 Return 슬롯 수를 넘는 물리 Return의 의도적 필터링
 - 8번째 이상 물리 Return의 `return_overflow` 분류
 - IFIFO1 완료, 전체 Drain 완료, Timeout/Error-fill Cell 순서
 - 전용 Rise/Fall Chip, 한 Chip 양 Edge, 네 Chip 전체 양 Edge
@@ -37,7 +37,7 @@ H1 Hit17 이벤트
 gpx_cell_collector_hls
   - Shot 소유권/식별자 검사
   - Chip x STOP x slope별 Return 저장
-  - Runtime 전시 Return 필터
+  - Runtime 직렬화(전시) Return 필터
   - IFIFO1/DRAIN/TIMEOUT Cell 생성
         |
         | 328-bit result_out
@@ -61,14 +61,14 @@ Cell = Shot 하나 x TDC-GPX Chip 하나 x STOP 하나 x slope 하나
 Rise와 Fall이 모두 활성인 Chip은 같은 STOP에 대해 Rise Cell과 Fall Cell이
 각각 존재한다. Cell 내부의 Return 슬롯은 물리 도착 순서 0~6을 유지한다.
 
-## 3. 물리 Drain과 Runtime 전시 Return 계약
+## 3. 물리 Drain과 Runtime 직렬화 Return 계약
 
 H2는 TDC-GPX IFIFO를 직접 읽지 않는다. 물리 IFIFO Drain은 앞단 RTL이 EF
-완료까지 수행한다. 따라서 Runtime 전시 Return 수가 1이어도 외부 TDC-GPX에
+완료까지 수행한다. 따라서 Runtime 직렬화(전시) Return 슬롯 수가 1이어도 외부 TDC-GPX에
 존재하는 나머지 Return을 읽지 않고 남겨두는 구조가 아니다.
 
 ```text
-물리 Return 7개, Runtime 전시 Return 3개 예
+물리 Return 7개, Runtime 직렬화 Return 슬롯 3개 예
 
 외부 TDC-GPX IFIFO : R0 R1 R2 R3 R4 R5 R6  -> 모두 Drain
 H2 Cell 저장/출력   : R0 R1 R2              -> 3개만 표시
@@ -117,8 +117,8 @@ Reset Epoch는 Abort 세대 번호다. Adapter가 Abort 상승 Edge마다 1 증�
 | `[4]` | IFIFO index |
 | `[7:5]` | STOP index 0~7 |
 | `[8]` | slope: 0=Fall, 1=Rise |
-| `[11:9]` | Runtime에 표시하는 Return 수 |
-| `[14:12]` | 해당 Shot에 고정된 Runtime 전시 Return 설정값 |
+| `[11:9]` | 실제 유효 Return 수: `min(실제 수신 수, Runtime 직렬화 슬롯 수)` |
+| `[14:12]` | 해당 Shot에 고정된 Runtime 직렬화(전시) Return 슬롯 수 |
 | `[133:15]` | Hit0~Hit6, 각 17 bit |
 | `[134]` | 의도하지 않은 Hit 손실 예약 Flag |
 | `[135]` | 8번째 이상 물리 Return 발생 |
@@ -129,7 +129,7 @@ Reset Epoch는 Abort 세대 번호다. Adapter가 Abort 상승 Edge마다 1 증�
 | `[318:303]` | Chip별 Shot sequence |
 
 Shot identity 비교에는 Chip sequence, Active version, Shot index, Face index,
-Simulation source가 포함된다. Shot 도중 Runtime 전시 Return 수나 identity가
+Simulation source가 포함된다. Shot 도중 Runtime 직렬화 Return 슬롯 수나 identity가
 바뀌면 그 Shot을 fault 처리하고 처음 승인한 Shot context를 Cell에 유지한다.
 
 ## 5. Cell 생성 순서
@@ -173,7 +173,7 @@ in-flight 추적으로 수정했다.
 
 ### 7.1 독립 CSim
 
-- Runtime 전시 Return 1~7 전체 Sweep
+- Runtime 직렬화(전시) Return 슬롯 1~7 전체 Sweep
 - 물리 Return 7개를 모두 입력한 뒤 노출 수만 변경
 - 물리 8번째 Return의 overflow
 - `Hit[16]`을 포함한 17-bit 값 보존

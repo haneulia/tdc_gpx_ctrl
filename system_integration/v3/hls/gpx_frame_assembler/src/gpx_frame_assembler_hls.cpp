@@ -21,7 +21,7 @@ static std::uint32_t fall_present;
 
 static bool shot_active;
 static context_storage_t shot_context;
-static std::uint8_t shot_max_hits;
+static std::uint8_t shot_serialized_return_slots;
 static std::uint8_t shot_rise_mask;
 static std::uint8_t shot_fall_mask;
 static std::uint8_t shot_terminal_mask;
@@ -174,10 +174,10 @@ h3::lane_cell_storage_t pack_lane_cell(
         lidar_v3::read_field<h2::cell_event_layout::visible_return_count>(
             cell));
     lidar_v3::write_field<
-        h3::lane_cell_storage_layout::configured_return_capacity>(
+        h3::lane_cell_storage_layout::serialized_return_slot_count>(
         result,
         lidar_v3::read_field<
-            h2::cell_event_layout::configured_return_capacity>(cell));
+            h2::cell_event_layout::serialized_return_slot_count>(cell));
     lidar_v3::write_flag<h3::lane_cell_storage_layout::hit_was_dropped>(
         result,
         lidar_v3::read_flag<h2::cell_event_layout::hit_was_dropped>(cell));
@@ -206,7 +206,8 @@ h3::ordered_lane_cell_axis_t
 make_frame_cell(const h3::lane_cell_storage_t &stored, bool present,
                 std::uint8_t chip, std::uint8_t stop, std::uint8_t slope,
                 std::uint8_t slot, std::uint8_t slot_count,
-                const context_storage_t &context, std::uint8_t missing_max_hits,
+                const context_storage_t &context,
+                std::uint8_t missing_serialized_return_slots,
                 std::uint16_t gap_before, bool line_faulted) {
     h2::cell_event_record_t cell = 0;
     lidar_v3::write_field<h2::cell_event_layout::event_kind>(
@@ -232,10 +233,10 @@ make_frame_cell(const h3::lane_cell_storage_t &stored, bool present,
             lidar_v3::read_field<
                 h3::lane_cell_storage_layout::visible_return_count>(stored));
         lidar_v3::write_field<
-            h2::cell_event_layout::configured_return_capacity>(
+            h2::cell_event_layout::serialized_return_slot_count>(
             cell,
             lidar_v3::read_field<
-                h3::lane_cell_storage_layout::configured_return_capacity>(
+                h3::lane_cell_storage_layout::serialized_return_slot_count>(
                 stored));
         lidar_v3::write_flag<h2::cell_event_layout::hit_was_dropped>(
             cell,
@@ -264,8 +265,8 @@ make_frame_cell(const h3::lane_cell_storage_t &stored, bool present,
                 h3::lane_cell_storage_layout::tdc_chip_shot_sequence>(stored));
     } else {
         lidar_v3::write_field<
-            h2::cell_event_layout::configured_return_capacity>(
-            cell, missing_max_hits);
+            h2::cell_event_layout::serialized_return_slot_count>(
+            cell, missing_serialized_return_slots);
         lidar_v3::write_flag<h2::cell_event_layout::error_fill_inserted>(
             cell, true);
         lidar_v3::write_flag<h2::cell_event_layout::cell_is_faulted>(
@@ -503,9 +504,9 @@ extern "C" void gpx_frame_assembler_hls(
             shot_terminal_mask = 0U;
             shot_active = true;
             shot_context = context;
-            shot_max_hits =
+            shot_serialized_return_slots =
                 lidar_v3::read_field<
-                    h2::cell_event_layout::configured_return_capacity>(cell)
+                    h2::cell_event_layout::serialized_return_slot_count>(cell)
                     .to_uint();
             shot_rise_mask = runtime_enabled_rise_chip_mask;
             shot_fall_mask = runtime_enabled_fall_chip_mask;
@@ -735,7 +736,8 @@ extern "C" void gpx_frame_assembler_hls(
                             static_cast<std::uint8_t>(
                                 lidar_v3::tdc_edge_slope_t::rise),
                             static_cast<std::uint8_t>(slot), rise_count,
-                            shot_context, shot_max_hits, shot_gap_before,
+                            shot_context, shot_serialized_return_slots,
+                            shot_gap_before,
                             shot_faulted));
                     }
                     if (slot < fall_count) {
@@ -753,7 +755,8 @@ extern "C" void gpx_frame_assembler_hls(
                             static_cast<std::uint8_t>(
                                 lidar_v3::tdc_edge_slope_t::fall),
                             static_cast<std::uint8_t>(slot), fall_count,
-                            shot_context, shot_max_hits, shot_gap_before,
+                            shot_context, shot_serialized_return_slots,
+                            shot_gap_before,
                             shot_faulted));
                     }
                 }

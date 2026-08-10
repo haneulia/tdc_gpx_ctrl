@@ -1,7 +1,7 @@
 # V3 H3 GPX Cell-to-Frame 체크포인트 결과
 
-> 현재 ABI 3.1의 전체 H0~H3 Header, Bit Map과 재검증 수치는
-> [`V3_H0_H3_HEADER_CONTRACT_KO.md`](V3_H0_H3_HEADER_CONTRACT_KO.md)를 기준으로 한다.
+> 현재 ABI 3.2의 전체 H0~H4 Header, Bit Map과 재검증 수치는
+> [`V3_H0_H4_HEADER_CONTRACT_KO.md`](V3_H0_H4_HEADER_CONTRACT_KO.md)를 기준으로 한다.
 > 이 문서의 수치는 H3 최초 체크포인트 이력으로 유지한다.
 
 ## 1. 판정
@@ -12,7 +12,7 @@ Adapter는 H2 Cell을 Shot 단위로 수집한 뒤, Rise/Fall Lane별 논리 Chi
 
 - 1~4 Chip, Chip당 1~8 STOP 구성
 - 전용 Rise/Fall Chip, 한 Chip 양 Edge, Fall 비활성, 네 Chip 전체 양 Edge
-- Runtime 전시 Return 수 1~7이 섞인 Cell payload의 무손실 전달
+- Runtime 직렬화(전시) Return 슬롯 수 1~7이 섞인 Cell payload의 무손실 전달
 - 누락 Cell의 blank Cell 대체와 Line fault 전파
 - Shot column gap, Face trailing gap, all-hole Face 계산
 - Rise/Fall 독립 Backpressure와 외부 소비 완료 기준 `shot_done`
@@ -211,7 +211,7 @@ in-flight 정보가 소실되지 않는다.
 ### 7.2 V2/HLS 차등 회귀
 
 다섯 Profile을 150 MHz와 200 MHz에서 실행한 총 10개 시나리오가 PASS했다.
-Runtime 전시 Return 수 1~7이 Cell마다 섞인 payload 전체를 비교했다.
+Runtime 직렬화(전시) Return 슬롯 수 1~7이 Cell마다 섞인 payload 전체를 비교했다.
 
 - Rise/Fall Cell record와 출력 순서 완전 비교
 - Rise/Fall 독립 Backpressure 중 payload 고정

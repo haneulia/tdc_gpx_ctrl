@@ -36,7 +36,7 @@ Cell = Shot 하나 x TDC-GPX Chip 하나 x STOP 하나 x slope 하나
 
 ### 검증 항목
 
-- 물리 Return 7개를 입력하면서 Runtime 전시 Return 수 1~7 Sweep
+- 물리 Return 7개를 입력하면서 Runtime 직렬화(전시) Return 슬롯 수 1~7 Sweep
 - Runtime 전시 범위를 넘는 Return이 의도적으로 필터되며 fault가 아님
 - 8번째 물리 Return만 `return_overflow`로 분류
 - 17-bit Hit의 최상위 Bit `Hit[16]` 보존

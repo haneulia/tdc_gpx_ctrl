@@ -5,7 +5,7 @@
 --   내용, 순서, 오류 분류 및 Abort 뒤 복구 결과가 같은지를 검증한다.
 --
 -- 검증 범위:
---   * 물리 Return 용량 7에서 Runtime 전시 Return 수 1~7 전체
+--   * 물리 Return 용량 7에서 Runtime 직렬화(전시) Return 슬롯 수 1~7 전체
 --   * 전용 Rise/Fall Chip, 한 Chip 양 Edge, 축소 구성, 네 Chip 전체 양 Edge
 --   * IFIFO1 하위 STOP 완료, 전체 Drain 완료, Timeout/Error-fill
 --   * START number, 8번째 물리 Return, topology/context 오류 진단
