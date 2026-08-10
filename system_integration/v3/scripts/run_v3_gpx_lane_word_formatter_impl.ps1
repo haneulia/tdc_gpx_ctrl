@@ -43,6 +43,7 @@ $VhdlFiles = @(
     (Join-Path $V2Root "pkg\lidar_gpx_data_pkg.vhd"),
     (Join-Path $V2Root "pkg\lidar_gpx_vdma_pkg.vhd"),
     (Join-Path $V3Root "pkg\lidar_v3_hls_contract_pkg.vhd"),
+    (Join-Path $RepoRoot "tdc_gpx_skid_buffer.vhd"),
     (Join-Path $V2Root "rtl\proc\lidar_gpx_axis_word_packer.vhd"),
     (Join-Path $V3Root (
         "rtl\bridges\lidar_gpx_lane_word_formatter_hls_adapter.vhd")),

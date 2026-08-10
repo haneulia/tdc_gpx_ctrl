@@ -98,6 +98,11 @@ architecture rtl of lidar_gpx_frame_lane_assembler_hls_adapter is
         );
     end component;
 
+    signal packed_input_axis_data_c : std_logic_vector(
+        C_V3_H3_ASSEMBLER_INPUT_AXIS_BITS - 1 downto 0);
+    signal packed_input_axis_valid_c : std_logic;
+    signal packed_input_axis_ready_c : std_logic;
+
     signal input_axis_data_c  : std_logic_vector(
         C_V3_H3_ASSEMBLER_INPUT_AXIS_BITS - 1 downto 0);
     signal input_axis_valid_c : std_logic;
@@ -142,6 +147,7 @@ architecture rtl of lidar_gpx_frame_lane_assembler_hls_adapter is
     signal abort_d_r      : std_logic := '0';
     signal hls_inflight_r : std_logic := '0';
     signal flush_active_r : std_logic := '0';
+    signal input_accept_enable_r : std_logic := '0';
 
     signal shot_open_r       : std_logic := '0';
     signal completion_armed_r : std_logic := '0';
@@ -359,27 +365,46 @@ begin
         payload(C_V3_H3_INPUT_RESET_EPOCH_HI downto
                 C_V3_H3_INPUT_RESET_EPOCH_LO) :=
             std_logic_vector(reset_epoch_r);
-        input_axis_data_c <= payload;
+        packed_input_axis_data_c <= payload;
     end process p_pack_input;
 
-    input_close_c <= i_face_close_event.valid;
-    input_axis_valid_c <= '1' when
-        i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
+    input_close_c <= input_axis_data_c(C_V3_H3_INPUT_KIND_BIT);
+    packed_input_axis_valid_c <= '1' when
+        i_rst_n = '1' and i_abort = '0' and input_accept_enable_r = '1' and
         frame_close_event_r.valid = '0' and completion_armed_r = '0' and
         ((i_face_close_event.valid = '1' and shot_open_r = '0') or
          (i_face_close_event.valid = '0' and i_cell_event.valid = '1'))
         else '0';
-    o_face_close_ready <= input_axis_ready_c when
-        i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
+    o_face_close_ready <= packed_input_axis_ready_c when
+        i_rst_n = '1' and i_abort = '0' and input_accept_enable_r = '1' and
         frame_close_event_r.valid = '0' and completion_armed_r = '0' and
         shot_open_r = '0' else '0';
-    o_cell_ready <= input_axis_ready_c when
-        i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
+    o_cell_ready <= packed_input_axis_ready_c when
+        i_rst_n = '1' and i_abort = '0' and input_accept_enable_r = '1' and
         frame_close_event_r.valid = '0' and completion_armed_r = '0' and
         i_face_close_event.valid = '0' else '0';
     input_fire_c <= input_axis_valid_c and input_axis_ready_c;
 
     lane_flush_c <= i_abort or flush_active_r;
+
+    -- H2 Cell/Face-close 계약을 H3 HLS 입력까지 한 Cycle에 직접 연결하지
+    -- 않는다. 처리율을 유지하는 Registered skid가 폭이 큰 Record의
+    -- Placement 경계를 만들고 abort 시 대기 Event도 함께 폐기한다.
+    u_input_skid : entity work.tdc_gpx_skid_buffer
+        generic map (
+            g_DATA_WIDTH => C_V3_H3_ASSEMBLER_INPUT_AXIS_BITS
+        )
+        port map (
+            i_clk     => i_clk,
+            i_rst_n   => i_rst_n,
+            i_flush   => lane_flush_c,
+            i_s_valid => packed_input_axis_valid_c,
+            o_s_ready => packed_input_axis_ready_c,
+            i_s_data  => packed_input_axis_data_c,
+            o_m_valid => input_axis_valid_c,
+            i_m_ready => input_axis_ready_c,
+            o_m_data  => input_axis_data_c
+        );
 
     u_rise_fifo : entity work.tdc_gpx_sync_fifo
         generic map (
@@ -456,8 +481,23 @@ begin
         i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
         hls_inflight_r = '0' and shot_open_r = '0' and
         completion_armed_r = '0' and
+        input_axis_valid_c = '0' and i_cell_event.valid = '0' and
+        i_face_close_event.valid = '0' and
         rise_fifo_valid_c = '0' and fall_fifo_valid_c = '0' and
         frame_close_event_r.valid = '0' else '0';
+
+    -- abort stale-output Drain 상태가 H2 Ready까지 한 Cycle 조합 경로로
+    -- 역전파되지 않도록 입력 허용 창을 Register한다.
+    p_input_accept_enable : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' or flush_active_r = '1' then
+                input_accept_enable_r <= '0';
+            else
+                input_accept_enable_r <= '1';
+            end if;
+        end if;
+    end process p_input_accept_enable;
 
     p_control : process (i_clk)
         variable pulse_v  : gpx_frame_assembler_faults_t;

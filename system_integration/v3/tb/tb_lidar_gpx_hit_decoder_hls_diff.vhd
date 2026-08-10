@@ -229,6 +229,8 @@ begin
             o_raw_ready        => hls_raw_ready,
             o_hit_event        => hls_hit_event,
             i_hit_ready        => hit_ready,
+            o_idle             => open,
+            o_inflight_count   => open,
             o_fault_pulse      => hls_fault_pulse,
             o_fault_sticky     => hls_fault_sticky
         );

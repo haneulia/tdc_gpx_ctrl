@@ -125,6 +125,7 @@ begin
             o_hit_ready         => o_hit_ready,
             o_cell_event        => cell_event_c,
             i_cell_ready        => i_cell_ready,
+            o_idle              => open,
             o_fault_pulse       => fault_pulse_c,
             o_fault_sticky      => fault_sticky_c
         );

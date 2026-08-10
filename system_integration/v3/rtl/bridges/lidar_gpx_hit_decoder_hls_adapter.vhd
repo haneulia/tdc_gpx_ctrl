@@ -34,6 +34,12 @@ entity lidar_gpx_hit_decoder_hls_adapter is
         o_hit_event : out gpx_hit_event_t;
         i_hit_ready : in  std_logic;
 
+        -- H5 통합 유휴 판정용이다. accepted Raw 사건 수와 HLS가 반환한
+        -- 결과 수의 차이를 보존하므로, Hit으로 방출되지 않는 제어 사건도
+        -- 처리 완료 전에는 idle로 잘못 판정되지 않는다.
+        o_idle           : out std_logic;
+        o_inflight_count : out unsigned(7 downto 0);
+
         o_fault_pulse  : out gpx_hit_decoder_faults_t;
         o_fault_sticky : out gpx_hit_decoder_faults_t
     );
@@ -71,6 +77,8 @@ architecture rtl of lidar_gpx_hit_decoder_hls_adapter is
     signal result_axis_ready_c : std_logic;
     signal result_emit_c       : std_logic;
     signal result_fire_c       : std_logic;
+    signal raw_fire_c          : std_logic;
+    signal inflight_count_r    : unsigned(7 downto 0) := (others => '0');
 
     signal num_chips_c      : std_logic_vector(7 downto 0);
     signal stops_per_chip_c : std_logic_vector(7 downto 0);
@@ -101,6 +109,12 @@ begin
     raw_axis_data_c <= '0' & fn_pack_raw_event(i_raw_event);
     raw_axis_valid_c <= i_raw_event.valid and i_rst_n and not i_abort;
     o_raw_ready <= raw_axis_ready_c and i_rst_n and not i_abort;
+    raw_fire_c <= raw_axis_valid_c and raw_axis_ready_c;
+
+    o_inflight_count <= inflight_count_r;
+    o_idle <= '1' when i_rst_n = '1' and i_abort = '0' and
+        i_raw_event.valid = '0' and inflight_count_r = 0 and
+        result_axis_valid_c = '0' else '0';
 
     hls_rst_n_c <= i_rst_n and not i_abort;
     num_chips_c <= std_logic_vector(to_unsigned(
@@ -169,6 +183,25 @@ begin
     o_hit_event    <= hit_event_c;
     o_fault_pulse  <= fault_pulse_r;
     o_fault_sticky <= fault_sticky_r;
+
+    p_inflight_count : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' then
+                inflight_count_r <= (others => '0');
+            elsif raw_fire_c = '1' and result_fire_c = '0' then
+                assert inflight_count_r /= (inflight_count_r'range => '1')
+                    report "V3-HLS-B6-005 decoder inflight counter overflow"
+                    severity failure;
+                inflight_count_r <= inflight_count_r + 1;
+            elsif raw_fire_c = '0' and result_fire_c = '1' then
+                assert inflight_count_r /= 0
+                    report "V3-HLS-B6-006 decoder result without input"
+                    severity failure;
+                inflight_count_r <= inflight_count_r - 1;
+            end if;
+        end if;
+    end process p_inflight_count;
 
     p_fault_state : process (i_clk)
         variable pulse_v  : gpx_hit_decoder_faults_t;

@@ -85,6 +85,8 @@ begin
             o_raw_ready    => o_raw_ready,
             o_hit_event    => hit_event_c,
             i_hit_ready    => i_hit_ready,
+            o_idle         => open,
+            o_inflight_count => open,
             o_fault_pulse  => fault_pulse_c,
             o_fault_sticky => fault_sticky_c
         );

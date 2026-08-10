@@ -75,6 +75,12 @@ architecture rtl of lidar_gpx_lane_word_formatter_hls_adapter is
         );
     end component;
 
+    signal packed_input_axis_data_c : std_logic_vector(
+        C_V3_H4_FORMATTER_INPUT_AXIS_BITS - 1 downto 0);
+    signal packed_input_axis_valid_c : std_logic;
+    signal packed_input_axis_ready_c : std_logic;
+    signal input_skid_flush_c : std_logic;
+
     signal input_axis_data_c : std_logic_vector(
         C_V3_H4_FORMATTER_INPUT_AXIS_BITS - 1 downto 0);
     signal input_axis_valid_c : std_logic;
@@ -101,6 +107,7 @@ architecture rtl of lidar_gpx_lane_word_formatter_hls_adapter is
     signal abort_d_r      : std_logic := '0';
     signal hls_inflight_r : std_logic := '0';
     signal flush_active_r : std_logic := '0';
+    signal input_accept_enable_r : std_logic := '0';
     signal hls_done_c     : std_logic;
 
     signal footer_emitted_r : std_logic := '0';
@@ -339,21 +346,43 @@ begin
         payload(C_V3_H4_INPUT_RESET_EPOCH_HI downto
                 C_V3_H4_INPUT_RESET_EPOCH_LO) :=
             std_logic_vector(reset_epoch_r);
-        input_axis_data_c <= payload;
+        packed_input_axis_data_c <= payload;
     end process p_pack_input;
 
     profile_data_c <= fn_pack_profile(i_active_profile, i_active_version);
 
-    input_axis_valid_c <= '1' when
-        i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
+    packed_input_axis_valid_c <= '1' when
+        i_rst_n = '1' and i_abort = '0' and input_accept_enable_r = '1' and
         (i_frame_close_event.valid = '1' or i_cell_event.valid = '1')
         else '0';
-    o_frame_close_ready <= input_axis_ready_c when
-        i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' else '0';
-    o_cell_ready <= input_axis_ready_c when
-        i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
+    o_frame_close_ready <= packed_input_axis_ready_c when
+        i_rst_n = '1' and i_abort = '0' and
+        input_accept_enable_r = '1' else '0';
+    o_cell_ready <= packed_input_axis_ready_c when
+        i_rst_n = '1' and i_abort = '0' and
+        input_accept_enable_r = '1' and
         i_frame_close_event.valid = '0' else '0';
     input_fire_c <= input_axis_valid_c and input_axis_ready_c;
+    input_skid_flush_c <= i_abort or flush_active_r;
+
+    -- H3 정렬 FIFO에서 H4 HLS 입력 Register까지 이어지던 폭이 큰
+    -- 조합/Routing 경로를 Registered skid로 분리한다. Ready는 Register되며
+    -- 2-slot 구조이므로 Backpressure 중에도 처리율 1 Event/clock을 보존한다.
+    u_input_skid : entity work.tdc_gpx_skid_buffer
+        generic map (
+            g_DATA_WIDTH => C_V3_H4_FORMATTER_INPUT_AXIS_BITS
+        )
+        port map (
+            i_clk     => i_clk,
+            i_rst_n   => i_rst_n,
+            i_flush   => input_skid_flush_c,
+            i_s_valid => packed_input_axis_valid_c,
+            o_s_ready => packed_input_axis_ready_c,
+            i_s_data  => packed_input_axis_data_c,
+            o_m_valid => input_axis_valid_c,
+            i_m_ready => input_axis_ready_c,
+            o_m_data  => input_axis_data_c
+        );
 
     output_event_c <= fn_unpack_line_word(output_axis_data_c);
     o_line_word <= output_event_c when
@@ -371,8 +400,23 @@ begin
     o_fault_sticky <= fault_sticky_r;
     o_idle <= '1' when
         i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
-        hls_inflight_r = '0' and output_axis_valid_c = '0' and
-        control_axis_valid_c = '0' else '0';
+        hls_inflight_r = '0' and input_axis_valid_c = '0' and
+        i_cell_event.valid = '0' and i_frame_close_event.valid = '0' and
+        output_axis_valid_c = '0' and control_axis_valid_c = '0' else '0';
+
+    -- abort 복구 상태를 H3 Ready에 직접 조합 연결하지 않고 Register된
+    -- 입력 허용 창으로 전달한다. 정상 운용 중에는 계속 1이라 II를 바꾸지
+    -- 않으며, stale-output Drain 종료 뒤 한 Cycle 후 안전하게 다시 열린다.
+    p_input_accept_enable : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' or flush_active_r = '1' then
+                input_accept_enable_r <= '0';
+            else
+                input_accept_enable_r <= '1';
+            end if;
+        end if;
+    end process p_input_accept_enable;
 
     p_control : process (i_clk)
         variable pulse_v    : lidar_gpx_word_formatter_faults_t;

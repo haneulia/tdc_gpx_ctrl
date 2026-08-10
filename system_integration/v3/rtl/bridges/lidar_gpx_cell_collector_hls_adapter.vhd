@@ -35,6 +35,10 @@ entity lidar_gpx_cell_collector_hls_adapter is
         o_cell_event : out gpx_cell_event_t;
         i_cell_ready : in  std_logic;
 
+        -- 한 STOP 채널의 Return 수집 호출과 abort stale-output Drain이
+        -- 모두 끝난 뒤에만 활성화되는 통합 유휴 상태다.
+        o_idle : out std_logic;
+
         o_fault_pulse  : out gpx_cell_collector_faults_t;
         o_fault_sticky : out gpx_cell_collector_faults_t
     );
@@ -71,6 +75,12 @@ architecture rtl of lidar_gpx_cell_collector_hls_adapter is
         );
     end component;
 
+    signal packed_hit_axis_data_c : std_logic_vector(
+        C_V3_H2_COLLECTOR_INPUT_AXIS_BITS - 1 downto 0);
+    signal packed_hit_axis_valid_c : std_logic;
+    signal packed_hit_axis_ready_c : std_logic;
+    signal hit_skid_flush_c : std_logic;
+
     signal hit_axis_data_c  : std_logic_vector(
         C_V3_H2_COLLECTOR_INPUT_AXIS_BITS - 1 downto 0);
     signal hit_axis_valid_c : std_logic;
@@ -98,6 +108,7 @@ architecture rtl of lidar_gpx_cell_collector_hls_adapter is
     signal abort_d_r      : std_logic := '0';
     signal hls_inflight_r : std_logic := '0';
     signal flush_active_r : std_logic := '0';
+    signal input_accept_enable_r : std_logic := '0';
 
     signal cell_event_c   : gpx_cell_event_t := C_GPX_CELL_EVENT_IDLE;
     signal fault_pulse_r  : gpx_cell_collector_faults_t :=
@@ -157,14 +168,34 @@ begin
         payload(C_V3_H2_INPUT_RESET_EPOCH_HI downto
                 C_V3_H2_INPUT_RESET_EPOCH_LO) :=
             std_logic_vector(reset_epoch_r);
-        hit_axis_data_c <= payload;
+        packed_hit_axis_data_c <= payload;
     end process p_pack_hit;
 
-    hit_axis_valid_c <= i_hit_event.valid and i_rst_n and
-                        not i_abort and not flush_active_r;
-    o_hit_ready <= hit_axis_ready_c and i_rst_n and
-                   not i_abort and not flush_active_r;
+    packed_hit_axis_valid_c <= i_hit_event.valid and i_rst_n and
+                               not i_abort and input_accept_enable_r;
+    o_hit_ready <= packed_hit_axis_ready_c and i_rst_n and
+                   not i_abort and input_accept_enable_r;
     hit_fire_c <= hit_axis_valid_c and hit_axis_ready_c;
+    hit_skid_flush_c <= i_abort or flush_active_r;
+
+    -- H1의 폭이 큰 Hit 계약을 H2 HLS 입력 Register까지 한 Cycle에 직접
+    -- 전달하지 않는다. 2-slot Buffer가 Ready를 Register하고 처리율은
+    -- 1 Event/clock으로 유지하여 Stage 간 Routing 지연을 제한한다.
+    u_hit_input_skid : entity work.tdc_gpx_skid_buffer
+        generic map (
+            g_DATA_WIDTH => C_V3_H2_COLLECTOR_INPUT_AXIS_BITS
+        )
+        port map (
+            i_clk     => i_clk,
+            i_rst_n   => i_rst_n,
+            i_flush   => hit_skid_flush_c,
+            i_s_valid => packed_hit_axis_valid_c,
+            o_s_ready => packed_hit_axis_ready_c,
+            i_s_data  => packed_hit_axis_data_c,
+            o_m_valid => hit_axis_valid_c,
+            i_m_ready => hit_axis_ready_c,
+            o_m_data  => hit_axis_data_c
+        );
 
     num_chips_c <= std_logic_vector(to_unsigned(
         G_BUILD_CONFIG.num_chips, num_chips_c'length));
@@ -249,8 +280,26 @@ begin
     end process p_unpack_result;
 
     o_cell_event   <= cell_event_c;
+    o_idle <= '1' when i_rst_n = '1' and i_abort = '0' and
+        hls_inflight_r = '0' and flush_active_r = '0' and
+        hit_axis_valid_c = '0' and result_axis_valid_c = '0' and
+        i_hit_event.valid = '0' else '0';
     o_fault_pulse  <= fault_pulse_r;
     o_fault_sticky <= fault_sticky_r;
+
+    -- flush_active를 Upstream Ready에 직접 조합 연결하면 H2 복구 상태가
+    -- H1 HLS 입력 CE까지 역전파된다. 입력 허용 창을 Register하여 abort
+    -- 복구 경로를 한 Cycle 늦게 여는 대신 정상 처리율은 그대로 유지한다.
+    p_input_accept_enable : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' or flush_active_r = '1' then
+                input_accept_enable_r <= '0';
+            else
+                input_accept_enable_r <= '1';
+            end if;
+        end if;
+    end process p_input_accept_enable;
 
     p_control_and_faults : process (i_clk)
         variable pulse_v  : gpx_cell_collector_faults_t;
@@ -272,11 +321,13 @@ begin
                 flush_v := flush_active_r;
                 inflight_v := hls_inflight_r;
 
-                if hit_fire_c = '1' then
-                    inflight_v := '1';
-                end if;
                 if hls_done_c = '1' then
                     inflight_v := '0';
+                end if;
+                -- 완료와 다음 HLS 입력 승인이 같은 Cycle이면 새 호출이
+                -- 우선하므로 통합 idle이 조기에 올라가지 않는다.
+                if hit_fire_c = '1' then
+                    inflight_v := '1';
                 end if;
 
                 if i_clear_sticky = '1' then

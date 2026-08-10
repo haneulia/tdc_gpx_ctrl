@@ -228,6 +228,7 @@ begin
             o_hit_ready         => hls_hit_ready,
             o_cell_event        => hls_cell_event,
             i_cell_ready        => cell_ready,
+            o_idle              => open,
             o_fault_pulse       => hls_fault_pulse,
             o_fault_sticky      => hls_fault_sticky
         );

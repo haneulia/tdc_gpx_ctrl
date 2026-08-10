@@ -54,14 +54,16 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 | H2 | 완료 | Hit-to-Cell | Return 1~7, filter, overflow, timeout, abort PASS |
 | H3 | 완료 | Cell-to-Frame | 5 topology, Rise/Fall 독립 stall, Face gap, abort, 150/200 MHz PASS |
 | H4 | 완료 | PACKED17/Shot Metadata/Hole/Face Footer | V2 최종 AXI Beat 4개와 150/200 MHz OOC PASS |
-| H5 | 다음 | 혼합 RTL/HLS Top | Reset, abort, stall, Face Profile, 32/64-bit PASS |
-| H6 | 대기 | Parent Sign-off | 4-Chip OOC/Parent timing, CDC, DRC, bitstream PASS |
+| H5 | 완료 | 혼합 RTL/HLS Top | H1~H4와 유지 RTL packer 통합, V2 종단 차등, abort/stall/idle, 150/200 MHz x 32/64-bit OOC PASS |
+| H6 | 다음 | Parent Sign-off | 상위 async FIFO 점유율, CDC/CSR/VDMA/DDR, 4-Chip Parent timing, DRC, bitstream PASS |
 
 ## 6. 성능·안전 Gate
 
 - HLS 내부 Metadata scrub과 Cell 방출 메모리 loop의 initiation interval은 1이다.
-- 입력 승인 간격은 V2 상태 직렬 처리보다 시스템 처리율을 악화시키지 않아야 하며,
-  H5에서 상위 FIFO 최대 점유율과 Shot 처리 여유를 실측한다.
+- 입력 승인 간격은 V2 상태 직렬 처리보다 시스템 처리율을 악화시키지 않아야 한다.
+  H5는 상위 async FIFO 뒤에서 시작하므로 FIFO 최대 점유율과 Shot 처리 여유는
+  H6 Parent 통합에서 실측한다. H5의 H1 inflight count를 FIFO 점유율로 해석하지
+  않는다.
 - H3의 Rise/Fall Cell Slot은 VDMA Line이 아니다. H4가 Slot을 canonical 32-bit
   Word로 만들고 H5의 RTL packer가 32/64-bit AXI4-Stream Beat로 결합한다.
 - 출력 backpressure 동안 payload와 종료 정보는 변하지 않는다.
@@ -83,3 +85,9 @@ H0~H4의 전체 Bit Map과 수정 절차는
 [`V3_H0_H4_HEADER_CONTRACT_KO.md`](V3_H0_H4_HEADER_CONTRACT_KO.md)를 단일 검토
 문서로 사용한다. 단계 Header를 수정한 커밋은 해당 문서의 ABI 버전과 검증 Stamp를
 같이 갱신해야 한다.
+
+H5의 통합 경계와 결과는
+[`V3_H5_MIXED_TOP_SIGNOFF_KO.md`](V3_H5_MIXED_TOP_SIGNOFF_KO.md), 테스트 소유권과
+변경 영향은 [`V3_H5_TESTBENCH_GUIDE_KO.md`](V3_H5_TESTBENCH_GUIDE_KO.md)에
+기록한다. H5 PASS는 Processing-domain 데이터 경로 체크포인트이며 Parent 전체
+Sign-off가 아니다.
