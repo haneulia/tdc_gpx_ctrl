@@ -38,13 +38,17 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 - Hit17은 `uint32_t`에 저장하고 `0x1FFFF`로 제한한다.
 - C/C++ bit-field와 컴파일러 종속 구조체 padding을 ABI로 사용하지 않는다.
 - `ap_uint`는 HLS/RTL 경계의 비트 정확한 packed payload에만 사용한다.
-- 모든 packed field 위치는 `lidar_v3_hls_contract.hpp` 한 파일이 소유한다.
+- H0의 `lidar_v3_hls_contract.hpp`는 전체 계약을 포함하는 안정된 진입점이다.
+- 실제 packed field 위치는 소유 단계별 `lidar_v3_h1_raw_hit_contract.hpp`,
+  `lidar_v3_h2_cell_contract.hpp`, `lidar_v3_h3_frame_contract.hpp`가 정의한다.
+- VHDL Adapter는 `lidar_v3_hls_contract_pkg.vhd`의 같은 이름 상수를 사용한다.
+- 숫자 Bit slice를 구현과 테스트에서 직접 반복하지 않는다.
 
 ## 5. 단계와 종료 조건
 
 | 단계 | 상태 | 구현 | 종료 조건 |
 |---|---|---|---|
-| H0 | 완료 | 프로젝트/타입/실행 환경 | Vitis 2025.2 재현 실행 PASS |
+| H0 | 완료 | 공통 상한, 의미 기반 Bit field, ABI 3.1, 실행 환경 | C++/VHDL 계약과 Vitis 2025.2 재현 실행 PASS |
 | H1 | 완료 | Raw28-to-Hit17 | 모든 topology와 fault C/RTL co-sim 및 V2 차동 회귀 PASS |
 | H2 | 완료 | Hit-to-Cell | Return 1~7, filter, overflow, timeout, abort PASS |
 | H3 | 완료 | Cell-to-Frame | 5 topology, Rise/Fall 독립 stall, Face gap, abort, 150/200 MHz PASS |
@@ -73,3 +77,8 @@ V2는 읽기 전용 Golden 기준으로 유지한다. V3의 각 단계는 소스
 도구 설정, 결과 문서를 한 Git 체크포인트로 커밋한다. 생성된 HLS 프로젝트는
 `.work/`에만 두고, 최종 통합 IP에 필요한 Export RTL은 도구 버전과 소스 hash를
 기록한 Release 단계에서만 추적한다.
+
+H0~H3의 전체 Bit Map과 수정 절차는
+[`V3_H0_H3_HEADER_CONTRACT_KO.md`](V3_H0_H3_HEADER_CONTRACT_KO.md)를 단일 검토
+문서로 사용한다. 단계 Header를 수정한 커밋은 해당 문서의 ABI 버전과 검증 Stamp를
+같이 갱신해야 한다.

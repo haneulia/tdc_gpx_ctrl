@@ -55,6 +55,7 @@ $VhdlFiles = @(
     (Join-Path $V2Root "pkg\lidar_gpx_pkg.vhd"),
     (Join-Path $V2Root "pkg\lidar_gpx_event_pkg.vhd"),
     (Join-Path $V2Root "pkg\lidar_gpx_data_pkg.vhd"),
+    (Join-Path $V3Root "pkg\lidar_v3_hls_contract_pkg.vhd"),
     (Join-Path $V2Root "rtl\proc\lidar_gpx_hit_decoder.vhd"),
     (Join-Path $V3Root "rtl\bridges\lidar_gpx_hit_decoder_hls_adapter.vhd"),
     (Join-Path $V3Root "tb\tb_lidar_gpx_hit_decoder_hls_diff.vhd")

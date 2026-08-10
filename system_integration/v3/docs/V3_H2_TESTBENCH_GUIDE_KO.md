@@ -31,7 +31,8 @@ Cell = Shot 하나 x TDC-GPX Chip 하나 x STOP 하나 x slope 하나
 
 - 테스트: `hls/gpx_cell_collector/tb/tb_gpx_cell_collector_hls.cpp`
 - 구현: `hls/gpx_cell_collector/src/gpx_cell_collector_hls.cpp`
-- 계약: `hls/common/include/lidar_v3_hls_contract.hpp`
+- H0 전체 진입점: `hls/common/include/lidar_v3_hls_contract.hpp`
+- H2 Bit 소유 계약: `hls/common/include/lidar_v3_h2_cell_contract.hpp`
 
 ### 검증 항목
 

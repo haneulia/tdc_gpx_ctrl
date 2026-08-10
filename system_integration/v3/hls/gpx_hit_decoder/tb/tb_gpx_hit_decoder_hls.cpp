@@ -1,187 +1,276 @@
 #include <cassert>
-#include <cstdlib>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
 #include "gpx_hit_decoder_hls.hpp"
 
 // 검증 목적:
-//   네 가지 Chip/STOP/Rise/Fall 구성에서 Raw28의 모든 조합을 독립 Oracle과
-//   비교한다. 이 테스트는 HLS C simulation과 C/RTL co-simulation이 공유한다.
+//   1. TDC-GPX I-Mode 28-bit 워드가 17-bit 거리값, 채널, START 번호,
+//      Rising/Falling slope로 정확히 분리되는지 확인한다.
+//   2. Chip/STOP 수와 Runtime slope mask 위반이 각각 독립 fault가 되는지
+//      확인한다.
+//   3. 162-bit Shot 문맥과 Chip별 Shot 순번이 비트 단위로 보존되는지
+//      확인한다. 이 Oracle은 CSim과 C/RTL CoSim이 함께 사용한다.
 
 namespace {
 
-using namespace lidar_v3;
+namespace h1 = lidar_v3::h1;
+namespace limits = lidar_v3::limits;
 
 struct expected_result_t {
-    bool emit;
-    bool chip_fault;
-    bool stop_fault;
-    bool slope_fault;
-    std::uint8_t kind;
-    std::uint8_t chip;
-    std::uint8_t ififo;
-    std::uint8_t channel;
-    std::uint8_t stop;
-    std::uint8_t start;
-    std::uint8_t slope;
-    std::uint32_t hit;
-    std::uint8_t faulted;
-    std::uint8_t timeout;
-    std::uint16_t sequence;
+    bool contains_hit_event;
+    bool tdc_chip_index_fault;
+    bool stop_channel_index_fault;
+    bool edge_slope_assignment_fault;
+    std::uint8_t event_kind;
+    std::uint8_t tdc_chip_index;
+    std::uint8_t ififo_bank_select;
+    std::uint8_t channel_index_within_ififo;
+    std::uint8_t logical_stop_channel_index;
+    std::uint8_t start_number;
+    std::uint8_t edge_slope_is_rise;
+    std::uint32_t distance_hit_17bit;
+    std::uint8_t upstream_event_faulted;
+    std::uint8_t timeout_cause_bitmap;
+    std::uint16_t tdc_chip_shot_sequence;
 };
 
-raw_payload_t make_raw(
-    raw_kind_t kind,
-    std::uint8_t chip,
-    std::uint8_t ififo,
-    std::uint8_t channel,
-    std::uint8_t start,
-    slope_t slope,
-    std::uint32_t hit,
-    std::uint16_t sequence,
-    std::uint8_t faulted = 0,
-    std::uint8_t timeout = 0) {
-    raw_payload_t raw = 0;
-    std::uint32_t word = 0;
-    word |= (static_cast<std::uint32_t>(channel) & 0x3U) << 26;
-    word |= static_cast<std::uint32_t>(start) << 18;
-    word |= (static_cast<std::uint32_t>(slope) & 0x1U) << 17;
-    word |= hit & 0x1FFFFU;
+h1::raw_event_axis_t make_raw_event(
+    h1::raw_event_kind_t event_kind,
+    std::uint8_t tdc_chip_index,
+    std::uint8_t ififo_bank_select,
+    std::uint8_t channel_index_within_ififo,
+    std::uint8_t start_number,
+    lidar_v3::tdc_edge_slope_t edge_slope,
+    std::uint32_t distance_hit_17bit,
+    std::uint16_t tdc_chip_shot_sequence,
+    std::uint8_t upstream_event_faulted = 0U,
+    std::uint8_t timeout_cause_bitmap = 0U) {
+    h1::raw_event_axis_t raw_event = 0;
+    ap_uint<h1::kTdcGpxImodeWordBits> imode_word = 0;
 
-    raw.range(kRawKindHi, kRawKindLo) = static_cast<std::uint8_t>(kind);
-    raw.range(kRawChipHi, kRawChipLo) = chip;
-    raw[kRawIfifo] = ififo != 0U;
-    raw.range(kRawWordHi, kRawWordLo) = word;
-    raw[kRawFaulted] = faulted != 0U;
-    raw.range(kRawTimeoutHi, kRawTimeoutLo) = timeout & 0x7U;
+    lidar_v3::write_field<h1::tdc_gpx_imode_word_layout::distance_hit_17bit>(
+        imode_word, distance_hit_17bit);
+    lidar_v3::write_flag<h1::tdc_gpx_imode_word_layout::edge_slope_is_rise>(
+        imode_word,
+        edge_slope == lidar_v3::tdc_edge_slope_t::rise);
+    lidar_v3::write_field<h1::tdc_gpx_imode_word_layout::start_number>(
+        imode_word, start_number);
+    lidar_v3::write_field<
+        h1::tdc_gpx_imode_word_layout::channel_index_within_ififo>(
+        imode_word, channel_index_within_ififo);
 
-    // Use a nontrivial opaque context pattern and require exact pass-through.
-    ap_uint<kShotContextBits> context = 0;
-    for (unsigned bit = 0; bit < kShotContextBits; ++bit) {
-        context[bit] = ((bit * 5U + sequence) % 11U) < 5U;
+    lidar_v3::write_field<h1::raw_event_layout::event_kind>(
+        raw_event, static_cast<std::uint8_t>(event_kind));
+    lidar_v3::write_field<h1::raw_event_layout::tdc_chip_index>(
+        raw_event, tdc_chip_index);
+    lidar_v3::write_flag<h1::raw_event_layout::ififo_bank_select>(
+        raw_event, ififo_bank_select != 0U);
+    lidar_v3::write_field<h1::raw_event_layout::tdc_gpx_imode_word>(
+        raw_event, imode_word);
+    lidar_v3::write_flag<h1::raw_event_layout::upstream_event_faulted>(
+        raw_event, upstream_event_faulted != 0U);
+    lidar_v3::write_field<h1::raw_event_layout::timeout_cause_bitmap>(
+        raw_event, timeout_cause_bitmap & 0x7U);
+
+    h1::shot_context_t shot_context = 0;
+    for (unsigned bit_index = 0;
+         bit_index < h1::kShotContextRecordBits;
+         ++bit_index) {
+        shot_context[bit_index] =
+            ((bit_index * 5U + tdc_chip_shot_sequence) % 11U) < 5U;
     }
-    raw.range(kRawShotContextHi, kRawShotContextLo) = context;
-    raw.range(kRawChipShotSeqHi, kRawChipShotSeqLo) = sequence;
-    return raw;
+    lidar_v3::write_field<h1::raw_event_layout::shot_context>(
+        raw_event, shot_context);
+    lidar_v3::write_field<h1::raw_event_layout::tdc_chip_shot_sequence>(
+        raw_event, tdc_chip_shot_sequence);
+    return raw_event;
 }
 
-expected_result_t oracle(
-    const raw_payload_t &raw,
-    const decoder_config_t &config) {
+expected_result_t calculate_expected_result(
+    const h1::raw_event_axis_t &raw_event,
+    const h1::decoder_configuration_t &configuration) {
     expected_result_t expected{};
-    expected.kind = raw.range(kRawKindHi, kRawKindLo).to_uint();
-    expected.chip = raw.range(kRawChipHi, kRawChipLo).to_uint();
-    expected.ififo = raw[kRawIfifo] ? 1U : 0U;
-    expected.faulted = raw[kRawFaulted] ? 1U : 0U;
-    expected.timeout = raw.range(kRawTimeoutHi, kRawTimeoutLo).to_uint();
-    expected.sequence =
-        raw.range(kRawChipShotSeqHi, kRawChipShotSeqLo).to_uint();
+    expected.event_kind =
+        lidar_v3::read_field<h1::raw_event_layout::event_kind>(raw_event)
+            .to_uint();
+    expected.tdc_chip_index =
+        lidar_v3::read_field<h1::raw_event_layout::tdc_chip_index>(raw_event)
+            .to_uint();
+    expected.ififo_bank_select =
+        lidar_v3::read_flag<h1::raw_event_layout::ififo_bank_select>(raw_event)
+            ? 1U
+            : 0U;
+    expected.upstream_event_faulted =
+        lidar_v3::read_flag<h1::raw_event_layout::upstream_event_faulted>(
+            raw_event)
+            ? 1U
+            : 0U;
+    expected.timeout_cause_bitmap =
+        lidar_v3::read_field<h1::raw_event_layout::timeout_cause_bitmap>(
+            raw_event)
+            .to_uint();
+    expected.tdc_chip_shot_sequence =
+        lidar_v3::read_field<h1::raw_event_layout::tdc_chip_shot_sequence>(
+            raw_event)
+            .to_uint();
 
-    if (expected.chip >= config.num_chips || expected.chip >= kMaxChips) {
-        expected.chip_fault = true;
+    if (expected.tdc_chip_index >= configuration.build_tdc_chip_count ||
+        expected.tdc_chip_index >= limits::kMaximumTdcGpxChipCount) {
+        expected.tdc_chip_index_fault = true;
         return expected;
     }
-    if (expected.kind != static_cast<std::uint8_t>(raw_kind_t::data)) {
-        expected.emit = true;
+    if (expected.event_kind !=
+        static_cast<std::uint8_t>(h1::raw_event_kind_t::data)) {
+        expected.contains_hit_event = true;
         return expected;
     }
 
-    const std::uint32_t word = raw.range(kRawWordHi, kRawWordLo).to_uint();
-    expected.channel = (word >> 26) & 0x3U;
-    expected.stop = expected.channel + (expected.ififo != 0U ? 4U : 0U);
-    expected.start = (word >> 18) & 0xFFU;
-    expected.slope = (word >> 17) & 0x1U;
-    expected.hit = word & 0x1FFFFU;
+    const ap_uint<h1::kTdcGpxImodeWordBits> imode_word =
+        lidar_v3::read_field<h1::raw_event_layout::tdc_gpx_imode_word>(
+            raw_event);
+    expected.channel_index_within_ififo =
+        lidar_v3::read_field<
+            h1::tdc_gpx_imode_word_layout::channel_index_within_ififo>(
+            imode_word)
+            .to_uint();
+    expected.logical_stop_channel_index =
+        static_cast<std::uint8_t>(expected.channel_index_within_ififo +
+                                  (expected.ififo_bank_select != 0U ? 4U : 0U));
+    expected.start_number =
+        lidar_v3::read_field<h1::tdc_gpx_imode_word_layout::start_number>(
+            imode_word)
+            .to_uint();
+    expected.edge_slope_is_rise =
+        lidar_v3::read_flag<h1::tdc_gpx_imode_word_layout::edge_slope_is_rise>(
+            imode_word)
+            ? 1U
+            : 0U;
+    expected.distance_hit_17bit =
+        lidar_v3::read_field<h1::tdc_gpx_imode_word_layout::distance_hit_17bit>(
+            imode_word)
+            .to_uint();
 
-    if (expected.stop >= config.stops_per_chip ||
-        expected.stop >= kMaxStopsPerChip) {
-        expected.stop_fault = true;
+    if (expected.logical_stop_channel_index >=
+            configuration.build_stop_channels_per_chip ||
+        expected.logical_stop_channel_index >=
+            limits::kMaximumStopChannelsPerChip) {
+        expected.stop_channel_index_fault = true;
         return expected;
     }
-    const std::uint8_t mask = expected.slope != 0U
-                                  ? config.rise_mask
-                                  : config.fall_mask;
-    if (((mask >> expected.chip) & 0x1U) == 0U) {
-        expected.slope_fault = true;
+    const std::uint8_t enabled_chip_mask =
+        expected.edge_slope_is_rise != 0U
+            ? configuration.runtime_enabled_rise_chip_mask
+            : configuration.runtime_enabled_fall_chip_mask;
+    if (((enabled_chip_mask >> expected.tdc_chip_index) & 0x1U) == 0U) {
+        expected.edge_slope_assignment_fault = true;
         return expected;
     }
-    expected.emit = true;
+    expected.contains_hit_event = true;
     return expected;
 }
 
-void check_one(
-    const raw_payload_t &raw,
-    const decoder_config_t &config) {
-    hls::stream<raw_payload_t> input;
-    hls::stream<decode_result_payload_t> output;
-    input.write(raw);
+void check_one_event(
+    const h1::raw_event_axis_t &raw_event,
+    const h1::decoder_configuration_t &configuration) {
+    hls::stream<h1::raw_event_axis_t> raw_event_stream;
+    hls::stream<h1::decoder_result_axis_t> decoder_result_stream;
+    raw_event_stream.write(raw_event);
     gpx_hit_decoder_hls(
-        input,
-        output,
-        config.num_chips,
-        config.stops_per_chip,
-        config.rise_mask,
-        config.fall_mask);
-    assert(!output.empty());
+        raw_event_stream,
+        decoder_result_stream,
+        configuration.build_tdc_chip_count,
+        configuration.build_stop_channels_per_chip,
+        configuration.runtime_enabled_rise_chip_mask,
+        configuration.runtime_enabled_fall_chip_mask);
+    assert(!decoder_result_stream.empty());
 
-    const decode_result_payload_t result = output.read();
-    const hit_payload_t hit_payload = result_hit(result);
-    const expected_result_t expected = oracle(raw, config);
+    const h1::decoder_result_axis_t decoder_result =
+        decoder_result_stream.read();
+    const h1::decoded_hit_event_t decoded_hit_event =
+        h1::read_decoder_result_hit_event(decoder_result);
+    const expected_result_t expected =
+        calculate_expected_result(raw_event, configuration);
 
-    assert(result_emits_hit(result) == expected.emit);
-    assert((result[kResultChipFault] != 0) == expected.chip_fault);
-    assert((result[kResultStopFault] != 0) == expected.stop_fault);
-    assert((result[kResultSlopeFault] != 0) == expected.slope_fault);
-    assert(result.range(kResultReservedHi, kResultReservedLo) == 0U);
-    assert(hit_payload.range(kHitKindHi, kHitKindLo).to_uint() == expected.kind);
-    assert(hit_payload.range(kHitChipHi, kHitChipLo).to_uint() == expected.chip);
-    assert((hit_payload[kHitIfifo] ? 1U : 0U) == expected.ififo);
-    assert((hit_payload[kHitFaulted] ? 1U : 0U) == expected.faulted);
-    assert(hit_payload.range(kHitTimeoutHi, kHitTimeoutLo).to_uint() ==
-           expected.timeout);
-    assert(hit_payload.range(kHitChipShotSeqHi, kHitChipShotSeqLo).to_uint() ==
-           expected.sequence);
-    assert(hit_payload.range(kHitShotContextHi, kHitShotContextLo) ==
-           raw.range(kRawShotContextHi, kRawShotContextLo));
+    assert(h1::decoder_result_contains_hit_event(decoder_result) ==
+           expected.contains_hit_event);
+    assert(lidar_v3::read_flag<h1::decoder_result_layout::tdc_chip_index_fault>(
+               decoder_result) == expected.tdc_chip_index_fault);
+    assert(lidar_v3::read_flag<
+               h1::decoder_result_layout::stop_channel_index_fault>(
+               decoder_result) == expected.stop_channel_index_fault);
+    assert(lidar_v3::read_flag<
+               h1::decoder_result_layout::edge_slope_assignment_fault>(
+               decoder_result) == expected.edge_slope_assignment_fault);
+    assert(lidar_v3::read_field<h1::decoder_result_layout::reserved_zero>(
+               decoder_result) == 0U);
+    assert(lidar_v3::read_field<h1::decoded_hit_event_layout::event_kind>(
+               decoded_hit_event) == expected.event_kind);
+    assert(lidar_v3::read_field<h1::decoded_hit_event_layout::tdc_chip_index>(
+               decoded_hit_event) == expected.tdc_chip_index);
+    assert(lidar_v3::read_flag<
+               h1::decoded_hit_event_layout::ififo_bank_select>(
+               decoded_hit_event) == (expected.ififo_bank_select != 0U));
+    assert(lidar_v3::read_flag<
+               h1::decoded_hit_event_layout::upstream_event_faulted>(
+               decoded_hit_event) ==
+           (expected.upstream_event_faulted != 0U));
+    assert(lidar_v3::read_field<
+               h1::decoded_hit_event_layout::timeout_cause_bitmap>(
+               decoded_hit_event) == expected.timeout_cause_bitmap);
+    assert(lidar_v3::read_field<
+               h1::decoded_hit_event_layout::tdc_chip_shot_sequence>(
+               decoded_hit_event) == expected.tdc_chip_shot_sequence);
+    assert(lidar_v3::read_field<h1::decoded_hit_event_layout::shot_context>(
+               decoded_hit_event) ==
+           lidar_v3::read_field<h1::raw_event_layout::shot_context>(raw_event));
 
-    if (expected.emit &&
-        expected.kind == static_cast<std::uint8_t>(raw_kind_t::data)) {
-        assert(hit_payload.range(kHitChannelHi, kHitChannelLo).to_uint() ==
-               expected.channel);
-        assert(hit_payload.range(kHitStopHi, kHitStopLo).to_uint() ==
-               expected.stop);
-        assert(hit_payload.range(kHitStartHi, kHitStartLo).to_uint() ==
-               expected.start);
-        assert((hit_payload[kHitSlope] ? 1U : 0U) == expected.slope);
-        assert(hit_payload.range(kHitValueHi, kHitValueLo).to_uint() ==
-               expected.hit);
+    if (expected.contains_hit_event &&
+        expected.event_kind ==
+            static_cast<std::uint8_t>(h1::raw_event_kind_t::data)) {
+        assert(lidar_v3::read_field<
+                   h1::decoded_hit_event_layout::tdc_gpx_channel_index>(
+                   decoded_hit_event) == expected.channel_index_within_ififo);
+        assert(lidar_v3::read_field<
+                   h1::decoded_hit_event_layout::logical_stop_channel_index>(
+                   decoded_hit_event) == expected.logical_stop_channel_index);
+        assert(lidar_v3::read_field<
+                   h1::decoded_hit_event_layout::tdc_start_number>(
+                   decoded_hit_event) == expected.start_number);
+        assert(lidar_v3::read_flag<
+                   h1::decoded_hit_event_layout::edge_slope_is_rise>(
+                   decoded_hit_event) ==
+               (expected.edge_slope_is_rise != 0U));
+        assert(lidar_v3::read_field<
+                   h1::decoded_hit_event_layout::distance_hit_17bit>(
+                   decoded_hit_event) == expected.distance_hit_17bit);
     }
 }
 
-void run_profile(const decoder_config_t &config) {
-    std::uint16_t sequence = 1;
-    for (std::uint8_t kind = 0; kind < 4; ++kind) {
-        for (std::uint8_t chip = 0; chip < 4; ++chip) {
-            for (std::uint8_t ififo = 0; ififo < 2; ++ififo) {
-                for (std::uint8_t channel = 0; channel < 4; ++channel) {
-                    for (std::uint8_t slope = 0; slope < 2; ++slope) {
-                        const std::uint32_t hit =
+void run_profile(const h1::decoder_configuration_t &configuration) {
+    std::uint16_t sequence = 1U;
+    for (std::uint8_t event_kind = 0U; event_kind < 4U; ++event_kind) {
+        for (std::uint8_t chip_index = 0U; chip_index < 4U; ++chip_index) {
+            for (std::uint8_t ififo_bank = 0U; ififo_bank < 2U; ++ififo_bank) {
+                for (std::uint8_t channel = 0U; channel < 4U; ++channel) {
+                    for (std::uint8_t slope = 0U; slope < 2U; ++slope) {
+                        const std::uint32_t hit_value =
                             ((sequence * 977U) ^ 0x10001U) & 0x1FFFFU;
-                        check_one(
-                            make_raw(
-                                static_cast<raw_kind_t>(kind),
-                                chip,
-                                ififo,
+                        check_one_event(
+                            make_raw_event(
+                                static_cast<h1::raw_event_kind_t>(event_kind),
+                                chip_index,
+                                ififo_bank,
                                 channel,
                                 static_cast<std::uint8_t>(sequence),
-                                static_cast<slope_t>(slope),
-                                hit,
+                                static_cast<lidar_v3::tdc_edge_slope_t>(slope),
+                                hit_value,
                                 sequence,
                                 (sequence & 1U) != 0U,
                                 sequence & 0x7U),
-                            config);
+                            configuration);
                         ++sequence;
                     }
                 }
@@ -193,14 +282,17 @@ void run_profile(const decoder_config_t &config) {
 }  // namespace
 
 int main() {
-    const decoder_config_t dedicated{4, 8, 0x3, 0xC};
-    const decoder_config_t one_chip_dual{1, 8, 0x1, 0x1};
-    const decoder_config_t reduced{3, 6, 0x3, 0x4};
-    const decoder_config_t all_dual{4, 8, 0xF, 0xF};
+    const h1::decoder_configuration_t dedicated{
+        4U, 8U, 0x3U, 0xCU};
+    const h1::decoder_configuration_t one_chip_dual{
+        1U, 8U, 0x1U, 0x1U};
+    const h1::decoder_configuration_t reduced{
+        3U, 6U, 0x3U, 0x4U};
+    const h1::decoder_configuration_t all_dual{
+        4U, 8U, 0xFU, 0xFU};
 
-    // C simulation runs all profiles. C/RTL co-simulation sets one fixed
-    // profile per invocation because ap_ctrl_none scalar configuration is a
-    // stable Face/run contract, not a transaction sideband.
+    // ap_ctrl_none 설정 입력은 개별 이벤트 sideband가 아니라 한 Face/run
+    // 동안 안정적으로 유지되는 설정 계약이므로 CoSim은 profile별 실행한다.
     const char *profile_value = std::getenv("V3_HLS_PROFILE");
     const std::string profile = profile_value == nullptr ? "" : profile_value;
 
@@ -225,11 +317,18 @@ int main() {
         return 2;
     }
 
-    // Explicitly preserve the full 17-bit maximum Hit value.
+    // 물리 최대값 0x1FFFF의 상위 17번째 bit가 손실되지 않는지 별도 고정한다.
     if (profile.empty() || profile == "one_chip_dual") {
-        check_one(
-            make_raw(raw_kind_t::data, 0, 0, 2, 0x7E,
-                     slope_t::rise, 0x1FFFFU, 0x55AA),
+        check_one_event(
+            make_raw_event(
+                h1::raw_event_kind_t::data,
+                0U,
+                0U,
+                2U,
+                0x7EU,
+                lidar_v3::tdc_edge_slope_t::rise,
+                0x1FFFFU,
+                0x55AAU),
             one_chip_dual);
     }
 

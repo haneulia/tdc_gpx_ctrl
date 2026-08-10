@@ -14,7 +14,16 @@
 
 namespace {
 
-using namespace lidar_v3;
+namespace h1 = lidar_v3::h1;
+namespace h2 = lidar_v3::h2;
+namespace limits = lidar_v3::limits;
+
+using raw_kind_t = h1::raw_event_kind_t;
+using slope_t = lidar_v3::tdc_edge_slope_t;
+using cell_kind_t = h2::cell_event_kind_t;
+using cell_hit_input_t = h2::collector_input_axis_t;
+using collector_result_payload_t = h2::collector_result_axis_t;
+using cell_payload_t = h2::cell_event_record_t;
 
 struct config_t {
     std::uint8_t num_chips;
@@ -29,21 +38,26 @@ struct config_t {
 
 using result_list_t = std::vector<collector_result_payload_t>;
 
-ap_uint<kShotContextBits> make_context(
+h1::shot_context_t make_context(
     std::uint16_t shot_index,
     std::uint16_t active_version,
     std::uint8_t face = 1U,
     bool source_sim = false) {
-    ap_uint<kShotContextBits> context = 0;
-    for (unsigned bit = 0; bit < kShotContextBits; ++bit) {
+    h1::shot_context_t context = 0;
+    for (unsigned bit = 0; bit < h1::kShotContextRecordBits; ++bit) {
         context[bit] = ((bit * 7U + shot_index) % 13U) < 6U;
     }
-    context.range(kContextFaceHi, kContextFaceLo) = face & 0x7U;
-    context.range(kContextShotIndexHi, kContextShotIndexLo) = shot_index;
-    context[kContextSourceSim] = source_sim;
-    context.range(kContextActiveVersionHi, kContextActiveVersionLo) =
-        active_version;
-    context[kShotContextBits - 1U] = 1;
+    lidar_v3::write_field<h1::shot_context_layout::mirror_face_index>(
+        context, face & 0x7U);
+    lidar_v3::write_field<h1::shot_context_layout::shot_column_index>(
+        context, shot_index);
+    lidar_v3::write_flag<h1::shot_context_layout::source_is_simulation>(
+        context, source_sim);
+    lidar_v3::write_field<
+        h1::shot_context_layout::active_configuration_version>(
+        context, active_version);
+    lidar_v3::write_flag<h1::shot_context_layout::context_is_valid>(
+        context, true);
     return context;
 }
 
@@ -61,21 +75,33 @@ cell_hit_input_t make_hit(
     std::uint8_t face = 1U,
     bool source_sim = false) {
     cell_hit_input_t input = 0;
-    hit_payload_t hit = 0;
-    hit.range(kHitKindHi, kHitKindLo) = static_cast<std::uint8_t>(kind);
-    hit.range(kHitChipHi, kHitChipLo) = chip;
-    hit[kHitIfifo] = stop >= 4U;
-    hit.range(kHitChannelHi, kHitChannelLo) = stop & 0x3U;
-    hit.range(kHitStopHi, kHitStopLo) = stop;
-    hit.range(kHitStartHi, kHitStartLo) = start_number;
-    hit[kHitSlope] = static_cast<std::uint8_t>(slope);
-    hit.range(kHitValueHi, kHitValueLo) = hit_value & 0x1FFFFU;
-    hit[kHitFaulted] = faulted;
-    hit.range(kHitTimeoutHi, kHitTimeoutLo) = timeout_cause & 0x7U;
-    hit.range(kHitShotContextHi, kHitShotContextLo) =
-        make_context(shot_index, active_version, face, source_sim);
-    hit.range(kHitChipShotSeqHi, kHitChipShotSeqLo) = shot_index;
-    input.range(kHitPayloadBits - 1U, 0U) = hit;
+    h1::decoded_hit_event_t hit = 0;
+    lidar_v3::write_field<h1::decoded_hit_event_layout::event_kind>(
+        hit, static_cast<std::uint8_t>(kind));
+    lidar_v3::write_field<h1::decoded_hit_event_layout::tdc_chip_index>(
+        hit, chip);
+    lidar_v3::write_flag<h1::decoded_hit_event_layout::ififo_bank_select>(
+        hit, stop >= 4U);
+    lidar_v3::write_field<h1::decoded_hit_event_layout::tdc_gpx_channel_index>(
+        hit, stop & 0x3U);
+    lidar_v3::write_field<
+        h1::decoded_hit_event_layout::logical_stop_channel_index>(hit, stop);
+    lidar_v3::write_field<h1::decoded_hit_event_layout::tdc_start_number>(
+        hit, start_number);
+    lidar_v3::write_flag<h1::decoded_hit_event_layout::edge_slope_is_rise>(
+        hit, slope == slope_t::rise);
+    lidar_v3::write_field<h1::decoded_hit_event_layout::distance_hit_17bit>(
+        hit, hit_value & 0x1FFFFU);
+    lidar_v3::write_flag<h1::decoded_hit_event_layout::upstream_event_faulted>(
+        hit, faulted);
+    lidar_v3::write_field<h1::decoded_hit_event_layout::timeout_cause_bitmap>(
+        hit, timeout_cause & 0x7U);
+    lidar_v3::write_field<h1::decoded_hit_event_layout::shot_context>(
+        hit, make_context(shot_index, active_version, face, source_sim));
+    lidar_v3::write_field<
+        h1::decoded_hit_event_layout::tdc_chip_shot_sequence>(hit, shot_index);
+    lidar_v3::write_field<h2::collector_input_layout::decoded_hit_event>(
+        input, hit);
     return input;
 }
 
@@ -85,8 +111,8 @@ result_list_t invoke(
     hls::stream<cell_hit_input_t> hit_stream;
     hls::stream<collector_result_payload_t> result_stream;
     cell_hit_input_t tagged_input = input;
-    tagged_input.range(kCellInputResetEpochHi, kCellInputResetEpochLo) =
-        config.reset_epoch;
+    lidar_v3::write_field<h2::collector_input_layout::reset_epoch>(
+        tagged_input, config.reset_epoch);
     hit_stream.write(tagged_input);
     gpx_cell_collector_hls(
         hit_stream,
@@ -112,25 +138,40 @@ void expect_status(
     bool context_fault = false,
     bool overflow_fault = false,
     bool start_fault = false) {
-    assert(!collector_result_emits_cell(result));
-    assert((result[kCollectorContextFault] != 0) == context_fault);
-    assert((result[kCollectorReturnOverflowFault] != 0) == overflow_fault);
-    assert((result[kCollectorStartNonzeroFault] != 0) == start_fault);
-    assert(result[kCollectorCapacityDropFault] == 0);
-    assert(result.range(kCollectorReservedHi, kCollectorReservedLo) == 0U);
+    assert(!h2::collector_result_contains_cell_event(result));
+    assert(lidar_v3::read_flag<
+               h2::collector_result_layout::shot_context_fault>(result) ==
+           context_fault);
+    assert(lidar_v3::read_flag<
+               h2::collector_result_layout::return_overflow_fault>(result) ==
+           overflow_fault);
+    assert(lidar_v3::read_flag<
+               h2::collector_result_layout::nonzero_start_number_fault>(
+               result) == start_fault);
+    assert(!lidar_v3::read_flag<
+        h2::collector_result_layout::return_capacity_drop_fault>(result));
+    assert(lidar_v3::read_field<h2::collector_result_layout::reserved_zero>(
+               result) == 0U);
 }
 
 cell_payload_t emitted_cell(const collector_result_payload_t &result) {
-    assert(collector_result_emits_cell(result));
-    assert(result.range(kCollectorReservedHi, kCollectorReservedLo) == 0U);
-    assert(result.range(
-               kCollectorCapacityDropFault,
-               kCollectorContextFault) == 0U);
-    return collector_result_cell(result);
+    assert(h2::collector_result_contains_cell_event(result));
+    assert(lidar_v3::read_field<h2::collector_result_layout::reserved_zero>(
+               result) == 0U);
+    assert(!lidar_v3::read_flag<
+        h2::collector_result_layout::shot_context_fault>(result));
+    assert(!lidar_v3::read_flag<
+        h2::collector_result_layout::return_overflow_fault>(result));
+    assert(!lidar_v3::read_flag<
+        h2::collector_result_layout::nonzero_start_number_fault>(result));
+    assert(!lidar_v3::read_flag<
+        h2::collector_result_layout::return_capacity_drop_fault>(result));
+    return h2::read_collector_result_cell_event(result);
 }
 
 std::uint32_t cell_hit(const cell_payload_t &cell, unsigned index) {
-    const unsigned lo = kCellHitsLo + index * 17U;
+    const unsigned lo =
+        h2::cell_event_layout::packed_distance_hits_17bit::low + index * 17U;
     return cell.range(lo + 16U, lo).to_uint();
 }
 
@@ -146,23 +187,35 @@ void expect_data_cell(
     bool error_fill = false,
     bool faulted = false,
     std::uint8_t timeout_cause = 0U) {
-    assert(cell.range(kCellKindHi, kCellKindLo).to_uint() ==
+    assert(lidar_v3::read_field<h2::cell_event_layout::event_kind>(cell) ==
            static_cast<std::uint8_t>(cell_kind_t::data));
-    assert(cell.range(kCellChipHi, kCellChipLo).to_uint() == chip);
-    assert((cell[kCellIfifo] != 0) == (stop >= 4U));
-    assert(cell.range(kCellStopHi, kCellStopLo).to_uint() == stop);
-    assert((cell[kCellSlope] ? 1U : 0U) ==
-           static_cast<std::uint8_t>(slope));
-    assert(cell.range(kCellHitCountHi, kCellHitCountLo).to_uint() == hit_count);
-    assert(cell.range(kCellMaxHitsHi, kCellMaxHitsLo).to_uint() == max_hits);
-    assert(cell[kCellHitDropped] == 0);
-    assert((cell[kCellReturnOverflow] != 0) == overflow);
-    assert((cell[kCellErrorFill] != 0) == error_fill);
-    assert((cell[kCellFaulted] != 0) == faulted);
-    assert(cell.range(kCellTimeoutHi, kCellTimeoutLo).to_uint() ==
-           timeout_cause);
+    assert(lidar_v3::read_field<h2::cell_event_layout::tdc_chip_index>(cell) ==
+           chip);
+    assert(lidar_v3::read_flag<h2::cell_event_layout::ififo_bank_select>(cell) ==
+           (stop >= 4U));
+    assert(lidar_v3::read_field<
+               h2::cell_event_layout::logical_stop_channel_index>(cell) ==
+           stop);
+    assert(lidar_v3::read_flag<h2::cell_event_layout::edge_slope_is_rise>(
+               cell) == (slope == slope_t::rise));
+    assert(lidar_v3::read_field<h2::cell_event_layout::visible_return_count>(
+               cell) == hit_count);
+    assert(lidar_v3::read_field<
+               h2::cell_event_layout::configured_return_capacity>(cell) ==
+           max_hits);
+    assert(!lidar_v3::read_flag<h2::cell_event_layout::hit_was_dropped>(cell));
+    assert(lidar_v3::read_flag<h2::cell_event_layout::return_overflow>(cell) ==
+           overflow);
+    assert(lidar_v3::read_flag<h2::cell_event_layout::error_fill_inserted>(
+               cell) == error_fill);
+    assert(lidar_v3::read_flag<h2::cell_event_layout::cell_is_faulted>(cell) ==
+           faulted);
+    assert(lidar_v3::read_field<h2::cell_event_layout::timeout_cause_bitmap>(
+               cell) == timeout_cause);
 
-    for (unsigned index = 0; index < kMaxReturnsPerStop; ++index) {
+    for (unsigned index = 0;
+         index < limits::kMaximumReturnCountPerStop;
+         ++index) {
         const std::uint32_t expected =
             index < expected_hits.size() ? expected_hits[index] : 0U;
         assert(cell_hit(cell, index) == expected);
@@ -177,15 +230,21 @@ void expect_control_cell(
     bool error_fill = false,
     bool faulted = false,
     std::uint8_t timeout_cause = 0U) {
-    assert(cell.range(kCellKindHi, kCellKindLo).to_uint() ==
+    assert(lidar_v3::read_field<h2::cell_event_layout::event_kind>(cell) ==
            static_cast<std::uint8_t>(kind));
-    assert(cell.range(kCellChipHi, kCellChipLo).to_uint() == chip);
-    assert(cell.range(kCellHitCountHi, kCellHitCountLo).to_uint() == 0U);
-    assert(cell.range(kCellMaxHitsHi, kCellMaxHitsLo).to_uint() == max_hits);
-    assert((cell[kCellErrorFill] != 0) == error_fill);
-    assert((cell[kCellFaulted] != 0) == faulted);
-    assert(cell.range(kCellTimeoutHi, kCellTimeoutLo).to_uint() ==
-           timeout_cause);
+    assert(lidar_v3::read_field<h2::cell_event_layout::tdc_chip_index>(cell) ==
+           chip);
+    assert(lidar_v3::read_field<h2::cell_event_layout::visible_return_count>(
+               cell) == 0U);
+    assert(lidar_v3::read_field<
+               h2::cell_event_layout::configured_return_capacity>(cell) ==
+           max_hits);
+    assert(lidar_v3::read_flag<h2::cell_event_layout::error_fill_inserted>(
+               cell) == error_fill);
+    assert(lidar_v3::read_flag<h2::cell_event_layout::cell_is_faulted>(cell) ==
+           faulted);
+    assert(lidar_v3::read_field<h2::cell_event_layout::timeout_cause_bitmap>(
+               cell) == timeout_cause);
 }
 
 void expect_data_status_ok(

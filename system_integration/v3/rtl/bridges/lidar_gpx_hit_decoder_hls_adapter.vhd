@@ -5,6 +5,7 @@ use ieee.numeric_std.all;
 use work.lidar_build_pkg.all;
 use work.lidar_gpx_event_pkg.all;
 use work.lidar_gpx_data_pkg.all;
+use work.lidar_v3_hls_contract_pkg.all;
 
 -- V3 HLS Hit decoder boundary adapter.
 --
@@ -40,35 +41,32 @@ end entity lidar_gpx_hit_decoder_hls_adapter;
 
 architecture rtl of lidar_gpx_hit_decoder_hls_adapter is
 
-    constant C_RAW_AXIS_WIDTH    : positive := 216;
-    constant C_RESULT_AXIS_WIDTH : positive := 224;
-
     component gpx_hit_decoder_hls is
         port (
             ap_clk            : in  std_logic;
             ap_rst_n          : in  std_logic;
-            raw_in_TDATA      : in  std_logic_vector(
-                C_RAW_AXIS_WIDTH - 1 downto 0);
-            raw_in_TVALID     : in  std_logic;
-            raw_in_TREADY     : out std_logic;
-            result_out_TDATA  : out std_logic_vector(
-                C_RESULT_AXIS_WIDTH - 1 downto 0);
-            result_out_TVALID : out std_logic;
-            result_out_TREADY : in  std_logic;
-            num_chips         : in  std_logic_vector(7 downto 0);
-            stops_per_chip    : in  std_logic_vector(7 downto 0);
-            rise_mask         : in  std_logic_vector(7 downto 0);
-            fall_mask         : in  std_logic_vector(7 downto 0)
+            raw_event_in_TDATA  : in  std_logic_vector(
+                C_V3_H1_RAW_EVENT_AXIS_BITS - 1 downto 0);
+            raw_event_in_TVALID : in  std_logic;
+            raw_event_in_TREADY : out std_logic;
+            decoder_result_out_TDATA  : out std_logic_vector(
+                C_V3_H1_DECODER_RESULT_AXIS_BITS - 1 downto 0);
+            decoder_result_out_TVALID : out std_logic;
+            decoder_result_out_TREADY : in  std_logic;
+            build_tdc_chip_count : in std_logic_vector(7 downto 0);
+            build_stop_channels_per_chip : in std_logic_vector(7 downto 0);
+            runtime_enabled_rise_chip_mask : in std_logic_vector(7 downto 0);
+            runtime_enabled_fall_chip_mask : in std_logic_vector(7 downto 0)
         );
     end component;
 
     signal hls_rst_n_c       : std_logic;
     signal raw_axis_data_c   : std_logic_vector(
-        C_RAW_AXIS_WIDTH - 1 downto 0);
+        C_V3_H1_RAW_EVENT_AXIS_BITS - 1 downto 0);
     signal raw_axis_valid_c  : std_logic;
     signal raw_axis_ready_c  : std_logic;
     signal result_axis_data_c : std_logic_vector(
-        C_RESULT_AXIS_WIDTH - 1 downto 0);
+        C_V3_H1_DECODER_RESULT_AXIS_BITS - 1 downto 0);
     signal result_axis_valid_c : std_logic;
     signal result_axis_ready_c : std_logic;
     signal result_emit_c       : std_logic;
@@ -112,7 +110,8 @@ begin
     rise_mask_c <= "0000" & i_active_rise_mask;
     fall_mask_c <= "0000" & i_active_fall_mask;
 
-    result_emit_c <= result_axis_data_c(218);
+    result_emit_c <= result_axis_data_c(
+        C_V3_H1_RESULT_CONTAINS_HIT_BIT);
     result_axis_ready_c <= '1' when
         i_rst_n = '1' and i_abort = '0' and
         (result_axis_valid_c = '0' or result_emit_c = '0' or
@@ -128,21 +127,41 @@ begin
         if result_axis_valid_c = '1' then
             result.valid := result_emit_c and i_rst_n and not i_abort;
             kind_value := to_integer(unsigned(
-                result_axis_data_c(1 downto 0)));
+                result_axis_data_c(
+                    C_V3_H1_HIT_EVENT_KIND_HI downto
+                    C_V3_H1_HIT_EVENT_KIND_LO)));
             result.kind := gpx_hit_event_kind_t'val(kind_value);
-            result.chip_index := unsigned(result_axis_data_c(3 downto 2));
-            result.ififo_id := result_axis_data_c(4);
-            result.channel_code := unsigned(result_axis_data_c(6 downto 5));
-            result.stop_index := unsigned(result_axis_data_c(9 downto 7));
-            result.start_number := unsigned(result_axis_data_c(17 downto 10));
-            result.slope := fn_gpx_slope_from_bit(result_axis_data_c(18));
-            result.hit := unsigned(result_axis_data_c(35 downto 19));
-            result.faulted := result_axis_data_c(36);
-            result.timeout_cause := result_axis_data_c(39 downto 37);
+            result.chip_index := unsigned(result_axis_data_c(
+                C_V3_H1_HIT_CHIP_INDEX_HI downto
+                C_V3_H1_HIT_CHIP_INDEX_LO));
+            result.ififo_id := result_axis_data_c(
+                C_V3_H1_HIT_IFIFO_BANK_BIT);
+            result.channel_code := unsigned(result_axis_data_c(
+                C_V3_H1_HIT_CHANNEL_HI downto C_V3_H1_HIT_CHANNEL_LO));
+            result.stop_index := unsigned(result_axis_data_c(
+                C_V3_H1_HIT_STOP_INDEX_HI downto
+                C_V3_H1_HIT_STOP_INDEX_LO));
+            result.start_number := unsigned(result_axis_data_c(
+                C_V3_H1_HIT_START_NUMBER_HI downto
+                C_V3_H1_HIT_START_NUMBER_LO));
+            result.slope := fn_gpx_slope_from_bit(result_axis_data_c(
+                C_V3_H1_HIT_SLOPE_RISE_BIT));
+            result.hit := unsigned(result_axis_data_c(
+                C_V3_H1_HIT_DISTANCE_17BIT_HI downto
+                C_V3_H1_HIT_DISTANCE_17BIT_LO));
+            result.faulted := result_axis_data_c(
+                C_V3_H1_HIT_FAULTED_BIT);
+            result.timeout_cause := result_axis_data_c(
+                C_V3_H1_HIT_TIMEOUT_CAUSE_HI downto
+                C_V3_H1_HIT_TIMEOUT_CAUSE_LO);
             result.shot_context := fn_unpack_shot_context(
-                result_axis_data_c(201 downto 40));
+                result_axis_data_c(
+                    C_V3_H1_HIT_SHOT_CONTEXT_HI downto
+                    C_V3_H1_HIT_SHOT_CONTEXT_LO));
             result.chip_shot_seq := unsigned(
-                result_axis_data_c(217 downto 202));
+                result_axis_data_c(
+                    C_V3_H1_HIT_CHIP_SHOT_SEQ_HI downto
+                    C_V3_H1_HIT_CHIP_SHOT_SEQ_LO));
         end if;
         hit_event_c <= result;
     end process p_unpack_result;
@@ -168,19 +187,27 @@ begin
                 end if;
 
                 if i_abort = '0' and result_fire_c = '1' then
-                    assert result_axis_data_c(223 downto 222) = "00"
+                    assert result_axis_data_c(
+                        C_V3_H1_RESULT_RESERVED_HI downto
+                        C_V3_H1_RESULT_RESERVED_LO) = "00"
                         report "V3-HLS-B6-004 nonzero reserved result bits"
                         severity failure;
 
-                    pulse_v.chip_index_error := result_axis_data_c(219);
-                    pulse_v.stop_index_error := result_axis_data_c(220);
-                    pulse_v.slope_role_error := result_axis_data_c(221);
+                    pulse_v.chip_index_error := result_axis_data_c(
+                        C_V3_H1_RESULT_CHIP_FAULT_BIT);
+                    pulse_v.stop_index_error := result_axis_data_c(
+                        C_V3_H1_RESULT_STOP_FAULT_BIT);
+                    pulse_v.slope_role_error := result_axis_data_c(
+                        C_V3_H1_RESULT_SLOPE_FAULT_BIT);
                     sticky_v.chip_index_error :=
-                        sticky_v.chip_index_error or result_axis_data_c(219);
+                        sticky_v.chip_index_error or result_axis_data_c(
+                            C_V3_H1_RESULT_CHIP_FAULT_BIT);
                     sticky_v.stop_index_error :=
-                        sticky_v.stop_index_error or result_axis_data_c(220);
+                        sticky_v.stop_index_error or result_axis_data_c(
+                            C_V3_H1_RESULT_STOP_FAULT_BIT);
                     sticky_v.slope_role_error :=
-                        sticky_v.slope_role_error or result_axis_data_c(221);
+                        sticky_v.slope_role_error or result_axis_data_c(
+                            C_V3_H1_RESULT_SLOPE_FAULT_BIT);
                 end if;
 
                 fault_pulse_r  <= pulse_v;
@@ -193,16 +220,16 @@ begin
         port map (
             ap_clk            => i_clk,
             ap_rst_n          => hls_rst_n_c,
-            raw_in_TDATA      => raw_axis_data_c,
-            raw_in_TVALID     => raw_axis_valid_c,
-            raw_in_TREADY     => raw_axis_ready_c,
-            result_out_TDATA  => result_axis_data_c,
-            result_out_TVALID => result_axis_valid_c,
-            result_out_TREADY => result_axis_ready_c,
-            num_chips         => num_chips_c,
-            stops_per_chip    => stops_per_chip_c,
-            rise_mask         => rise_mask_c,
-            fall_mask         => fall_mask_c
+            raw_event_in_TDATA      => raw_axis_data_c,
+            raw_event_in_TVALID     => raw_axis_valid_c,
+            raw_event_in_TREADY     => raw_axis_ready_c,
+            decoder_result_out_TDATA  => result_axis_data_c,
+            decoder_result_out_TVALID => result_axis_valid_c,
+            decoder_result_out_TREADY => result_axis_ready_c,
+            build_tdc_chip_count => num_chips_c,
+            build_stop_channels_per_chip => stops_per_chip_c,
+            runtime_enabled_rise_chip_mask => rise_mask_c,
+            runtime_enabled_fall_chip_mask => fall_mask_c
         );
 
 end architecture rtl;

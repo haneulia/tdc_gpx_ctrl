@@ -1,5 +1,9 @@
 # V3 H2 GPX Hit-to-Cell 체크포인트 결과
 
+> 현재 ABI 3.1의 전체 H0~H3 Header, Bit Map과 재검증 수치는
+> [`V3_H0_H3_HEADER_CONTRACT_KO.md`](V3_H0_H3_HEADER_CONTRACT_KO.md)를 기준으로 한다.
+> 이 문서의 수치는 H2 최초 체크포인트 이력으로 유지한다.
+
 ## 1. 판정
 
 **H2 기능 및 단독 구현 PASS**다. V3 HLS `gpx_cell_collector_hls`는 H1에서

@@ -1,5 +1,9 @@
 # V3 H1 GPX Raw28-to-Hit17 체크포인트 결과
 
+> 현재 ABI 3.1의 전체 H0~H3 Header, Bit Map과 재검증 수치는
+> [`V3_H0_H3_HEADER_CONTRACT_KO.md`](V3_H0_H3_HEADER_CONTRACT_KO.md)를 기준으로 한다.
+> 이 문서의 수치는 H1 최초 체크포인트 이력으로 유지한다.
+
 ## 1. 판정
 
 **H1 PASS**다. V3 HLS `gpx_hit_decoder_hls`는 외부 TDC-GPX I-Mode에서 읽은

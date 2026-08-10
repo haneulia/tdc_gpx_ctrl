@@ -1,5 +1,9 @@
 # V3 H3 GPX Cell-to-Frame 체크포인트 결과
 
+> 현재 ABI 3.1의 전체 H0~H3 Header, Bit Map과 재검증 수치는
+> [`V3_H0_H3_HEADER_CONTRACT_KO.md`](V3_H0_H3_HEADER_CONTRACT_KO.md)를 기준으로 한다.
+> 이 문서의 수치는 H3 최초 체크포인트 이력으로 유지한다.
+
 ## 1. 판정
 
 **H3 기능 및 단독 구현 PASS**다. V3 HLS `gpx_frame_assembler_hls`와 RTL
@@ -69,8 +73,9 @@ Slot index     :   0,    1,    2,    3,    4,    5
 
 ## 4. 고정 Bit 계약
 
-모든 Bit 위치는
-`hls/common/include/lidar_v3_hls_contract.hpp`가 단독 소유한다.
+`hls/common/include/lidar_v3_hls_contract.hpp`는 전체 계약의 진입점이고, H3의
+실제 Bit 위치는 `lidar_v3_h3_frame_contract.hpp`가 소유한다. VHDL Adapter는
+`pkg/lidar_v3_hls_contract_pkg.vhd`의 같은 값 상수를 사용한다.
 
 ### 4.1 HLS 입력 328 bit
 

@@ -26,7 +26,8 @@ H3 소스나 공통 계약 헤더를 바꾼 뒤에는 1~5를 모두 실행한다
 
 - 구현: `hls/gpx_frame_assembler/src/gpx_frame_assembler_hls.cpp`
 - 테스트: `hls/gpx_frame_assembler/tb/tb_gpx_frame_assembler_hls.cpp`
-- 계약: `hls/common/include/lidar_v3_hls_contract.hpp`
+- H0 전체 진입점: `hls/common/include/lidar_v3_hls_contract.hpp`
+- H3 Bit 소유 계약: `hls/common/include/lidar_v3_h3_frame_contract.hpp`
 
 ### 다섯 Profile
 

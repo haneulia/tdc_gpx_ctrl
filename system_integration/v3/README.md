@@ -26,7 +26,7 @@ HLS로 단계 전환하는 항목:
 | 경로 | 역할 |
 |---|---|
 | `docs/` | 마이그레이션 계약과 체크포인트 결과 |
-| `hls/common/include/` | HLS/RTL 경계의 고정 Bit Map |
+| `hls/common/include/` | H0 공통 상한·Bit field 도구와 H1~H3 의미 기반 ABI Header |
 | `hls/gpx_hit_decoder/` | 첫 변환 대상 Raw28-to-Hit17 컴포넌트 |
 | `hls/gpx_cell_collector/` | Hit17-to-Cell 수집·필터·오류 분류 컴포넌트 |
 | `hls/gpx_frame_assembler/` | Cell-to-Frame Rise/Fall 정렬·gap·Face 종료 컴포넌트 |
@@ -59,13 +59,15 @@ HLS로 단계 전환하는 항목:
 
 | 단계 | 상태 | 판정 |
 |---|---|---|
-| H0 실행 환경 | 완료 | Vitis HLS/Vivado 2025.2.1 재현 확인 |
+| H0 공통 계약/실행 환경 | 완료 | ABI 3.1 공통 Header, C++/VHDL 단일 Bit 계약, Vitis HLS/Vivado 2025.2.1 재현 확인 |
 | H1 Raw28-to-Hit17 | 완료 | CSim, C/RTL co-sim, V2 차동 회귀, 150/200 MHz 배치·배선 PASS |
 | H2 Hit-to-Cell | 완료 | CSim, C/RTL co-sim, V2 차등, Abort, 150/200 MHz 배치·배선 PASS |
 | H3 Cell-to-Frame | 완료 | 5 topology C/RTL, V2 차등 10개, Abort, 150/200 MHz 배치·배선 PASS |
 | H4 Frame-to-Word | 다음 단계 | PACKED17, Shot Line Metadata, Face Footer의 V2 Word Golden 비교 |
 
-H1의 계약, 시험 행렬과 수치는
+H0~H3 Header의 역할, 전체 Bit Map, 생산자·소비자와 ABI 수정 규칙은
+[`docs/V3_H0_H3_HEADER_CONTRACT_KO.md`](docs/V3_H0_H3_HEADER_CONTRACT_KO.md)에
+기록한다. H1의 계약, 시험 행렬과 수치는
 [`docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md`](docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md)에
 기록한다. H2의 계약과 검증 결과는
 [`docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md`](docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md)에

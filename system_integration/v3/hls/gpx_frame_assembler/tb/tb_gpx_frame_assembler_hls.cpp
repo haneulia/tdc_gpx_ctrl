@@ -14,7 +14,17 @@
 
 namespace {
 
-using namespace lidar_v3;
+namespace h1 = lidar_v3::h1;
+namespace h2 = lidar_v3::h2;
+namespace h3 = lidar_v3::h3;
+namespace limits = lidar_v3::limits;
+
+using slope_t = lidar_v3::tdc_edge_slope_t;
+using cell_kind_t = h2::cell_event_kind_t;
+using cell_payload_t = h2::cell_event_record_t;
+using frame_input_payload_t = h3::assembler_input_axis_t;
+using frame_cell_payload_t = h3::ordered_lane_cell_axis_t;
+using frame_control_payload_t = h3::assembler_control_axis_t;
 
 struct config_t {
     std::uint8_t num_chips;
@@ -33,24 +43,44 @@ struct invocation_t {
     frame_control_payload_t control;
 };
 
-ap_uint<kShotContextBits>
+constexpr std::uint8_t fault_mask(h3::assembler_fault_bit_t fault) {
+    return static_cast<std::uint8_t>(
+        1U << static_cast<unsigned>(fault));
+}
+
+h1::shot_context_t
 make_context(std::uint16_t shot_index, std::uint16_t columns,
              std::uint16_t active_version, std::uint8_t face = 1U,
              bool direction_ccw = false, bool source_sim = false) {
-    ap_uint<kShotContextBits> context = 0;
-    context[0] = 1;
-    context.range(kContextFaceHi, kContextFaceLo) = face;
-    context.range(18, 4) = 100U + shot_index;
-    context[19] = direction_ccw;
-    context.range(kContextShotIndexHi, kContextShotIndexLo) = shot_index;
-    context[36] = shot_index + 1U >= columns;
-    context[kContextSourceSim] = source_sim;
-    context.range(45, 38) = 3U;
-    context[46] = 1;
-    context.range(kContextActiveVersionHi, kContextActiveVersionLo) =
-        active_version;
-    context.range(94, 63) = 7U;
-    context[kShotContextBits - 1U] = 1;
+    h1::shot_context_t context = 0;
+    lidar_v3::write_flag<h1::shot_context_layout::request_valid>(
+        context, true);
+    lidar_v3::write_field<h1::shot_context_layout::mirror_face_index>(
+        context, face);
+    lidar_v3::write_field<h1::shot_context_layout::encoder_position_state>(
+        context, 100U + shot_index);
+    lidar_v3::write_flag<h1::shot_context_layout::direction_is_ccw>(
+        context, direction_ccw);
+    lidar_v3::write_field<h1::shot_context_layout::shot_column_index>(
+        context, shot_index);
+    lidar_v3::write_flag<
+        h1::shot_context_layout::is_last_shot_column_in_face>(
+        context, shot_index + 1U >= columns);
+    lidar_v3::write_flag<h1::shot_context_layout::source_is_simulation>(
+        context, source_sim);
+    lidar_v3::write_field<
+        h1::shot_context_layout::encoder_to_scheduler_latency_clks>(
+        context, 3U);
+    lidar_v3::write_flag<h1::shot_context_layout::encoder_latency_is_valid>(
+        context, true);
+    lidar_v3::write_field<
+        h1::shot_context_layout::active_configuration_version>(
+        context, active_version);
+    lidar_v3::write_field<
+        h1::shot_context_layout::fire_command_to_t0_latency_clks>(
+        context, 7U);
+    lidar_v3::write_flag<h1::shot_context_layout::context_is_valid>(
+        context, true);
     return context;
 }
 
@@ -69,30 +99,42 @@ cell_payload_t make_cell(cell_kind_t kind, std::uint8_t chip, std::uint8_t stop,
                          std::uint8_t hit_count = 1U, bool faulted = false,
                          std::uint8_t face = 1U) {
     cell_payload_t cell = 0;
-    cell.range(kCellKindHi, kCellKindLo) = static_cast<std::uint8_t>(kind);
-    cell.range(kCellChipHi, kCellChipLo) = chip;
-    cell[kCellIfifo] = stop >= 4U;
-    cell.range(kCellStopHi, kCellStopLo) = stop;
-    cell[kCellSlope] = slope;
-    cell.range(kCellHitCountHi, kCellHitCountLo) = hit_count;
-    cell.range(kCellMaxHitsHi, kCellMaxHitsLo) = 2U;
+    lidar_v3::write_field<h2::cell_event_layout::event_kind>(
+        cell, static_cast<std::uint8_t>(kind));
+    lidar_v3::write_field<h2::cell_event_layout::tdc_chip_index>(cell, chip);
+    lidar_v3::write_flag<h2::cell_event_layout::ififo_bank_select>(
+        cell, stop >= 4U);
+    lidar_v3::write_field<h2::cell_event_layout::logical_stop_channel_index>(
+        cell, stop);
+    lidar_v3::write_flag<h2::cell_event_layout::edge_slope_is_rise>(
+        cell, slope == static_cast<std::uint8_t>(slope_t::rise));
+    lidar_v3::write_field<h2::cell_event_layout::visible_return_count>(
+        cell, hit_count);
+    lidar_v3::write_field<h2::cell_event_layout::configured_return_capacity>(
+        cell, 2U);
     if (hit_count != 0U) {
-        cell.range(kCellHitsLo + 16U, kCellHitsLo) =
+        const unsigned first_hit_low_bit =
+            h2::cell_event_layout::packed_distance_hits_17bit::low;
+        cell.range(first_hit_low_bit + 16U, first_hit_low_bit) =
             expected_hit(shot, chip, stop, slope);
     }
-    cell[kCellFaulted] = faulted;
-    cell.range(kCellShotContextHi, kCellShotContextLo) =
-        make_context(shot, columns, version, face);
-    cell.range(kCellChipShotSeqHi, kCellChipShotSeqLo) = 10U + shot;
+    lidar_v3::write_flag<h2::cell_event_layout::cell_is_faulted>(
+        cell, faulted);
+    lidar_v3::write_field<h2::cell_event_layout::shot_context>(
+        cell, make_context(shot, columns, version, face));
+    lidar_v3::write_field<h2::cell_event_layout::tdc_chip_shot_sequence>(
+        cell, 10U + shot);
     return cell;
 }
 
 frame_input_payload_t cell_input(const cell_payload_t &cell,
                                  std::uint8_t reset_epoch) {
     frame_input_payload_t input = 0;
-    input.range(kFrameCellCellHi, kFrameCellCellLo) = cell;
-    input[kFrameInputKind] = 0;
-    input.range(kFrameInputResetEpochHi, kFrameInputResetEpochLo) = reset_epoch;
+    lidar_v3::write_field<h3::assembler_input_layout::event_body>(
+        input, cell);
+    lidar_v3::write_flag<h3::assembler_input_layout::event_kind>(input, false);
+    lidar_v3::write_field<h3::assembler_input_layout::reset_epoch>(
+        input, reset_epoch);
     return input;
 }
 
@@ -102,14 +144,26 @@ frame_input_payload_t face_close_input(std::uint32_t frame_id,
                                        std::uint16_t columns,
                                        std::uint8_t reset_epoch) {
     frame_input_payload_t input = 0;
-    input.range(kFaceCloseIdHi, kFaceCloseIdLo) = frame_id;
-    input.range(kFaceCloseFaceHi, kFaceCloseFaceLo) = face;
-    input[kFaceCloseDirection] = direction_ccw;
-    input[kFaceCloseSourceSim] = source_sim;
-    input.range(kFaceCloseVersionHi, kFaceCloseVersionLo) = version;
-    input.range(kFaceCloseColumnsHi, kFaceCloseColumnsLo) = columns;
-    input[kFrameInputKind] = 1;
-    input.range(kFrameInputResetEpochHi, kFrameInputResetEpochLo) = reset_epoch;
+    h3::face_close_event_record_t close_event = 0;
+    lidar_v3::write_field<h3::face_close_event_layout::frame_identifier>(
+        close_event, frame_id);
+    lidar_v3::write_field<h3::face_close_event_layout::mirror_face_index>(
+        close_event, face);
+    lidar_v3::write_flag<h3::face_close_event_layout::direction_is_ccw>(
+        close_event, direction_ccw);
+    lidar_v3::write_flag<h3::face_close_event_layout::source_is_simulation>(
+        close_event, source_sim);
+    lidar_v3::write_field<
+        h3::face_close_event_layout::active_configuration_version>(
+        close_event, version);
+    lidar_v3::write_field<
+        h3::face_close_event_layout::expected_shot_column_count>(
+        close_event, columns);
+    lidar_v3::write_field<h3::assembler_input_layout::face_close_event>(
+        input, close_event);
+    lidar_v3::write_flag<h3::assembler_input_layout::event_kind>(input, true);
+    lidar_v3::write_field<h3::assembler_input_layout::reset_epoch>(
+        input, reset_epoch);
     return input;
 }
 
@@ -140,9 +194,11 @@ invocation_t invoke(const frame_input_payload_t &input,
 
 void expect_faults(const frame_control_payload_t &control,
                    std::uint8_t expected) {
-    assert(control.range(7, 0).to_uint() == expected);
-    assert(control.range(kFrameControlReservedHi, kFrameControlReservedLo) ==
-           0U);
+    assert(lidar_v3::read_field<
+               h3::assembler_control_layout::fault_event_bitmap>(control) ==
+           expected);
+    assert(lidar_v3::read_field<h3::assembler_control_layout::reserved_zero>(
+               control) == 0U);
 }
 
 std::uint8_t popcount4(std::uint8_t mask) {
@@ -178,44 +234,76 @@ void expect_lane(const std::vector<frame_cell_payload_t> &lane,
     for (std::uint8_t slot = 0; slot < count; ++slot) {
         const frame_cell_payload_t frame = lane[slot];
         const cell_payload_t cell =
-            frame.range(kFrameCellCellHi, kFrameCellCellLo);
+            lidar_v3::read_field<h3::ordered_lane_cell_layout::cell_event>(
+                frame);
         const std::uint8_t chip =
             chip_for_slot(mask, config.stops_per_chip, slot);
         const std::uint8_t stop = slot % config.stops_per_chip;
         const bool blank = chip == missing_chip && stop == missing_stop;
 
-        assert(frame.range(kFrameCellSlotHi, kFrameCellSlotLo) == slot);
-        assert(frame.range(kFrameCellSlotCountHi, kFrameCellSlotCountLo) ==
+        assert(lidar_v3::read_field<
+                   h3::ordered_lane_cell_layout::lane_cell_slot_index>(frame) ==
+               slot);
+        assert(lidar_v3::read_field<
+                   h3::ordered_lane_cell_layout::lane_cell_slot_count>(frame) ==
                count);
-        assert((frame[kFrameCellLineStart] != 0) == (slot == 0U));
-        assert((frame[kFrameCellLineEnd] != 0) == (slot + 1U == count));
-        assert((frame[kFrameCellFirstColumn] != 0) == (shot == 0U));
-        assert((frame[kFrameCellLastColumn] != 0) ==
-               (shot + 1U >= config.columns));
-        assert(frame.range(kFrameCellGapHi, kFrameCellGapLo) ==
-               (slot == 0U ? gap : 0U));
-        assert((frame[kFrameCellBlank] != 0) == blank);
-        assert((frame[kFrameCellLineFaulted] != 0) == line_faulted);
-        assert(frame.range(kFrameCellReservedHi, kFrameCellReservedLo) == 0U);
+        assert(lidar_v3::read_flag<
+                   h3::ordered_lane_cell_layout::is_first_cell_in_shot_line>(
+                   frame) == (slot == 0U));
+        assert(lidar_v3::read_flag<
+                   h3::ordered_lane_cell_layout::is_last_cell_in_shot_line>(
+                   frame) == (slot + 1U == count));
+        assert(lidar_v3::read_flag<
+                   h3::ordered_lane_cell_layout::is_first_shot_column_in_face>(
+                   frame) == (shot == 0U));
+        assert(lidar_v3::read_flag<
+                   h3::ordered_lane_cell_layout::is_last_shot_column_in_face>(
+                   frame) == (shot + 1U >= config.columns));
+        assert(lidar_v3::read_field<
+                   h3::ordered_lane_cell_layout::missing_shot_columns_before>(
+                   frame) == (slot == 0U ? gap : 0U));
+        assert(lidar_v3::read_flag<
+                   h3::ordered_lane_cell_layout::is_missing_cell_placeholder>(
+                   frame) == blank);
+        assert(lidar_v3::read_flag<
+                   h3::ordered_lane_cell_layout::shot_line_is_faulted>(frame) ==
+               line_faulted);
+        assert(lidar_v3::read_field<
+                   h3::ordered_lane_cell_layout::reserved_zero>(frame) == 0U);
 
-        assert(cell.range(kCellKindHi, kCellKindLo) ==
+        assert(lidar_v3::read_field<h2::cell_event_layout::event_kind>(cell) ==
                static_cast<std::uint8_t>(cell_kind_t::data));
-        assert(cell.range(kCellChipHi, kCellChipLo) == chip);
-        assert(cell.range(kCellStopHi, kCellStopLo) == stop);
-        assert((cell[kCellSlope] != 0) ==
+        assert(lidar_v3::read_field<h2::cell_event_layout::tdc_chip_index>(
+                   cell) == chip);
+        assert(lidar_v3::read_field<
+                   h2::cell_event_layout::logical_stop_channel_index>(cell) ==
+               stop);
+        assert(lidar_v3::read_flag<
+                   h2::cell_event_layout::edge_slope_is_rise>(cell) ==
                (slope == static_cast<std::uint8_t>(slope_t::rise)));
-        assert(cell.range(kCellShotContextHi, kCellShotContextLo) ==
+        assert(lidar_v3::read_field<h2::cell_event_layout::shot_context>(cell) ==
                make_context(shot, config.columns, config.active_version));
         if (blank) {
-            assert(cell.range(kCellHitCountHi, kCellHitCountLo) == 0U);
-            assert(cell[kCellErrorFill] != 0);
-            assert(cell[kCellFaulted] != 0);
-            assert(cell.range(kCellChipShotSeqHi, kCellChipShotSeqLo) == 0U);
+            assert(lidar_v3::read_field<
+                       h2::cell_event_layout::visible_return_count>(cell) ==
+                   0U);
+            assert(lidar_v3::read_flag<
+                h2::cell_event_layout::error_fill_inserted>(cell));
+            assert(lidar_v3::read_flag<
+                h2::cell_event_layout::cell_is_faulted>(cell));
+            assert(lidar_v3::read_field<
+                       h2::cell_event_layout::tdc_chip_shot_sequence>(cell) ==
+                   0U);
         } else {
-            assert(cell.range(kCellHitCountHi, kCellHitCountLo) == 1U);
-            assert(cell.range(kCellHitsLo + 16U, kCellHitsLo) ==
+            assert(lidar_v3::read_field<
+                       h2::cell_event_layout::visible_return_count>(cell) ==
+                   1U);
+            const unsigned first_hit_low_bit =
+                h2::cell_event_layout::packed_distance_hits_17bit::low;
+            assert(cell.range(first_hit_low_bit + 16U, first_hit_low_bit) ==
                    expected_hit(shot, chip, stop, slope));
-            assert(cell.range(kCellChipShotSeqHi, kCellChipShotSeqLo) ==
+            assert(lidar_v3::read_field<
+                       h2::cell_event_layout::tdc_chip_shot_sequence>(cell) ==
                    10U + shot);
         }
     }
@@ -278,8 +366,11 @@ invocation_t send_shot(config_t &config, std::uint16_t shot,
                                  config.columns, config.active_version),
                        config.reset_epoch),
             config);
-        accumulated_faults |= 1U << kFrameFaultDuplicateCell;
-        expect_faults(result.control, 1U << kFrameFaultDuplicateCell);
+        accumulated_faults |=
+            fault_mask(h3::assembler_fault_bit_t::duplicate_cell);
+        expect_faults(
+            result.control,
+            fault_mask(h3::assembler_fault_bit_t::duplicate_cell));
 
         result = invoke(
             cell_input(make_cell(cell_kind_t::data, 0U, 0U,
@@ -287,20 +378,27 @@ invocation_t send_shot(config_t &config, std::uint16_t shot,
                                  config.columns, config.active_version),
                        config.reset_epoch),
             config);
-        accumulated_faults |= 1U << kFrameFaultMaskedDrop;
-        expect_faults(result.control, 1U << kFrameFaultMaskedDrop);
+        accumulated_faults |=
+            fault_mask(h3::assembler_fault_bit_t::masked_lane_drop);
+        expect_faults(
+            result.control,
+            fault_mask(h3::assembler_fault_bit_t::masked_lane_drop));
 
         cell_payload_t context_bad =
             make_cell(cell_kind_t::data, 0U, 0U,
                       static_cast<std::uint8_t>(slope_t::rise), shot,
                       config.columns, config.active_version);
-        context_bad.range(kCellShotContextHi, kCellShotContextLo) =
+        lidar_v3::write_field<h2::cell_event_layout::shot_context>(
+            context_bad,
             make_context(shot, config.columns,
                          static_cast<std::uint16_t>(
-                             config.active_version + 1U));
+                             config.active_version + 1U)));
         result = invoke(cell_input(context_bad, config.reset_epoch), config);
-        accumulated_faults |= 1U << kFrameFaultContext;
-        expect_faults(result.control, 1U << kFrameFaultContext);
+        accumulated_faults |=
+            fault_mask(h3::assembler_fault_bit_t::shot_context_mismatch);
+        expect_faults(
+            result.control,
+            fault_mask(h3::assembler_fault_bit_t::shot_context_mismatch));
 
         result = invoke(
             cell_input(make_cell(
@@ -309,8 +407,11 @@ invocation_t send_shot(config_t &config, std::uint16_t shot,
                            config.columns, config.active_version),
                        config.reset_epoch),
             config);
-        accumulated_faults |= 1U << kFrameFaultUnexpected;
-        expect_faults(result.control, 1U << kFrameFaultUnexpected);
+        accumulated_faults |=
+            fault_mask(h3::assembler_fault_bit_t::unexpected_event);
+        expect_faults(
+            result.control,
+            fault_mask(h3::assembler_fault_bit_t::unexpected_event));
     }
 
     bool duplicate_sent = false;
@@ -324,21 +425,27 @@ invocation_t send_shot(config_t &config, std::uint16_t shot,
             if (inject_faults && !duplicate_sent) {
                 result =
                     invoke(cell_input(terminal, config.reset_epoch), config);
-                accumulated_faults |= 1U << kFrameFaultDuplicateTerminal;
+                accumulated_faults |= fault_mask(
+                    h3::assembler_fault_bit_t::duplicate_terminal_event);
                 expect_faults(result.control,
-                              1U << kFrameFaultDuplicateTerminal);
+                              fault_mask(h3::assembler_fault_bit_t::
+                                             duplicate_terminal_event));
                 duplicate_sent = true;
             }
         }
     }
 
-    assert(result.control[kFrameControlShotDone] != 0);
-    assert(
-        result.control.range(kFrameControlContextHi, kFrameControlContextLo) ==
-        make_context(shot, config.columns, config.active_version));
+    assert(lidar_v3::read_flag<
+        h3::assembler_control_layout::shot_cell_generation_complete>(
+        result.control));
+    assert(lidar_v3::read_field<
+               h3::assembler_control_layout::completed_shot_context>(
+               result.control) ==
+           make_context(shot, config.columns, config.active_version));
     const std::uint8_t final_faults =
-        inject_faults ? static_cast<std::uint8_t>(1U << kFrameFaultMissingCell)
-                      : 0U;
+        inject_faults
+            ? fault_mask(h3::assembler_fault_bit_t::missing_cell)
+            : 0U;
     expect_faults(result.control, final_faults);
     (void)accumulated_faults;
     return result;
@@ -386,25 +493,40 @@ void run_profile(const std::string &profile) {
         expect_lane(first.rise, config.rise_mask, config, 0U,
                     static_cast<std::uint8_t>(slope_t::rise));
         invocation_t gap =
-            send_shot(config, 2U, false, 1U << kFrameFaultColumnGap);
+            send_shot(
+                config,
+                2U,
+                false,
+                fault_mask(h3::assembler_fault_bit_t::shot_column_gap));
         expect_faults(gap.control, 0U);
         expect_lane(gap.rise, config.rise_mask, config, 2U,
                     static_cast<std::uint8_t>(slope_t::rise), -1, -1, false,
                     1U);
-        assert(gap.control[kFrameControlShotDone] != 0);
+        assert(lidar_v3::read_flag<
+            h3::assembler_control_layout::shot_cell_generation_complete>(
+            gap.control));
 
         invocation_t close =
             invoke(face_close_input(0x12345678U, 1U, false, false,
                                     config.active_version, config.columns,
                                     config.reset_epoch),
                    config);
-        assert(close.control[kFrameControlEmitClose] != 0);
-        const frame_close_payload_t close_payload =
-            close.control.range(kFrameControlCloseHi, kFrameControlCloseLo);
-        assert(close_payload.range(kFrameCloseTrailingHi,
-                                   kFrameCloseTrailingLo) == 0U);
-        assert(close_payload[kFrameCloseAllHole] == 0);
-        assert(close_payload[kFrameCloseFaulted] == 0);
+        assert(lidar_v3::read_flag<
+            h3::assembler_control_layout::contains_face_close_result>(
+            close.control));
+        const h3::face_close_result_t close_payload =
+            lidar_v3::read_field<
+                h3::assembler_control_layout::face_close_result>(
+                close.control);
+        assert(lidar_v3::read_field<
+                   h3::face_close_result_layout::
+                       trailing_missing_shot_columns>(close_payload) == 0U);
+        assert(!lidar_v3::read_flag<
+            h3::face_close_result_layout::entire_face_is_missing>(
+            close_payload));
+        assert(!lidar_v3::read_flag<
+            h3::face_close_result_layout::face_close_is_faulted>(
+            close_payload));
         expect_faults(close.control, 0U);
 
         ++config.reset_epoch;
@@ -413,12 +535,20 @@ void run_profile(const std::string &profile) {
                                     config.active_version, config.columns,
                                     config.reset_epoch),
                    config);
-        const frame_close_payload_t hole_payload =
-            all_hole.control.range(kFrameControlCloseHi, kFrameControlCloseLo);
-        assert(hole_payload[kFrameCloseAllHole] != 0);
-        assert(hole_payload.range(kFrameCloseTrailingHi,
-                                  kFrameCloseTrailingLo) == config.columns);
-        expect_faults(all_hole.control, 1U << kFrameFaultColumnGap);
+        const h3::face_close_result_t hole_payload =
+            lidar_v3::read_field<
+                h3::assembler_control_layout::face_close_result>(
+                all_hole.control);
+        assert(lidar_v3::read_flag<
+            h3::face_close_result_layout::entire_face_is_missing>(
+            hole_payload));
+        assert(lidar_v3::read_field<
+                   h3::face_close_result_layout::
+                       trailing_missing_shot_columns>(hole_payload) ==
+               config.columns);
+        expect_faults(
+            all_hole.control,
+            fault_mask(h3::assembler_fault_bit_t::shot_column_gap));
 
         invocation_t bad_geometry =
             invoke(face_close_input(0x1234567AU, 1U, false, false,
@@ -426,10 +556,13 @@ void run_profile(const std::string &profile) {
                                     config.columns, config.reset_epoch),
                    config);
         const std::uint8_t bad_geometry_faults =
-            static_cast<std::uint8_t>((1U << kFrameFaultGeometry) |
-                                      (1U << kFrameFaultColumnGap));
+            static_cast<std::uint8_t>(
+                fault_mask(h3::assembler_fault_bit_t::geometry_mismatch) |
+                fault_mask(h3::assembler_fault_bit_t::shot_column_gap));
         expect_faults(bad_geometry.control, bad_geometry_faults);
-        assert(bad_geometry.control[kFrameControlEmitClose] != 0);
+        assert(lidar_v3::read_flag<
+            h3::assembler_control_layout::contains_face_close_result>(
+            bad_geometry.control));
     }
 
     if (profile == "one_chip_dual") {

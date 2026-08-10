@@ -6,6 +6,7 @@ use work.lidar_build_pkg.all;
 use work.lidar_event_types_pkg.all;
 use work.lidar_gpx_event_pkg.all;
 use work.lidar_gpx_data_pkg.all;
+use work.lidar_v3_hls_contract_pkg.all;
 
 -- V3 HLS Cell-to-Frame 경계 Adapter.
 -- HLS가 만든 Rise/Fall Cell을 독립 FIFO에 저장하여 한 Lane의 Backpressure가
@@ -54,9 +55,6 @@ end entity lidar_gpx_frame_lane_assembler_hls_adapter;
 
 architecture rtl of lidar_gpx_frame_lane_assembler_hls_adapter is
 
-    constant C_INPUT_WIDTH   : positive := 328;
-    constant C_LANE_WIDTH    : positive := 360;
-    constant C_CONTROL_WIDTH : positive := 264;
     constant C_LANE_FIFO_DEPTH : positive := 32;
     constant C_LANE_FIFO_LOG2  : positive := 5;
 
@@ -69,64 +67,65 @@ architecture rtl of lidar_gpx_frame_lane_assembler_hls_adapter is
             ap_idle  : out std_logic;
             ap_ready : out std_logic;
 
-            event_in_TDATA  : in  std_logic_vector(
-                C_INPUT_WIDTH - 1 downto 0);
-            event_in_TVALID : in  std_logic;
-            event_in_TREADY : out std_logic;
+            cell_or_face_close_event_in_TDATA  : in  std_logic_vector(
+                C_V3_H3_ASSEMBLER_INPUT_AXIS_BITS - 1 downto 0);
+            cell_or_face_close_event_in_TVALID : in  std_logic;
+            cell_or_face_close_event_in_TREADY : out std_logic;
 
-            rise_out_TDATA  : out std_logic_vector(
-                C_LANE_WIDTH - 1 downto 0);
-            rise_out_TVALID : out std_logic;
-            rise_out_TREADY : in  std_logic;
+            ordered_rise_cell_out_TDATA  : out std_logic_vector(
+                C_V3_H3_ORDERED_LANE_AXIS_BITS - 1 downto 0);
+            ordered_rise_cell_out_TVALID : out std_logic;
+            ordered_rise_cell_out_TREADY : in  std_logic;
 
-            fall_out_TDATA  : out std_logic_vector(
-                C_LANE_WIDTH - 1 downto 0);
-            fall_out_TVALID : out std_logic;
-            fall_out_TREADY : in  std_logic;
+            ordered_fall_cell_out_TDATA  : out std_logic_vector(
+                C_V3_H3_ORDERED_LANE_AXIS_BITS - 1 downto 0);
+            ordered_fall_cell_out_TVALID : out std_logic;
+            ordered_fall_cell_out_TREADY : in  std_logic;
 
-            control_out_TDATA  : out std_logic_vector(
-                C_CONTROL_WIDTH - 1 downto 0);
-            control_out_TVALID : out std_logic;
-            control_out_TREADY : in  std_logic;
+            assembler_control_out_TDATA  : out std_logic_vector(
+                C_V3_H3_CONTROL_AXIS_BITS - 1 downto 0);
+            assembler_control_out_TVALID : out std_logic;
+            assembler_control_out_TREADY : in  std_logic;
 
-            num_chips       : in std_logic_vector(7 downto 0);
-            stops_per_chip  : in std_logic_vector(7 downto 0);
-            num_faces       : in std_logic_vector(7 downto 0);
-            active_version  : in std_logic_vector(15 downto 0);
-            rise_mask       : in std_logic_vector(7 downto 0);
-            fall_mask       : in std_logic_vector(7 downto 0);
-            columns_per_face : in std_logic_vector(15 downto 0)
+            build_tdc_chip_count : in std_logic_vector(7 downto 0);
+            build_stop_channels_per_chip : in std_logic_vector(7 downto 0);
+            build_mirror_face_count : in std_logic_vector(7 downto 0);
+            active_configuration_version : in std_logic_vector(15 downto 0);
+            runtime_enabled_rise_chip_mask : in std_logic_vector(7 downto 0);
+            runtime_enabled_fall_chip_mask : in std_logic_vector(7 downto 0);
+            runtime_expected_shot_columns_per_face :
+                in std_logic_vector(15 downto 0)
         );
     end component;
 
     signal input_axis_data_c  : std_logic_vector(
-        C_INPUT_WIDTH - 1 downto 0);
+        C_V3_H3_ASSEMBLER_INPUT_AXIS_BITS - 1 downto 0);
     signal input_axis_valid_c : std_logic;
     signal input_axis_ready_c : std_logic;
     signal input_fire_c       : std_logic;
     signal input_close_c      : std_logic;
 
     signal hls_rise_data_c  : std_logic_vector(
-        C_LANE_WIDTH - 1 downto 0);
+        C_V3_H3_ORDERED_LANE_AXIS_BITS - 1 downto 0);
     signal hls_rise_valid_c : std_logic;
     signal hls_rise_ready_c : std_logic;
     signal hls_fall_data_c  : std_logic_vector(
-        C_LANE_WIDTH - 1 downto 0);
+        C_V3_H3_ORDERED_LANE_AXIS_BITS - 1 downto 0);
     signal hls_fall_valid_c : std_logic;
     signal hls_fall_ready_c : std_logic;
 
     signal rise_fifo_data_c  : std_logic_vector(
-        C_LANE_WIDTH - 1 downto 0);
+        C_V3_H3_ORDERED_LANE_AXIS_BITS - 1 downto 0);
     signal rise_fifo_valid_c : std_logic;
     signal rise_fifo_ready_c : std_logic;
     signal fall_fifo_data_c  : std_logic_vector(
-        C_LANE_WIDTH - 1 downto 0);
+        C_V3_H3_ORDERED_LANE_AXIS_BITS - 1 downto 0);
     signal fall_fifo_valid_c : std_logic;
     signal fall_fifo_ready_c : std_logic;
     signal lane_flush_c      : std_logic;
 
     signal control_axis_data_c  : std_logic_vector(
-        C_CONTROL_WIDTH - 1 downto 0);
+        C_V3_H3_CONTROL_AXIS_BITS - 1 downto 0);
     signal control_axis_valid_c : std_logic;
     signal control_axis_ready_c : std_logic;
     signal control_fire_c       : std_logic;
@@ -168,101 +167,152 @@ architecture rtl of lidar_gpx_frame_lane_assembler_hls_adapter is
 
     function fn_pack_cell(value : gpx_cell_event_t)
         return std_logic_vector is
-        variable result : std_logic_vector(318 downto 0) :=
+        variable result : std_logic_vector(
+            C_V3_H2_CELL_EVENT_BITS - 1 downto 0) :=
             (others => '0');
         variable bit_lo : natural;
     begin
-        result(1 downto 0) := std_logic_vector(to_unsigned(
+        result(C_V3_H2_CELL_KIND_HI downto C_V3_H2_CELL_KIND_LO) :=
+            std_logic_vector(to_unsigned(
             gpx_cell_event_kind_t'pos(value.kind), 2));
-        result(3 downto 2) := std_logic_vector(value.chip_index);
-        result(4) := value.ififo_id;
-        result(7 downto 5) := std_logic_vector(value.stop_index);
-        result(8) := fn_gpx_slope_to_bit(value.slope);
-        result(11 downto 9) := std_logic_vector(value.hit_count);
-        result(14 downto 12) := std_logic_vector(value.max_hits);
+        result(C_V3_H2_CELL_CHIP_INDEX_HI downto
+               C_V3_H2_CELL_CHIP_INDEX_LO) :=
+            std_logic_vector(value.chip_index);
+        result(C_V3_H2_CELL_IFIFO_BANK_BIT) := value.ififo_id;
+        result(C_V3_H2_CELL_STOP_INDEX_HI downto
+               C_V3_H2_CELL_STOP_INDEX_LO) :=
+            std_logic_vector(value.stop_index);
+        result(C_V3_H2_CELL_SLOPE_RISE_BIT) :=
+            fn_gpx_slope_to_bit(value.slope);
+        result(C_V3_H2_CELL_VISIBLE_RETURNS_HI downto
+               C_V3_H2_CELL_VISIBLE_RETURNS_LO) :=
+            std_logic_vector(value.hit_count);
+        result(C_V3_H2_CELL_RETURN_CAPACITY_HI downto
+               C_V3_H2_CELL_RETURN_CAPACITY_LO) :=
+            std_logic_vector(value.max_hits);
         for hit_index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
-            bit_lo := 15 + hit_index * C_GPX_HIT_WIDTH;
+            bit_lo := C_V3_H2_CELL_PACKED_HITS_LO +
+                      hit_index * C_GPX_HIT_WIDTH;
             result(bit_lo + C_GPX_HIT_WIDTH - 1 downto bit_lo) :=
                 std_logic_vector(value.hits(hit_index));
         end loop;
-        result(134) := value.hit_dropped;
-        result(135) := value.return_overflow;
-        result(136) := value.error_fill;
-        result(137) := value.faulted;
-        result(140 downto 138) := value.timeout_cause;
-        result(302 downto 141) :=
+        result(C_V3_H2_CELL_HIT_DROPPED_BIT) := value.hit_dropped;
+        result(C_V3_H2_CELL_RETURN_OVERFLOW_BIT) := value.return_overflow;
+        result(C_V3_H2_CELL_ERROR_FILL_BIT) := value.error_fill;
+        result(C_V3_H2_CELL_FAULTED_BIT) := value.faulted;
+        result(C_V3_H2_CELL_TIMEOUT_CAUSE_HI downto
+               C_V3_H2_CELL_TIMEOUT_CAUSE_LO) := value.timeout_cause;
+        result(C_V3_H2_CELL_SHOT_CONTEXT_HI downto
+               C_V3_H2_CELL_SHOT_CONTEXT_LO) :=
             fn_pack_shot_context(value.shot_context);
-        result(318 downto 303) :=
+        result(C_V3_H2_CELL_CHIP_SHOT_SEQ_HI downto
+               C_V3_H2_CELL_CHIP_SHOT_SEQ_LO) :=
             std_logic_vector(value.chip_shot_seq);
         return result;
     end function fn_pack_cell;
 
-    function fn_unpack_cell(value : std_logic_vector(318 downto 0))
+    function fn_unpack_cell(value : std_logic_vector(
+        C_V3_H2_CELL_EVENT_BITS - 1 downto 0))
         return gpx_cell_event_t is
         variable result : gpx_cell_event_t := C_GPX_CELL_EVENT_IDLE;
         variable bit_lo : natural;
     begin
         result.valid := '1';
         result.kind := gpx_cell_event_kind_t'val(
-            to_integer(unsigned(value(1 downto 0))));
-        result.chip_index := unsigned(value(3 downto 2));
-        result.ififo_id := value(4);
-        result.stop_index := unsigned(value(7 downto 5));
-        result.slope := fn_gpx_slope_from_bit(value(8));
-        result.hit_count := unsigned(value(11 downto 9));
-        result.max_hits := unsigned(value(14 downto 12));
+            to_integer(unsigned(value(
+                C_V3_H2_CELL_KIND_HI downto C_V3_H2_CELL_KIND_LO))));
+        result.chip_index := unsigned(value(
+            C_V3_H2_CELL_CHIP_INDEX_HI downto
+            C_V3_H2_CELL_CHIP_INDEX_LO));
+        result.ififo_id := value(C_V3_H2_CELL_IFIFO_BANK_BIT);
+        result.stop_index := unsigned(value(
+            C_V3_H2_CELL_STOP_INDEX_HI downto
+            C_V3_H2_CELL_STOP_INDEX_LO));
+        result.slope := fn_gpx_slope_from_bit(value(
+            C_V3_H2_CELL_SLOPE_RISE_BIT));
+        result.hit_count := unsigned(value(
+            C_V3_H2_CELL_VISIBLE_RETURNS_HI downto
+            C_V3_H2_CELL_VISIBLE_RETURNS_LO));
+        result.max_hits := unsigned(value(
+            C_V3_H2_CELL_RETURN_CAPACITY_HI downto
+            C_V3_H2_CELL_RETURN_CAPACITY_LO));
         for hit_index in 0 to C_MAX_RETURNS_PER_STOP - 1 loop
-            bit_lo := 15 + hit_index * C_GPX_HIT_WIDTH;
+            bit_lo := C_V3_H2_CELL_PACKED_HITS_LO +
+                      hit_index * C_GPX_HIT_WIDTH;
             result.hits(hit_index) := unsigned(value(
                 bit_lo + C_GPX_HIT_WIDTH - 1 downto bit_lo));
         end loop;
-        result.hit_dropped := value(134);
-        result.return_overflow := value(135);
-        result.error_fill := value(136);
-        result.faulted := value(137);
-        result.timeout_cause := value(140 downto 138);
+        result.hit_dropped := value(C_V3_H2_CELL_HIT_DROPPED_BIT);
+        result.return_overflow := value(C_V3_H2_CELL_RETURN_OVERFLOW_BIT);
+        result.error_fill := value(C_V3_H2_CELL_ERROR_FILL_BIT);
+        result.faulted := value(C_V3_H2_CELL_FAULTED_BIT);
+        result.timeout_cause := value(
+            C_V3_H2_CELL_TIMEOUT_CAUSE_HI downto
+            C_V3_H2_CELL_TIMEOUT_CAUSE_LO);
         result.shot_context := fn_unpack_shot_context(
-            value(302 downto 141));
-        result.chip_shot_seq := unsigned(value(318 downto 303));
+            value(C_V3_H2_CELL_SHOT_CONTEXT_HI downto
+                  C_V3_H2_CELL_SHOT_CONTEXT_LO));
+        result.chip_shot_seq := unsigned(value(
+            C_V3_H2_CELL_CHIP_SHOT_SEQ_HI downto
+            C_V3_H2_CELL_CHIP_SHOT_SEQ_LO));
         return result;
     end function fn_unpack_cell;
 
     function fn_unpack_frame(value : std_logic_vector(
-        C_LANE_WIDTH - 1 downto 0)) return gpx_frame_cell_event_t is
+        C_V3_H3_ORDERED_LANE_AXIS_BITS - 1 downto 0))
+        return gpx_frame_cell_event_t is
         variable result : gpx_frame_cell_event_t :=
             C_GPX_FRAME_CELL_EVENT_IDLE;
     begin
         result.valid := '1';
-        result.cell := fn_unpack_cell(value(318 downto 0));
-        result.slot_index := unsigned(value(324 downto 319));
-        result.slot_count := unsigned(value(330 downto 325));
-        result.line_start := value(331);
-        result.line_end := value(332);
-        result.first_column := value(333);
-        result.last_column := value(334);
-        result.gap_before := unsigned(value(350 downto 335));
-        result.slot_blank := value(351);
-        result.line_faulted := value(352);
+        result.cell := fn_unpack_cell(value(
+            C_V3_H3_LANE_CELL_HI downto C_V3_H3_LANE_CELL_LO));
+        result.slot_index := unsigned(value(
+            C_V3_H3_LANE_SLOT_INDEX_HI downto
+            C_V3_H3_LANE_SLOT_INDEX_LO));
+        result.slot_count := unsigned(value(
+            C_V3_H3_LANE_SLOT_COUNT_HI downto
+            C_V3_H3_LANE_SLOT_COUNT_LO));
+        result.line_start := value(C_V3_H3_LANE_LINE_START_BIT);
+        result.line_end := value(C_V3_H3_LANE_LINE_END_BIT);
+        result.first_column := value(C_V3_H3_LANE_FIRST_COLUMN_BIT);
+        result.last_column := value(C_V3_H3_LANE_LAST_COLUMN_BIT);
+        result.gap_before := unsigned(value(
+            C_V3_H3_LANE_GAP_BEFORE_HI downto
+            C_V3_H3_LANE_GAP_BEFORE_LO));
+        result.slot_blank := value(C_V3_H3_LANE_BLANK_BIT);
+        result.line_faulted := value(C_V3_H3_LANE_LINE_FAULTED_BIT);
         return result;
     end function fn_unpack_frame;
 
-    function fn_unpack_close(value : std_logic_vector(86 downto 0))
+    function fn_unpack_close(value : std_logic_vector(
+        C_V3_H3_FACE_CLOSE_RESULT_BITS - 1 downto 0))
         return gpx_frame_close_event_t is
         variable result : gpx_frame_close_event_t :=
             C_GPX_FRAME_CLOSE_EVENT_IDLE;
     begin
         result.valid := '1';
-        result.face_frame_id := unsigned(value(31 downto 0));
-        result.face_index := unsigned(value(34 downto 32));
-        if value(35) = '1' then
+        result.face_frame_id := unsigned(value(
+            C_V3_H3_CLOSE_FRAME_ID_HI downto
+            C_V3_H3_CLOSE_FRAME_ID_LO));
+        result.face_index := unsigned(value(
+            C_V3_H3_CLOSE_FACE_INDEX_HI downto
+            C_V3_H3_CLOSE_FACE_INDEX_LO));
+        if value(C_V3_H3_CLOSE_DIRECTION_CCW_BIT) = '1' then
             result.direction := DIRECTION_CCW;
         end if;
-        result.source_sim := value(36);
-        result.active_version := unsigned(value(52 downto 37));
-        result.columns_per_face := unsigned(value(68 downto 53));
-        result.trailing_gap := unsigned(value(84 downto 69));
-        result.all_hole := value(85);
-        result.face_faulted := value(86);
+        result.source_sim := value(C_V3_H3_CLOSE_SOURCE_SIM_BIT);
+        result.active_version := unsigned(value(
+            C_V3_H3_CLOSE_ACTIVE_VERSION_HI downto
+            C_V3_H3_CLOSE_ACTIVE_VERSION_LO));
+        result.columns_per_face := unsigned(value(
+            C_V3_H3_CLOSE_EXPECTED_COLUMNS_HI downto
+            C_V3_H3_CLOSE_EXPECTED_COLUMNS_LO));
+        result.trailing_gap := unsigned(value(
+            C_V3_H3_CLOSE_TRAILING_GAP_HI downto
+            C_V3_H3_CLOSE_TRAILING_GAP_LO));
+        result.all_hole := value(C_V3_H3_CLOSE_ALL_HOLE_BIT);
+        result.face_faulted := value(C_V3_H3_CLOSE_FAULTED_BIT);
         return result;
     end function fn_unpack_close;
 
@@ -280,27 +330,35 @@ begin
 
     p_pack_input : process (all)
         variable payload : std_logic_vector(
-            C_INPUT_WIDTH - 1 downto 0);
+            C_V3_H3_ASSEMBLER_INPUT_AXIS_BITS - 1 downto 0);
     begin
         payload := (others => '0');
         if i_face_close_event.valid = '1' then
-            payload(31 downto 0) :=
+            payload(C_V3_H3_CLOSE_FRAME_ID_HI downto
+                    C_V3_H3_CLOSE_FRAME_ID_LO) :=
                 std_logic_vector(i_face_close_event.face_frame_id);
-            payload(34 downto 32) :=
+            payload(C_V3_H3_CLOSE_FACE_INDEX_HI downto
+                    C_V3_H3_CLOSE_FACE_INDEX_LO) :=
                 std_logic_vector(i_face_close_event.face_index);
             if i_face_close_event.direction = DIRECTION_CCW then
-                payload(35) := '1';
+                payload(C_V3_H3_CLOSE_DIRECTION_CCW_BIT) := '1';
             end if;
-            payload(36) := i_face_close_event.source_sim;
-            payload(52 downto 37) :=
+            payload(C_V3_H3_CLOSE_SOURCE_SIM_BIT) :=
+                i_face_close_event.source_sim;
+            payload(C_V3_H3_CLOSE_ACTIVE_VERSION_HI downto
+                    C_V3_H3_CLOSE_ACTIVE_VERSION_LO) :=
                 std_logic_vector(i_face_close_event.active_version);
-            payload(68 downto 53) :=
+            payload(C_V3_H3_CLOSE_EXPECTED_COLUMNS_HI downto
+                    C_V3_H3_CLOSE_EXPECTED_COLUMNS_LO) :=
                 std_logic_vector(i_face_close_event.columns_per_face);
-            payload(319) := '1';
+            payload(C_V3_H3_INPUT_KIND_BIT) := '1';
         else
-            payload(318 downto 0) := fn_pack_cell(i_cell_event);
+            payload(C_V3_H3_LANE_CELL_HI downto C_V3_H3_LANE_CELL_LO) :=
+                fn_pack_cell(i_cell_event);
         end if;
-        payload(327 downto 320) := std_logic_vector(reset_epoch_r);
+        payload(C_V3_H3_INPUT_RESET_EPOCH_HI downto
+                C_V3_H3_INPUT_RESET_EPOCH_LO) :=
+            std_logic_vector(reset_epoch_r);
         input_axis_data_c <= payload;
     end process p_pack_input;
 
@@ -325,7 +383,7 @@ begin
 
     u_rise_fifo : entity work.tdc_gpx_sync_fifo
         generic map (
-            g_DATA_WIDTH => C_LANE_WIDTH,
+            g_DATA_WIDTH => C_V3_H3_ORDERED_LANE_AXIS_BITS,
             g_DEPTH      => C_LANE_FIFO_DEPTH,
             g_LOG2_DEPTH => C_LANE_FIFO_LOG2,
             g_IN_REG     => true,
@@ -345,7 +403,7 @@ begin
 
     u_fall_fifo : entity work.tdc_gpx_sync_fifo
         generic map (
-            g_DATA_WIDTH => C_LANE_WIDTH,
+            g_DATA_WIDTH => C_V3_H3_ORDERED_LANE_AXIS_BITS,
             g_DEPTH      => C_LANE_FIFO_DEPTH,
             g_LOG2_DEPTH => C_LANE_FIFO_LOG2,
             g_IN_REG     => true,
@@ -381,7 +439,8 @@ begin
     control_axis_ready_c <= '1' when
         i_rst_n = '1' and
         (i_abort = '1' or flush_active_r = '1' or
-         control_axis_valid_c = '0' or control_axis_data_c(8) = '0' or
+         control_axis_valid_c = '0' or
+         control_axis_data_c(C_V3_H3_CONTROL_HAS_CLOSE_BIT) = '0' or
          frame_close_event_r.valid = '0' or i_frame_close_ready = '1')
         else '0';
     control_fire_c <= control_axis_valid_c and control_axis_ready_c;
@@ -509,44 +568,68 @@ begin
 
                 if i_abort = '0' and flush_active_r = '0' and
                    control_fire_c = '1' then
-                    assert control_axis_data_c(263 downto 259) = "00000"
+                    assert control_axis_data_c(
+                        C_V3_H3_CONTROL_RESERVED_HI downto
+                        C_V3_H3_CONTROL_RESERVED_LO) = "00000"
                         report "V3-HLS-H3-004 nonzero control reserved bits"
                         severity failure;
 
-                    pulse_v.context_mismatch := control_axis_data_c(0);
-                    pulse_v.unexpected_cell := control_axis_data_c(1);
-                    pulse_v.duplicate_cell := control_axis_data_c(2);
-                    pulse_v.duplicate_terminal := control_axis_data_c(3);
-                    pulse_v.missing_cell := control_axis_data_c(4);
-                    pulse_v.geometry_error := control_axis_data_c(5);
-                    pulse_v.column_gap := control_axis_data_c(6);
-                    pulse_v.masked_payload_drop := control_axis_data_c(7);
+                    pulse_v.context_mismatch := control_axis_data_c(
+                        C_V3_H3_FAULT_CONTEXT_BIT);
+                    pulse_v.unexpected_cell := control_axis_data_c(
+                        C_V3_H3_FAULT_UNEXPECTED_BIT);
+                    pulse_v.duplicate_cell := control_axis_data_c(
+                        C_V3_H3_FAULT_DUPLICATE_CELL_BIT);
+                    pulse_v.duplicate_terminal := control_axis_data_c(
+                        C_V3_H3_FAULT_DUPLICATE_TERM_BIT);
+                    pulse_v.missing_cell := control_axis_data_c(
+                        C_V3_H3_FAULT_MISSING_CELL_BIT);
+                    pulse_v.geometry_error := control_axis_data_c(
+                        C_V3_H3_FAULT_GEOMETRY_BIT);
+                    pulse_v.column_gap := control_axis_data_c(
+                        C_V3_H3_FAULT_COLUMN_GAP_BIT);
+                    pulse_v.masked_payload_drop := control_axis_data_c(
+                        C_V3_H3_FAULT_MASKED_DROP_BIT);
 
                     sticky_v.context_mismatch :=
-                        sticky_v.context_mismatch or control_axis_data_c(0);
+                        sticky_v.context_mismatch or control_axis_data_c(
+                            C_V3_H3_FAULT_CONTEXT_BIT);
                     sticky_v.unexpected_cell :=
-                        sticky_v.unexpected_cell or control_axis_data_c(1);
+                        sticky_v.unexpected_cell or control_axis_data_c(
+                            C_V3_H3_FAULT_UNEXPECTED_BIT);
                     sticky_v.duplicate_cell :=
-                        sticky_v.duplicate_cell or control_axis_data_c(2);
+                        sticky_v.duplicate_cell or control_axis_data_c(
+                            C_V3_H3_FAULT_DUPLICATE_CELL_BIT);
                     sticky_v.duplicate_terminal :=
-                        sticky_v.duplicate_terminal or control_axis_data_c(3);
+                        sticky_v.duplicate_terminal or control_axis_data_c(
+                            C_V3_H3_FAULT_DUPLICATE_TERM_BIT);
                     sticky_v.missing_cell :=
-                        sticky_v.missing_cell or control_axis_data_c(4);
+                        sticky_v.missing_cell or control_axis_data_c(
+                            C_V3_H3_FAULT_MISSING_CELL_BIT);
                     sticky_v.geometry_error :=
-                        sticky_v.geometry_error or control_axis_data_c(5);
+                        sticky_v.geometry_error or control_axis_data_c(
+                            C_V3_H3_FAULT_GEOMETRY_BIT);
                     sticky_v.column_gap :=
-                        sticky_v.column_gap or control_axis_data_c(6);
+                        sticky_v.column_gap or control_axis_data_c(
+                            C_V3_H3_FAULT_COLUMN_GAP_BIT);
                     sticky_v.masked_payload_drop :=
-                        sticky_v.masked_payload_drop or control_axis_data_c(7);
+                        sticky_v.masked_payload_drop or control_axis_data_c(
+                            C_V3_H3_FAULT_MASKED_DROP_BIT);
 
-                    if control_axis_data_c(8) = '1' then
+                    if control_axis_data_c(
+                        C_V3_H3_CONTROL_HAS_CLOSE_BIT) = '1' then
                         close_v := fn_unpack_close(
-                            control_axis_data_c(95 downto 9));
+                            control_axis_data_c(
+                                C_V3_H3_CONTROL_CLOSE_HI downto
+                                C_V3_H3_CONTROL_CLOSE_LO));
                         frame_close_event_r <= close_v;
                     end if;
-                    if control_axis_data_c(96) = '1' then
+                    if control_axis_data_c(
+                        C_V3_H3_CONTROL_CELLS_DONE_BIT) = '1' then
                         done_context_v := fn_unpack_shot_context(
-                            control_axis_data_c(258 downto 97));
+                            control_axis_data_c(
+                                C_V3_H3_CONTROL_SHOT_CONTEXT_HI downto
+                                C_V3_H3_CONTROL_SHOT_CONTEXT_LO));
                         armed_v := '1';
                     end if;
                 end if;
@@ -588,32 +671,36 @@ begin
             ap_idle  => open,
             ap_ready => open,
 
-            event_in_TDATA  => input_axis_data_c,
-            event_in_TVALID => input_axis_valid_c,
-            event_in_TREADY => input_axis_ready_c,
+            cell_or_face_close_event_in_TDATA  => input_axis_data_c,
+            cell_or_face_close_event_in_TVALID => input_axis_valid_c,
+            cell_or_face_close_event_in_TREADY => input_axis_ready_c,
 
-            rise_out_TDATA  => hls_rise_data_c,
-            rise_out_TVALID => hls_rise_valid_c,
-            rise_out_TREADY => hls_rise_ready_c,
+            ordered_rise_cell_out_TDATA  => hls_rise_data_c,
+            ordered_rise_cell_out_TVALID => hls_rise_valid_c,
+            ordered_rise_cell_out_TREADY => hls_rise_ready_c,
 
-            fall_out_TDATA  => hls_fall_data_c,
-            fall_out_TVALID => hls_fall_valid_c,
-            fall_out_TREADY => hls_fall_ready_c,
+            ordered_fall_cell_out_TDATA  => hls_fall_data_c,
+            ordered_fall_cell_out_TVALID => hls_fall_valid_c,
+            ordered_fall_cell_out_TREADY => hls_fall_ready_c,
 
-            control_out_TDATA  => control_axis_data_c,
-            control_out_TVALID => control_axis_valid_c,
-            control_out_TREADY => control_axis_ready_c,
+            assembler_control_out_TDATA  => control_axis_data_c,
+            assembler_control_out_TVALID => control_axis_valid_c,
+            assembler_control_out_TREADY => control_axis_ready_c,
 
-            num_chips => std_logic_vector(to_unsigned(
+            build_tdc_chip_count => std_logic_vector(to_unsigned(
                 G_BUILD_CONFIG.num_chips, 8)),
-            stops_per_chip => std_logic_vector(to_unsigned(
+            build_stop_channels_per_chip => std_logic_vector(to_unsigned(
                 G_BUILD_CONFIG.stops_per_chip, 8)),
-            num_faces => std_logic_vector(to_unsigned(
+            build_mirror_face_count => std_logic_vector(to_unsigned(
                 G_BUILD_CONFIG.num_faces, 8)),
-            active_version => std_logic_vector(i_active_version),
-            rise_mask => "0000" & i_active_rise_mask,
-            fall_mask => "0000" & i_active_fall_mask,
-            columns_per_face => std_logic_vector(i_columns_per_face)
+            active_configuration_version =>
+                std_logic_vector(i_active_version),
+            runtime_enabled_rise_chip_mask =>
+                "0000" & i_active_rise_mask,
+            runtime_enabled_fall_chip_mask =>
+                "0000" & i_active_fall_mask,
+            runtime_expected_shot_columns_per_face =>
+                std_logic_vector(i_columns_per_face)
         );
 
 end architecture rtl;

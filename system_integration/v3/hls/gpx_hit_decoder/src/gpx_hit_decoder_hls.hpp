@@ -1,26 +1,33 @@
 #ifndef GPX_HIT_DECODER_HLS_HPP
 #define GPX_HIT_DECODER_HLS_HPP
 
+#include <cstdint>
 #include <hls_stream.h>
 
-#include "lidar_v3_hls_contract.hpp"
+#include "lidar_v3_h1_raw_hit_contract.hpp"
 
 namespace lidar_v3 {
+namespace h1 {
 
-decode_result_payload_t decode_gpx_raw_event(
-    const raw_payload_t &raw,
-    const decoder_config_t &config);
+// Decode one accepted external TDC-GPX I-Mode Raw Event. The function keeps
+// event identity and Shot context even when a topology fault suppresses the
+// decoded Hit Event.
+decoder_result_axis_t decode_gpx_raw_event(
+    const raw_event_axis_t &raw_event,
+    const decoder_configuration_t &configuration);
 
+}  // namespace h1
 }  // namespace lidar_v3
 
-// Keep the synthesizable top at global C linkage. Vitis HLS resolves this
-// symbol by name, while all implementation types remain namespace-scoped.
+// One accepted Raw Event produces one decoder result. Chip/STOP counts are
+// build-time structure snapshots; rise/fall masks are active Runtime topology
+// snapshots and must stay stable while an event is accepted.
 extern "C" void gpx_hit_decoder_hls(
-    hls::stream<lidar_v3::raw_payload_t> &raw_in,
-    hls::stream<lidar_v3::decode_result_payload_t> &result_out,
-    std::uint8_t num_chips,
-    std::uint8_t stops_per_chip,
-    std::uint8_t rise_mask,
-    std::uint8_t fall_mask);
+    hls::stream<lidar_v3::h1::raw_event_axis_t> &raw_event_in,
+    hls::stream<lidar_v3::h1::decoder_result_axis_t> &decoder_result_out,
+    std::uint8_t build_tdc_chip_count,
+    std::uint8_t build_stop_channels_per_chip,
+    std::uint8_t runtime_enabled_rise_chip_mask,
+    std::uint8_t runtime_enabled_fall_chip_mask);
 
 #endif
