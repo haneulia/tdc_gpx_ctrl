@@ -8,6 +8,7 @@ namespace lidar_v3 {
 
 constexpr unsigned kMaxChips = 4;
 constexpr unsigned kMaxStopsPerChip = 8;
+constexpr unsigned kMaxReturnsPerStop = 7;
 
 // AXI4-Stream TDATA is byte-aligned. The semantic Raw payload uses bits
 // [214:0]; bit 215 is reserved and must be driven to zero by the RTL adapter.
@@ -28,6 +29,31 @@ using raw_payload_t = ap_uint<kRawPayloadBits>;
 using hit_payload_t = ap_uint<kHitPayloadBits>;
 using decode_result_payload_t = ap_uint<kDecodeResultBits>;
 
+// H2 carries the abort generation beside each accepted Hit. The generation
+// is checked after the stream handshake, so an abort cannot be missed while
+// the HLS core is waiting for input. Bits [223:218] remain reserved-zero and
+// bits [231:224] carry reset_epoch.
+constexpr unsigned kCellHitInputBits = 232;
+using cell_hit_input_t = ap_uint<kCellHitInputBits>;
+constexpr unsigned kCellInputReservedLo = 218;
+constexpr unsigned kCellInputReservedHi = 223;
+constexpr unsigned kCellInputResetEpochLo = 224;
+constexpr unsigned kCellInputResetEpochHi = 231;
+
+// One Cell is one Shot x one Chip x one STOP x one slope. The Cell payload
+// carries all seven physical Return slots; hit_count states how many leading
+// slots are visible for the active Runtime Return setting.
+constexpr unsigned kCellPayloadBits = 319;
+constexpr unsigned kCollectorResultSemanticBits = 324;
+constexpr unsigned kCollectorResultBits = 328;
+using cell_payload_t = ap_uint<kCellPayloadBits>;
+using collector_result_payload_t = ap_uint<kCollectorResultBits>;
+
+static_assert((kCellHitInputBits % 8U) == 0U,
+              "Cell input AXIS width must be byte aligned");
+static_assert((kCollectorResultBits % 8U) == 0U,
+              "Cell result AXIS width must be byte aligned");
+
 enum class raw_kind_t : std::uint8_t {
     data = 0,
     ififo1_done = 1,
@@ -38,6 +64,13 @@ enum class raw_kind_t : std::uint8_t {
 enum class slope_t : std::uint8_t {
     fall = 0,
     rise = 1
+};
+
+enum class cell_kind_t : std::uint8_t {
+    data = 0,
+    ififo1_done = 1,
+    drain_done = 2,
+    timeout = 3
 };
 
 // Raw payload layout. AXI TVALID owns event validity and is not in TDATA.
@@ -99,6 +132,56 @@ constexpr unsigned kResultSlopeFault = 221;
 constexpr unsigned kResultReservedLo = 222;
 constexpr unsigned kResultReservedHi = 223;
 
+// Fields inside the opaque 162-bit Shot context. These positions are owned by
+// lidar_gpx_event_pkg.fn_pack_shot_context in V2 and are repeated here only as
+// an explicit RTL/HLS ABI contract.
+constexpr unsigned kContextFaceLo = 1;
+constexpr unsigned kContextFaceHi = 3;
+constexpr unsigned kContextShotIndexLo = 20;
+constexpr unsigned kContextShotIndexHi = 35;
+constexpr unsigned kContextSourceSim = 37;
+constexpr unsigned kContextActiveVersionLo = 47;
+constexpr unsigned kContextActiveVersionHi = 62;
+
+// Width-independent Cell payload layout. AXI TVALID owns event validity.
+constexpr unsigned kCellKindLo = 0;
+constexpr unsigned kCellKindHi = 1;
+constexpr unsigned kCellChipLo = 2;
+constexpr unsigned kCellChipHi = 3;
+constexpr unsigned kCellIfifo = 4;
+constexpr unsigned kCellStopLo = 5;
+constexpr unsigned kCellStopHi = 7;
+constexpr unsigned kCellSlope = 8;
+constexpr unsigned kCellHitCountLo = 9;
+constexpr unsigned kCellHitCountHi = 11;
+constexpr unsigned kCellMaxHitsLo = 12;
+constexpr unsigned kCellMaxHitsHi = 14;
+constexpr unsigned kCellHitsLo = 15;
+constexpr unsigned kCellHitsHi = 133;
+constexpr unsigned kCellHitDropped = 134;
+constexpr unsigned kCellReturnOverflow = 135;
+constexpr unsigned kCellErrorFill = 136;
+constexpr unsigned kCellFaulted = 137;
+constexpr unsigned kCellTimeoutLo = 138;
+constexpr unsigned kCellTimeoutHi = 140;
+constexpr unsigned kCellShotContextLo = 141;
+constexpr unsigned kCellShotContextHi = 302;
+constexpr unsigned kCellChipShotSeqLo = 303;
+constexpr unsigned kCellChipShotSeqHi = 318;
+
+// One collector result is emitted for every accepted Hit input. The first
+// result is a non-Cell status acknowledgement; a terminal input may then emit
+// several Cell results followed by one Cell control event.
+constexpr unsigned kCollectorCellLo = 0;
+constexpr unsigned kCollectorCellHi = 318;
+constexpr unsigned kCollectorEmit = 319;
+constexpr unsigned kCollectorContextFault = 320;
+constexpr unsigned kCollectorReturnOverflowFault = 321;
+constexpr unsigned kCollectorStartNonzeroFault = 322;
+constexpr unsigned kCollectorCapacityDropFault = 323;
+constexpr unsigned kCollectorReservedLo = 324;
+constexpr unsigned kCollectorReservedHi = 327;
+
 struct decoder_config_t {
     std::uint8_t num_chips;
     std::uint8_t stops_per_chip;
@@ -120,6 +203,20 @@ inline hit_payload_t result_hit(const decode_result_payload_t &result) {
 
 inline bool result_emits_hit(const decode_result_payload_t &result) {
     return result[kResultEmit] != 0;
+}
+
+inline hit_payload_t cell_input_hit(const cell_hit_input_t &input) {
+    return input.range(kHitPayloadBits - 1U, 0U);
+}
+
+inline cell_payload_t collector_result_cell(
+    const collector_result_payload_t &result) {
+    return result.range(kCollectorCellHi, kCollectorCellLo);
+}
+
+inline bool collector_result_emits_cell(
+    const collector_result_payload_t &result) {
+    return result[kCollectorEmit] != 0;
 }
 
 }  // namespace lidar_v3

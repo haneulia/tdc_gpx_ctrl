@@ -28,6 +28,9 @@ HLS로 단계 전환하는 항목:
 | `docs/` | 마이그레이션 계약과 체크포인트 결과 |
 | `hls/common/include/` | HLS/RTL 경계의 고정 Bit Map |
 | `hls/gpx_hit_decoder/` | 첫 변환 대상 Raw28-to-Hit17 컴포넌트 |
+| `hls/gpx_cell_collector/` | Hit17-to-Cell 수집·필터·오류 분류 컴포넌트 |
+| `rtl/bridges/` | HLS와 V2 record 경계를 연결하는 Adapter |
+| `tb/` | V2/HLS 차등 및 구현 Timing Harness |
 | `scripts/` | Vitis HLS 재현 실행기 |
 
 생성 프로젝트와 로그는 저장소 루트의 `.work/` 아래에만 만들며 Git에 넣지
@@ -56,11 +59,16 @@ HLS로 단계 전환하는 항목:
 |---|---|---|
 | H0 실행 환경 | 완료 | Vitis HLS/Vivado 2025.2.1 재현 확인 |
 | H1 Raw28-to-Hit17 | 완료 | CSim, C/RTL co-sim, V2 차동 회귀, 150/200 MHz 배치·배선 PASS |
-| H2 Hit-to-Cell | 다음 단계 | Return 1~7 수집·필터·overflow·timeout 구현 전 |
+| H2 Hit-to-Cell | 완료 | CSim, C/RTL co-sim, V2 차등, Abort, 150/200 MHz 배치·배선 PASS |
+| H3 Cell-to-Frame | 다음 단계 | Rise/Fall Cell 정렬과 Shot/Face 구조화 |
 
 H1의 계약, 시험 행렬과 수치는
 [`docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md`](docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md)에
-기록한다. H1 PASS는 Raw28-to-Hit17 경계만 닫았다는 뜻이며 V3 통합 IP 또는
+기록한다. H2의 계약과 검증 결과는
+[`docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md`](docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md)에
+기록하고, 테스트별 목적·수행 순서·유지보수 규칙은
+[`docs/V3_H2_TESTBENCH_GUIDE_KO.md`](docs/V3_H2_TESTBENCH_GUIDE_KO.md)에
+분리해 둔다. 각 단계 PASS는 해당 경계만 닫았다는 뜻이며 V3 통합 IP 또는
 Parent 프로젝트 전체 Sign-off를 뜻하지 않는다.
 
 ## H1 재현 명령
@@ -74,4 +82,17 @@ Parent 프로젝트 전체 Sign-off를 뜻하지 않는다.
 
 # xc7z020clg484-2 실제 OOC 합성·배치·배선: 150/200 MHz
 ./system_integration/v3/scripts/run_v3_gpx_hit_decoder_impl.ps1 -SkipHlsSynthesis
+```
+
+## H2 재현 명령
+
+```powershell
+# CSim + CSynth + 네 가지 topology C/RTL co-sim
+./system_integration/v3/scripts/run_v3_hls_cell_collector.ps1 -Step all
+
+# V2 RTL과 V3 HLS 혼합 시뮬레이션: 네 topology x 150/200 MHz
+./system_integration/v3/scripts/run_v3_gpx_cell_collector_diff.ps1
+
+# xc7z020clg484-2 실제 OOC 합성·배치·배선: 150/200 MHz
+./system_integration/v3/scripts/run_v3_gpx_cell_collector_impl.ps1 -SkipHlsSynthesis
 ```
