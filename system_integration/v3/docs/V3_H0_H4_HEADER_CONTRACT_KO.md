@@ -49,8 +49,8 @@ H3 gpx_frame_assembler_hls
   └─ Assembler Control 264 bit
   ▼
 H4 gpx_lane_word_formatter_hls
-  ├─ Canonical Line Word 248 bit
-  │   └─ 실제 DDR payload 32 bit + Line/Frame 제어 문맥
+  ├─ Canonical Line Word 64 bit
+  │   └─ 실제 DDR payload 32 bit + Line/Frame 경계 제어 27 bit + reserve 5 bit
   └─ Formatter Control 32 bit
   ▼
 RTL AXIS Word packer
@@ -281,11 +281,14 @@ Profile은 COMMIT 후 Face 경계에서 등록된 값이다. H4는 Streaming 중
 | 100:85 | `active_configuration_version` | 이 Face에 실제 적용된 설정 버전 |
 | 103:101 | `reserved_zero` | 항상 0 |
 
-### 8.3 Canonical Line Word AXIS TDATA, 248-bit
+### 8.3 Canonical Line Word AXIS TDATA, 64-bit
 
 한 전송의 실제 DDR payload는 Bit 31:0의 32-bit Word다. 나머지는 최종 RTL
-AXIS Word packer가 `TUSER`, `TLAST`, 32/64-bit Beat 조립을 결정하기 위한 문맥이며
-DDR에 별도 Word로 저장되지 않는다.
+AXIS Word packer가 `TUSER`, `TLAST`, 32/64-bit Beat 조립을 결정하기 위한 경계
+정보이며 DDR에 별도 Word로 저장되지 않는다. Shot Context는 첫 4개
+Shot Metadata Word에 이미 직렬화되며, Cell 수와 Cell당 Word 수는 COMMIT 후
+등록된 Active Lane Profile에서 Adapter가 복원한다. 따라서 이 값들을 매
+Word에 반복하지 않는다.
 
 | Bit | 의미 이름 | 의미 |
 |---:|---|---|
@@ -300,11 +303,11 @@ DDR에 별도 Word로 저장되지 않는다.
 | 56 | `is_last_shot_column` | Face 마지막 Shot Line |
 | 57 | `line_represents_missing_shot` | Hole Line |
 | 58 | `shot_line_is_faulted` | 이 Shot Line의 fault 요약 |
-| 74:59 | `unexpanded_missing_shot_columns` | H4 출력에서는 반드시 0 |
-| 80:75 | `lane_cell_slot_count` | 이 Line의 Cell 수 |
-| 83:81 | `serialized_cell_word_count` | Cell당 Word 수 |
-| 245:84 | `shot_context` | 원본 Shot 문맥; Footer에서는 0 |
-| 247:246 | `reserved_zero` | 항상 0 |
+| 63:59 | `reserved_zero` | byte 정렬 reserve, 항상 0 |
+
+64-bit는 **H4와 유지 RTL packer 사이의 내부 AXI 경계 폭**이다. 최종
+VDMA AXI4-Stream 출력 폭은 합성 시 `G_BUILD_CONFIG.output_width`로 32 또는
+64 bit 중 하나를 별도로 결정한다.
 
 ### 8.4 Shot Line Metadata, 4 Word/16 byte
 

@@ -130,7 +130,22 @@ begin
     s_o_hs         <= s_core_m_valid and s_core_m_ready;
     s_core_m_data  <= s_mem(to_integer(s_rptr_r));
 
-    p_write : process(i_clk)
+    -- Flush invalidates FIFO occupancy through the pointers and skid-valid
+    -- registers.  Stored bits do not need clearing.  Keeping the memory write
+    -- in a separate process prevents reset/flush from becoming a high-fanout
+    -- write-enable term across every LUTRAM data bit.  A write coincident with
+    -- flush is harmless because both pointers are reset on that same edge and
+    -- the location remains logically empty until a later accepted write.
+    p_memory_write : process(i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if s_i_hs = '1' then
+                s_mem(to_integer(s_wptr_r)) <= s_core_s_data;
+            end if;
+        end if;
+    end process p_memory_write;
+
+    p_write_pointer : process(i_clk)
         variable v_wptr_next  : unsigned(g_LOG2_DEPTH - 1 downto 0);
         variable v_round_next : std_logic;
     begin
@@ -139,8 +154,6 @@ begin
                 s_wptr_r       <= (others => '0');
                 s_wptr_round_r <= '0';
             elsif s_i_hs = '1' then
-                s_mem(to_integer(s_wptr_r)) <= s_core_s_data;
-
                 if s_wptr_r = to_unsigned(g_DEPTH - 1, g_LOG2_DEPTH) then
                     v_wptr_next  := (others => '0');
                     v_round_next := not s_wptr_round_r;
@@ -152,7 +165,7 @@ begin
                 s_wptr_round_r <= v_round_next;
             end if;
         end if;
-    end process p_write;
+    end process p_write_pointer;
 
     p_read : process(i_clk)
         variable v_rptr_next  : unsigned(g_LOG2_DEPTH - 1 downto 0);

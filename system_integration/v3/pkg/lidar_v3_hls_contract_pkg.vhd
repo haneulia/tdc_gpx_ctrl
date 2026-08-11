@@ -203,7 +203,10 @@ package lidar_v3_hls_contract_pkg is
     -- 폭에 독립적인 32-bit Canonical Word로 유지한다.
     constant C_V3_H4_FORMATTER_INPUT_AXIS_BITS : positive := 376;
     constant C_V3_H4_LANE_PROFILE_BITS         : positive := 104;
-    constant C_V3_H4_LINE_WORD_AXIS_BITS       : positive := 248;
+    -- H4 output carries one 32-bit canonical DDR Word and only the boundary
+    -- flags consumed by the retained RTL packer. Shot Context and geometry
+    -- are already serialized in the DDR Word stream and are not duplicated.
+    constant C_V3_H4_LINE_WORD_AXIS_BITS       : positive := 64;
     constant C_V3_H4_CONTROL_AXIS_BITS         : positive := 32;
 
     constant C_V3_H4_INPUT_BODY_LO             : natural := 0;
@@ -259,16 +262,8 @@ package lidar_v3_hls_contract_pkg is
     constant C_V3_H4_WORD_LAST_COLUMN_BIT      : natural := 56;
     constant C_V3_H4_WORD_LINE_HOLE_BIT        : natural := 57;
     constant C_V3_H4_WORD_LINE_FAULTED_BIT     : natural := 58;
-    constant C_V3_H4_WORD_UNEXPANDED_GAP_LO    : natural := 59;
-    constant C_V3_H4_WORD_UNEXPANDED_GAP_HI    : natural := 74;
-    constant C_V3_H4_WORD_SLOT_COUNT_LO        : natural := 75;
-    constant C_V3_H4_WORD_SLOT_COUNT_HI        : natural := 80;
-    constant C_V3_H4_WORD_CELL_WORDS_LO        : natural := 81;
-    constant C_V3_H4_WORD_CELL_WORDS_HI        : natural := 83;
-    constant C_V3_H4_WORD_SHOT_CONTEXT_LO      : natural := 84;
-    constant C_V3_H4_WORD_SHOT_CONTEXT_HI      : natural := 245;
-    constant C_V3_H4_WORD_RESERVED_LO          : natural := 246;
-    constant C_V3_H4_WORD_RESERVED_HI          : natural := 247;
+    constant C_V3_H4_WORD_RESERVED_LO          : natural := 59;
+    constant C_V3_H4_WORD_RESERVED_HI          : natural := 63;
 
     constant C_V3_H4_FAULT_INVALID_PROFILE_BIT : natural := 0;
     constant C_V3_H4_FAULT_SLOPE_BIT           : natural := 1;

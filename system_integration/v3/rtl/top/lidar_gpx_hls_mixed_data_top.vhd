@@ -74,18 +74,58 @@ entity lidar_gpx_hls_mixed_data_top is
 end entity lidar_gpx_hls_mixed_data_top;
 
 architecture rtl of lidar_gpx_hls_mixed_data_top is
-    signal rise_event_s : gpx_frame_cell_event_t :=
+    signal h3_rise_event_s : gpx_frame_cell_event_t :=
         C_GPX_FRAME_CELL_EVENT_IDLE;
-    signal fall_event_s : gpx_frame_cell_event_t :=
+    signal h3_fall_event_s : gpx_frame_cell_event_t :=
+        C_GPX_FRAME_CELL_EVENT_IDLE;
+    signal rise_event_r : gpx_frame_cell_event_t :=
+        C_GPX_FRAME_CELL_EVENT_IDLE;
+    signal fall_event_r : gpx_frame_cell_event_t :=
         C_GPX_FRAME_CELL_EVENT_IDLE;
     signal frame_close_s : gpx_frame_close_event_t :=
         C_GPX_FRAME_CLOSE_EVENT_IDLE;
-    signal rise_ready_s : std_logic;
-    signal fall_ready_s : std_logic;
+    signal h3_rise_ready_s : std_logic;
+    signal h3_fall_ready_s : std_logic;
+    signal rise_ready_s    : std_logic;
+    signal fall_ready_s    : std_logic;
     signal frame_close_ready_s : std_logic;
     signal pipeline_idle_s : std_logic;
     signal output_idle_s : std_logic;
 begin
+    -- H3의 폭이 큰 Cell record가 FIFO 출력 선택 MUX를 거쳐 H4 입력까지
+    -- 한 Cycle에 이동하지 않도록 Rise/Fall 각각에 순차 경계를 둔다.
+    -- 이 1-entry elastic register는 데이터 순서를 바꾸지 않으며, H4가
+    -- 멈추면 현재 record를 그대로 보존한다.
+    h3_rise_ready_s <= '1' when
+        rise_event_r.valid = '0' or rise_ready_s = '1' else '0';
+    h3_fall_ready_s <= '1' when
+        fall_event_r.valid = '0' or fall_ready_s = '1' else '0';
+
+    p_h3_h4_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_abort = '1' then
+                rise_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
+                fall_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
+            else
+                if h3_rise_ready_s = '1' then
+                    if h3_rise_event_s.valid = '1' then
+                        rise_event_r <= h3_rise_event_s;
+                    else
+                        rise_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
+                    end if;
+                end if;
+                if h3_fall_ready_s = '1' then
+                    if h3_fall_event_s.valid = '1' then
+                        fall_event_r <= h3_fall_event_s;
+                    else
+                        fall_event_r <= C_GPX_FRAME_CELL_EVENT_IDLE;
+                    end if;
+                end if;
+            end if;
+        end if;
+    end process p_h3_h4_pipeline;
+
     assert fn_validate_build_config(G_BUILD_CONFIG) = CFG_OK
         report "V3-H5-TOP-001 invalid build configuration"
         severity failure;
@@ -109,10 +149,10 @@ begin
             o_raw_ready => o_raw_ready,
             i_face_close_event => i_face_close_event,
             o_face_close_ready => o_face_close_ready,
-            o_rise_event => rise_event_s,
-            i_rise_ready => rise_ready_s,
-            o_fall_event => fall_event_s,
-            i_fall_ready => fall_ready_s,
+            o_rise_event => h3_rise_event_s,
+            i_rise_ready => h3_rise_ready_s,
+            o_fall_event => h3_fall_event_s,
+            i_fall_ready => h3_fall_ready_s,
             o_frame_close_event => frame_close_s,
             i_frame_close_ready => frame_close_ready_s,
             o_rise_line_done => open,
@@ -139,9 +179,9 @@ begin
             i_active_version => i_active_config.version,
             i_rise_active_profile => i_rise_active_profile,
             i_fall_active_profile => i_fall_active_profile,
-            i_rise_event => rise_event_s,
+            i_rise_event => rise_event_r,
             o_rise_ready => rise_ready_s,
-            i_fall_event => fall_event_s,
+            i_fall_event => fall_event_r,
             o_fall_ready => fall_ready_s,
             i_frame_close_event => frame_close_s,
             o_frame_close_ready => frame_close_ready_s,

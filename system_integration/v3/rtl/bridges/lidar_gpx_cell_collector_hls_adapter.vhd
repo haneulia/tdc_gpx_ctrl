@@ -90,6 +90,11 @@ architecture rtl of lidar_gpx_cell_collector_hls_adapter is
         C_V3_H2_COLLECTOR_RESULT_AXIS_BITS - 1 downto 0);
     signal result_axis_valid_c : std_logic;
     signal result_axis_ready_c : std_logic;
+    signal hls_result_axis_data_c  : std_logic_vector(
+        C_V3_H2_COLLECTOR_RESULT_AXIS_BITS - 1 downto 0);
+    signal hls_result_axis_valid_c : std_logic;
+    signal hls_result_axis_ready_c : std_logic;
+    signal result_skid_flush_c     : std_logic;
     signal result_emit_c       : std_logic;
     signal result_fire_c       : std_logic;
     signal hit_fire_c          : std_logic;
@@ -211,6 +216,27 @@ begin
 
     result_emit_c <= result_axis_data_c(
         C_V3_H2_RESULT_CONTAINS_CELL_BIT);
+    result_skid_flush_c <= i_abort or flush_active_r;
+
+    -- HLS 자동 AXIS 출력 Register 대신 RTL이 명시적으로 2-slot 경계를
+    -- 소유한다. Backpressure 용량은 유지하면서 HLS 내부 Ready-to-CE 경로를
+    -- 이 Register에서 끊어 200 MHz Processing timing을 안정화한다.
+    u_result_output_skid : entity work.tdc_gpx_skid_buffer
+        generic map (
+            g_DATA_WIDTH => C_V3_H2_COLLECTOR_RESULT_AXIS_BITS
+        )
+        port map (
+            i_clk     => i_clk,
+            i_rst_n   => i_rst_n,
+            i_flush   => result_skid_flush_c,
+            i_s_valid => hls_result_axis_valid_c,
+            o_s_ready => hls_result_axis_ready_c,
+            i_s_data  => hls_result_axis_data_c,
+            o_m_valid => result_axis_valid_c,
+            i_m_ready => result_axis_ready_c,
+            o_m_data  => result_axis_data_c
+        );
+
     -- Status acknowledgements never wait for the Cell consumer. During abort
     -- or stale-output flush every result is consumed and intentionally hidden.
     result_axis_ready_c <= '1' when
@@ -282,7 +308,8 @@ begin
     o_cell_event   <= cell_event_c;
     o_idle <= '1' when i_rst_n = '1' and i_abort = '0' and
         hls_inflight_r = '0' and flush_active_r = '0' and
-        hit_axis_valid_c = '0' and result_axis_valid_c = '0' and
+        hit_axis_valid_c = '0' and hls_result_axis_valid_c = '0' and
+        result_axis_valid_c = '0' and
         i_hit_event.valid = '0' else '0';
     o_fault_pulse  <= fault_pulse_r;
     o_fault_sticky <= fault_sticky_r;
@@ -339,7 +366,8 @@ begin
                     -- TREADY may rise before an invocation has retired all
                     -- results, so it cannot prove that no stale output exists.
                     -- Track the accepted-input to ap_done interval explicitly.
-                    flush_v := inflight_v or result_axis_valid_c;
+                    flush_v := inflight_v or hls_result_axis_valid_c or
+                               result_axis_valid_c;
                 end if;
                 abort_d_r <= i_abort;
 
@@ -398,9 +426,9 @@ begin
             decoded_hit_event_in_TVALID => hit_axis_valid_c,
             decoded_hit_event_in_TREADY => hit_axis_ready_c,
 
-            collector_result_out_TDATA  => result_axis_data_c,
-            collector_result_out_TVALID => result_axis_valid_c,
-            collector_result_out_TREADY => result_axis_ready_c,
+            collector_result_out_TDATA  => hls_result_axis_data_c,
+            collector_result_out_TVALID => hls_result_axis_valid_c,
+            collector_result_out_TREADY => hls_result_axis_ready_c,
 
             build_tdc_chip_count => num_chips_c,
             build_stop_channels_per_chip => stops_per_chip_c,

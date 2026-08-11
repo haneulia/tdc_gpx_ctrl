@@ -32,7 +32,7 @@ HLS로 단계 전환하는 항목:
 | `hls/gpx_frame_assembler/` | Cell-to-Frame Rise/Fall 정렬·gap·Face 종료 컴포넌트 |
 | `hls/gpx_lane_word_formatter/` | Shot Metadata, PACKED17 Cell, Hole, Face Footer Word 생성 |
 | `rtl/bridges/` | HLS와 V2 record 경계를 연결하는 Adapter |
-| `rtl/top/` | H1~H4와 유지 RTL packer를 연결한 H5 Processing-domain Top |
+| `rtl/top/` | H1~H4와 유지 RTL packer를 연결한 H5 Top, GPX bus/CDC까지 포함한 H6-A Parent 데이터 경계 |
 | `tb/` | V2/HLS 차등 및 구현 Timing Harness |
 | `scripts/` | Vitis HLS 재현 실행기 |
 
@@ -67,7 +67,8 @@ HLS로 단계 전환하는 항목:
 | H3 Cell-to-Frame | 완료 | 5 topology C/RTL, V2 차등 10개, Abort, 150/200 MHz 배치·배선 PASS |
 | H4 Frame-to-Word | 완료 | 5 profile C/RTL, V2 최종 Beat 직접 비교 4개, 32/64-bit 150/200 MHz 배치·배선 PASS |
 | H5 혼합 RTL/HLS Top | 완료 | H1~H4와 유지 RTL packer 통합, V2 종단 차등 5개(Rise-only 포함), abort/backpressure/idle, 150/200 MHz x 32/64-bit OOC PASS |
-| H6 Parent 통합 Sign-off | 다음 단계 | 상위 async FIFO 점유율, CDC/CSR/VDMA/DDR, 4-Chip Parent timing/DRC/bitstream |
+| H6-A Parent 데이터 경계 | 완료 | GPX bus/EF 전체 Drain, async FIFO, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
+| H6-B 통합 설정/DDR | 다음 단계 | CSR/COMMIT/IRQ, Runtime VDMA 재설정, DDR Golden, PS cache/Ethernet |
 
 H0~H4 Header의 역할, 전체 Bit Map, 생산자·소비자와 ABI 수정 규칙은
 [`docs/V3_H0_H4_HEADER_CONTRACT_KO.md`](docs/V3_H0_H4_HEADER_CONTRACT_KO.md)에
@@ -93,6 +94,12 @@ H5의 통합 경계, 데이터 흐름, V2 종단 비교와 구현 결과는
 [`docs/V3_H5_MIXED_TOP_SIGNOFF_KO.md`](docs/V3_H5_MIXED_TOP_SIGNOFF_KO.md),
 테스트 수행 순서와 변경 영향은
 [`docs/V3_H5_TESTBENCH_GUIDE_KO.md`](docs/V3_H5_TESTBENCH_GUIDE_KO.md)에 기록한다.
+
+H6-A의 물리 GPX Drain~AXI 데이터 경계, 64-bit H4 내부 계약,
+CDC와 배치·배선 결과는
+[`docs/V3_H6_PARENT_DATA_SIGNOFF_KO.md`](docs/V3_H6_PARENT_DATA_SIGNOFF_KO.md),
+테스트별 소유 범위와 필수 회귀는
+[`docs/V3_H6_TESTBENCH_GUIDE_KO.md`](docs/V3_H6_TESTBENCH_GUIDE_KO.md)에 기록한다.
 
 ## H1 재현 명령
 
@@ -154,4 +161,22 @@ H5의 통합 경계, 데이터 흐름, V2 종단 비교와 구현 결과는
 
 # 4 Chip 최대 구성, 150/200 MHz x 32/64-bit OOC 배치·배선
 ./system_integration/v3/scripts/run_v3_hls_mixed_top_impl.ps1 -SkipHlsSynthesis
+```
+
+## H6-A 재현 명령
+
+```powershell
+# skid/sync FIFO stale-ready 공용 경계
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_shared_stream_boundary_diff.ps1
+
+# 외부 GPX bus부터 최종 AXI까지 V2/V3 종단 차분 5개
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6_parent_data_diff.ps1 `
+  -SkipHlsSynthesis
+
+# 제품 두 교차 clock 조합 OOC 배치·배선
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6_parent_data_impl.ps1 `
+  -SkipHlsSynthesis -ImplementationStrategy timing_explore
 ```

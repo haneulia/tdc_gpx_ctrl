@@ -321,10 +321,7 @@ h4::canonical_line_word_axis_t make_output_word(
     bool first_column,
     bool last_column,
     bool missing_line,
-    bool line_faulted,
-    std::uint8_t cell_slot_count,
-    std::uint8_t cell_word_count,
-    const h1::shot_context_t &shot_context) {
+    bool line_faulted) {
     h4::canonical_line_word_axis_t result = 0;
     lidar_v3::write_field<
         h4::canonical_line_word_layout::canonical_word_32bit>(result, data);
@@ -353,17 +350,6 @@ h4::canonical_line_word_axis_t make_output_word(
     lidar_v3::write_flag<
         h4::canonical_line_word_layout::shot_line_is_faulted>(result,
                                                                line_faulted);
-    lidar_v3::write_field<
-        h4::canonical_line_word_layout::unexpanded_missing_shot_columns>(
-        result, 0U);
-    lidar_v3::write_field<
-        h4::canonical_line_word_layout::lane_cell_slot_count>(result,
-                                                               cell_slot_count);
-    lidar_v3::write_field<
-        h4::canonical_line_word_layout::serialized_cell_word_count>(
-        result, cell_word_count);
-    lidar_v3::write_field<h4::canonical_line_word_layout::shot_context>(
-        result, shot_context);
     return result;
 }
 
@@ -504,8 +490,7 @@ void emit_missing_shot_line(
         output.write(make_output_word(
             data, kind, word_index, profile.raw_line_words,
             word_index == 0U, line_end, false, first_column, last_column,
-            true, line_faulted, profile.cell_slot_count,
-            profile.cell_word_count, context));
+            true, line_faulted));
     }
 }
 
@@ -524,8 +509,7 @@ void emit_real_shot_metadata(
             make_shot_metadata_word(context, false, line_faulted, word_index),
             h4::canonical_word_kind_t::shot_metadata, word_index,
             profile.raw_line_words, word_index == 0U, false, false,
-            first_column, last_column, false, line_faulted,
-            profile.cell_slot_count, profile.cell_word_count, context));
+            first_column, last_column, false, line_faulted));
     }
 }
 
@@ -669,8 +653,7 @@ void emit_ordered_cell(
                                     line_faulted),
             h4::canonical_word_kind_t::packed17_cell, global_word_index,
             profile.raw_line_words, false, line_end, false, first_column,
-            last_column, false, line_faulted, profile.cell_slot_count,
-            profile.cell_word_count, context));
+            last_column, false, line_faulted));
     }
 }
 
@@ -804,8 +787,7 @@ void emit_footer_line(
             line_word_index, profile.hsize_words,
             line_word_index == 0U, line_end,
             line_end && final_footer_line, false, false,
-            false, false, profile.cell_slot_count,
-            profile.cell_word_count, empty_context));
+            false, false));
     }
 }
 
@@ -833,7 +815,7 @@ extern "C" void gpx_lane_word_formatter_hls(
         &formatter_control_out,
     lidar_v3::h4::lane_profile_t active_lane_profile) {
 #pragma HLS INTERFACE axis port=ordered_cell_or_face_close_in
-#pragma HLS INTERFACE axis port=canonical_line_word_out
+#pragma HLS INTERFACE axis port=canonical_line_word_out register_mode=off
 #pragma HLS INTERFACE axis port=formatter_control_out
 #pragma HLS INTERFACE ap_none port=active_lane_profile
 #pragma HLS INTERFACE ap_ctrl_hs port=return

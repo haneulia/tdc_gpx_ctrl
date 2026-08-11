@@ -1,6 +1,7 @@
 param(
     [string]$Stamp = (Get-Date -Format "yyMMddHHmmss"),
     [switch]$SkipHlsSynthesis,
+    [string]$ProfileName = "",
     [string]$VivadoRoot = "C:\AMDDesignTools\2025.2.1\Vivado"
 )
 
@@ -75,6 +76,13 @@ $Profiles = @(
         Name = "200mhz_64bit"; Mhz = 200; Period = "5.000"; Width = 64
     }
 )
+
+if ($ProfileName -ne "") {
+    $Profiles = @($Profiles | Where-Object { $_.Name -eq $ProfileName })
+    if ($Profiles.Count -eq 0) {
+        throw "Unknown V3 H4 implementation profile: $ProfileName"
+    }
+}
 
 New-Item -ItemType Directory -Force -Path $ToolHome | Out-Null
 $SavedEnvironment = @{

@@ -681,7 +681,10 @@ begin
 
         assert v2_shot_done_count = expected_shots and
                hls_shot_done_count = expected_shots
-            report "V3-H3-DIFF Shot completion count mismatch"
+            report "V3-H3-DIFF Shot completion count mismatch: expected=" &
+                integer'image(expected_shots) &
+                " V2=" & integer'image(v2_shot_done_count) &
+                " HLS=" & integer'image(hls_shot_done_count)
             severity failure;
         assert close_count = 3
             report "V3-H3-DIFF Face close count mismatch"

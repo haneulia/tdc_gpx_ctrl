@@ -561,7 +561,16 @@ begin
                           hls_packer_idle = '1';
                 if cycle_index = limit then
                     assert false
-                        report "V3-H4-DIFF path idle timeout"
+                        report "V3-H4-DIFF path idle timeout" &
+                            " v2_idle=" & std_logic'image(v2_idle) &
+                            " hls_formatter_idle=" &
+                            std_logic'image(hls_formatter_idle) &
+                            " hls_packer_idle=" &
+                            std_logic'image(hls_packer_idle) &
+                            " compared_beats=" &
+                            integer'image(compared_beats) &
+                            " v2_frames=" & integer'image(v2_frames) &
+                            " hls_frames=" & integer'image(hls_frames)
                         severity failure;
                 end if;
             end loop;

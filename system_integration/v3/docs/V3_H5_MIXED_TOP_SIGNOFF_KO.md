@@ -86,18 +86,23 @@ H2~H4의 입력 허용 창은 register로 관리하여 `flush_active`가 상위 
 
 ### 4.3 자원 변화
 
-첫 H5 통합 구현과 최종 200 MHz OOC 결과를 비교하면 다음과 같다.
+현재 64-bit H4 내부 계약과 명시적 순차 경계를 적용한 소스를 Profile별로 다시
+구현한 결과는 다음과 같다. 표의 LUT는 Vivado 계층 보고서의 Total LUT이며,
+Logic LUT와 LUTRAM/SRL은 원인 분석을 위해 별도로 적었다.
 
-| 출력 폭 | 구현 | LUT | FF | LUTRAM | BRAM/DSP |
-|---:|---|---:|---:|---:|---:|
-| 32-bit | 등록 경계 전 | 10,543 | 19,964 | 950 | 0/0 |
-| 32-bit | 최종 | 11,185 | 22,460 | 950 | 0/0 |
-| 64-bit | 등록 경계 전 | 10,603 | 20,164 | 950 | 0/0 |
-| 64-bit | 최종 | 11,248 | 22,658 | 950 | 0/0 |
+| Processing clock | 출력 폭 | Total LUT | Logic LUT | LUTRAM | SRL | FF | BRAM/DSP |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 150 MHz | 32-bit | 11,191 | 10,151 | 950 | 90 | 23,026 | 0/0 |
+| 200 MHz | 32-bit | 11,341 | 10,300 | 950 | 91 | 23,029 | 0/0 |
+| 150 MHz | 64-bit | 11,284 | 10,245 | 950 | 89 | 23,224 | 0/0 |
+| 200 MHz | 64-bit | 11,350 | 10,311 | 950 | 89 | 23,226 | 0/0 |
 
-64-bit 기준으로 LUT 645개와 FF 2,494개가 증가했다. 이는 넓은 H2/H3/H4
-계약을 두 슬롯씩 등록한 비용이다. xc7z020 Parent에서 다른 IP와 함께 배치할 때
-자원과 혼잡을 다시 확인해야 한다.
+H4와 packer 사이에서 Shot Context를 매 Word에 반복하던 248-bit payload는
+64-bit Canonical Line Word 계약으로 축소했다. 다만 H2/H4 출력의 2-slot skid와
+H3-H4 Rise/Fall elastic register는 backpressure와 abort 복구를 위해 유지하므로,
+payload 축소가 Top 전체 LUT/FF의 단순 감소로 바로 나타난다고 해석하지 않는다.
+또한 clock 제약에 따른 배치 차이로 동일 폭에서도 소폭의 자원 차이가 생긴다.
+xc7z020 Parent에서 다른 IP와 함께 배치할 때 자원과 혼잡을 다시 확인해야 한다.
 
 ## 5. V2 Golden 직접 비교
 
@@ -129,10 +134,10 @@ Beat 단위로 비교했다. 두 경로의 latency 차이는 허용하고, 먼�
 | 검증 | 최종 결과 위치 |
 |---|---|
 | H1 V2 차등 | `.work/v3_gpx_hit_decoder_diff/260811002828` |
-| H2 V2 차등 | `.work/v3_gpx_cell_collector_diff/260810235907` |
-| H3 V2 차등 | `.work/v3_gpx_frame_assembler_diff/260811000137` |
-| H4 V2 차등 | `.work/v3_gpx_lane_word_formatter_diff/260811000251` |
-| H5 V2 종단 차등 | `.work/v3_hls_mixed_top_diff/260811003453` |
+| H2 V2 차등 | `.work/v3_gpx_cell_collector_diff/260811155414` |
+| H3 V2 차등 | `.work/v3_gpx_frame_assembler_diff/260811155512` |
+| H4 V2 차등 | `.work/v3_gpx_lane_word_formatter_diff/260811151844` |
+| H5 V2 종단 차등 | `.work/v3_hls_mixed_top_diff/260811151919` |
 
 ## 6. xc7z020 배치·배선
 
@@ -141,23 +146,24 @@ OOC Top을 `xc7z020clg484-2`에 배치·배선했다.
 
 | Processing clock | 출력 폭 | WNS | WHS | Latch | Blocking DRC | Routing 오류 net | 결과 |
 |---:|---:|---:|---:|---:|---:|---:|---|
-| 150 MHz | 32-bit | +0.080 ns | +0.006 ns | 0 | 0 | 0 | PASS |
-| 200 MHz | 32-bit | +0.044 ns | +0.003 ns | 0 | 0 | 0 | PASS |
-| 150 MHz | 64-bit | +0.094 ns | +0.033 ns | 0 | 0 | 0 | PASS |
-| 200 MHz | 64-bit | +0.025 ns | +0.034 ns | 0 | 0 | 0 | PASS |
+| 150 MHz | 32-bit | +0.086 ns | +0.031 ns | 0 | 0 | 0 | PASS |
+| 200 MHz | 32-bit | +0.127 ns | +0.034 ns | 0 | 0 | 0 | PASS |
+| 150 MHz | 64-bit | +0.162 ns | +0.034 ns | 0 | 0 | 0 | PASS |
+| 200 MHz | 64-bit | +0.072 ns | +0.032 ns | 0 | 0 | 0 | PASS |
 
-최종 구현 결과는 `.work/v3_hls_mixed_top_impl/260811000658`이다.
+구현 결과는 다음 두 실행에 나뉘어 있다.
 
-200 MHz/32-bit 최악 setup 경로는 H3 Rise FIFO 출력에서 H4 Rise 입력 skid까지며
-3 LUT, data path 4.587 ns, 배선 비중 약 81.0%다. 200 MHz/64-bit 최악 경로는
-H2 HLS 출력 register slice 내부의 enable 경로이며 5 LUT, data path 4.668 ns,
-배선 비중 약 77.5%다. 이전의 H2 `flush_active`에서 H1 입력 `ready`로 이어지던
-역방향 최악 경로는 제거됐다.
+- 150 MHz/32-bit, 200 MHz/32-bit, 150 MHz/64-bit:
+  `.work/v3_hls_mixed_top_impl/260811160558`
+- 200 MHz/64-bit:
+  `.work/v3_hls_mixed_top_impl/260811162203`
 
-모든 수치는 양수지만 최소 setup 여유는 +0.025 ns, 최소 hold 여유는 +0.003 ns로
-작다. 따라서 H5 OOC timing은 통과했으나 충분한 물리 여유가 확보됐다고 확대
-해석하지 않는다. Parent 배치·배선에서는 혼잡, clock tree, 실제 I/O와 다른 IP를
-포함해 다시 Sign-off해야 한다.
+현재 H5 단독 OOC의 최소 setup 여유는 +0.072 ns, 최소 hold 여유는 +0.031 ns다.
+H6 Parent 데이터 경계에서는 200/150 MHz, 64-bit Profile의 Processing WNS가
++0.057 ns이고 두 제품 교차 clock Profile 중 최소 hold 여유는 +0.013 ns다.
+따라서 H5 OOC timing은 통과했지만 충분한 물리 여유가 확보됐다고 확대 해석하지
+않는다. Parent 배치·배선에서는 혼잡, clock tree, 실제 I/O와 다른 IP를 포함해
+다시 Sign-off해야 한다.
 
 ## 7. 재현 명령
 
@@ -181,18 +187,27 @@ H2 HLS 출력 register slice 내부의 enable 경로이며 5 LUT, data path 4.66
 # 150/200 MHz x 32/64-bit OOC 합성·배치·배선
 ./system_integration/v3/scripts/run_v3_hls_mixed_top_impl.ps1 `
     -SkipHlsSynthesis
+
+# 한 Profile만 재현하는 예
+./system_integration/v3/scripts/run_v3_hls_mixed_top_impl.ps1 `
+    -SkipHlsSynthesis -ProfileName 200mhz_64bit
 ```
 
-## 8. H6로 넘기는 항목
+## 8. H6 인수 상태
 
-1. TDC-domain 비동기 결과 FIFO를 H5 앞에 연결하고 최대 점유율과 Shot 처리
-   여유를 실측한다. H5는 FIFO 뒤에서 시작하므로 이 수치를 자체 측정할 수 없다.
-2. TDC-GPX 버스 PHY/IFIFO Drain과 H5 사이 CDC를 4:1, 1:4 및 1:1 clock
-   조합에서 다시 검증한다.
-3. AXI4-Lite CSR, Shadow/Active, COMMIT, IRQ와 Runtime Profile의 Face 안전
+H6-A에서 TDC-GPX 버스 PHY/IFIFO 전체 Drain, Shot/STOP/Result 비동기 FIFO와
+H5를 연결했다. Processing:TDC clock 1:4, 4:1, 1:1 및 제품 교차 clock
+150/200 MHz와 200/150 MHz에서 V2 최종 AXI Beat와 일치했고, 두 제품 조합의
+OOC 배치·배선도 통과했다.
+
+다음 항목은 H6-B 이후에 남아 있다.
+
+1. AXI4-Lite CSR, Shadow/Active, COMMIT, IRQ와 Runtime Profile의 Face 안전
    경계 적용을 통합한다.
-4. VDMA HSIZE/VSIZE/STRIDE와 DDR Golden Word를 비교하고 PS cache 동기화 후
+2. VDMA HSIZE/VSIZE/STRIDE와 DDR Golden Word를 비교하고 PS cache 동기화 후
    H-Line/Ethernet 결과를 확인한다.
-5. 4 Chip Parent 전체의 150/200 MHz timing, CDC, DRC, bitstream을 확인한다.
-6. 물리 `fire_done` 승인부터 측정 시작 기준시점 (T0), 레이저·모터·Echo
+3. 4 Chip Parent 전체의 배치·배선, bitstream과 실제 I/O를 확인한다.
+4. 물리 `fire_done` 승인부터 측정 시작 기준시점 (T0), 레이저·모터·Echo
    LVDS 경로와 보드 동작은 별도 Sign-off한다.
+5. 물리 IFIFO Drain 도중 Processing abort와 TDC-GPX soft reset을 함께
+   수행하는 통합 복구 정책을 검증한다.

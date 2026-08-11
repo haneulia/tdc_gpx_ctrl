@@ -80,8 +80,12 @@ enum class canonical_word_kind_t : std::uint8_t {
     face_footer = 2
 };
 
-// One H4 output transfer is one canonical 32-bit DDR word plus the Line/Frame
-// boundary information required by the retained RTL 32/64-bit AXIS packer.
+// One H4 output transfer is one canonical 32-bit DDR word plus only the
+// Line/Frame boundary information consumed by the retained RTL AXIS packer.
+// Shot Context, Cell geometry and gap information are already serialized into
+// Shot Metadata/Cell Metadata/Face Footer words or retained inside H4.  They
+// must not be repeated on every transfer because that creates a wide,
+// high-fanout routing boundary without changing the DDR ABI.
 // PACKED17 means each Hit keeps 16 low bits in Hit Words and its 17th bit in
 // the final Cell Metadata Word; it does not mean the AXIS Beat is 17 bits.
 struct canonical_line_word_layout {
@@ -100,17 +104,7 @@ struct canonical_line_word_layout {
         bit_field_t<is_last_shot_column::end, 1U>;
     using shot_line_is_faulted =
         bit_field_t<line_represents_missing_shot::end, 1U>;
-    // H4 expands all missing columns, so this field must be zero at H4 output.
-    using unexpanded_missing_shot_columns =
-        bit_field_t<shot_line_is_faulted::end, 16U>;
-    using lane_cell_slot_count =
-        bit_field_t<unexpanded_missing_shot_columns::end, 6U>;
-    using serialized_cell_word_count =
-        bit_field_t<lane_cell_slot_count::end, 3U>;
-    using shot_context =
-        bit_field_t<serialized_cell_word_count::end,
-                    h1::kShotContextRecordBits>;
-    using reserved_zero = bit_field_t<shot_context::end, 2U>;
+    using reserved_zero = bit_field_t<shot_line_is_faulted::end, 5U>;
 };
 
 constexpr unsigned kCanonicalLineWordSemanticBits =
@@ -160,9 +154,9 @@ static_assert(kLaneProfileSemanticBits == 101U,
               "H4 Lane Profile semantic width changed unexpectedly");
 static_assert(kLaneProfileBits == 104U,
               "H4 Lane Profile width changed unexpectedly");
-static_assert(kCanonicalLineWordSemanticBits == 246U,
+static_assert(kCanonicalLineWordSemanticBits == 59U,
               "H4 canonical Word semantic width changed unexpectedly");
-static_assert(kCanonicalLineWordAxisTdataBits == 248U,
+static_assert(kCanonicalLineWordAxisTdataBits == 64U,
               "H4 canonical Word AXIS width changed unexpectedly");
 static_assert(kFormatterControlSemanticBits == 26U,
               "H4 control semantic width changed unexpectedly");

@@ -55,7 +55,8 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 | H3 | 완료 | Cell-to-Frame | 5 topology, Rise/Fall 독립 stall, Face gap, abort, 150/200 MHz PASS |
 | H4 | 완료 | PACKED17/Shot Metadata/Hole/Face Footer | V2 최종 AXI Beat 4개와 150/200 MHz OOC PASS |
 | H5 | 완료 | 혼합 RTL/HLS Top | H1~H4와 유지 RTL packer 통합, V2 종단 차등, abort/stall/idle, 150/200 MHz x 32/64-bit OOC PASS |
-| H6 | 다음 | Parent Sign-off | 상위 async FIFO 점유율, CDC/CSR/VDMA/DDR, 4-Chip Parent timing, DRC, bitstream PASS |
+| H6-A | 완료 | Parent 데이터 경계 | GPX bus/EF 전체 Drain, CDC, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
+| H6-B | 다음 | 통합 설정/DDR | CSR/COMMIT/IRQ, Runtime VDMA, DDR Golden, PS cache/Ethernet PASS |
 
 ## 6. 성능·안전 Gate
 
@@ -91,3 +92,9 @@ H5의 통합 경계와 결과는
 변경 영향은 [`V3_H5_TESTBENCH_GUIDE_KO.md`](V3_H5_TESTBENCH_GUIDE_KO.md)에
 기록한다. H5 PASS는 Processing-domain 데이터 경로 체크포인트이며 Parent 전체
 Sign-off가 아니다.
+
+H6-A의 데이터 흐름·CDC·실패한 최적화 실험·배치·배선 근거는
+[`V3_H6_PARENT_DATA_SIGNOFF_KO.md`](V3_H6_PARENT_DATA_SIGNOFF_KO.md), 테스트 소유
+범위는 [`V3_H6_TESTBENCH_GUIDE_KO.md`](V3_H6_TESTBENCH_GUIDE_KO.md)에 기록한다.
+H6-A PASS는 물리 GPX Drain부터 최종 AXI까지의 데이터 경계 판정이며,
+CSR/VDMA/DDR/PS와 Parent bitstream을 포함한 전체 Sign-off는 아니다.

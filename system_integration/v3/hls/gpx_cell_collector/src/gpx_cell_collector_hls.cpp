@@ -284,7 +284,7 @@ extern "C" void gpx_cell_collector_hls(
     std::uint8_t runtime_visible_return_count,
     std::uint16_t active_configuration_version) {
 #pragma HLS INTERFACE axis port=decoded_hit_event_in
-#pragma HLS INTERFACE axis port=collector_result_out
+#pragma HLS INTERFACE axis port=collector_result_out register_mode=off
 #pragma HLS INTERFACE ap_none port=build_tdc_chip_count
 #pragma HLS INTERFACE ap_none port=build_stop_channels_per_chip
 #pragma HLS INTERFACE ap_none port=build_max_return_count_per_stop

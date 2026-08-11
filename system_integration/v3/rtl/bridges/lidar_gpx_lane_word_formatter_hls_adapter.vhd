@@ -94,6 +94,11 @@ architecture rtl of lidar_gpx_lane_word_formatter_hls_adapter is
         C_V3_H4_LINE_WORD_AXIS_BITS - 1 downto 0);
     signal output_axis_valid_c : std_logic;
     signal output_axis_ready_c : std_logic;
+    signal hls_output_axis_data_c : std_logic_vector(
+        C_V3_H4_LINE_WORD_AXIS_BITS - 1 downto 0);
+    signal hls_output_axis_valid_c : std_logic;
+    signal hls_output_axis_ready_c : std_logic;
+    signal output_skid_flush_c     : std_logic;
     signal output_event_c      : gpx_vdma_line_word_event_t :=
         C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
 
@@ -271,8 +276,11 @@ architecture rtl of lidar_gpx_lane_word_formatter_hls_adapter is
         return result;
     end function fn_pack_profile;
 
-    function fn_unpack_line_word(value : std_logic_vector(
-        C_V3_H4_LINE_WORD_AXIS_BITS - 1 downto 0))
+    function fn_unpack_line_word(
+        value : std_logic_vector(
+            C_V3_H4_LINE_WORD_AXIS_BITS - 1 downto 0);
+        slot_count : gpx_frame_slot_t;
+        cell_word_count : gpx_vdma_word_count_t)
         return gpx_vdma_line_word_event_t is
         variable result : gpx_vdma_line_word_event_t :=
             C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
@@ -300,18 +308,11 @@ architecture rtl of lidar_gpx_lane_word_formatter_hls_adapter is
         result.last_column := value(C_V3_H4_WORD_LAST_COLUMN_BIT);
         result.line_hole := value(C_V3_H4_WORD_LINE_HOLE_BIT);
         result.line_faulted := value(C_V3_H4_WORD_LINE_FAULTED_BIT);
-        result.gap_before := unsigned(value(
-            C_V3_H4_WORD_UNEXPANDED_GAP_HI downto
-            C_V3_H4_WORD_UNEXPANDED_GAP_LO));
-        result.slot_count := unsigned(value(
-            C_V3_H4_WORD_SLOT_COUNT_HI downto
-            C_V3_H4_WORD_SLOT_COUNT_LO));
-        result.cell_word_count := unsigned(value(
-            C_V3_H4_WORD_CELL_WORDS_HI downto
-            C_V3_H4_WORD_CELL_WORDS_LO));
-        result.shot_context := fn_unpack_shot_context(value(
-            C_V3_H4_WORD_SHOT_CONTEXT_HI downto
-            C_V3_H4_WORD_SHOT_CONTEXT_LO));
+        -- These geometry fields are constant for the active Face and can be
+        -- reconstructed locally. Shot Context is already serialized into the
+        -- first four Shot Metadata Words, so the record keeps its idle value.
+        result.slot_count := slot_count;
+        result.cell_word_count := cell_word_count;
         return result;
     end function fn_unpack_line_word;
 
@@ -326,6 +327,9 @@ begin
         severity failure;
     assert C_GPX_SHOT_CONTEXT_WIDTH = 162
         report "V3-HLS-H4-003 Shot context width changed"
+        severity failure;
+    assert C_V3_H4_LINE_WORD_AXIS_BITS = 64
+        report "V3-HLS-H4-007 canonical Word boundary must remain 64 bits"
         severity failure;
 
     p_pack_input : process (all)
@@ -384,7 +388,30 @@ begin
             o_m_data  => input_axis_data_c
         );
 
-    output_event_c <= fn_unpack_line_word(output_axis_data_c);
+    output_skid_flush_c <= i_abort or flush_active_r;
+
+    -- HLS owns the Word generation while this explicit two-slot boundary
+    -- owns backpressure timing and abort flushing in RTL.
+    u_output_skid : entity work.tdc_gpx_skid_buffer
+        generic map (
+            g_DATA_WIDTH => C_V3_H4_LINE_WORD_AXIS_BITS
+        )
+        port map (
+            i_clk     => i_clk,
+            i_rst_n   => i_rst_n,
+            i_flush   => output_skid_flush_c,
+            i_s_valid => hls_output_axis_valid_c,
+            o_s_ready => hls_output_axis_ready_c,
+            i_s_data  => hls_output_axis_data_c,
+            o_m_valid => output_axis_valid_c,
+            i_m_ready => output_axis_ready_c,
+            o_m_data  => output_axis_data_c
+        );
+
+    output_event_c <= fn_unpack_line_word(
+        output_axis_data_c,
+        i_active_profile.slot_count,
+        i_active_profile.cell_word_count);
     o_line_word <= output_event_c when
         output_axis_valid_c = '1' and i_abort = '0' and
         flush_active_r = '0' else C_GPX_VDMA_LINE_WORD_EVENT_IDLE;
@@ -402,7 +429,8 @@ begin
         i_rst_n = '1' and i_abort = '0' and flush_active_r = '0' and
         hls_inflight_r = '0' and input_axis_valid_c = '0' and
         i_cell_event.valid = '0' and i_frame_close_event.valid = '0' and
-        output_axis_valid_c = '0' and control_axis_valid_c = '0' else '0';
+        hls_output_axis_valid_c = '0' and output_axis_valid_c = '0' and
+        control_axis_valid_c = '0' else '0';
 
     -- abort 복구 상태를 H3 Ready에 직접 조합 연결하지 않고 Register된
     -- 입력 허용 창으로 전달한다. 정상 운용 중에는 계속 1이라 II를 바꾸지
@@ -457,10 +485,21 @@ begin
 
                 if i_abort = '1' and abort_d_r = '0' then
                     reset_epoch_r <= reset_epoch_r + 1;
-                    flush_v := inflight_v or output_axis_valid_c or
-                               control_axis_valid_c;
+                    flush_v := inflight_v or hls_output_axis_valid_c or
+                               output_axis_valid_c or control_axis_valid_c;
                 end if;
                 abort_d_r <= i_abort;
+
+                -- An abort can coincide with the one-cycle HLS done pulse.
+                -- Release the flush from observable quiescence as well, so a
+                -- buffered output at that boundary cannot leave flush active
+                -- waiting for a done pulse that has already occurred.
+                if i_abort = '0' and flush_active_r = '1' and
+                   inflight_v = '0' and hls_output_axis_valid_c = '0' and
+                   output_axis_valid_c = '0' and
+                   control_axis_valid_c = '0' then
+                    flush_v := '0';
+                end if;
 
                 if i_abort = '0' and flush_active_r = '0' and
                    control_fire_c = '1' then
@@ -483,13 +522,8 @@ begin
                    i_abort = '0' and flush_active_r = '0' then
                     assert output_axis_data_c(
                         C_V3_H4_WORD_RESERVED_HI downto
-                        C_V3_H4_WORD_RESERVED_LO) = "00"
+                        C_V3_H4_WORD_RESERVED_LO) = "00000"
                         report "V3-HLS-H4-005 nonzero Word reserved bits"
-                        severity failure;
-                    assert output_axis_data_c(
-                        C_V3_H4_WORD_UNEXPANDED_GAP_HI downto
-                        C_V3_H4_WORD_UNEXPANDED_GAP_LO) = x"0000"
-                        report "V3-HLS-H4-006 H4 left an unexpanded Shot gap"
                         severity failure;
                 end if;
 
@@ -514,9 +548,9 @@ begin
             ordered_cell_or_face_close_in_TVALID => input_axis_valid_c,
             ordered_cell_or_face_close_in_TREADY => input_axis_ready_c,
 
-            canonical_line_word_out_TDATA  => output_axis_data_c,
-            canonical_line_word_out_TVALID => output_axis_valid_c,
-            canonical_line_word_out_TREADY => output_axis_ready_c,
+            canonical_line_word_out_TDATA  => hls_output_axis_data_c,
+            canonical_line_word_out_TVALID => hls_output_axis_valid_c,
+            canonical_line_word_out_TREADY => hls_output_axis_ready_c,
 
             formatter_control_out_TDATA  => control_axis_data_c,
             formatter_control_out_TVALID => control_axis_valid_c,
