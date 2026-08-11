@@ -484,6 +484,8 @@ begin
             o_shot_done => open,
             o_shot_done_context => open,
             o_frame_output_done => v3_frame_output_done,
+            o_pipeline_idle => open,
+            o_axis_idle => open,
             o_idle => v3_idle,
             o_decoder_inflight => v3_decoder_inflight,
             o_rise_emitted_lines => open,

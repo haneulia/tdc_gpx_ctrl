@@ -199,6 +199,8 @@ begin
             o_shot_done => open,
             o_shot_done_context => open,
             o_frame_output_done => open,
+            o_pipeline_idle => open,
+            o_axis_idle => open,
             o_idle => o_idle,
             o_decoder_inflight => o_decoder_inflight,
             o_rise_emitted_lines => open,

@@ -319,7 +319,8 @@ architecture rtl of lidar_gpx_lane_word_formatter_hls_adapter is
 begin
 
     assert fn_validate_build_config(G_BUILD_CONFIG) = CFG_OK
-        report "V3-HLS-H4-001 invalid build configuration"
+        report "V3-HLS-H4-001 invalid build configuration: " &
+            lidar_cfg_error_t'image(fn_validate_build_config(G_BUILD_CONFIG))
         severity failure;
     assert G_BUILD_CONFIG.output_width = 32 or
            G_BUILD_CONFIG.output_width = 64

@@ -76,6 +76,8 @@ entity lidar_gpx_hls_parent_data_subsystem is
         o_shot_done         : out std_logic;
         o_shot_done_context : out shot_start_event_t;
         o_frame_output_done : out std_logic;
+        o_processing_idle   : out std_logic;
+        o_axis_output_idle  : out std_logic;
         o_proc_idle         : out std_logic;
         o_outstanding_shots : out unsigned(15 downto 0);
         o_decoder_inflight  : out unsigned(7 downto 0);
@@ -165,7 +167,8 @@ architecture rtl of lidar_gpx_hls_parent_data_subsystem is
     signal h5_shot_done_s : std_logic;
     signal h5_shot_done_context_s : shot_start_event_t;
     signal h5_frame_output_done_s : std_logic;
-    signal h5_idle_s : std_logic;
+    signal h5_pipeline_idle_s : std_logic;
+    signal h5_axis_idle_s : std_logic;
 
 begin
 
@@ -200,11 +203,22 @@ begin
     o_shot_done <= h5_shot_done_s;
     o_shot_done_context <= h5_shot_done_context_s;
     o_frame_output_done <= h5_frame_output_done_s;
+    -- Processing idle은 승인된 Shot이 남지 않고, Face-close 소유 상태기계가
+    -- 유휴이며, H1~H3가 비었음을 뜻한다. Face Footer가 AXI에서 아직 승인되지
+    -- 않았더라도 Face-close transaction 자체가 진행 중이면 COMMIT 안전 조건은
+    -- 참이 되면 안 된다.
+    -- AXIS idle은 H4와 최종 packer에 보류 Word/Beat가 없음을 뜻한다.
+    -- 두 값을 분리해 V2 CSR 진단 Bit의 의미를 그대로 보존한다.
+    o_processing_idle <= '1' when outstanding_shots_r = 0 and
+                                  face_close_state_r = FACE_CLOSE_IDLE and
+                                  h5_pipeline_idle_s = '1' else '0';
+    o_axis_output_idle <= h5_axis_idle_s;
     o_outstanding_shots <= outstanding_shots_r;
     o_context_fault_sticky <= context_fault_sticky_r;
     o_proc_idle <= '1' when outstanding_shots_r = 0 and
                             face_close_state_r = FACE_CLOSE_IDLE and
-                            h5_idle_s = '1' else '0';
+                            h5_pipeline_idle_s = '1' and
+                            h5_axis_idle_s = '1' else '0';
 
     -- 승인된 Shot 수와 H5에서 Cell 정렬이 끝난 Shot 수를 순차적으로 맞춘다.
     -- Face-close는 이 값이 0인 시점에만 H5로 전달되며, 마지막 Footer의 AXI
@@ -392,7 +406,9 @@ begin
             o_shot_done => h5_shot_done_s,
             o_shot_done_context => h5_shot_done_context_s,
             o_frame_output_done => h5_frame_output_done_s,
-            o_idle => h5_idle_s,
+            o_pipeline_idle => h5_pipeline_idle_s,
+            o_axis_idle => h5_axis_idle_s,
+            o_idle => open,
             o_decoder_inflight => o_decoder_inflight,
             o_rise_emitted_lines => o_rise_emitted_lines,
             o_fall_emitted_lines => o_fall_emitted_lines,

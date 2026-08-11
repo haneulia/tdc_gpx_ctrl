@@ -342,6 +342,8 @@ architecture sim of tb_lidar_gpx_hls_parent_data_subsystem_diff is
     signal shot_done : std_logic;
     signal shot_done_context : shot_start_event_t;
     signal frame_output_done : std_logic;
+    signal processing_idle : std_logic;
+    signal axis_output_idle : std_logic;
     signal proc_idle : std_logic;
     signal outstanding_shots : unsigned(15 downto 0);
     signal decoder_inflight : unsigned(7 downto 0) := (others => '0');
@@ -462,6 +464,8 @@ begin
             C_LIDAR_GPX_WORD_FORMATTER_FAULTS_CLEAR;
         fall_formatter_fault_sticky <=
             C_LIDAR_GPX_WORD_FORMATTER_FAULTS_CLEAR;
+        processing_idle <= v2_proc_idle;
+        axis_output_idle <= v2_axis_idle;
         proc_idle <= v2_proc_idle and v2_axis_idle;
         frame_output_done <= v2_frame_output_done_s;
 
@@ -623,6 +627,8 @@ begin
                 o_shot_done => shot_done,
                 o_shot_done_context => shot_done_context,
                 o_frame_output_done => frame_output_done,
+                o_processing_idle => processing_idle,
+                o_axis_output_idle => axis_output_idle,
                 o_proc_idle => proc_idle,
                 o_outstanding_shots => outstanding_shots,
                 o_decoder_inflight => decoder_inflight,
@@ -1023,7 +1029,8 @@ begin
         face_close <= fn_close(2);
         wait_proc_clocks(20);
         assert face_close_ready = '0' and
-               frame_done_count_r = frame_done_before_v
+               frame_done_count_r = frame_done_before_v and
+               processing_idle = '0' and proc_idle = '0'
             report "V3-H6-TB-015 Face ACK escaped AXI backpressure"
             severity failure;
         force_sink_stall <= '0';
@@ -1048,6 +1055,8 @@ begin
         wait_proc_clocks(4);
 
         assert frame_done_count_r = 2 and proc_idle = '1' and
+               processing_idle = '1' and axis_output_idle = '1' and
+               proc_idle = (processing_idle and axis_output_idle) and
                rise_line_count_r = C_EXPECTED_LINES_PER_LANE and
                fall_line_count_r = C_EXPECTED_LINES_PER_LANE and
                rise_beat_count_r = C_EXPECTED_BEATS_PER_LANE and

@@ -56,7 +56,8 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 | H4 | 완료 | PACKED17/Shot Metadata/Hole/Face Footer | V2 최종 AXI Beat 4개와 150/200 MHz OOC PASS |
 | H5 | 완료 | 혼합 RTL/HLS Top | H1~H4와 유지 RTL packer 통합, V2 종단 차등, abort/stall/idle, 150/200 MHz x 32/64-bit OOC PASS |
 | H6-A | 완료 | Parent 데이터 경계 | GPX bus/EF 전체 Drain, CDC, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
-| H6-B | 다음 | 통합 설정/DDR | CSR/COMMIT/IRQ, Runtime VDMA, DDR Golden, PS cache/Ethernet PASS |
+| H6-B1 | 완료 | 통합 제어·데이터 Top | V2 CSR/Shadow/Active/COMMIT/IRQ와 V3 HLS 데이터 경로, 4 Chip 기능 회귀, formatter 진단, 두 제품 clock OOC PASS |
+| H6-B2 | 다음 | Runtime VDMA/DDR/PS | Face 경계 VDMA 재설정, DDR Golden, PS cache/Ethernet PASS |
 
 ## 6. 성능·안전 Gate
 
@@ -98,3 +99,9 @@ H6-A의 데이터 흐름·CDC·실패한 최적화 실험·배치·배선 근거
 범위는 [`V3_H6_TESTBENCH_GUIDE_KO.md`](V3_H6_TESTBENCH_GUIDE_KO.md)에 기록한다.
 H6-A PASS는 물리 GPX Drain부터 최종 AXI까지의 데이터 경계 판정이며,
 CSR/VDMA/DDR/PS와 Parent bitstream을 포함한 전체 Sign-off는 아니다.
+
+H6-B1의 통합 Top 구조, COMMIT 안전 유휴 조건, H4 formatter 진단 ABI,
+4 Chip 기능 회귀와 OOC 구현 근거는
+[`V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md`](V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md)에
+기록한다. H6-B1 PASS 뒤에도 Runtime VDMA/DDR/PS와 Parent 보드 검증은 H6-B2로
+남는다.

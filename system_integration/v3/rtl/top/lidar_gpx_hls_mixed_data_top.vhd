@@ -59,6 +59,10 @@ entity lidar_gpx_hls_mixed_data_top is
         o_shot_done : out std_logic;
         o_shot_done_context : out shot_start_event_t;
         o_frame_output_done : out std_logic;
+        -- 기존 V2 진단 ABI가 데이터 처리와 최종 AXIS 출력의 유휴 상태를
+        -- 구분하므로 두 상태를 개별 노출하고, o_idle은 둘의 AND로 유지한다.
+        o_pipeline_idle : out std_logic;
+        o_axis_idle     : out std_logic;
         o_idle : out std_logic;
         o_decoder_inflight : out unsigned(7 downto 0);
         o_rise_emitted_lines : out unsigned(16 downto 0);
@@ -134,6 +138,8 @@ begin
         report "V3-H5-TOP-002 V3 output width must be 32 or 64"
         severity failure;
 
+    o_pipeline_idle <= pipeline_idle_s;
+    o_axis_idle <= output_idle_s;
     o_idle <= pipeline_idle_s and output_idle_s;
 
     u_h1_h3_pipeline : entity work.lidar_gpx_hls_hit_cell_frame_pipeline

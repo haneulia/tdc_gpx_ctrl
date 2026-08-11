@@ -174,6 +174,8 @@ begin
             o_shot_done => o_shot_done,
             o_shot_done_context => o_shot_done_context,
             o_frame_output_done => o_frame_output_done,
+            o_processing_idle => open,
+            o_axis_output_idle => open,
             o_proc_idle => o_proc_idle,
             o_outstanding_shots => o_outstanding_shots,
             o_decoder_inflight => o_decoder_inflight,

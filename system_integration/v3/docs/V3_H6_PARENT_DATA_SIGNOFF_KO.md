@@ -11,6 +11,11 @@ TDC/Processing clock domain crossing (CDC), H1~H4 HLS 처리와 최종 Rise/Fall
 Runtime VDMA 재설정, 실제 DDR Word 비교, PS cache 동기화, Ethernet 재포장,
 Parent bitstream 및 보드 I/O는 H6-B 이후 단계에 남아 있다.
 
+후속 H6-B1에서 AXI4-Lite CSR, Shadow/Active, COMMIT, IRQ와 V3 데이터 경계의
+통합까지 완료했다. 최신 범위는
+[`V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md`](V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md)를
+함께 본다.
+
 ## 2. 모듈 역할과 데이터 흐름
 
 ```mermaid
@@ -146,7 +151,7 @@ instance 경로와 다시 대조해야 한다.
 
 ## 9. 남은 H6-B 범위
 
-1. AXI4-Lite CSR, Shadow/Active, COMMIT, IRQ를 H6-A 데이터 경계와 연결한다.
+1. AXI4-Lite CSR, Shadow/Active, COMMIT, IRQ 연결은 H6-B1에서 완료했다.
 2. Runtime 직렬화 Return 슬롯 수, Shot 수 변경을 다음 Face 경계에서 적용하고
    HSIZE/VSIZE/STRIDE 및 VDMA Frame buffer를 안전하게 갱신한다.
 3. VDMA가 DDR에 쓴 Word를 Golden Vector와 직접 비교한다.
@@ -157,5 +162,5 @@ instance 경로와 다시 대조해야 한다.
    통합 command CDC에서 검증한다. 현재 H6-A 시험은 정상 Drain을 완료한 데이터
    경계를 판정하며, 이 in-flight 복구 정책까지 닫았다는 뜻은 아니다.
 
-따라서 현재 상태는 **H6-A 정상 데이터 경계 Sign-off 가능**, **V3 통합 IP 전체
-Sign-off 보류**다.
+따라서 H6-A 정상 데이터 경계와 H6-B1 통합 제어·데이터 경계는 체크포인트
+Sign-off 가능하며, **H6-B2 DDR/PS와 V3 통합 IP 전체 Sign-off는 보류**다.

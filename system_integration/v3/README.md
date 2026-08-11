@@ -32,7 +32,7 @@ HLS로 단계 전환하는 항목:
 | `hls/gpx_frame_assembler/` | Cell-to-Frame Rise/Fall 정렬·gap·Face 종료 컴포넌트 |
 | `hls/gpx_lane_word_formatter/` | Shot Metadata, PACKED17 Cell, Hole, Face Footer Word 생성 |
 | `rtl/bridges/` | HLS와 V2 record 경계를 연결하는 Adapter |
-| `rtl/top/` | H1~H4와 유지 RTL packer를 연결한 H5 Top, GPX bus/CDC까지 포함한 H6-A Parent 데이터 경계 |
+| `rtl/top/` | H1~H4와 유지 RTL packer를 연결한 H5 Top, GPX bus/CDC의 H6-A 데이터 경계, V2 제어 계층과 결합한 H6-B1 통합 Top |
 | `tb/` | V2/HLS 차등 및 구현 Timing Harness |
 | `scripts/` | Vitis HLS 재현 실행기 |
 
@@ -68,7 +68,8 @@ HLS로 단계 전환하는 항목:
 | H4 Frame-to-Word | 완료 | 5 profile C/RTL, V2 최종 Beat 직접 비교 4개, 32/64-bit 150/200 MHz 배치·배선 PASS |
 | H5 혼합 RTL/HLS Top | 완료 | H1~H4와 유지 RTL packer 통합, V2 종단 차등 5개(Rise-only 포함), abort/backpressure/idle, 150/200 MHz x 32/64-bit OOC PASS |
 | H6-A Parent 데이터 경계 | 완료 | GPX bus/EF 전체 Drain, async FIFO, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
-| H6-B 통합 설정/DDR | 다음 단계 | CSR/COMMIT/IRQ, Runtime VDMA 재설정, DDR Golden, PS cache/Ethernet |
+| H6-B1 통합 제어·데이터 Top | 완료 | V2 CSR/Shadow/Active/COMMIT/IRQ와 V3 HLS 데이터 경로 통합, 4 Chip 기능 회귀, formatter 진단, 두 제품 clock OOC PASS |
+| H6-B2 Runtime VDMA/DDR/PS | 다음 단계 | Runtime VDMA 재설정, DDR Golden, PS cache/Ethernet |
 
 H0~H4 Header의 역할, 전체 Bit Map, 생산자·소비자와 ABI 수정 규칙은
 [`docs/V3_H0_H4_HEADER_CONTRACT_KO.md`](docs/V3_H0_H4_HEADER_CONTRACT_KO.md)에
@@ -100,6 +101,11 @@ CDC와 배치·배선 결과는
 [`docs/V3_H6_PARENT_DATA_SIGNOFF_KO.md`](docs/V3_H6_PARENT_DATA_SIGNOFF_KO.md),
 테스트별 소유 범위와 필수 회귀는
 [`docs/V3_H6_TESTBENCH_GUIDE_KO.md`](docs/V3_H6_TESTBENCH_GUIDE_KO.md)에 기록한다.
+
+H6-B1의 통합 CSR/COMMIT/IRQ와 HLS 데이터 경계, 유휴 안전 계약, formatter 진단,
+4 Chip 기능 회귀와 OOC 구현 결과는
+[`docs/V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md`](docs/V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md)에
+기록한다. H6-B1 PASS는 실제 DDR/PS 또는 Parent 보드 Sign-off를 뜻하지 않는다.
 
 ## H1 재현 명령
 
@@ -178,5 +184,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 # 제품 두 교차 clock 조합 OOC 배치·배선
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   ./system_integration/v3/scripts/run_v3_h6_parent_data_impl.ps1 `
+  -SkipHlsSynthesis -ImplementationStrategy timing_explore
+```
+
+## H6-B1 재현 명령
+
+```powershell
+# 4 Chip 통합 CSR/COMMIT/Reg7/IFIFO/HLS/AXI 기능 회귀
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6b_integrated_top_diff.ps1 `
+  -SkipHlsSynthesis
+
+# H4 formatter fault의 0x1A/0x27/GPX_DATA IRQ 분류 시험
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6b_formatter_status.ps1
+
+# 4 Chip 최대 물리 구성, 두 제품 clock/폭 OOC 배치·배선
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6b_integrated_top_impl.ps1 `
   -SkipHlsSynthesis -ImplementationStrategy timing_explore
 ```
