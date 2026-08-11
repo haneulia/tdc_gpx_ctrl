@@ -17,8 +17,10 @@ V3 H1~H4 HLS와 유지 RTL AXI packer로 교체했다.
 - H4 formatter fault의 진단 요약·상세 bitmap과 `GPX_DATA` IRQ 분류
 - `xc7z020clg484-2`의 두 제품 clock 조합 OOC 합성·배치·배선
 
-아직 Runtime VDMA Register 재설정, 실제 DDR dump, PS cache 동기화, Ethernet
-재포장, Parent bitstream과 보드 I/O는 닫히지 않았다. 이 범위는 H6-B2다.
+이 H6-B1 판정 당시 Runtime VDMA, DDR와 PS 종단은 닫히지 않았다. 이후 보드 없이
+가능한 H6-B2 범위는
+[`V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md`](V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md)에서
+PASS했으며, 실제 VDMA/DDR/cache API/Ethernet과 보드 I/O는 H6-B3로 남는다.
 
 ## 2. 통합 구조
 
@@ -198,7 +200,7 @@ Sign-off 근거로 확대 해석하지 않는다.
 - `.work/v3_h6b_integrated_top_impl/260811_h6b_impl_first`
 - `.work/v3_h6b_integrated_top_impl/260811_h6b_impl_second`
 
-## 9. 남은 H6-B2와 최종 Sign-off 조건
+## 9. 후속 H6-B2와 최종 Sign-off 조건
 
 1. Runtime 직렬화 Return 또는 Shot geometry 변경 시 다음 Face 경계에서
    HSIZE/VSIZE/STRIDE를 VDMA Register와 원자적으로 갱신한다.
@@ -214,5 +216,6 @@ Sign-off 근거로 확대 해석하지 않는다.
    배치에서 다시 확인하고, WNS가 음수가 되면 유휴 판정을 안전하게 등록하는
    별도 최적화를 기능 회귀와 함께 수행한다.
 
-따라서 현재 상태는 **H6-B1 통합 제어·데이터 경계 체크포인트 PASS**,
-**H6-B2 DDR/PS와 V3 전체 Sign-off 보류**다.
+따라서 이 문서의 판정은 **H6-B1 통합 제어·데이터 경계 체크포인트 PASS**다.
+후속 H6-B2 보드 독립 결과는 별도 문서에서 PASS했으며, V3 전체 물리 Sign-off는
+H6-B3 보드 증거 완료 전까지 보류다.

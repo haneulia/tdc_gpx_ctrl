@@ -57,7 +57,8 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 | H5 | 완료 | 혼합 RTL/HLS Top | H1~H4와 유지 RTL packer 통합, V2 종단 차등, abort/stall/idle, 150/200 MHz x 32/64-bit OOC PASS |
 | H6-A | 완료 | Parent 데이터 경계 | GPX bus/EF 전체 Drain, CDC, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
 | H6-B1 | 완료 | 통합 제어·데이터 Top | V2 CSR/Shadow/Active/COMMIT/IRQ와 V3 HLS 데이터 경로, 4 Chip 기능 회귀, formatter 진단, 두 제품 clock OOC PASS |
-| H6-B2 | 다음 | Runtime VDMA/DDR/PS | Face 경계 VDMA 재설정, DDR Golden, PS cache/Ethernet PASS |
+| H6-B2 | 보드 독립 범위 완료 | Runtime VDMA/DDR/PS | 7→3→7 Return의 Lane별 VDMA ACK 원자성, 32/64-bit DDR Word Golden, Cortex-A9 PS cache 소유권 및 H-Line/Ethernet 바이트 비교 PASS |
+| H6-B3 | 다음 | Parent 보드 증거 | 실제 VDMA/DDR/cache API/Ethernet, bitstream와 물리 I/O PASS |
 
 ## 6. 성능·안전 Gate
 
@@ -103,5 +104,11 @@ CSR/VDMA/DDR/PS와 Parent bitstream을 포함한 전체 Sign-off는 아니다.
 H6-B1의 통합 Top 구조, COMMIT 안전 유휴 조건, H4 formatter 진단 ABI,
 4 Chip 기능 회귀와 OOC 구현 근거는
 [`V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md`](V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md)에
-기록한다. H6-B1 PASS 뒤에도 Runtime VDMA/DDR/PS와 Parent 보드 검증은 H6-B2로
-남는다.
+기록한다. H6-B1 자체의 PASS 범위에는 Runtime VDMA/DDR/PS와 Parent 보드 검증이
+포함되지 않는다.
+
+H6-B2의 Face 경계 VDMA ACK, DDR Word Golden, PS cache 소유권 및 H-Line/Ethernet
+결과는
+[`V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md`](V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md)에
+기록한다. 실제 AXI VDMA Register, 물리 DDR DMA, FreeRTOS/PetaLinux cache API와
+Ethernet 송신은 H6-B3에서만 닫는다.

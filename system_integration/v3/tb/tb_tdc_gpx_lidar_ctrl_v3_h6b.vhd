@@ -48,7 +48,7 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v3_axis_core is
     constant C_STOPS_PER_CHIP : positive := 8;
     constant C_RETURNS_PER_STOP : positive := 7;
     constant C_WORDS_PER_IFIFO : positive :=
-        (C_STOPS_PER_CHIP / 2) * G_ACTIVE_RETURNS;
+        (C_STOPS_PER_CHIP / 2) * C_RETURNS_PER_STOP;
     constant C_WORDS_PER_CHIP : positive := 2 * C_WORDS_PER_IFIFO;
 
     function fn_build_config return lidar_build_config_t is
@@ -203,6 +203,9 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v3_axis_core is
         fn_derive_runtime_config(C_BUILD_CONFIG, C_RUNTIME);
     constant C_WORDS : csr_word_array_t :=
         fn_pack_runtime_config(C_RUNTIME);
+    -- H6-B2는 물리 IFIFO의 7 Return Drain 계약을 바꾸지 않고, DDR에
+    -- 직렬화해 보여 줄 Return 수만 7 -> 3 -> 7로 전환한다.
+    constant C_TRANSITION_RETURNS : positive range 1 to 7 := 3;
     constant C_RISE_SLOT_COUNT : positive :=
         C_CHIPS * C_STOPS_PER_CHIP;
     constant C_EXPECTED_HSIZE_BYTES : positive :=
@@ -214,6 +217,12 @@ architecture sim of tb_tdc_gpx_lidar_ctrl_v3_axis_core is
     constant C_EXPECTED_STRIDE_BYTES : positive :=
         fn_gpx_vdma_stride_bytes(
             C_RISE_SLOT_COUNT, C_RETURNS_PER_STOP, G_OUTPUT_WIDTH);
+    constant C_TRANSITION_HSIZE_BYTES : positive :=
+        fn_gpx_vdma_shot_hsize_bytes(
+            C_RISE_SLOT_COUNT, C_TRANSITION_RETURNS, G_OUTPUT_WIDTH);
+    constant C_TRANSITION_LINES : positive :=
+        to_integer(C_DERIVED.columns_per_face) +
+        fn_gpx_vdma_footer_lines(C_TRANSITION_HSIZE_BYTES);
     constant C_EXPECTED_BEATS : positive := C_EXPECTED_LINES *
         fn_gpx_vdma_shot_line_beats(
             C_RISE_SLOT_COUNT, G_ACTIVE_RETURNS, G_OUTPUT_WIDTH);
@@ -758,6 +767,21 @@ begin
         variable first_frame_commit_v : natural := 0;
         variable first_frame_all_hole_v : natural := 0;
         variable all_ififos_drained_v : boolean := false;
+        variable transition_bus_profile_v : std_logic_vector(31 downto 0) :=
+            C_WORDS(C_CTL_TDC_BUS_PROFILE);
+        variable active_version_before_transition_v : unsigned(
+            15 downto 0) := (others => '0');
+        variable profile_control_v : std_logic_vector(31 downto 0) :=
+            (others => '0');
+        variable rise_geometry_v : std_logic_vector(31 downto 0) :=
+            (others => '0');
+        variable rise_stride_v : std_logic_vector(31 downto 0) :=
+            (others => '0');
+        variable fall_geometry_v : std_logic_vector(31 downto 0) :=
+            (others => '0');
+        variable fall_stride_v : std_logic_vector(31 downto 0) :=
+            (others => '0');
+        variable pending_state_observed_v : boolean := false;
 
         procedure wait_proc(count : positive) is
         begin
@@ -881,6 +905,46 @@ begin
             axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
                 x"00000300");
         end procedure accept_vdma_profile;
+
+        -- CTL25 앞/뒤를 다시 읽어 CTL26..29가 같은 Pending snapshot에
+        -- 속하는지 확인한다. 실제 PS도 같은 방식으로 coherent read한다.
+        procedure read_pending_vdma_profile(
+            constant case_name : string;
+            variable profile_control : out std_logic_vector(31 downto 0);
+            variable rise_geometry : out std_logic_vector(31 downto 0);
+            variable rise_stride : out std_logic_vector(31 downto 0);
+            variable fall_geometry : out std_logic_vector(31 downto 0);
+            variable fall_stride : out std_logic_vector(31 downto 0)
+        ) is
+            variable control_before : std_logic_vector(31 downto 0);
+            variable control_after : std_logic_vector(31 downto 0);
+            variable coherent : boolean := false;
+        begin
+            for retry in 0 to 10000 loop
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                    control_before);
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_GEOMETRY),
+                    rise_geometry);
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_RISE_STRIDE),
+                    rise_stride);
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_GEOMETRY),
+                    fall_geometry);
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_FALL_STRIDE),
+                    fall_stride);
+                axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                    control_after);
+                if control_before(3 downto 0) = control_after(3 downto 0) and
+                   control_after(C_VDMA_RISE_PENDING_BIT) = '1' and
+                   control_after(C_VDMA_FALL_PENDING_BIT) = '1' then
+                    coherent := true;
+                    exit;
+                end if;
+            end loop;
+            assert coherent
+                report case_name & ": coherent VDMA profile request timeout"
+                severity failure;
+            profile_control := control_after;
+        end procedure read_pending_vdma_profile;
 
         procedure wait_transaction_done(constant case_name : string) is
             variable complete : boolean := false;
@@ -1101,12 +1165,88 @@ begin
                 "V2-K12 first physical Reg7 Chip " & integer'image(index));
         end loop;
 
-        -- H6-B1 시나리오 B(V2-K12 계보): 다음 COMMIT은 B Shadow를 원자
-        -- 적용한다. staging에는
-        -- 수동 MTimer가 남고 Active/두 물리 Chip에는 ceil(53/5)=11만 보인다.
+        -- H6-B2 시나리오 B: 다음 COMMIT은 B Shadow와 직렬화 Return 수 3을
+        -- 하나의 후보로 적용한다. Rise/Fall VDMA 설정이 모두 성공하기 전에는
+        -- Active Version, Active source, 출력 geometry가 이전 7 Return 계약을
+        -- 유지해야 한다. Fall lane은 비활성이어도 disable profile의 실제 적용
+        -- 완료를 확인해야 하므로 ACK를 생략할 수 없다.
         command(C_CMD_CLEAR_STATUS_BIT);
+        transition_bus_profile_v(19 downto 17) := std_logic_vector(
+            to_unsigned(C_TRANSITION_RETURNS, 3));
+        axi_write(fn_ctl_byte_offset(C_CTL_TDC_BUS_PROFILE),
+            transition_bus_profile_v);
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), status_word);
+        active_version_before_transition_v := unsigned(
+            status_word(15 downto 0));
         command(C_CMD_COMMIT_BIT);
-        accept_vdma_profile("V2-K12 second COMMIT");
+
+        read_pending_vdma_profile("V3-H6B2 7-to-3 transition",
+            profile_control_v, rise_geometry_v, rise_stride_v,
+            fall_geometry_v, fall_stride_v);
+        assert profile_control_v(C_VDMA_RISE_ENABLE_BIT) = '1' and
+               profile_control_v(C_VDMA_FALL_ENABLE_BIT) = '0' and
+               to_integer(unsigned(rise_geometry_v(15 downto 0))) =
+                   C_TRANSITION_HSIZE_BYTES and
+               to_integer(unsigned(rise_geometry_v(31 downto 16))) =
+                   C_TRANSITION_LINES and
+               to_integer(unsigned(rise_stride_v(15 downto 0))) =
+                   C_EXPECTED_STRIDE_BYTES and
+               fall_geometry_v = x"00000000"
+            report "V3-H6B2 pending 3-Return VDMA geometry mismatch"
+            severity failure;
+
+        -- PS가 실제 VDMA 정지/재설정을 수행하는 동안 Pending을 의도적으로
+        -- 유지한다. 이 구간에는 새 Active source나 AXIS Frame이 보이면 안 된다.
+        for poll in 0 to 7 loop
+            axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), status_word);
+            assert status_word(C_TXN_BUSY_BIT) = '1'
+                report "V3-H6B2 COMMIT completed before VDMA ACK"
+                severity failure;
+            axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), status_word);
+            assert unsigned(status_word(15 downto 0)) =
+                       active_version_before_transition_v
+                report "V3-H6B2 Active Version changed before VDMA ACK"
+                severity failure;
+            axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE +
+                C_CTL_TDC_BUS_PROFILE - 1), status_word);
+            assert to_integer(unsigned(status_word(19 downto 17))) =
+                       G_ACTIVE_RETURNS
+                report "V3-H6B2 Active Return count changed before VDMA ACK"
+                severity failure;
+        end loop;
+        assert rise_beat_count = 0 and rise_line_count = 0
+            report "V3-H6B2 data escaped while STOP/DISARM profile was pending"
+            severity failure;
+
+        -- Rise VDMA만 먼저 성공시킨다. 비활성 Fall lane도 disable profile을
+        -- 적용했다는 ACK가 오기 전까지 통합 COMMIT은 끝나지 않아야 한다.
+        axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000100");
+        pending_state_observed_v := false;
+        for poll in 0 to 400 loop
+            axi_read(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+                profile_control_v);
+            if profile_control_v(C_VDMA_RISE_PENDING_BIT) = '0' and
+               profile_control_v(C_VDMA_FALL_PENDING_BIT) = '1' then
+                pending_state_observed_v := true;
+                exit;
+            end if;
+        end loop;
+        assert pending_state_observed_v
+            report "V3-H6B2 independent Rise ACK state was not observed"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_TRANSACTION), status_word);
+        assert status_word(C_TXN_BUSY_BIT) = '1'
+            report "V3-H6B2 one-lane ACK completed the transaction"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), status_word);
+        assert unsigned(status_word(15 downto 0)) =
+                   active_version_before_transition_v
+            report "V3-H6B2 one-lane ACK changed Active Version"
+            severity failure;
+
+        axi_write(fn_ctl_byte_offset(C_CTL_VDMA_PROFILE_CONTROL),
+            x"00000200");
         wait_transaction_done("V2-K12 second COMMIT");
         assert status_word(C_TXN_SUCCESS_STICKY_BIT) = '1' and
                status_word(C_TXN_SHADOW_DIRTY_BIT) = '0'
@@ -1116,6 +1256,17 @@ begin
             C_CTL_TARGET_RANGE - 1), status_word);
         assert unsigned(status_word) = C_TARGET_B_5NS
             report "V2-K12 second Active source target mismatch"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE +
+            C_CTL_TDC_BUS_PROFILE - 1), status_word);
+        assert to_integer(unsigned(status_word(19 downto 17))) =
+                   C_TRANSITION_RETURNS
+            report "V3-H6B2 acknowledged Return count did not become Active"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_VERSION), status_word);
+        assert unsigned(status_word(15 downto 0)) =
+                   active_version_before_transition_v + 1
+            report "V3-H6B2 acknowledged profile did not advance Active Version"
             severity failure;
         check_reg7_view(false, C_STAGED_REG7_B,
             "V2-K12 second staging");
@@ -1164,12 +1315,20 @@ begin
         command(C_CMD_CLEAR_STATUS_BIT);
         axi_write(fn_ctl_byte_offset(C_CTL_TARGET_RANGE),
             std_logic_vector(to_unsigned(C_TARGET_B_5NS, 32)));
+        axi_write(fn_ctl_byte_offset(C_CTL_TDC_BUS_PROFILE),
+            C_WORDS(C_CTL_TDC_BUS_PROFILE));
         command(C_CMD_COMMIT_BIT);
         accept_vdma_profile("V2-K12 recovery COMMIT");
         wait_transaction_done("V2-K12 recovery COMMIT");
         assert status_word(C_TXN_SUCCESS_STICKY_BIT) = '1' and
                status_word(C_TXN_SHADOW_DIRTY_BIT) = '0'
             report "V2-K12 recovery COMMIT failed"
+            severity failure;
+        axi_read(fn_stat_byte_offset(C_STAT_ACTIVE_SOURCE_BASE +
+            C_CTL_TDC_BUS_PROFILE - 1), status_word);
+        assert to_integer(unsigned(status_word(19 downto 17))) =
+                   G_ACTIVE_RETURNS
+            report "V3-H6B2 recovery did not restore the 7-Return profile"
             severity failure;
         check_reg7_view(true, C_EFFECTIVE_REG7_B,
             "V2-K12 recovered Active image");
@@ -1336,6 +1495,17 @@ begin
         report "LIDAR_V3_H6B_REG7_SHADOW_ACTIVE_PHYSICAL_PASS proc_mhz=" &
             positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
             positive'image(G_TDC_CLK_MHZ) severity note;
+        report "LIDAR_V3_H6B2_VDMA_PROFILE_ATOMIC_PASS proc_mhz=" &
+            positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
+            positive'image(G_TDC_CLK_MHZ) & " width=" &
+            positive'image(G_OUTPUT_WIDTH) & " old_returns=" &
+            positive'image(G_ACTIVE_RETURNS) & " transition_returns=" &
+            positive'image(C_TRANSITION_RETURNS) & " restored_returns=" &
+            positive'image(G_ACTIVE_RETURNS) & " transition_hsize_bytes=" &
+            positive'image(C_TRANSITION_HSIZE_BYTES) &
+            " transition_vsize_lines=" & positive'image(C_TRANSITION_LINES) &
+            " stride_bytes=" & positive'image(C_EXPECTED_STRIDE_BYTES)
+            severity note;
         report "LIDAR_V3_H6B_AXIS_PASS proc_mhz=" &
             positive'image(G_PROC_CLK_MHZ) & " tdc_mhz=" &
             positive'image(G_TDC_CLK_MHZ) & " output_width=" &

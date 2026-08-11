@@ -69,7 +69,8 @@ HLS로 단계 전환하는 항목:
 | H5 혼합 RTL/HLS Top | 완료 | H1~H4와 유지 RTL packer 통합, V2 종단 차등 5개(Rise-only 포함), abort/backpressure/idle, 150/200 MHz x 32/64-bit OOC PASS |
 | H6-A Parent 데이터 경계 | 완료 | GPX bus/EF 전체 Drain, async FIFO, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
 | H6-B1 통합 제어·데이터 Top | 완료 | V2 CSR/Shadow/Active/COMMIT/IRQ와 V3 HLS 데이터 경로 통합, 4 Chip 기능 회귀, formatter 진단, 두 제품 clock OOC PASS |
-| H6-B2 Runtime VDMA/DDR/PS | 다음 단계 | Runtime VDMA 재설정, DDR Golden, PS cache/Ethernet |
+| H6-B2 Runtime VDMA/DDR/PS | 보드 독립 범위 완료 | 7→3→7 Return VDMA ACK 원자성, 32/64-bit DDR Word Golden, Cortex-A9 PS cache 소유권 및 H-Line/Ethernet 바이트 비교 PASS |
+| H6-B3 Parent 보드 증거 | 다음 단계 | 실제 VDMA/DDR/cache API/Ethernet, Parent bitstream와 물리 I/O |
 
 H0~H4 Header의 역할, 전체 Bit Map, 생산자·소비자와 ABI 수정 규칙은
 [`docs/V3_H0_H4_HEADER_CONTRACT_KO.md`](docs/V3_H0_H4_HEADER_CONTRACT_KO.md)에
@@ -106,6 +107,12 @@ H6-B1의 통합 CSR/COMMIT/IRQ와 HLS 데이터 경계, 유휴 안전 계약, fo
 4 Chip 기능 회귀와 OOC 구현 결과는
 [`docs/V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md`](docs/V3_H6B_INTEGRATED_TOP_CHECKPOINT_KO.md)에
 기록한다. H6-B1 PASS는 실제 DDR/PS 또는 Parent 보드 Sign-off를 뜻하지 않는다.
+
+H6-B2의 Runtime 직렬화(전시) Return 변경, VDMA ACK 원자성, DDR Word Golden,
+PS cache 소유권 및 Ethernet payload 비교는
+[`docs/V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md`](docs/V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md)에
+기록한다. H6-B2 PASS는 보드 없이 가능한 계약의 종료이며 실제 DMA/cache API와
+물리 Ethernet은 H6-B3 보드 증거로 남는다.
 
 ## H1 재현 명령
 
@@ -203,4 +210,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   ./system_integration/v3/scripts/run_v3_h6b_integrated_top_impl.ps1 `
   -SkipHlsSynthesis -ImplementationStrategy timing_explore
+```
+
+## H6-B2 재현 명령
+
+```powershell
+# 통합 Top에서 7→3→7 Return과 Rise/Fall VDMA ACK 원자성
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6b_integrated_top_diff.ps1 `
+  -SkipHlsSynthesis
+
+# V3 HLS/AXIS가 만든 32/64-bit DDR 영상을 HTML/V2 Golden과 Word 비교
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6b2_ddr_golden.ps1 `
+  -SkipHlsSynthesis
+
+# DDR 회귀부터 Cortex-A9 컴파일, cache 소유권, H-Line/Ethernet까지 연속 검증
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6b2_ps_hline.ps1 `
+  -SkipHlsSynthesis
 ```

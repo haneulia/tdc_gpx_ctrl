@@ -220,6 +220,10 @@ try {
                 (("LIDAR_V3_H6B_REG7_SHADOW_ACTIVE_PHYSICAL_PASS " +
                     "proc_mhz={0} tdc_mhz={1}") -f
                     $Profile.ProcMhz, $Profile.TdcMhz),
+                (("LIDAR_V3_H6B2_VDMA_PROFILE_ATOMIC_PASS " +
+                    "proc_mhz={0} tdc_mhz={1} width={2} old_returns=7 " +
+                    "transition_returns=3 restored_returns=7") -f
+                    $Profile.ProcMhz, $Profile.TdcMhz, $Profile.Width),
                 (("LIDAR_V3_H6B_AXIS_PASS proc_mhz={0} tdc_mhz={1} " +
                     "output_width={2} stall_clks=13") -f
                     $Profile.ProcMhz, $Profile.TdcMhz, $Profile.Width)
