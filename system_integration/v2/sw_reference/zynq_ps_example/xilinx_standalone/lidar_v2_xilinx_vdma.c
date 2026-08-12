@@ -140,6 +140,13 @@ int lidar_v2_xilinx_vdma_program(
     setup.EnableCircularBuf = 1;
     setup.EnableSync = 0;
     setup.PointNum = 0;
+    /*
+     * Keep circular S2MM running across Face Frames.  This bit controls the
+     * transfer-stop frame counter, not the completion-interrupt coalescing
+     * threshold.  V3 separately sets that threshold to one Face Frame with
+     * XAxiVdma_SetFrameCounter(); XAxiVdma_DmaConfig() preserves its [23:16]
+     * register field while this zero keeps the DMA in endless-transfer mode.
+     */
     setup.EnableFrameCounter = 0;
     setup.FixedFrameStoreAddr = 0;
     setup.EnableVFlip = 0U;

@@ -58,7 +58,8 @@ Reset synchronizer 및 물리 I/O는 HLS에 넣지 않는다.
 | H6-A | 완료 | Parent 데이터 경계 | GPX bus/EF 전체 Drain, CDC, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
 | H6-B1 | 완료 | 통합 제어·데이터 Top | V2 CSR/Shadow/Active/COMMIT/IRQ와 V3 HLS 데이터 경로, 4 Chip 기능 회귀, formatter 진단, 두 제품 clock OOC PASS |
 | H6-B2 | 보드 독립 범위 완료 | Runtime VDMA/DDR/PS | 7→3→7 Return의 Lane별 VDMA ACK 원자성, 32/64-bit DDR Word Golden, Cortex-A9 PS cache 소유권 및 H-Line/Ethernet 바이트 비교 PASS |
-| H6-B3 | 다음 | Parent 보드 증거 | 실제 VDMA/DDR/cache API/Ethernet, bitstream와 물리 I/O PASS |
+| H6-B3A | 완료 | PS 보드 투입 준비 | CSR ABI 2.7, Lane별 적용·ACK, 처리-idle gate, 1-Face IRQ/3중 버퍼, Cortex-A9 BSP와 Vivado VDMA 계약 PASS |
+| H6-B3B | 다음 | Parent 보드 증거 | 실제 VDMA/DDR/cache API/Ethernet, bitstream와 물리 I/O PASS |
 
 ## 6. 성능·안전 Gate
 
@@ -111,4 +112,5 @@ H6-B2의 Face 경계 VDMA ACK, DDR Word Golden, PS cache 소유권 및 H-Line/Et
 결과는
 [`V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md`](V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md)에
 기록한다. 실제 AXI VDMA Register, 물리 DDR DMA, FreeRTOS/PetaLinux cache API와
-Ethernet 송신은 H6-B3에서만 닫는다.
+Ethernet 송신은 H6-B3B에서만 닫는다. H6-B3A의 PS 트랜잭션과 보드 투입 절차는
+[`V3_H6B3A_PS_BOARD_PREFLIGHT_KO.md`](V3_H6B3A_PS_BOARD_PREFLIGHT_KO.md)에 기록한다.

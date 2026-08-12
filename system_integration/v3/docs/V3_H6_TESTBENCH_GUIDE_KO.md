@@ -21,6 +21,7 @@ H6-B2는 Runtime VDMA ACK, DDR Word와 PS H-Line/Ethernet 종단을 소유한다
 | `tb_tdc_gpx_lidar_ctrl_v3_h6b.vhd` | V2 제어 계층과 V3 HLS 데이터 경로를 실제 통합 Top에서 결합 | 4 Chip Reg7 Shadow/Active/Physical, COMMIT 실패 복구, IFIFO Drain, 7→3→7 Return과 Lane별 VDMA ACK 원자성, AXI/Footer stall, 0x27 CSR routing |
 | `tb_lidar_v3_h6b2_ddr_golden.vhd` | V3 H4 HLS와 유지 RTL AXIS packer의 실제 DDR 주소 영상을 검사 | 32/64-bit HSIZE/VSIZE/STRIDE, Shot/Hole/Footer, SOF/TLAST, 예약 STRIDE Word 보존, HTML/V2 Golden exact compare |
 | `run_v3_h6b2_ps_hline.ps1` | V3 DDR 캡처가 Zynq PS와 Viewer까지 같은 의미를 갖는지 검사 | Cortex-A9 컴파일, DMA/cache 소유권 오용 거부, Face Header/H-Line Ethernet payload byte compare |
+| `run_v3_h6b3a_ps_board_preflight.ps1` | 보드 투입 전 CSR/VDMA PS 절차와 실패 복구 검사 | CTL23/24 idle sequence, Lane별 ACK, ACK 지연, snapshot 교체, 정지 직전 완료 Frame/cache/소유권, CPU/ready/overwrite/error 정책, 실제 Cortex-A9 BSP 컴파일 |
 | `tb_lidar_v3_processing_status_formatter_fault.vhd` | H4 신규 fault가 기존 V2 IRQ/진단 ABI에서 빠지는 것을 방지 | 0x1A 요약, 0x27 bitmap, GPX_DATA 단독 IRQ, CLEAR_STATUS exact compare |
 | `run_v3_h6b_integrated_top_impl.ps1` | HLS 데이터 경로와 CSR/처리 계층을 함께 놓았을 때 timing 확인 | 4 Chip 최대 구성, 150/200 MHz 32-bit와 200/150 MHz 64-bit post-route |
 
@@ -128,6 +129,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   ./system_integration/v3/scripts/run_v3_h6b2_ps_hline.ps1 `
   -SkipHlsSynthesis
+
+# 10. H6-B3A Lane별 VDMA 적용, 1-Face IRQ, 마지막 Frame 인계와 실제 BSP/Vivado 검사
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/run_v3_h6b3a_ps_board_preflight.ps1 `
+  -BspInclude <exported-platform>/sw/<domain>/include `
+  -CheckVivadoVdma
 ```
 
 PASS marker:
@@ -143,6 +150,7 @@ PASS marker:
 - `LIDAR_V3_H6B_INTEGRATED_TOP_IMPL_PASS`
 - `LIDAR_V3_H6B2_DDR_GOLDEN_PASS`
 - `LIDAR_V3_H6B2_PS_HLINE_ETHERNET_PASS`
+- `LIDAR_V3_H6B3A_PS_BOARD_PREFLIGHT_PASS`
 
 ## 7. 변경 영향과 필수 회귀
 
@@ -159,6 +167,7 @@ PASS marker:
 | HSIZE/VSIZE/STRIDE 함수 | H6-B2 DDR + PS |
 | PACKED17/Shot Metadata/Face Footer ABI | H0~H4 + H6-B2 DDR/PS + HTML Golden |
 | PS cache 소유권 API | H6-B2 호스트/Cortex-A9 + 실제 보드 cache 시험 |
+| VDMA adapter, Frame Store/IRQ 또는 COMMIT progress service | H6-B3A 전체 + H6-B3B 실제 보드 ISR/전환 시험 |
 | H1~H4 fault bit/IRQ 분류 | 해당 Stage fault 시험 + formatter 상태 시험 + H6-B1 정상 CSR routing |
 | Processing/AXIS idle 정의 | H5 + H6-A stalled Face + H6-B1 COMMIT/Formatter stall |
 | 구현 directive/flatten | 두 제품 clock 조합의 새 post-route 결과 |
@@ -188,6 +197,7 @@ PASS marker:
 - Runtime VDMA 원자성: `.work/v3_h6b_integrated_top_diff/260811_h6b2_runtime_vdma_final`
 - DDR Golden: `.work/v3_h6b2_ddr_golden/260811_h6b2_end_to_end_final_ddr`
 - PS H-Line/Ethernet: `.work/v3_h6b2_ps_hline/260811_h6b2_end_to_end_final`
+- PS 보드 투입 준비: `.work/v3_h6b3a_ps_board_preflight/260812_h6b3a_frame_irq_final5`
 
 ## 9. 아직 소유하지 않는 시험
 
@@ -197,3 +207,6 @@ PASS marker:
 - Parent 전체 bitstream, IOB, TDC-GPX/레이저/모터/설정된 Echo LVDS 보드 시험
 - 물리 IFIFO Drain 도중 Processing abort와 TDC-GPX soft reset을 함께 발생시키는
   통합 command CDC 복구 시험
+
+H6-B3A PS 시험은 보드 독립 실패 주입과 실제 BSP header 컴파일까지 닫는다. 실제
+XAxiVdma Register 효과와 DDR/cache API 실호출은 H6-B3B 보드 시험 범위다.

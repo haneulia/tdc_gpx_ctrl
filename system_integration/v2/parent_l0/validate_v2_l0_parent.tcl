@@ -136,6 +136,8 @@ foreach cell [list $rise_vdma $fall_vdma] {
         [get_property CONFIG.c_include_s2mm $cell] 1
     l0_expect_equal "$cell MM2S disabled" \
         [get_property CONFIG.c_include_mm2s $cell] 0
+    l0_expect_equal "$cell Frame Store count" \
+        [get_property CONFIG.c_num_fstores $cell] 3
 }
 foreach cell [list $rise_converter $fall_converter] {
     l0_expect_equal "$cell slave protocol" \

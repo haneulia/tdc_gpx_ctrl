@@ -70,7 +70,8 @@ HLS로 단계 전환하는 항목:
 | H6-A Parent 데이터 경계 | 완료 | GPX bus/EF 전체 Drain, async FIFO, H1~H4, V2 종단 차분 5개, 150/200·200/150 MHz OOC PASS |
 | H6-B1 통합 제어·데이터 Top | 완료 | V2 CSR/Shadow/Active/COMMIT/IRQ와 V3 HLS 데이터 경로 통합, 4 Chip 기능 회귀, formatter 진단, 두 제품 clock OOC PASS |
 | H6-B2 Runtime VDMA/DDR/PS | 보드 독립 범위 완료 | 7→3→7 Return VDMA ACK 원자성, 32/64-bit DDR Word Golden, Cortex-A9 PS cache 소유권 및 H-Line/Ethernet 바이트 비교 PASS |
-| H6-B3 Parent 보드 증거 | 다음 단계 | 실제 VDMA/DDR/cache API/Ethernet, Parent bitstream와 물리 I/O |
+| H6-B3A PS 보드 투입 준비 | 완료 | V2 CSR ABI 2.7, Lane별 적용·ACK, 처리-idle gate, 1-Face IRQ/3중 버퍼, Cortex-A9 BSP와 Vivado VDMA 계약 PASS |
+| H6-B3B Parent 보드 증거 | 다음 단계 | 실제 VDMA/DDR/cache API/Ethernet, Parent bitstream와 물리 I/O |
 
 H0~H4 Header의 역할, 전체 Bit Map, 생산자·소비자와 ABI 수정 규칙은
 [`docs/V3_H0_H4_HEADER_CONTRACT_KO.md`](docs/V3_H0_H4_HEADER_CONTRACT_KO.md)에
@@ -113,6 +114,13 @@ PS cache 소유권 및 Ethernet payload 비교는
 [`docs/V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md`](docs/V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md)에
 기록한다. H6-B2 PASS는 보드 없이 가능한 계약의 종료이며 실제 DMA/cache API와
 물리 Ethernet은 H6-B3 보드 증거로 남는다.
+
+H6-B3A는 [`docs/V3_H6B3A_PS_BOARD_PREFLIGHT_KO.md`](docs/V3_H6B3A_PS_BOARD_PREFLIGHT_KO.md)에
+기록한다. V3는 검증된 V2 CSR ABI 2.7을 공유하고, V3 전용 PS 계층은 CTL23/24의
+새 sequence로 Processing/Echo/TDC-GPX/AXIS idle을 확인한 뒤에만 VDMA를 정지한다.
+Rise/Fall Lane별 실제 VDMA 적용 뒤 개별 ACK, ACK 해제 지연 중복 방지, 미처리 DDR
+Frame 소유권과 실패 복구도 담당한다. S2MM-only AXI VDMA, Lane당 3개 Frame Store,
+Face마다 1회 완료 IRQ를 초기화 단계에서 강제한다. 실제 보드 증거는 H6-B3B로 남는다.
 
 ## H1 재현 명령
 
