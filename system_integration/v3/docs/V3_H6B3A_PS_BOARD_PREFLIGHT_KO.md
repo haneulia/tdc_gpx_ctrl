@@ -6,7 +6,8 @@ H6-B3A의 보드 없이 가능한 PS 운용 준비 범위는 PASS다. V3가 V2�
 2.7을 사용한다는 사실을 자동 확인했고, 32/64-bit VDMA Geometry를 실제
 Zynq-7000 Cortex-A9 BSP 헤더로 교차 컴파일했다.
 
-이 판정은 물리 보드 Sign-off가 아니다. H6-B3B는 실제 bitstream, VDMA Register,
+이 판정은 물리 보드 Sign-off가 아니다. H6-B3B는 Parent bitstream와 IOB/timing을,
+H6-B4는 실제 VDMA Register,
 DDR S2MM, cache API, Ethernet MAC/PHY와 물리 I/O를 사용한 결과가 있어야 완료된다.
 
 ## 2. 이번 단계에서 보완한 문제
@@ -84,7 +85,7 @@ CTL23은 `BUSY=0`, `VALID=1`, `ERROR=0`이어야 하고 CAPTURE 전후 sequence�
 완료 IRQ가 발생한 Frame은 모두 보존한다. 반면 활성 Face 중간에 운용자가 STOP을
 발행해 Footer까지 끝나지 않은 현재 Frame은 완성된 Face가 아니므로 전송하지 않는다.
 유효 Face를 버리지 않으려면 Face 완료 IRQ 직후 비활성 미러 구간에서 STOP해야 하며,
-이 시간 여유와 다음 Face가 시작되지 않는지는 H6-B3B 보드 시험에서 확인한다.
+이 시간 여유와 다음 Face가 시작되지 않는지는 H6-B4 보드 시험에서 확인한다.
 
 ### 2.7 COMMIT 제한시간과 Ethernet 분리
 
@@ -139,7 +140,7 @@ PS 완료 알림    : Face 하나가 끝날 때마다 IRQ 1회
 ```
 
 3개 Frame Store는 PS 처리 지연을 흡수하는 최소 운용 계약이다. 그래도 ISR가 한 Face
-주기 이상 지연되면 완료된 Frame Store를 놓칠 가능성이 있으므로, H6-B3B에서 GIC
+주기 이상 지연되면 완료된 Frame Store를 놓칠 가능성이 있으므로, H6-B4에서 GIC
 우선순위와 최악 ISR latency가 최소 Face 주기보다 짧은지 측정한다.
 
 ## 3. 자동 시험 결과
@@ -190,10 +191,10 @@ GUI 재확인용 V2 L0 기준 Parent 프로젝트:
 
 두 프로젝트는 V3 최종 bitstream가 아니다. V3와 동일한 Zynq-7000 VDMA 연결 규칙을
 가진 검증 기준으로서 `S2MM-only`, Lane당 Frame Store 3개, 32/64-bit 입력 폭을
-확인하는 용도다. V3 Top이 들어간 최종 Parent 생성·합성·보드 시험은 H6-B3B가
-소유한다.
+확인하는 용도다. V3 Top이 들어간 최종 Parent 생성·합성은 H6-B3B가 소유하고,
+실물 보드 시험은 H6-B4가 소유한다.
 
-## 4. 보드 H6-B3 실행 순서
+## 4. H6-B3B Parent 이후 H6-B4 보드 실행 순서
 
 1. V3 4-Chip Parent bitstream와 XSA를 생성한다.
 2. `STAT0/STAT1`에서 CSR ABI 2.7, Chip 수, STOP 수, Return 최대값, 32/64-bit
@@ -217,7 +218,7 @@ GUI 재확인용 V2 L0 기준 Parent 프로젝트:
 12. 장시간 운용에서 `overwrite_mask`, VDMA error, IRQ 원인별 진단 카운터와
     `PROCESSING_WARNING.schedule_overrun` Shot 시간 계약 오류를 기록한다.
 
-## 5. H6-B3 종료 조건
+## 5. H6-B4 종료 조건
 
 - 실제 VDMA Register readback과 `CTL25~29` 일치
 - 32-bit 또는 64-bit 선택 폭에서 DDR Golden 일치
@@ -226,4 +227,5 @@ GUI 재확인용 V2 L0 기준 Parent 프로젝트:
 - Runtime Return 변경 중 Lane별 ACK와 Frame 경계 무결
 - Rise/Fall 완료 IRQ가 Face마다 정확히 1회이며 최악 ISR latency가 Face 주기 미만
 - 장시간 시험에서 설명되지 않는 overwrite, VDMA error, GPX transport/data fault 없음
-- Parent timing, XDC, IOB와 물리 TDC-GPX/Encoder/Laser/Echo LVDS 시험 PASS
+- H6-B3B Parent timing/XDC/IOB 증적을 사용하고 물리
+  TDC-GPX/Encoder/Laser/Echo LVDS 시험 PASS

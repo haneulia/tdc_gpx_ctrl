@@ -17,7 +17,7 @@ V3 H6-B2의 **보드 독립 검증 범위는 PASS**다. 다음 계약을 실제 
   참조 소프트웨어가 거부한다.
 
 실제 AXI VDMA Register 쓰기, 물리 DDR DMA, FreeRTOS/PetaLinux 캐시 API 호출 및
-Ethernet 송신은 보드가 있어야 검증할 수 있으므로 H6-B3 보드 증거로 남긴다.
+Ethernet 송신은 보드가 있어야 검증할 수 있으므로 H6-B4 보드 증거로 남긴다.
 
 ## 2. 데이터와 제어 흐름
 
@@ -188,7 +188,7 @@ PASS marker:
 | PACKED17, Shot Metadata, Face Footer ABI | H0~H4 계약 + DDR + PS + HTML Golden |
 | PS cache 소유권 API | PS 시험 + 실제 FreeRTOS/PetaLinux 보드 시험 |
 
-## 8. 남은 H6-B3 보드 증거
+## 8. 남은 H6-B4 보드 증거
 
 - PS가 실제 AXI VDMA를 STOP하고 `HSIZE/VSIZE/STRIDE`와 Frame 주소를 갱신한 뒤
   Lane별 ACK를 쓰는 순서

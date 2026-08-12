@@ -1,0 +1,1137 @@
+-- =============================================================================
+-- tdc_gpx_pkg.vhd
+-- TDC-GPX Controller - Record types, design constants, helper functions
+-- =============================================================================
+--
+-- Purpose:
+--   Defines record types for inter-module signal bundling:
+--     t_tdc_cfg    : CSR configuration (CSR -> all submodules via TOP)
+--     t_tdc_status : Status feedback   (submodules -> CSR via TOP)
+--     t_raw_event  : Decoded IFIFO read result (decode -> cell_builder)
+--     t_cell       : Dense hit storage for one stop/shot (cell_builder internal)
+--
+--   Design constants for TDC-GPX I-Mode (4-chip, 8-stop, SINGLE_SHOT).
+--   Helper functions:
+--     fn_ceil_div          : integer ceiling division (replaces (a+b-1)/b)
+--     fn_cell_size_bytes   : cell size in bytes (ceil_pow2)
+--     fn_cell_beat         : cell-to-AXI beat serialization MUX
+--
+--   Each record has a matching c_*_INIT reset constant.
+--
+-- Usage:
+--   TOP instantiates signals of these record types and extracts individual
+--   fields for submodule port maps. CSR outputs t_tdc_cfg, modules feed
+--   back t_tdc_status.
+--
+-- Standard: VHDL-93 compatible
+-- =============================================================================
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+package tdc_gpx_pkg is
+
+    -- =========================================================================
+    -- Utility: integer ceiling division  ceil(a / b)
+    -- Declared first so that derived constants below can use it.
+    -- =========================================================================
+    function fn_ceil_div(a : natural; b : positive) return natural;
+    -- Elaboration-time physical-time conversion. The result is rounded up so
+    -- a programmed guard/window is never shorter than the requested time.
+    -- These functions are used only with generics/constants; they do not infer
+    -- a runtime multiplier or divider in the datapath.
+    function fn_time_ns_to_clks_ceil(
+        time_ns : natural;
+        clk_mhz : positive
+    ) return natural;
+    function fn_time_ps_to_clks_ceil(
+        time_ps : natural;
+        clk_mhz : positive
+    ) return natural;
+
+    -- =========================================================================
+    -- Build defaults
+    --
+    -- These constants are defaults only.  The effective value for an instance
+    -- is owned by the matching tdc_gpx_top generic and is propagated down the
+    -- hierarchy explicitly.
+    -- =========================================================================
+    constant c_DEFAULT_HW_VERSION       : std_logic_vector(31 downto 0) := x"00010000";
+    constant c_DEFAULT_OUTPUT_WIDTH     : natural := 32;
+    -- Slope-role masks used when falling capture is enabled. Overlap means
+    -- dual-edge capture for that chip. When falling capture is disabled at
+    -- runtime, every active/present chip is routed to the rising lane.
+    constant c_DEFAULT_RISE_CHIP_MASK   : std_logic_vector(3 downto 0) := "0011";
+    constant c_DEFAULT_FALL_CHIP_MASK   : std_logic_vector(3 downto 0) := "1100";
+    constant c_DEFAULT_FALLING_ENABLE   : std_logic := '1';
+    constant c_DEFAULT_AXIS_CLK_MHZ     : positive := 150;
+    constant c_DEFAULT_TDC_CLK_MHZ      : positive := 200;
+    -- Physical timing defaults. tdc_gpx_top owns the effective values and
+    -- converts them to the clock domain that consumes each policy.
+    constant c_DEFAULT_POWERUP_TIME_NS              : positive := 240;
+    constant c_DEFAULT_RECOVERY_TIME_NS             : positive := 40;
+    constant c_DEFAULT_ALU_PULSE_TIME_NS            : positive := 20;
+    constant c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS  : positive := 25;
+    constant c_DEFAULT_BUS_IDLE_STABLE_TIME_NS      : positive := 20_480;
+    constant c_DEFAULT_DRAIN_MARGIN_TIME_NS         : positive := 1_280;
+    constant c_DEFAULT_ERR_DEBOUNCE_TIME_NS         : positive := 25;
+    constant c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS : positive := 3_410;
+    constant c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS   : positive := 1_705;
+    constant c_DEFAULT_ERR_MAX_RETRIES              : positive := 3;
+
+    -- TDC-GPX status-pin timing. The 11.8 ns value is the device data-valid
+    -- maximum; two additional clocks model the fixed local 2-FF synchronizer.
+    constant c_TDC_EF_DATA_VALID_MAX_PS : positive := 11_800;
+    constant c_TDC_STATUS_SYNC_CLKS      : positive := 2;
+
+    -- Cycle aliases retain standalone child-module defaults while deriving
+    -- from one physical source of truth at the default clocks.
+    constant c_DEFAULT_POWERUP_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_POWERUP_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_RECOVERY_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_RECOVERY_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_ALU_PULSE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_ALU_PULSE_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_BUS_READ_PERIOD_MIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_BUS_READ_PERIOD_MIN_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_BUS_IDLE_STABLE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_BUS_IDLE_STABLE_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_DRAIN_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_DRAIN_MARGIN_TIME_NS, c_DEFAULT_TDC_CLK_MHZ);
+    constant c_DEFAULT_EF_SYNC_GUARD_CLKS : positive :=
+        fn_time_ps_to_clks_ceil(c_TDC_EF_DATA_VALID_MAX_PS,
+                                c_DEFAULT_TDC_CLK_MHZ)
+        + c_TDC_STATUS_SYNC_CLKS;
+    constant c_DEFAULT_ERR_DEBOUNCE_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_ERR_DEBOUNCE_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
+    constant c_DEFAULT_CELL_QUARANTINE_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_CELL_QUARANTINE_MARGIN_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
+    constant c_DEFAULT_CELL_IFIFO2_MARGIN_CLKS : positive := fn_time_ns_to_clks_ceil(
+        c_DEFAULT_CELL_IFIFO2_MARGIN_TIME_NS, c_DEFAULT_AXIS_CLK_MHZ);
+    constant c_DEFAULT_OEN_MODE         : string := "DYNAMIC_CONNECTED";
+    constant c_DEFAULT_STREAM_CLK_MODE  : string := "ASYNC";
+
+    -- =========================================================================
+    -- Fixed protocol/cell-format capacities
+    -- =========================================================================
+    -- Fixed ABI/format capacities. These are not the selected build profile:
+    -- tdc_gpx_top may implement a subset while the CSR/header logical slot
+    -- format stays four chips wide. Physical pin widths use g_NUM_CHIPS, which
+    -- each owner requires to equal popcount(g_PRESENT_CHIP_MASK).
+    constant c_MAX_CHIPS            : natural := 4;
+    constant c_MAX_STOPS_PER_CHIP   : natural := 8;
+    constant c_MAX_HITS_PER_STOP    : natural := 7;
+    constant c_ALL_CHIPS_MASK       : std_logic_vector(c_MAX_CHIPS - 1 downto 0) :=
+        (others => '1');
+    -- Cell hit slots carry the lower 16 bits of each GPX raw hit. The 17th
+    -- raw hit bit is preserved separately in the cell metadata beat as
+    -- hit_msb_vec[6:0], so output beat count still scales only by
+    -- g_OUTPUT_WIDTH and max_hits_cfg.
+    constant c_HIT_SLOT_DATA_WIDTH  : natural := 16;
+    constant c_DEFAULT_OUTPUT_BYTES : natural := c_DEFAULT_OUTPUT_WIDTH / 8;
+    constant c_CELL_FORMAT          : natural := 0;     -- Phase 1: Zynq-7000
+
+    -- Derived cell layout constants (auto-calculated from MAX_HITS / TDATA_WIDTH)
+    -- These use c_DEFAULT_OUTPUT_WIDTH=32 defaults. Modules with g_OUTPUT_WIDTH generic
+    -- should use fn_slots_per_beat/fn_beats_per_cell instead.
+    constant c_SLOTS_PER_BEAT       : natural := c_DEFAULT_OUTPUT_WIDTH / c_HIT_SLOT_DATA_WIDTH;  -- 2
+    constant c_HIT_DATA_BEATS       : natural := fn_ceil_div(c_MAX_HITS_PER_STOP,
+                                                              c_SLOTS_PER_BEAT);          -- 4
+    constant c_META_BEAT_IDX        : natural := c_HIT_DATA_BEATS;                        -- 4
+
+    -- Generic-width helper functions (for modules with g_OUTPUT_WIDTH)
+    function fn_output_width_supported(tdata_width : natural) return boolean;
+    function fn_slots_per_beat(tdata_width : natural) return natural;
+    function fn_hit_data_beats(tdata_width : natural) return natural;
+    function fn_meta_beat_idx(tdata_width : natural) return natural;
+    function fn_beats_per_cell(tdata_width : natural) return natural;
+    function fn_hdr_prefix_beats(tdata_width : natural) return natural;
+    function fn_axis_keep_width(tdata_width : natural) return natural;
+
+    -- Range timing uses one CSR timebase independent of the clock domain.
+    -- One tick is always 5 ns (the period of the 200 MHz reference clock).
+    -- Domain-local watchdog counts are derived with ceil conversion so the
+    -- represented physical window is never shorter than the CSR request.
+    constant c_RANGE_REF_CLK_MHZ : positive := 200;
+    constant c_RANGE_REF_TICK_NS : positive := 5;
+    function fn_range_clk_mhz_supported(clk_mhz : natural) return boolean;
+    function fn_range_5ns_ticks_to_clks(
+        ticks_5ns : unsigned(15 downto 0);
+        clk_mhz   : positive
+    ) return unsigned;
+    -- Total acquisition budget: measurement range plus post-IrFlag drain
+    -- headroom. Zero max_range keeps the runtime range watchdog disabled;
+    -- nonzero sums saturate at the 16-bit counter limit.
+    function fn_range_budget_clks(
+        max_range_clks : unsigned(15 downto 0);
+        drain_margin   : natural
+    ) return unsigned;
+
+    -- Runtime MAX_HITS helpers (for dynamic max_hits_cfg)
+    function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural;
+    function fn_effective_max_hits(
+        cfg       : unsigned(2 downto 0);
+        build_max : positive
+    ) return natural;
+    function fn_cell_size_rt(max_hits : natural) return natural;
+    function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural;
+    -- Canonical VDMA storage keeps the existing 32-bit cell word ABI:
+    -- ceil(max_hits/2) hit words followed by one metadata word. Wider AXIS
+    -- outputs pack these words across cell boundaries instead of padding each
+    -- cell to a full 64/128-bit beat.
+    function fn_canonical_cell_words(max_hits : natural) return natural;
+    function fn_canonical_cell_bytes(max_hits : natural) return natural;
+    function fn_align_up(value : natural; alignment : positive) return natural;
+    function fn_vdma_line_bytes(cell_slots : natural; max_hits : natural) return natural;
+
+    -- AXI4-Stream boundary width constants.
+    -- Phase B keeps C01/C02 internal raw/event payloads at their current
+    -- compact widths, but names each contract so output-width scaling
+    -- (32/64/128) cannot accidentally be confused with bus/raw/event widths.
+    constant c_AXIS_BYTE_WIDTH      : natural := 8;
+
+    -- Bus response mirror from C01 bus_phy to chip_ctrl.
+    constant c_BUS_RSP_TDATA_WIDTH  : natural := 32;
+    constant c_BUS_RSP_TUSER_WIDTH  : natural := 8;
+    constant c_BUS_RSP_TKEEP_WIDTH  : natural := c_BUS_RSP_TDATA_WIDTH / c_AXIS_BYTE_WIDTH;
+    constant c_BUS_RSP_PACK_WIDTH   : natural := c_BUS_RSP_TDATA_WIDTH + c_BUS_RSP_TUSER_WIDTH;
+
+    -- Raw IFIFO stream from chip_ctrl to decoder_i_mode.
+    constant c_RAW_AXIS_TDATA_WIDTH : natural := 32;
+    constant c_RAW_AXIS_TUSER_WIDTH : natural := 8;
+    constant c_RAW_AXIS_PACK_WIDTH  : natural := c_RAW_AXIS_TDATA_WIDTH + c_RAW_AXIS_TUSER_WIDTH;
+
+    -- Decoded event stream from raw_event_builder to cell_pipe.
+    constant c_EVT_AXIS_TDATA_WIDTH : natural := 32;
+    constant c_EVT_AXIS_TUSER_WIDTH : natural := 16;
+    constant c_EVT_AXIS_PACK_WIDTH  : natural := c_EVT_AXIS_TDATA_WIDTH + c_EVT_AXIS_TUSER_WIDTH;
+
+    constant c_SHOT_SEQ_WIDTH       : natural := 16;
+    constant c_TDC_BUS_WIDTH        : natural := 28;
+    constant c_TDC_ADR_WIDTH        : natural := 4;
+    constant c_RAW_HIT_WIDTH        : natural := 17;   -- TDC-GPX I-Mode raw hit (always 17-bit)
+    constant c_MAX_ROWS_PER_FACE    : natural := c_MAX_CHIPS * c_MAX_STOPS_PER_CHIP;  -- 32
+
+    -- =========================================================================
+    -- TDC-GPX register addresses (ADR[3:0])
+    -- =========================================================================
+    constant c_TDC_REG0             : std_logic_vector(3 downto 0) := x"0";
+    constant c_TDC_REG1             : std_logic_vector(3 downto 0) := x"1";
+    constant c_TDC_REG2             : std_logic_vector(3 downto 0) := x"2";
+    constant c_TDC_REG3             : std_logic_vector(3 downto 0) := x"3";
+    constant c_TDC_REG4             : std_logic_vector(3 downto 0) := x"4";
+    constant c_TDC_REG5             : std_logic_vector(3 downto 0) := x"5";
+    constant c_TDC_REG6             : std_logic_vector(3 downto 0) := x"6";
+    constant c_TDC_REG7             : std_logic_vector(3 downto 0) := x"7";
+    constant c_TDC_REG8_IFIFO1      : std_logic_vector(3 downto 0) := x"8";
+    constant c_TDC_REG9_IFIFO2      : std_logic_vector(3 downto 0) := x"9";
+    constant c_TDC_REG10            : std_logic_vector(3 downto 0) := x"A";
+    constant c_TDC_REG11            : std_logic_vector(3 downto 0) := x"B";
+    constant c_TDC_REG12            : std_logic_vector(3 downto 0) := x"C";
+    constant c_TDC_REG14            : std_logic_vector(3 downto 0) := x"E";
+
+    -- =========================================================================
+    -- TDC-GPX 28-bit raw word field positions
+    -- =========================================================================
+    constant c_RAW_CHACODE_HI       : natural := 27;
+    constant c_RAW_CHACODE_LO       : natural := 26;
+    constant c_RAW_STARTNUM_HI      : natural := 25;   -- reserved (always 0 in SINGLE_SHOT)
+    constant c_RAW_STARTNUM_LO      : natural := 18;
+    constant c_RAW_SLOPE_BIT        : natural := 17;
+    constant c_RAW_HIT_HI           : natural := 16;
+    constant c_RAW_HIT_LO           : natural := 0;
+
+    -- =========================================================================
+    -- Cell size calculation
+    -- =========================================================================
+    function fn_cell_payload_bits(
+        hit_slot_width : natural;
+        max_hits       : natural
+    ) return natural;
+
+    function fn_ceil_pow2(x : natural) return natural;
+
+    function fn_cell_size_bytes(
+        hit_slot_width : natural;
+        max_hits       : natural
+    ) return natural;
+
+    function fn_count_ones(v : std_logic_vector) return natural;
+    -- A non-zero count suitable for entity port bounds. A zero mask returns
+    -- one only to keep the interface elaboratable; each owner separately
+    -- rejects a zero present mask with a severity-failure assertion.
+    function fn_physical_chip_count(v : std_logic_vector) return positive;
+    -- Compact physical lane for an asserted logical chip slot. Physical lanes
+    -- are ordered by ascending logical chip ID, preserving sparse slot IDs in
+    -- CSR/header metadata without exporting unused pins.
+    function fn_physical_chip_index(
+        present_mask : std_logic_vector;
+        logical_chip : natural
+    ) return natural;
+    function fn_first_one_mask(v : std_logic_vector) return std_logic_vector;
+
+    -- (Round 11 item 9 pack/unpack helpers are declared below, after
+    -- t_tdc_cfg is defined.)
+
+    -- Cell size and derived constants: auto-calculated from MAX_HITS
+    -- (deferred constants — full definitions in package body using fn_cell_size_bytes)
+    -- Legacy power-of-two internal cell allocation; not the packed VDMA
+    -- serialized cell size reported through the pipeline CSR.
+    constant c_CELL_SIZE_BYTES      : natural;
+    constant c_BEATS_PER_CELL       : natural;
+    constant c_DATA_BEATS_MAX       : natural;
+    constant c_HSIZE_BEATS_MAX      : natural;
+    constant c_HSIZE_MAX            : natural;
+
+    -- Header prefix (embedded in each VDMA line, 48 bytes fixed)
+    constant c_HDR_PREFIX_BYTES     : natural := 48;
+    constant c_HDR_PREFIX_BEATS     : natural := c_HDR_PREFIX_BYTES / c_DEFAULT_OUTPUT_BYTES;
+    -- All supported output widths divide 16 bytes. Aligning only at the line
+    -- boundary keeps full TKEEP and a width-independent HSIZE/STRIDE while
+    -- avoiding the former per-cell padding.
+    constant c_VDMA_LINE_ALIGN_BYTES : positive := 16;
+    -- Packed VDMA maxima are width-independent: wider AXIS beats repack the
+    -- same canonical 32-bit words without per-cell padding.
+    constant c_CANONICAL_CELL_BYTES_MAX : natural;
+    constant c_VDMA_LINE_BYTES_MAX      : natural;
+
+    -- =========================================================================
+    -- AXI-Stream array type (for multi-chip slice data)
+    -- =========================================================================
+    type t_expected_array is array(0 to c_MAX_CHIPS - 1) of unsigned(7 downto 0);
+
+    type t_axis_tdata_array is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(c_DEFAULT_OUTPUT_WIDTH - 1 downto 0);
+
+    subtype t_bus_rsp_tdata is std_logic_vector(c_BUS_RSP_TDATA_WIDTH - 1 downto 0);
+    subtype t_bus_rsp_tuser is std_logic_vector(c_BUS_RSP_TUSER_WIDTH - 1 downto 0);
+    subtype t_raw_axis_tdata is std_logic_vector(c_RAW_AXIS_TDATA_WIDTH - 1 downto 0);
+    subtype t_raw_axis_tuser is std_logic_vector(c_RAW_AXIS_TUSER_WIDTH - 1 downto 0);
+    subtype t_evt_axis_tdata is std_logic_vector(c_EVT_AXIS_TDATA_WIDTH - 1 downto 0);
+    subtype t_evt_axis_tuser is std_logic_vector(c_EVT_AXIS_TUSER_WIDTH - 1 downto 0);
+
+    type t_bus_rsp_tdata_array is array(0 to c_MAX_CHIPS - 1) of t_bus_rsp_tdata;
+    type t_bus_rsp_tuser_array is array(0 to c_MAX_CHIPS - 1) of t_bus_rsp_tuser;
+    type t_raw_axis_tdata_array is array(0 to c_MAX_CHIPS - 1) of t_raw_axis_tdata;
+    type t_raw_axis_tuser_array is array(0 to c_MAX_CHIPS - 1) of t_raw_axis_tuser;
+    type t_evt_axis_tdata_array is array(0 to c_MAX_CHIPS - 1) of t_evt_axis_tdata;
+    type t_evt_axis_tuser_array is array(0 to c_MAX_CHIPS - 1) of t_evt_axis_tuser;
+
+    -- =========================================================================
+    -- TDC-GPX physical bus array types (for top-level port maps)
+    -- =========================================================================
+    type t_tdc_bus_array is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+    type t_tdc_adr_array is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(c_TDC_ADR_WIDTH - 1 downto 0);
+
+    -- =========================================================================
+    -- Per-chip pipeline array types (package scope)
+    -- Used by cluster wrapper port lists and top-level signal declarations.
+    -- =========================================================================
+    type t_slv32_array    is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(31 downto 0);
+    type t_slv16_array    is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(15 downto 0);
+    type t_slv8_array     is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(7 downto 0);
+    type t_slv4_array     is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(3 downto 0);
+    type t_slv28_array    is array(0 to c_MAX_CHIPS - 1)
+        of std_logic_vector(c_TDC_BUS_WIDTH - 1 downto 0);
+    type t_u2_array       is array(0 to c_MAX_CHIPS - 1)
+        of unsigned(1 downto 0);
+    type t_u3_array       is array(0 to c_MAX_CHIPS - 1)
+        of unsigned(2 downto 0);
+    type t_u6_array       is array(0 to c_MAX_CHIPS - 1)
+        of unsigned(5 downto 0);
+    type t_shot_seq_array is array(0 to c_MAX_CHIPS - 1)
+        of unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+    type t_raw_hit_array  is array(0 to c_MAX_CHIPS - 1)
+        of unsigned(c_RAW_HIT_WIDTH - 1 downto 0);
+
+    -- =========================================================================
+    -- cfg_image array type (TDC-GPX register image stored in CSR)
+    -- =========================================================================
+    type t_cfg_image is array(0 to 15) of std_logic_vector(31 downto 0);
+    type t_cfg_image_array is array(0 to c_MAX_CHIPS - 1) of t_cfg_image;
+
+    -- =========================================================================
+    -- t_tdc_cfg : CSR configuration (CSR -> submodules)
+    -- Fields latched at appropriate boundaries (face_start / shot_start /
+    -- transaction entry) and stable during active processing.
+    --
+    -- Merged field ownership across the two AXI-Lite CSR banks:
+    --   PIPE CTL0  MAIN_CTRL  : packed control fields + COMMAND[31:28]
+    --   PIPE CTL1  RANGE_COLS : max_range_5ns_ticks[15:0] + cols_per_face[31:16]
+    --   CHIP CTL1  BUS_TIMING : bus_clk_div[5:0] + bus_ticks[8:6]
+    --   CHIP CTL3  START_OFF1 : [17:0]
+    --   CHIP CTL4  CFG_REG7   : [31:0]
+    -- =========================================================================
+    type t_tdc_cfg is record
+        -- CTL0: MAIN_CTRL packed fields
+        active_chip_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);     -- CTL0[3:0]
+        packet_scope        : std_logic;                                    -- CTL0[4]    HEADER-ONLY
+        hit_store_mode      : unsigned(1 downto 0);                         -- CTL0[6:5]  HEADER-ONLY
+        dist_scale          : unsigned(2 downto 0);                         -- CTL0[9:7]  HEADER-ONLY
+        drain_mode          : std_logic;                                    -- CTL0[10]
+        pipeline_en         : std_logic;                                    -- CTL0[11]   HEADER-ONLY
+        n_faces             : unsigned(2 downto 0); -- static motor geometry sideband snapshot
+        stops_per_chip      : unsigned(3 downto 0);                         -- CTL0[18:15]
+        n_drain_cap         : unsigned(3 downto 0);                         -- CTL0[22:19]
+        stopdis_override    : std_logic_vector(4 downto 0);                 -- CTL0[27:23]
+        -- CTL1: BUS_TIMING
+        bus_clk_div         : unsigned(5 downto 0);                         -- CTL1[5:0]
+        bus_ticks           : unsigned(2 downto 0);                         -- CTL1[8:6]
+        -- Pipeline CSR CTL1 (0x04): RANGE_COLS
+        -- max_range_5ns_ticks: physical round-trip bound (= 2 × max_distance
+        -- / c) encoded in 200 MHz reference ticks, i.e. fixed 5 ns units.
+        -- Software must calculate ceil(round_trip_time / 5 ns), regardless
+        -- of the actual TDC or AXIS clock. Each processing domain converts
+        -- this value to its local clock count with fn_range_5ns_ticks_to_clks.
+        -- Drives the chip_run physical drain watchdog and AXIS cell timeouts.
+        -- SW operating
+        -- contract: shot_period = 1.5 × round-trip (50% PRF headroom) — see
+        -- Doc/vdma_packet_structure.html §5 and Doc/260419/task_distance_
+        -- bounded_windows_2026-04-19.md for the 5-distance reference table.
+        -- Value 0 disables the range/window check entirely.
+        max_range_5ns_ticks : unsigned(15 downto 0);                        -- PIPE CTL1[15:0]
+        cols_per_face       : unsigned(15 downto 0);                        -- PIPE CTL1[31:16]
+        -- CTL3: START_OFF1
+        start_off1          : unsigned(17 downto 0);                        -- CTL3[17:0]
+        -- CTL4: CFG_REG7
+        cfg_reg7            : std_logic_vector(31 downto 0);                -- CTL4[31:0]
+        -- CTL21: SCAN_TIMEOUT + MAX_HITS + FALLING_ENABLE
+        max_scan_5ns_ticks  : unsigned(15 downto 0);                        -- CTL21[15:0]
+        max_hits_cfg        : unsigned(2 downto 0);                         -- CTL21[18:16] (1~7, 0→7)
+        falling_enable      : std_logic;                                    -- CTL21[19]
+    end record;
+
+    constant c_TDC_CFG_INIT : t_tdc_cfg := (
+        active_chip_mask    => c_ALL_CHIPS_MASK,
+        packet_scope        => '0',                     -- face scope
+        hit_store_mode      => "00",                    -- RAW
+        dist_scale          => "000",                   -- 1mm
+        drain_mode          => '0',                     -- SourceGating
+        pipeline_en         => '0',                     -- sequential
+        n_faces             => to_unsigned(5, 3),
+        stops_per_chip      => to_unsigned(c_MAX_STOPS_PER_CHIP, 4),
+        n_drain_cap         => (others => '0'),         -- unlimited
+        stopdis_override    => (others => '0'),
+        bus_clk_div         => to_unsigned(2, 6),  -- safe default; min legal div is 1
+        bus_ticks           => to_unsigned(5, 3),
+        max_range_5ns_ticks => to_unsigned(267, 16),    -- ~200m, 267 x 5ns
+        cols_per_face       => to_unsigned(2400, 16),
+        start_off1          => (others => '0'),
+        cfg_reg7            => (others => '0'),
+        max_scan_5ns_ticks  => to_unsigned(0, 16),          -- 0 = programmable timeout disabled; hard cap remains
+        max_hits_cfg        => to_unsigned(c_MAX_HITS_PER_STOP, 3),
+        falling_enable      => c_DEFAULT_FALLING_ENABLE
+    );
+
+    -- =========================================================================
+    -- Round 11 item 9: atomic CDC pack/unpack helpers for t_tdc_cfg.
+    -- xpm_cdc_handshake carries a std_logic_vector; these helpers flatten
+    -- the record into a fixed-width vector and restore it on the far side.
+    -- Field order MUST match between pack/unpack — any divergence silently
+    -- corrupts the destination bundle.
+    -- =========================================================================
+    constant c_TDC_CFG_BITS : natural :=
+          c_MAX_CHIPS    -- active_chip_mask
+        + 1            -- packet_scope
+        + 2            -- hit_store_mode
+        + 3            -- dist_scale
+        + 1            -- drain_mode
+        + 1            -- pipeline_en
+        + 3            -- n_faces
+        + 4            -- stops_per_chip
+        + 4            -- n_drain_cap
+        + 5            -- stopdis_override
+        + 6            -- bus_clk_div
+        + 3            -- bus_ticks
+        + 16           -- max_range_5ns_ticks
+        + 16           -- cols_per_face
+        + 18           -- start_off1
+        + 32           -- cfg_reg7
+        + 16           -- max_scan_5ns_ticks
+        + 3            -- max_hits_cfg
+        + 1;           -- falling_enable
+
+    function fn_pack_tdc_cfg(cfg : t_tdc_cfg) return std_logic_vector;
+    function fn_unpack_tdc_cfg(v  : std_logic_vector) return t_tdc_cfg;
+
+    -- =========================================================================
+    -- Round 13 axis 3: STICKY LIFETIME CATEGORIES
+    -- =========================================================================
+    -- Every sticky / status field in this record falls into one of four
+    -- lifetime categories. The category determines what CLEARS the sticky:
+    --
+    --   HISTORICAL   — hard reset (i_rst_n) only. Survives soft_reset,
+    --                  err_soft_clear, cmd_stop, cmd_start.
+    --                  Example: chip_error_mask and quarantine_escape_mask.
+    --                  Use when SW needs "did this EVER happen?" answer.
+    --
+    --   LAST-TX      — cleared on next transaction accept. Overrides
+    --                  historical — this category reflects THIS op's state.
+    --                  Example: cmd_arb reg_timeout_mask (cleared on new
+    --                  reg request).
+    --                  Use when "state of the current/just-finished op".
+    --
+    --   SOFT-CLEAR   — cleared by i_err_soft_clear pulse (SW-initiated).
+    --                  Example: err_chip_mask, err_cause, err_reg_overflow,
+    --                  chip_reg req_overflow.
+    --                  Use for per-run error history that SW explicitly
+    --                  acks before starting a new run.
+    --
+    --   RUN-SCOPED   — cleared on cmd_start_accepted. Reflects this run's
+    --                  outcome only.
+    --                  Example: shot_drop_count, frame_abort_count.
+    --                  Use for per-run counters.
+    --
+    -- When adding new fields, put the category in the comment so reviewers
+    -- and SW can map CSR semantics consistently across modules.
+    -- =========================================================================
+
+    -- =========================================================================
+    -- t_tdc_status : Status feedback (submodules -> CSR)
+    -- =========================================================================
+    type t_tdc_status is record
+        busy                : std_logic;
+        pipeline_overrun    : std_logic;
+        err_fatal           : std_logic;  -- err_handler fatal recovery failure
+        chip_error_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        drain_timeout_mask  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip drain timeout
+        sequence_error_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip sequence error
+        shot_seq_current    : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+        vdma_frame_count    : unsigned(31 downto 0);
+        error_cycle_count         : unsigned(31 downto 0);
+        shot_drop_count     : unsigned(15 downto 0);  -- deferred-shot overflow drops
+        frame_abort_count   : unsigned(15 downto 0);  -- frames discarded by abort
+        err_active          : std_logic;               -- err_handler recovery in progress
+        err_chip_mask       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chips under recovery
+        err_cause           : std_logic_vector(2 downto 0);  -- [0]=HitFIFO [1]=IFIFO [2]=PLL
+        rsp_mismatch_mask   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- bus response tuser mismatch
+        cfg_rejected        : std_logic;  -- cmd_start rejected due to invalid config
+        run_timeout_mask    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip chip_run timeout (sticky)
+        reg_arb_timeout     : std_logic;  -- cmd_arb register access timeout (sticky)
+        shot_drop_any       : std_logic;  -- OR of all cell_builder shot_dropped (rise+fall)
+        slice_timeout_any   : std_logic;  -- OR of all cell_builder slice_timeout (rise+fall)
+        -- #22 Sprint 3 — per-slope overrun (rise is primary; fall alone may
+        -- abort without killing rise's dedicated VDMA stream). SW correlates
+        -- the frames per-memory-address with these fields.
+        rise_overrun        : std_logic;  -- rise face_assembler overrun
+        fall_overrun        : std_logic;  -- fall face_assembler overrun only
+        -- Round 5 follow-up: 7 observability stickies surfaced to SW via STAT6
+        err_read_timeout    : std_logic;  -- err_handler ST_WAIT_READ watchdog fired (sticky)
+        reg_rejected        : std_logic;  -- cmd_arb request loss: queue full or simultaneous R+W (sticky)
+        reg_zero_mask       : std_logic;  -- cmd_arb got a zero chip_mask request (sticky)
+        err_reg_overflow_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chip_reg request loss: queue full or simultaneous R+W (per-chip sticky)
+        run_drain_complete_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- chip_run internal drain-complete seen (per-chip sticky latched from pulse)
+        rise_shot_flush_drop : std_logic;  -- rise face_assembler dropped non-empty FIFO on shot_start (sticky)
+        fall_shot_flush_drop : std_logic;  -- fall face_assembler dropped non-empty FIFO on shot_start (sticky)
+        rise_shot_overrun_count : unsigned(7 downto 0);  -- rise face_assembler blank-fill invocation count (wrap)
+        fall_shot_overrun_count : unsigned(7 downto 0);  -- fall face_assembler blank-fill invocation count (wrap)
+        -- Round 11 C: observability surface for CSR (STAT7).
+        reg_timeout_mask       : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- cmd_arb per-chip reg timeout
+        stop_id_error_mask     : std_logic_vector(c_MAX_CHIPS - 1 downto 0);  -- per-chip cell_builder stop_id out-of-range sticky
+        run_timeout_cause_last : std_logic_vector(2 downto 0);  -- chip_run last timeout cause (any chip, most recent)
+        rise_face_start_collapsed_count : unsigned(7 downto 0);
+        fall_face_start_collapsed_count : unsigned(7 downto 0);
+        -- Round 11 item 3: header_inserter drain-watchdog sticky per slope.
+        -- Asserts when ST_DRAIN_LAST or ST_ABORT_DRAIN force-escapes to IDLE
+        -- due to downstream AXI sink stall. Indicates the corresponding VDMA
+        -- frame is truncated; SW should issue cmd_soft_reset before the next
+        -- run. Wiring into CSR (STAT register packing) is a follow-up.
+        rise_hdr_drain_timeout : std_logic;
+        fall_hdr_drain_timeout : std_logic;
+        -- Round 11 item 4: cell_builder ST_C_QUARANTINE escalation sticky
+        -- mask (per chip, OR of rise/fall slopes). Bit i = '1' means chip i's
+        -- QUARANTINE force-escaped because neither drain_done nor i_abort
+        -- arrived within ~4.9ms — the chip's slice stream is out of sync.
+        -- Cleared only by full i_rst_n (cell_builder has no soft-reset).
+        quarantine_escape_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        -- Round 11 item 11: err_handler ST_WAIT_FRAME_DONE escape sticky
+        -- (distinct from err_read_timeout so SW can tell the two failure
+        -- modes apart).
+        err_frame_wait_escape  : std_logic;
+        -- Round 11 item 14: per-chip chip_init cfg_write coalesce sticky mask.
+        init_cfg_coalesced_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        -- Round 11 item 15: per-chip shot_flush_drop mask (OR of rise+fall).
+        -- Bit i = '1' (latched) if chip i's face_assembler input FIFO held
+        -- old-shot tail data at a shot_start boundary on either slope.
+        shot_flush_drop_mask : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        -- Round 11 item 18 (C): per-chip PH_IDLE cmd-collision sticky mask.
+        -- Bit i = '1' means chip i's chip_ctrl saw >1 command pulse in the
+        -- same PH_IDLE cycle. Under correct operation this should stay zero
+        -- (cmd_arb enforces mutual exclusion at source); a fire indicates a
+        -- cmd_arb contract violation, not a chip_ctrl bug.
+        cmd_collision_mask   : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        -- Round 12 #19: per-slope header_inserter abort-truncation sticky.
+        rise_hdr_abort_truncated : std_logic;
+        fall_hdr_abort_truncated : std_logic;
+        -- Round 12 #18: partial/blank chip error split per slope.
+        rise_chip_error_partial  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        rise_chip_error_blank    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        fall_chip_error_partial  : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        fall_chip_error_blank    : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        -- Round 13 axis 2: per-chip bus fatal sticky mask.
+        bus_fatal_mask           : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        -- Round 13 axis 1b: header_inserter frame_done_faulted sticky
+        -- (either slope's drain-watchdog escape → frame is synthetic).
+        frame_done_faulted_sticky : std_logic;
+        -- Round 13 axis 1c: face_assembler row_done_faulted sticky
+        -- (either slope's row had blank-fill / chip_error).
+        row_done_faulted_sticky  : std_logic;
+        -- Round 12 #15: distinct per-chip raw-overflow cause masks.
+        raw_drop_mask            : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        drain_cap_mask           : std_logic_vector(c_MAX_CHIPS - 1 downto 0);
+        -- Round 12 #17: per-chip last run_timeout_cause (3-bit × N_CHIPS packed).
+        run_timeout_cause_per_chip : std_logic_vector(3 * c_MAX_CHIPS - 1 downto 0);
+        -- CHAIN P1 (2026-07-16): cell_pipe masked-slope hit drop, OR across
+        -- all chips and both slopes. Set means a hit beat addressed a slope
+        -- lane its chip does not serve (physical edge misconfiguration in
+        -- DEDICATED topology). Per-chip masks exist at cell_pipe outputs
+        -- (o_masked_slope_drop_rise/fall) for sim/ILA use; the 8-STAT
+        -- pipeline CSR budget only carries this OR bit (STAT7[15]).
+        -- SOFT-CLEAR history: cmd_stop/abort preserves this for post-run
+        -- read; CTL2[1] err_soft_clear starts the next diagnostic epoch.
+        masked_slope_drop_any    : std_logic;
+    end record;
+
+    constant c_TDC_STATUS_INIT : t_tdc_status := (
+        busy                => '0',
+        pipeline_overrun    => '0',
+        err_fatal           => '0',
+        chip_error_mask     => (others => '0'),
+        drain_timeout_mask  => (others => '0'),
+        sequence_error_mask => (others => '0'),
+        shot_seq_current    => (others => '0'),
+        vdma_frame_count    => (others => '0'),
+        error_cycle_count         => (others => '0'),
+        shot_drop_count     => (others => '0'),
+        frame_abort_count   => (others => '0'),
+        err_active          => '0',
+        err_chip_mask       => (others => '0'),
+        err_cause           => (others => '0'),
+        rsp_mismatch_mask   => (others => '0'),
+        cfg_rejected        => '0',
+        run_timeout_mask    => (others => '0'),
+        reg_arb_timeout     => '0',
+        shot_drop_any       => '0',
+        slice_timeout_any   => '0',
+        rise_overrun        => '0',
+        fall_overrun        => '0',
+        err_read_timeout    => '0',
+        reg_rejected        => '0',
+        reg_zero_mask       => '0',
+        err_reg_overflow_mask => (others => '0'),
+        run_drain_complete_mask => (others => '0'),
+        rise_shot_flush_drop => '0',
+        fall_shot_flush_drop => '0',
+        rise_shot_overrun_count => (others => '0'),
+        fall_shot_overrun_count => (others => '0'),
+        reg_timeout_mask        => (others => '0'),
+        stop_id_error_mask      => (others => '0'),
+        run_timeout_cause_last  => (others => '0'),
+        rise_face_start_collapsed_count => (others => '0'),
+        fall_face_start_collapsed_count => (others => '0'),
+        rise_hdr_drain_timeout  => '0',
+        fall_hdr_drain_timeout  => '0',
+        quarantine_escape_mask  => (others => '0'),
+        err_frame_wait_escape   => '0',
+        init_cfg_coalesced_mask => (others => '0'),
+        shot_flush_drop_mask    => (others => '0'),
+        cmd_collision_mask      => (others => '0'),
+        rise_hdr_abort_truncated => '0',
+        fall_hdr_abort_truncated => '0',
+        raw_drop_mask            => (others => '0'),
+        drain_cap_mask           => (others => '0'),
+        run_timeout_cause_per_chip => (others => '0'),
+        masked_slope_drop_any    => '0',
+        rise_chip_error_partial  => (others => '0'),
+        rise_chip_error_blank    => (others => '0'),
+        fall_chip_error_partial  => (others => '0'),
+        fall_chip_error_blank    => (others => '0'),
+        bus_fatal_mask           => (others => '0'),
+        frame_done_faulted_sticky => '0',
+        row_done_faulted_sticky  => '0'
+    );
+
+    -- =========================================================================
+    -- t_raw_event : Decoded IFIFO read (decoder_i_mode -> raw_event_builder -> cell)
+    -- Key = {chip_id, shot_seq, stop_id_local}
+    -- =========================================================================
+    type t_raw_event is record
+        valid               : std_logic;
+        chip_id             : unsigned(1 downto 0);         -- 0..3
+        ififo_id            : std_logic;                    -- '0'=IFIFO1, '1'=IFIFO2
+        stop_id_local       : unsigned(2 downto 0);         -- 0..7
+        slope               : std_logic;
+        raw_hit             : unsigned(c_RAW_HIT_WIDTH - 1 downto 0);       -- 17-bit (truncation at cell_builder)
+        shot_seq            : unsigned(c_SHOT_SEQ_WIDTH - 1 downto 0);
+        hit_seq_local       : unsigned(2 downto 0);         -- 0..7 (per slope, MAX_HITS=7)
+    end record;
+
+    constant c_RAW_EVENT_INIT : t_raw_event := (
+        valid               => '0',
+        chip_id             => (others => '0'),
+        ififo_id            => '0',
+        stop_id_local       => (others => '0'),
+        slope               => '0',
+        raw_hit             => (others => '0'),
+        shot_seq            => (others => '0'),
+        hit_seq_local       => (others => '0')
+    );
+
+    -- =========================================================================
+    -- t_cell : Dense hit storage for one stop channel, one shot
+    -- Cell byte layout: hit_slot[0..MAX-1] + metadata vectors.
+    -- Datasheet I-Mode raw Hit[16:0] is serialized as:
+    --   hit_slot[n]   = Hit[15:0]
+    --   hit_msb_vec[n]= Hit[16] in the metadata beat
+    -- =========================================================================
+    type t_hit_slot_array is array (0 to c_MAX_HITS_PER_STOP - 1)
+        of unsigned(c_HIT_SLOT_DATA_WIDTH - 1 downto 0);
+
+    type t_cell is record
+        hit_slot            : t_hit_slot_array;
+        hit_msb_vec         : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
+        hit_valid           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
+        slope_vec           : std_logic_vector(c_MAX_HITS_PER_STOP - 1 downto 0);
+        hit_count_actual    : unsigned(3 downto 0);         -- 0..c_MAX_HITS_PER_STOP
+        hit_dropped         : std_logic;
+        error_fill          : std_logic;
+    end record;
+
+    constant c_CELL_INIT : t_cell := (
+        hit_slot            => (others => (others => '0')),
+        hit_msb_vec         => (others => '0'),
+        hit_valid           => (others => '0'),
+        slope_vec           => (others => '0'),
+        hit_count_actual    => (others => '0'),
+        hit_dropped         => '0',
+        error_fill          => '0'
+    );
+
+    -- =========================================================================
+    -- HIT_STORE_MODE constants
+    -- =========================================================================
+    constant c_STORE_RAW            : unsigned(1 downto 0) := "00";
+    constant c_STORE_CORRECTED      : unsigned(1 downto 0) := "01";
+    constant c_STORE_DISTANCE       : unsigned(1 downto 0) := "10";
+
+    -- =========================================================================
+    -- Header magic word: b"TDCG" (byte signature)
+    -- =========================================================================
+    constant c_HEADER_MAGIC         : std_logic_vector(31 downto 0) := x"47434454";
+    -- LE interpretation: Byte0=0x54('T'), Byte1=0x44('D'), Byte2=0x43('C'), Byte3=0x47('G')
+
+end package tdc_gpx_pkg;
+
+-- =============================================================================
+-- Package body: function implementations
+-- =============================================================================
+
+package body tdc_gpx_pkg is
+
+    -- =========================================================================
+    -- Deferred constants: cell size and derived VDMA line metrics
+    -- =========================================================================
+    constant c_CELL_SIZE_BYTES : natural := -- 32
+        fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, c_MAX_HITS_PER_STOP);
+    constant c_BEATS_PER_CELL  : natural := c_CELL_SIZE_BYTES / c_DEFAULT_OUTPUT_BYTES;
+    constant c_DATA_BEATS_MAX  : natural := c_MAX_ROWS_PER_FACE * c_BEATS_PER_CELL;
+    constant c_HSIZE_BEATS_MAX : natural := c_HDR_PREFIX_BEATS + c_DATA_BEATS_MAX;
+    constant c_HSIZE_MAX       : natural := c_HSIZE_BEATS_MAX * c_DEFAULT_OUTPUT_BYTES;
+    constant c_CANONICAL_CELL_BYTES_MAX : natural :=
+        fn_canonical_cell_bytes(c_MAX_HITS_PER_STOP);
+    constant c_VDMA_LINE_BYTES_MAX : natural :=
+        fn_vdma_line_bytes(c_MAX_ROWS_PER_FACE, c_MAX_HITS_PER_STOP);
+
+    -- Cell payload bits (Format 0, Zynq-7000)
+    -- hit_slot[MAX] + metadata beat fields.
+    -- hit_msb_vec is packed into reserved metadata bits and therefore does
+    -- not add a serialized beat.
+    function fn_cell_payload_bits(
+        hit_slot_width : natural;
+        max_hits       : natural
+    ) return natural is
+    begin
+        return hit_slot_width * max_hits    -- hit_slot
+             + max_hits                     -- hit_valid
+             + max_hits                     -- slope_vec
+             + 4 + 1 + 1;                   -- hit_count_actual + hit_dropped + error_fill
+    end function;
+
+    -- Integer ceiling division: ceil(a / b)
+    function fn_ceil_div(a : natural; b : positive) return natural is
+    begin
+        return (a + b - 1) / b;
+    end function;
+
+    function fn_time_ns_to_clks_ceil(
+        time_ns : natural;
+        clk_mhz : positive
+    ) return natural is
+    begin
+        -- MHz * ns / 1000 = clocks.
+        return fn_ceil_div(time_ns * clk_mhz, 1_000);
+    end function;
+
+    function fn_time_ps_to_clks_ceil(
+        time_ps : natural;
+        clk_mhz : positive
+    ) return natural is
+    begin
+        -- MHz * ps / 1,000,000 = clocks.
+        return fn_ceil_div(time_ps * clk_mhz, 1_000_000);
+    end function;
+
+    -- Round up to next power of 2
+    function fn_ceil_pow2(x : natural) return natural is
+        variable result : natural := 1;
+    begin
+        while result < x loop
+            result := result * 2;
+        end loop;
+        return result;
+    end function;
+
+    -- Cell size in bytes (aligned to power of 2)
+    function fn_cell_size_bytes(
+        hit_slot_width : natural;
+        max_hits       : natural
+    ) return natural is
+        variable payload_bits : natural;
+        variable raw_bytes    : natural;
+    begin
+        payload_bits := fn_cell_payload_bits(hit_slot_width, max_hits);
+        raw_bytes    := fn_ceil_div(payload_bits, 8);
+        return fn_ceil_pow2(raw_bytes);
+    end function;
+
+    -- Count '1' bits in a std_logic_vector
+    function fn_count_ones(v : std_logic_vector) return natural is
+        variable cnt : natural := 0;
+    begin
+        for i in v'range loop
+            if v(i) = '1' then
+                cnt := cnt + 1;
+            end if;
+        end loop;
+        return cnt;
+    end function;
+
+    function fn_physical_chip_count(v : std_logic_vector) return positive is
+        variable count : natural := fn_count_ones(v);
+    begin
+        if count = 0 then
+            return 1;
+        end if;
+        return count;
+    end function;
+
+    function fn_physical_chip_index(
+        present_mask : std_logic_vector;
+        logical_chip : natural
+    ) return natural is
+        variable rank : natural := 0;
+    begin
+        assert logical_chip >= present_mask'low
+           and logical_chip <= present_mask'high
+            report "fn_physical_chip_index: logical chip is outside mask range"
+            severity failure;
+        assert present_mask(logical_chip) = '1'
+            report "fn_physical_chip_index: logical chip is not present"
+            severity failure;
+
+        for i in present_mask'low to present_mask'high loop
+            if present_mask(i) = '1' then
+                if i = logical_chip then
+                    return rank;
+                end if;
+                rank := rank + 1;
+            end if;
+        end loop;
+        return 0;
+    end function;
+
+    -- Return a one-hot mask containing the lowest-index asserted bit.
+    -- This provides a deterministic fallback for an empty SW chip request.
+    function fn_first_one_mask(v : std_logic_vector) return std_logic_vector is
+        variable result : std_logic_vector(v'range) := (others => '0');
+    begin
+        for i in v'low to v'high loop
+            if v(i) = '1' then
+                result(i) := '1';
+                exit;
+            end if;
+        end loop;
+        return result;
+    end function;
+
+    -- =========================================================================
+    -- Generic-width helper functions (32/64/128-bit output bus support)
+    -- =========================================================================
+    function fn_output_width_supported(tdata_width : natural) return boolean is
+    begin
+        return (tdata_width = 32) or (tdata_width = 64) or (tdata_width = 128);
+    end function;
+
+    function fn_slots_per_beat(tdata_width : natural) return natural is
+    begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
+        return tdata_width / c_HIT_SLOT_DATA_WIDTH;
+    end function;
+
+    function fn_hit_data_beats(tdata_width : natural) return natural is
+    begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
+        return fn_ceil_div(c_MAX_HITS_PER_STOP, fn_slots_per_beat(tdata_width));
+    end function;
+
+    function fn_meta_beat_idx(tdata_width : natural) return natural is
+    begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
+        return fn_hit_data_beats(tdata_width);
+    end function;
+
+    function fn_beats_per_cell(tdata_width : natural) return natural is
+    begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
+        return c_CELL_SIZE_BYTES / (tdata_width / 8);
+    end function;
+
+    function fn_hdr_prefix_beats(tdata_width : natural) return natural is
+    begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
+        return c_HDR_PREFIX_BYTES / (tdata_width / 8);
+    end function;
+
+    function fn_axis_keep_width(tdata_width : natural) return natural is
+    begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
+        return tdata_width / 8;
+    end function;
+
+    function fn_range_clk_mhz_supported(clk_mhz : natural) return boolean is
+    begin
+        return clk_mhz = 50
+            or clk_mhz = 100
+            or clk_mhz = 125
+            or clk_mhz = 150
+            or clk_mhz = 200;
+    end function;
+
+    function fn_range_5ns_ticks_to_clks(
+        ticks_5ns : unsigned(15 downto 0);
+        clk_mhz   : positive
+    ) return unsigned is
+        -- 19 bits cover the largest supported numerator:
+        -- 5 * 65535 + 7 = 327682.
+        variable v_ticks  : unsigned(18 downto 0);
+        variable v_scaled : unsigned(18 downto 0);
+    begin
+        assert fn_range_clk_mhz_supported(clk_mhz)
+            report "tdc_gpx_pkg: range clock must be 50, 100, 125, 150, or 200 MHz"
+            severity failure;
+
+        v_ticks := resize(ticks_5ns, v_ticks'length);
+        case clk_mhz is
+            when 50 =>
+                -- ceil(N / 4) = (N + 3) >> 2
+                v_scaled := v_ticks + to_unsigned(3, v_scaled'length);
+                return resize(shift_right(v_scaled, 2), ticks_5ns'length);
+            when 100 =>
+                -- ceil(N / 2) = (N + 1) >> 1
+                v_scaled := v_ticks + to_unsigned(1, v_scaled'length);
+                return resize(shift_right(v_scaled, 1), ticks_5ns'length);
+            when 125 =>
+                -- ceil(5N / 8) = ((N << 2) + N + 7) >> 3
+                v_scaled := shift_left(v_ticks, 2) + v_ticks
+                            + to_unsigned(7, v_scaled'length);
+                return resize(shift_right(v_scaled, 3), ticks_5ns'length);
+            when 150 =>
+                -- ceil(3N / 4) = ((N << 1) + N + 3) >> 2
+                v_scaled := shift_left(v_ticks, 1) + v_ticks
+                            + to_unsigned(3, v_scaled'length);
+                return resize(shift_right(v_scaled, 2), ticks_5ns'length);
+            when 200 =>
+                return ticks_5ns;
+            when others =>
+                -- The assertion above is fatal in simulation. Keep a defined
+                -- synthesis return for tools that still elaborate this arm.
+                return ticks_5ns;
+        end case;
+    end function;
+
+    function fn_range_budget_clks(
+        max_range_clks : unsigned(15 downto 0);
+        drain_margin   : natural
+    ) return unsigned is
+        variable v_sum : unsigned(16 downto 0);
+    begin
+        if max_range_clks = 0 then
+            return to_unsigned(0, max_range_clks'length);
+        elsif drain_margin >= 65535 then
+            return to_unsigned(65535, max_range_clks'length);
+        end if;
+
+        v_sum := resize(max_range_clks, v_sum'length)
+                 + to_unsigned(drain_margin, v_sum'length);
+        if v_sum(v_sum'high) = '1' then
+            return to_unsigned(65535, max_range_clks'length);
+        end if;
+        return v_sum(max_range_clks'range);
+    end function;
+
+    function fn_effective_max_hits(cfg : unsigned(2 downto 0)) return natural is
+    begin
+        case cfg is
+            when "001" => return 1;
+            when "010" => return 2;
+            when "011" => return 3;
+            when "100" => return 4;
+            when "101" => return 5;
+            when "110" => return 6;
+            -- 000 is the defined full-capacity alias. Unknown startup values
+            -- also resolve conservatively to the protocol capacity.
+            when others => return c_MAX_HITS_PER_STOP;
+        end case;
+    end function;
+
+    function fn_effective_max_hits(
+        cfg       : unsigned(2 downto 0);
+        build_max : positive
+    ) return natural is
+        variable v_hits : natural;
+    begin
+        v_hits := fn_effective_max_hits(cfg);
+        if v_hits > build_max then
+            return build_max;
+        end if;
+        return v_hits;
+    end function;
+
+    -- Runtime cell size: same algorithm as fn_cell_size_bytes but with variable max_hits
+    function fn_cell_size_rt(max_hits : natural) return natural is
+    begin
+        return fn_cell_size_bytes(c_HIT_SLOT_DATA_WIDTH, max_hits);
+    end function;
+
+    function fn_beats_per_cell_rt(max_hits : natural; tdata_width : natural) return natural is
+        variable v_hit_beats : natural;
+    begin
+        assert fn_output_width_supported(tdata_width)
+            report "tdc_gpx_pkg: output TDATA width must be 32, 64, or 128"
+            severity failure;
+        -- hit data beats = ceil(max_hits / slots_per_beat), where each
+        -- output slot carries c_HIT_SLOT_DATA_WIDTH=16 bits:
+        --   32-bit TDATA:  2 slots/beat -> ceil(max_hits/2) + 1 meta beat
+        --   64-bit TDATA:  4 slots/beat -> ceil(max_hits/4) + 1 meta beat
+        --   128-bit TDATA: 8 slots/beat -> ceil(max_hits/8) + 1 meta beat
+        -- i_max_hits_cfg=000 is aliased to 7 by cell_builder before this
+        -- helper is selected, so callers should pass the effective 1..7 value.
+        v_hit_beats := fn_ceil_div(max_hits, tdata_width / c_HIT_SLOT_DATA_WIDTH);
+        -- total = hit beats + 1 metadata beat (always present)
+        return v_hit_beats + 1;
+    end function;
+
+    function fn_canonical_cell_words(max_hits : natural) return natural is
+    begin
+        assert max_hits >= 1 and max_hits <= c_MAX_HITS_PER_STOP
+            report "tdc_gpx_pkg: canonical cell max_hits must be in 1..7"
+            severity failure;
+        return fn_ceil_div(max_hits, 2) + 1;
+    end function;
+
+    function fn_canonical_cell_bytes(max_hits : natural) return natural is
+    begin
+        return fn_canonical_cell_words(max_hits) * 4;
+    end function;
+
+    function fn_align_up(value : natural; alignment : positive) return natural is
+    begin
+        return fn_ceil_div(value, alignment) * alignment;
+    end function;
+
+    function fn_vdma_line_bytes(cell_slots : natural; max_hits : natural) return natural is
+    begin
+        return c_HDR_PREFIX_BYTES
+             + fn_align_up(cell_slots * fn_canonical_cell_bytes(max_hits),
+                           c_VDMA_LINE_ALIGN_BYTES);
+    end function;
+
+    -- =========================================================================
+    -- Round 11 item 9: t_tdc_cfg ↔ std_logic_vector pack/unpack.
+    -- Layout is contiguous concatenation in declaration order. The
+    -- symmetric unpack reverses the same slicing, so any re-order of the
+    -- record fields MUST update both functions in lock-step.
+    -- =========================================================================
+    function fn_pack_tdc_cfg(cfg : t_tdc_cfg) return std_logic_vector is
+        variable v : std_logic_vector(c_TDC_CFG_BITS - 1 downto 0);
+        variable i : natural := 0;
+    begin
+        v(i + c_MAX_CHIPS - 1 downto i) := cfg.active_chip_mask;    i := i + c_MAX_CHIPS;
+        v(i)                          := cfg.packet_scope;        i := i + 1;
+        v(i + 1 downto i)             := std_logic_vector(cfg.hit_store_mode);    i := i + 2;
+        v(i + 2 downto i)             := std_logic_vector(cfg.dist_scale);        i := i + 3;
+        v(i)                          := cfg.drain_mode;          i := i + 1;
+        v(i)                          := cfg.pipeline_en;         i := i + 1;
+        v(i + 2 downto i)             := std_logic_vector(cfg.n_faces);           i := i + 3;
+        v(i + 3 downto i)             := std_logic_vector(cfg.stops_per_chip);    i := i + 4;
+        v(i + 3 downto i)             := std_logic_vector(cfg.n_drain_cap);       i := i + 4;
+        v(i + 4 downto i)             := cfg.stopdis_override;    i := i + 5;
+        v(i + 5 downto i)             := std_logic_vector(cfg.bus_clk_div);       i := i + 6;
+        v(i + 2 downto i)             := std_logic_vector(cfg.bus_ticks);         i := i + 3;
+        v(i + 15 downto i)            := std_logic_vector(cfg.max_range_5ns_ticks);    i := i + 16;
+        v(i + 15 downto i)            := std_logic_vector(cfg.cols_per_face);     i := i + 16;
+        v(i + 17 downto i)            := std_logic_vector(cfg.start_off1);        i := i + 18;
+        v(i + 31 downto i)            := cfg.cfg_reg7;            i := i + 32;
+        v(i + 15 downto i)            := std_logic_vector(cfg.max_scan_5ns_ticks); i := i + 16;
+        v(i + 2 downto i)             := std_logic_vector(cfg.max_hits_cfg);      i := i + 3;
+        v(i)                          := cfg.falling_enable;                       i := i + 1;
+        -- assert i = c_TDC_CFG_BITS;
+        return v;
+    end function;
+
+    function fn_unpack_tdc_cfg(v : std_logic_vector) return t_tdc_cfg is
+        variable cfg : t_tdc_cfg := c_TDC_CFG_INIT;
+        variable i   : natural := 0;
+    begin
+        cfg.active_chip_mask := v(i + c_MAX_CHIPS - 1 downto i);    i := i + c_MAX_CHIPS;
+        cfg.packet_scope     := v(i);                             i := i + 1;
+        cfg.hit_store_mode   := unsigned(v(i + 1 downto i));      i := i + 2;
+        cfg.dist_scale       := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.drain_mode       := v(i);                             i := i + 1;
+        cfg.pipeline_en      := v(i);                             i := i + 1;
+        cfg.n_faces          := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.stops_per_chip   := unsigned(v(i + 3 downto i));      i := i + 4;
+        cfg.n_drain_cap      := unsigned(v(i + 3 downto i));      i := i + 4;
+        cfg.stopdis_override := v(i + 4 downto i);                i := i + 5;
+        cfg.bus_clk_div      := unsigned(v(i + 5 downto i));      i := i + 6;
+        cfg.bus_ticks        := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.max_range_5ns_ticks := unsigned(v(i + 15 downto i));  i := i + 16;
+        cfg.cols_per_face    := unsigned(v(i + 15 downto i));     i := i + 16;
+        cfg.start_off1       := unsigned(v(i + 17 downto i));     i := i + 18;
+        cfg.cfg_reg7         := v(i + 31 downto i);               i := i + 32;
+        cfg.max_scan_5ns_ticks := unsigned(v(i + 15 downto i));   i := i + 16;
+        cfg.max_hits_cfg     := unsigned(v(i + 2 downto i));      i := i + 3;
+        cfg.falling_enable   := v(i);                             i := i + 1;
+        return cfg;
+    end function;
+
+end package body tdc_gpx_pkg;

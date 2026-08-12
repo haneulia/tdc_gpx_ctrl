@@ -321,6 +321,15 @@ begin
               state_proc.simulation_enable = '1' and
               state_proc.physical_fire_enable = '0',
             "V2-OP-P43 simulation/physical exclusion mismatch");
+        for index in 0 to 10 loop
+            exit when state_csr.scheduler_enable = '1' and
+                state_csr.simulation_enable = '1';
+            wait_csr_clocks(1);
+        end loop;
+        check(state_csr.scheduler_enable = '1' and
+              state_csr.simulation_enable = '1' and
+              state_csr.physical_fire_enable = '0',
+            "V2-OP-P43 derived CSR scheduler status mismatch");
         external_permit <= '1';
         wait_proc_clocks(3);
         check(state_proc.simulation_enable = '1' and

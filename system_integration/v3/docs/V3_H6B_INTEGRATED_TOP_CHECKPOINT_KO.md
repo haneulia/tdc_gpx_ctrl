@@ -20,7 +20,7 @@ V3 H1~H4 HLS와 유지 RTL AXI packer로 교체했다.
 이 H6-B1 판정 당시 Runtime VDMA, DDR와 PS 종단은 닫히지 않았다. 이후 보드 없이
 가능한 H6-B2 범위는
 [`V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md`](V3_H6B2_RUNTIME_VDMA_DDR_PS_SIGNOFF_KO.md)에서
-PASS했으며, 실제 VDMA/DDR/cache API/Ethernet과 보드 I/O는 H6-B3로 남는다.
+PASS했으며, 실제 VDMA/DDR/cache API/Ethernet과 보드 I/O는 H6-B4로 남는다.
 
 ## 2. 통합 구조
 
@@ -218,4 +218,4 @@ Sign-off 근거로 확대 해석하지 않는다.
 
 따라서 이 문서의 판정은 **H6-B1 통합 제어·데이터 경계 체크포인트 PASS**다.
 후속 H6-B2 보드 독립 결과는 별도 문서에서 PASS했으며, V3 전체 물리 Sign-off는
-H6-B3 보드 증거 완료 전까지 보류다.
+H6-B4 보드 증거 완료 전까지 보류다.

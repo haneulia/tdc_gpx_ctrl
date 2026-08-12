@@ -97,6 +97,7 @@ architecture rtl of lidar_gpx_acquisition_coordinator is
     signal lane_shot_c : shot_array_t :=
         (others => C_SHOT_START_EVENT_IDLE);
     signal lane_shot_ready_c : chip_mask_t := (others => '0');
+    signal lane_shot_ready_r : chip_mask_t := (others => '0');
     signal lane_event_c : gpx_raw_event_array_t :=
         (others => C_GPX_RAW_EVENT_IDLE);
     signal lane_event_ready_c : chip_mask_t := (others => '0');
@@ -171,7 +172,8 @@ begin
         i_soft_reset = '0' and i_force_reinit = '0' and
         i_active_valid = '1' and
         i_run_enable = '1' and active_mask_c /= (active_mask_c'range => '0') and
-        (lane_shot_ready_c and active_mask_c) = active_mask_c and
+        config_inflight_r = '0' and
+        (lane_shot_ready_r and active_mask_c) = active_mask_c and
         register_request_pending_r = '0' and
         register_read_outstanding_r = '0' and
         shot_dispatch_r.valid = '0' and
@@ -308,6 +310,22 @@ begin
             end if;
         end if;
     end process p_register_ready_pipeline;
+
+    -- 활성 Chip의 Shot ready를 먼저 등록해 다중 Chip ready 축약과 Shot
+    -- payload 레지스터 사이의 긴 조합 경로를 끊는다. 상승은 한 TDC
+    -- clock 보수적으로 늦어지지만, shot_ready_c가 현재 run/reset/config
+    -- 상태를 다시 확인하므로 이전 ready 값으로 Shot을 잘못 수락하지 않는다.
+    p_shot_ready_pipeline : process (i_clk)
+    begin
+        if rising_edge(i_clk) then
+            if i_rst_n = '0' or i_soft_reset = '1' or
+               i_force_reinit = '1' then
+                lane_shot_ready_r <= (others => '0');
+            else
+                lane_shot_ready_r <= lane_shot_ready_c;
+            end if;
+        end if;
+    end process p_shot_ready_pipeline;
 
 
     p_shot_broadcast : process (all)
