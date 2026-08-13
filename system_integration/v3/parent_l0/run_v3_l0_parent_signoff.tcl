@@ -37,6 +37,148 @@ proc l0_worst_slack {delay_type} {
     return [get_property SLACK $path]
 }
 
+# PS FCLK2가 공급하는 TDC-GPX bus/acquisition 200 MHz 도메인을 전체 설계
+# WNS/WHS와 분리해 관측한다.  0.100 ns는 timing PASS 기준이 아니라 5 ns
+# 주기의 2% 미만 경로를 조기에 드러내는 유지보수용 민감도 기준이다.
+proc l0_tdc_200mhz_metrics {} {
+    set setup_paths [get_timing_paths -quiet -group clk_fpga_2 \
+        -delay_type max -max_paths 100 -nworst 100]
+    set hold_paths [get_timing_paths -quiet -group clk_fpga_2 \
+        -delay_type min -max_paths 100 -nworst 100]
+    if {[llength $setup_paths] == 0 || [llength $hold_paths] == 0} {
+        error {TDC 200 MHz timing path group clk_fpga_2 is empty}
+    }
+
+    set setup_tight_count 0
+    foreach path $setup_paths {
+        if {[get_property SLACK $path] < 0.100} {
+            incr setup_tight_count
+        }
+    }
+    set hold_tight_count 0
+    foreach path $hold_paths {
+        if {[get_property SLACK $path] < 0.020} {
+            incr hold_tight_count
+        }
+    }
+
+    return [list \
+        [get_property SLACK [lindex $setup_paths 0]] \
+        [get_property SLACK [lindex $hold_paths 0]] \
+        $setup_tight_count $hold_tight_count]
+}
+
+# TDC 200 MHz Setup 경로를 Reset 분배와 일반 상태/데이터 처리로 나눈다.
+# proc_sys_reset의 peripheral_aresetn은 기능상 정상인 동기 Reset이지만,
+# 4-Chip IOB 레지스터 전체로 퍼지는 고팬아웃 배선이므로 일반 처리 경로와
+# 같은 WNS 하나로만 보면 병목의 물리 원인을 구분할 수 없다.
+proc l0_tdc_setup_class_metrics {} {
+    set paths [get_timing_paths -quiet -group clk_fpga_2 \
+        -delay_type max -max_paths 1000 -nworst 1000]
+    if {[llength $paths] == 0} {
+        error {TDC 200 MHz Setup classification path set is empty}
+    }
+
+    set worst_reset {}
+    set worst_regular {}
+    set reset_tight_count 0
+    set regular_tight_count 0
+    foreach path $paths {
+        set source [get_property STARTPOINT_PIN $path]
+        set endpoint [get_property ENDPOINT_PIN $path]
+        set slack [get_property SLACK $path]
+        set is_reset [expr {
+            [string match {*rst_tdc*} $source] ||
+            [regexp {/(R|S|CLR|PRE)$} $endpoint]
+        }]
+        if {$is_reset} {
+            if {$worst_reset eq {}} {
+                set worst_reset $path
+            }
+            if {$slack < 0.100} {
+                incr reset_tight_count
+            }
+        } else {
+            if {$worst_regular eq {}} {
+                set worst_regular $path
+            }
+            if {$slack < 0.100} {
+                incr regular_tight_count
+            }
+        }
+    }
+    if {$worst_reset eq {} || $worst_regular eq {}} {
+        error {TDC 200 MHz Setup classification did not find both path classes}
+    }
+    return [list \
+        [get_property SLACK $worst_reset] \
+        [get_property SLACK $worst_regular] \
+        $reset_tight_count $regular_tight_count \
+        [get_property MAX_FANOUT $worst_reset]]
+}
+
+proc l0_tdc_reset_replication_net {} {
+    set reset_net [get_nets -quiet -hier -regexp \
+        {^.*/rst_tdc/U0/peripheral_aresetn\[0\]$}]
+    if {[llength $reset_net] != 1} {
+        error "TDC Reset source net mismatch: expected=1 actual=[llength $reset_net]"
+    }
+    return $reset_net
+}
+
+proc l0_tdc_output_budget_metrics {} {
+    set tdc_outputs [get_ports -quiet [list \
+        {io_tdc_d[*]} {o_tdc_adr[*]} {o_tdc_csn[*]} {o_tdc_rdn[*]} \
+        {o_tdc_wrn[*]} {o_tdc_stopdis[*]} {o_tdc_alutrigger[*]} \
+        {o_tdc_puresn[*]}]]
+    set paths [get_timing_paths -quiet -from [get_clocks -quiet clk_fpga_2] \
+        -to $tdc_outputs -delay_type max -max_paths 152 -nworst 1]
+    if {[llength $paths] != 152} {
+        error "TDC output timing path-count mismatch: expected=152 actual=[llength $paths]"
+    }
+
+    set tight_count 0
+    foreach path $paths {
+        if {[get_property SLACK $path] < 0.100} {
+            incr tight_count
+        }
+    }
+
+    set worst_path [lindex $paths 0]
+    set data_path_delay [get_property DATAPATH_DELAY $worst_path]
+    # ENDPOINT_PIN은 Vivado 객체 handle이다. 합성 뒤 구현으로 design이 바뀌면
+    # 이전 handle이 null로 해석될 수 있으므로 즉시 문자열 이름으로 고정한다.
+    set worst_endpoint [get_property NAME \
+        [get_property ENDPOINT_PIN $worst_path]]
+    # Runtime TDC-GPX 버스 읽기 타이밍 (BUS_CLK_DIV/BUS_TICKS)은 최소
+    # 25 ns의 핀 유지구간을 보장한다. 아래 값은 가장 느린 register-to-pad
+    # 경로가 지난 뒤에도 외부 핀에 남는 보수적 안정시간이다.
+    set protocol_stable_margin [format %.3f \
+        [expr {25.000 - $data_path_delay}]]
+    return [list \
+        [get_property SLACK $worst_path] \
+        $tight_count \
+        $data_path_delay \
+        $protocol_stable_margin \
+        $worst_endpoint]
+}
+
+proc l0_report_tdc_200mhz {prefix result_dir} {
+    report_timing -group clk_fpga_2 -delay_type max \
+        -max_paths 100 -nworst 100 -input_pins \
+        -file [file join $result_dir ${prefix}_tdc_200mhz_setup_top100.rpt]
+    report_timing -group clk_fpga_2 -delay_type min \
+        -max_paths 100 -nworst 100 -input_pins \
+        -file [file join $result_dir ${prefix}_tdc_200mhz_hold_top100.rpt]
+    report_timing -from [get_clocks -quiet clk_fpga_2] \
+        -to [get_ports -quiet [list \
+            {io_tdc_d[*]} {o_tdc_adr[*]} {o_tdc_csn[*]} {o_tdc_rdn[*]} \
+            {o_tdc_wrn[*]} {o_tdc_stopdis[*]} {o_tdc_alutrigger[*]} \
+            {o_tdc_puresn[*]}]] \
+        -delay_type max -max_paths 152 -nworst 1 -input_pins \
+        -file [file join $result_dir ${prefix}_tdc_output_budget_top152.rpt]
+}
+
 proc l0_require_count {label objects expected} {
     set actual [llength $objects]
     if {$actual != $expected} {
@@ -215,6 +357,7 @@ proc l0_report_design {prefix result_dir} {
     report_methodology -file [file join $result_dir ${prefix}_methodology.rpt]
     report_drc -file [file join $result_dir ${prefix}_drc.rpt]
     report_io -file [file join $result_dir ${prefix}_io.rpt]
+    l0_report_tdc_200mhz $prefix $result_dir
 }
 
 proc l0_verify_service_pins {result_dir} {
@@ -298,14 +441,52 @@ set reviewed_waiver_counts [l0_apply_reviewed_waivers \
 l0_report_design post_synth $result_dir
 set synth_wns [l0_worst_slack max]
 set synth_whs [l0_worst_slack min]
-if {$synth_wns < 0.0 || $synth_whs < 0.0} {
-    error "Synthesized timing failed: WNS=$synth_wns WHS=$synth_whs"
+set synth_tdc_metrics [l0_tdc_200mhz_metrics]
+set synth_tdc_wns [lindex $synth_tdc_metrics 0]
+set synth_tdc_whs [lindex $synth_tdc_metrics 1]
+set synth_tdc_setup_lt_0p100_count [lindex $synth_tdc_metrics 2]
+set synth_tdc_hold_lt_0p020_count [lindex $synth_tdc_metrics 3]
+set synth_tdc_output_metrics [l0_tdc_output_budget_metrics]
+set synth_tdc_output_budget_slack [lindex $synth_tdc_output_metrics 0]
+set synth_tdc_output_lt_0p100_count [lindex $synth_tdc_output_metrics 1]
+set synth_tdc_output_data_path_delay [lindex $synth_tdc_output_metrics 2]
+set synth_tdc_output_protocol_margin [lindex $synth_tdc_output_metrics 3]
+set synth_tdc_output_worst_port [lindex $synth_tdc_output_metrics 4]
+if {$synth_wns < 0.0} {
+    error "Synthesized setup timing failed: WNS=$synth_wns"
+}
+# 배치 전 hold는 실제 셀 위치와 배선 지연이 없는 추정값이다. 음수이면
+# 결과에 명시하되 구현을 중단하지 않고, 최종 route WHS에서 엄격히 판정한다.
+# setup은 구조적 장경로를 조기에 검출할 수 있으므로 기존 gate를 유지한다.
+set synth_hold_advisory {NONNEGATIVE}
+if {$synth_whs < 0.0} {
+    set synth_hold_advisory {NEGATIVE_PRE_ROUTE_ESTIMATE}
+    puts "WARNING: post-synth hold is advisory until placement: WHS=$synth_whs"
 }
 set synth_report_gate_counts [l0_verify_report_gates post_synth $result_dir]
 
 set impl_status {NOT_RUN}
 set route_wns {NA}
 set route_whs {NA}
+set route_tdc_wns {NA}
+set route_tdc_whs {NA}
+set route_tdc_setup_lt_0p100_count {NA}
+set route_tdc_hold_lt_0p020_count {NA}
+set route_tdc_setup_margin_advisory {NOT_RUN}
+set route_initial_tdc_reset_wns {NA}
+set route_initial_tdc_regular_wns {NA}
+set route_reset_replication_applied {false}
+set route_tdc_reset_wns {NA}
+set route_tdc_regular_wns {NA}
+set route_tdc_reset_lt_0p100_count {NA}
+set route_tdc_regular_lt_0p100_count {NA}
+set route_tdc_reset_max_fanout {NA}
+set route_tdc_output_budget_slack {NA}
+set route_tdc_output_lt_0p100_count {NA}
+set route_tdc_output_data_path_delay {NA}
+set route_tdc_output_protocol_margin {NA}
+set route_tdc_output_worst_port {NA}
+set route_tdc_output_budget_advisory {NOT_RUN}
 set route_drc_error_count {NA}
 set bitstream_path {NA}
 set bitstream_size_bytes {NA}
@@ -316,7 +497,27 @@ if {$run_mode eq {IMPL}} {
     opt_design -directive ExploreWithRemap
     place_design -directive Explore
     phys_opt_design -directive AggressiveExplore
+    # 1차 route 뒤 Reset 경로만 민감한 경우에 되돌아올 물리 기준점이다.
+    # RTL 지연이나 Reset clock 수를 바꾸지 않고 배치된 Reset FF만 복제한다.
+    set pre_route_checkpoint [file join $result_dir pre_route.dcp]
+    write_checkpoint -force $pre_route_checkpoint
     route_design -directive AggressiveExplore -tns_cleanup
+
+    set initial_class_metrics [l0_tdc_setup_class_metrics]
+    set route_initial_tdc_reset_wns [lindex $initial_class_metrics 0]
+    set route_initial_tdc_regular_wns [lindex $initial_class_metrics 1]
+    if {$route_initial_tdc_reset_wns < 0.100} {
+        puts "WARNING: TDC Reset distribution is sensitive after initial route: WNS=$route_initial_tdc_reset_wns ns"
+        write_checkpoint -force [file join $result_dir post_initial_route.dcp]
+        close_design
+        open_checkpoint $pre_route_checkpoint
+        set reset_net [l0_tdc_reset_replication_net]
+        puts "TDC_RESET_REPLICATION_APPLY net=$reset_net fanout=[get_property FLAT_PIN_COUNT $reset_net]"
+        phys_opt_design -force_replication_on_nets $reset_net
+        route_design -directive AggressiveExplore -tns_cleanup
+        set route_reset_replication_applied {true}
+    }
+
     set impl_status {COMPLETE_DIRECT_BATCH}
     set timing_endpoints [l0_verify_timing_contract $result_dir]
     set reviewed_waiver_counts [l0_apply_reviewed_waivers \
@@ -327,6 +528,39 @@ if {$run_mode eq {IMPL}} {
     report_route_status -file [file join $result_dir post_route_status.rpt]
     set route_wns [l0_worst_slack max]
     set route_whs [l0_worst_slack min]
+    set route_tdc_metrics [l0_tdc_200mhz_metrics]
+    set route_tdc_wns [lindex $route_tdc_metrics 0]
+    set route_tdc_whs [lindex $route_tdc_metrics 1]
+    set route_tdc_setup_lt_0p100_count [lindex $route_tdc_metrics 2]
+    set route_tdc_hold_lt_0p020_count [lindex $route_tdc_metrics 3]
+    set route_tdc_class_metrics [l0_tdc_setup_class_metrics]
+    set route_tdc_reset_wns [lindex $route_tdc_class_metrics 0]
+    set route_tdc_regular_wns [lindex $route_tdc_class_metrics 1]
+    set route_tdc_reset_lt_0p100_count [lindex $route_tdc_class_metrics 2]
+    set route_tdc_regular_lt_0p100_count [lindex $route_tdc_class_metrics 3]
+    set route_tdc_reset_max_fanout [lindex $route_tdc_class_metrics 4]
+    # 내부 5 ns 주기 경로는 단순 timing PASS(0 ns)보다 엄격하게 0.100 ns를
+    # 최소 Sign-off 여유로 사용한다. 외부 8 ns register-to-pad 예산은 아래의
+    # 최소 25 ns 프로토콜 핀 안정시간과 별도 판정한다.
+    if {$route_tdc_reset_wns < 0.100 || $route_tdc_regular_wns < 0.100} {
+        error "TDC 200 MHz internal margin gate failed: reset=$route_tdc_reset_wns regular=$route_tdc_regular_wns ns"
+    }
+    set route_tdc_output_metrics [l0_tdc_output_budget_metrics]
+    set route_tdc_output_budget_slack [lindex $route_tdc_output_metrics 0]
+    set route_tdc_output_lt_0p100_count [lindex $route_tdc_output_metrics 1]
+    set route_tdc_output_data_path_delay [lindex $route_tdc_output_metrics 2]
+    set route_tdc_output_protocol_margin [lindex $route_tdc_output_metrics 3]
+    set route_tdc_output_worst_port [lindex $route_tdc_output_metrics 4]
+    set route_tdc_setup_margin_advisory {NONNEGATIVE_GE_0P100_NS}
+    if {$route_tdc_wns < 0.100} {
+        set route_tdc_setup_margin_advisory {TIGHT_LT_0P100_NS}
+        puts "WARNING: TDC 200 MHz setup margin is sensitive: WNS=$route_tdc_wns ns"
+    }
+    set route_tdc_output_budget_advisory {NONNEGATIVE_GE_0P100_NS}
+    if {$route_tdc_output_budget_slack < 0.100} {
+        set route_tdc_output_budget_advisory {TIGHT_8NS_BUDGET_BUT_PROTOCOL_MARGIN_REMAINS}
+        puts "WARNING: TDC output 8 ns budget is sensitive: slack=$route_tdc_output_budget_slack ns, protocol_stable_margin=$route_tdc_output_protocol_margin ns, port=$route_tdc_output_worst_port"
+    }
     set route_drc_errors [get_drc_violations -quiet -filter {SEVERITY == Error}]
     set route_drc_error_count [llength $route_drc_errors]
     if {$route_drc_error_count != 0} {
@@ -372,6 +606,16 @@ puts $summary "project=$project_root"
 puts $summary "synth_status=$synth_status"
 puts $summary "synth_wns_ns=$synth_wns"
 puts $summary "synth_whs_ns=$synth_whs"
+puts $summary "synth_hold_advisory=$synth_hold_advisory"
+puts $summary "synth_tdc_200mhz_wns_ns=$synth_tdc_wns"
+puts $summary "synth_tdc_200mhz_whs_ns=$synth_tdc_whs"
+puts $summary "synth_tdc_setup_lt_0p100_count=$synth_tdc_setup_lt_0p100_count"
+puts $summary "synth_tdc_hold_lt_0p020_count=$synth_tdc_hold_lt_0p020_count"
+puts $summary "synth_tdc_output_budget_slack_ns=$synth_tdc_output_budget_slack"
+puts $summary "synth_tdc_output_lt_0p100_count=$synth_tdc_output_lt_0p100_count"
+puts $summary "synth_tdc_output_data_path_delay_ns=$synth_tdc_output_data_path_delay"
+puts $summary "synth_tdc_output_protocol_stable_margin_ns=$synth_tdc_output_protocol_margin"
+puts $summary "synth_tdc_output_worst_port=$synth_tdc_output_worst_port"
 puts $summary "service_pin_count=$service_pin_count"
 puts $summary "synth_gpx_iob_register_count=$synth_gpx_iob_register_count"
 puts $summary "synth_black_box_count=[llength $black_boxes]"
@@ -386,6 +630,25 @@ puts $summary "synth_blocking_drc_count=[lindex $synth_report_gate_counts 3]"
 puts $summary "impl_status=$impl_status"
 puts $summary "route_wns_ns=$route_wns"
 puts $summary "route_whs_ns=$route_whs"
+puts $summary "route_tdc_200mhz_wns_ns=$route_tdc_wns"
+puts $summary "route_tdc_200mhz_whs_ns=$route_tdc_whs"
+puts $summary "route_tdc_setup_lt_0p100_count=$route_tdc_setup_lt_0p100_count"
+puts $summary "route_tdc_hold_lt_0p020_count=$route_tdc_hold_lt_0p020_count"
+puts $summary "route_tdc_setup_margin_advisory=$route_tdc_setup_margin_advisory"
+puts $summary "route_initial_tdc_reset_wns_ns=$route_initial_tdc_reset_wns"
+puts $summary "route_initial_tdc_regular_wns_ns=$route_initial_tdc_regular_wns"
+puts $summary "route_reset_replication_applied=$route_reset_replication_applied"
+puts $summary "route_tdc_reset_wns_ns=$route_tdc_reset_wns"
+puts $summary "route_tdc_regular_wns_ns=$route_tdc_regular_wns"
+puts $summary "route_tdc_reset_lt_0p100_count=$route_tdc_reset_lt_0p100_count"
+puts $summary "route_tdc_regular_lt_0p100_count=$route_tdc_regular_lt_0p100_count"
+puts $summary "route_tdc_reset_max_fanout=$route_tdc_reset_max_fanout"
+puts $summary "route_tdc_output_budget_slack_ns=$route_tdc_output_budget_slack"
+puts $summary "route_tdc_output_lt_0p100_count=$route_tdc_output_lt_0p100_count"
+puts $summary "route_tdc_output_data_path_delay_ns=$route_tdc_output_data_path_delay"
+puts $summary "route_tdc_output_protocol_stable_margin_ns=$route_tdc_output_protocol_margin"
+puts $summary "route_tdc_output_worst_port=$route_tdc_output_worst_port"
+puts $summary "route_tdc_output_budget_advisory=$route_tdc_output_budget_advisory"
 puts $summary "route_drc_error_count=$route_drc_error_count"
 puts $summary "bitstream_path=$bitstream_path"
 puts $summary "bitstream_size_bytes=$bitstream_size_bytes"

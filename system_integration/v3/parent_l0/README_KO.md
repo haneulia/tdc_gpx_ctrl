@@ -126,7 +126,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   -ProjectRoot ./.work/v3_parent_l0/w64 -Mode SYNTH `
   -SessionTag <unique_tag>
 
-# 배치·배선, Bitstream와 XSA
+# 배치·배선, Bitstream와 XSA (32/64-bit 모두 동일 명령)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   ./system_integration/v3/parent_l0/run_v3_l0_parent_signoff.ps1 `
   -ProjectRoot ./.work/v3_parent_l0/w32 -Mode IMPL `
@@ -148,7 +148,35 @@ FPGA programming은 같은 결과 폴더의 `.bit`를 사용한다.
 
 구현 Sign-off는 추가로 black box/latch 0, 내부 unconstrained endpoint 0, 활성 CDC
 Critical 0, bus skew violation 0, blocking DRC 0, Setup/Hold 양수, 서비스 핀 171개와
-GPX IOB Register 364개를 확인한다.
+GPX IOB Register 364개를 확인한다. 내부 TDC 200 MHz 경로는 더 엄격하게 Reset
+Setup과 일반 상태/데이터 Setup이 각각 `0.100 ns` 이상이어야 PASS한다.
+
+200 MHz 결과는 전체 WNS 한 값으로만 판정하지 않는다. Sign-off summary와 전용
+리포트에서 다음 계약을 분리해 확인한다.
+
+| 구분 | Summary/리포트 | 의미 |
+|---|---|---|
+| 내부 200 MHz Setup/Hold | `route_tdc_200mhz_wns_ns`, `route_tdc_200mhz_whs_ns` | `clk_fpga_2` register-to-register 경로 |
+| 내부 민감 경로 수 | `route_tdc_setup_lt_0p100_count`, `route_tdc_hold_lt_0p020_count` | PASS보다 여유가 얇은 경로의 조기 경보 |
+| 1차 Reset/일반 Setup | `route_initial_tdc_reset_wns_ns`, `route_initial_tdc_regular_wns_ns` | 첫 route에서 Reset 분배와 상태/데이터 경로를 분리한 여유 |
+| Reset 물리 보정 | `route_reset_replication_applied` | Reset Setup이 `0.100 ns` 미만일 때만 FF 복제 후 재배선 |
+| 최종 Reset/일반 Setup | `route_tdc_reset_wns_ns`, `route_tdc_regular_wns_ns` | 선택 보정 뒤 두 경로 종류의 최종 여유 |
+| 최종 Reset fanout | `route_tdc_reset_max_fanout` | 최악 Reset 경로가 사용하는 복제 후 부하 수 |
+| 외부 TDC 출력 8 ns 예산 | `route_tdc_output_budget_slack_ns` | TDC register-to-pad 보수적 제한 |
+| 최악 출력 실제 지연 | `route_tdc_output_data_path_delay_ns` | OBUF/OBUFT를 포함한 register-to-pad 지연 |
+| 최소 핀 안정시간 | `route_tdc_output_protocol_stable_margin_ns` | 최소 25 ns Runtime 버스 유지구간에서 출력 지연을 뺀 값 |
+
+전용 파일은 `post_route_tdc_200mhz_setup_top100.rpt`,
+`post_route_tdc_200mhz_hold_top100.rpt`,
+`post_route_tdc_output_budget_top152.rpt`다. `BUS_CLK_DIV`와 `BUS_TICKS`는
+Runtime TDC-GPX 버스 읽기 타이밍을 조절할 뿐 내부 200 MHz STA period를 바꾸지
+않는다. 내부 여유를 늘리려면 `i_tdc_clk`와 `G_TDC_CLK_MHZ`가 일치하는 더 낮은
+주파수 Profile을 합성하고 해당 비동기 clock 조합을 다시 검증해야 한다.
+
+선택형 Reset 보정은 RTL 동작이나 Reset latency를 바꾸지 않는다. 구현 흐름이
+1차 route 전에 `pre_route.dcp`를 저장하고, 1차 route의 TDC Reset Setup이
+`0.100 ns` 미만일 때만 `rst_tdc` 동기 Reset FF를 물리 복제한 뒤 다시 route한다.
+일반 상태/데이터 경로가 병목인 경우에는 Reset 복제를 적용하지 않는다.
 
 ## 9. 실물 보드에서 남은 Gate
 
