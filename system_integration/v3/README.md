@@ -79,7 +79,10 @@ H0~H4 Header의 역할, 전체 Bit Map, 생산자·소비자와 ABI 수정 규�
 [`docs/V3_H0_H4_HEADER_CONTRACT_KO.md`](docs/V3_H0_H4_HEADER_CONTRACT_KO.md)에
 기록한다. H0~H4 C++를 실제 함수와 상태 순서로 읽기 위한 통합 해설은
 [`docs/V3_HLS_CODE_READING_GUIDE_KO.md`](docs/V3_HLS_CODE_READING_GUIDE_KO.md)에
-기록한다. H1의 계약, 시험 행렬과 수치는
+기록한다. 검증된 H1~H4 Vitis HLS workspace와 32/64-bit Parent Vivado
+Sign-off 결과를 GUI에서 여는 절차는
+[`docs/V3_GUI_PROJECT_GUIDE_KO.md`](docs/V3_GUI_PROJECT_GUIDE_KO.md)에 기록한다.
+H1의 계약, 시험 행렬과 수치는
 [`docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md`](docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md)에
 기록한다. H2의 계약과 검증 결과는
 [`docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md`](docs/V3_H2_GPX_CELL_COLLECTOR_SIGNOFF_KO.md)에
