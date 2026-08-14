@@ -622,7 +622,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>8d8994e5</spirit:value>
+            <spirit:value>a246d81b</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -3312,6 +3312,10 @@
         <spirit:fileType>unknown</spirit:fileType>
       </spirit:file>
       <spirit:file>
+        <spirit:name>doc/V3_HLS_CODE_READING_GUIDE_KO.md</spirit:name>
+        <spirit:fileType>unknown</spirit:fileType>
+      </spirit:file>
+      <spirit:file>
         <spirit:name>doc/V3_H6_TESTBENCH_GUIDE_KO.md</spirit:name>
         <spirit:fileType>unknown</spirit:fileType>
       </spirit:file>
@@ -3472,13 +3476,13 @@
       <xilinx:vendorDisplayName>Victek Co., Ltd.</xilinx:vendorDisplayName>
       <xilinx:vendorURL>https://www.victek.co.kr</xilinx:vendorURL>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-13T05:11:53Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-14T03:33:01Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2.1</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="48ed89c2"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="183345d9"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="a9884970"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="e48e49f9"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="42379cbc"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="9f5a50b3"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="55e6eceb"/>

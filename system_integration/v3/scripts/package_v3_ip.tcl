@@ -22,12 +22,15 @@ set xgui_source [file join $v3_dir ip_package \
 set product_guide_source [file join $v3_dir ip_package PRODUCT_GUIDE_KO.md]
 set maintenance_guide_source [file join $v3_dir docs \
     V3_HLS_MIGRATION_PLAN_KO.md]
+set code_reading_guide_source [file join $v3_dir docs \
+    V3_HLS_CODE_READING_GUIDE_KO.md]
 set testbench_guide_source [file join $v3_dir docs \
     V3_H6_TESTBENCH_GUIDE_KO.md]
 set parent_checkpoint_source [file join $v3_dir docs \
     V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md]
 foreach required [list $manifest_source $xgui_source $product_guide_source \
-        $maintenance_guide_source $testbench_guide_source \
+        $maintenance_guide_source $code_reading_guide_source \
+        $testbench_guide_source \
         $parent_checkpoint_source] {
     if {![file exists $required]} {
         error "Required package source is missing: $required"
@@ -72,6 +75,10 @@ set maintenance_guide_name V3_HLS_MIGRATION_PLAN_KO.md
 set maintenance_guide_destination [file join $package_doc \
     $maintenance_guide_name]
 file copy -force $maintenance_guide_source $maintenance_guide_destination
+set code_reading_guide_name V3_HLS_CODE_READING_GUIDE_KO.md
+set code_reading_guide_destination [file join $package_doc \
+    $code_reading_guide_name]
+file copy -force $code_reading_guide_source $code_reading_guide_destination
 set testbench_guide_name V3_H6_TESTBENCH_GUIDE_KO.md
 set testbench_guide_destination [file join $package_doc \
     $testbench_guide_name]
@@ -409,6 +416,7 @@ if {[llength $product_guide_group] != 1} {
 ipx::remove_all_file $product_guide_group
 ipx::add_file doc/$product_guide_name $product_guide_group
 ipx::add_file doc/$maintenance_guide_name $product_guide_group
+ipx::add_file doc/$code_reading_guide_name $product_guide_group
 ipx::add_file doc/$testbench_guide_name $product_guide_group
 ipx::add_file doc/$parent_checkpoint_name $product_guide_group
 

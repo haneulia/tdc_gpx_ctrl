@@ -56,3 +56,7 @@ self-contained IP다. 패키지 무결성 검사, 4-Chip 32/64-bit Block Design 
 대표 Parent 합성·배치배선·bitstream·XSA 결과를 별도 H6-B3B 문서에 기록한다.
 물리 PCB의 40 MHz 기준 clock, GPX bus 파형, DDR cache API, Ethernet 지속 전송과
 레이저 안전 인터록은 보드 시험 전용 Gate다.
+
+HLS C++의 파일 읽기 순서, 함수별 상태, PACKED17 데이터 예제, Abort와 RTL
+Adapter 경계는 패키지의 `V3_HLS_CODE_READING_GUIDE_KO.md`를 따른다. 전체 packed
+Bit 위치의 단일 기준은 저장소의 `V3_H0_H4_HEADER_CONTRACT_KO.md`다.
