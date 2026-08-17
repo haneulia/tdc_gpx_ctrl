@@ -23,7 +23,7 @@ Vivado의 임시 GUI session 파일은 `.work/v3_gui_sessions/W32`와 `W64`로
 
 ## 2. Vivado 프로젝트와 Sign-off 증거
 
-| Profile | 편집 가능한 Project | 최종 물리 결과 |
+| Profile | 구조 참조 Project | 최종 물리 결과 |
 |---|---|---|
 | 32-bit | `.work/v3_parent_l0/w32/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260813_200mhz_adaptive_reset_w32_impl1/post_route.dcp` |
 | 64-bit | `.work/v3_parent_l0/w64/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260813_200mhz_adaptive_reset_w64_impl1/post_route.dcp` |
@@ -32,11 +32,11 @@ Vivado의 임시 GUI session 파일은 `.work/v3_gui_sessions/W32`와 `W64`로
 150 MHz, TDC-GPX bus/IFIFO acquisition 200 MHz를 사용한다. 최종 AXI4-Stream
 출력 폭만 합성 시 32-bit 또는 64-bit로 다르다.
 
-일반 `.xpr`에는 재사용 가능한 Block Design과 IP 설정이 있고, 최종 Sign-off는
-project run database가 아니라 별도 `post_route.dcp`로 보존되어 있다. 실행기는
-각 Vivado 창에서 다음 두 대상을 함께 연다.
+일반 `.xpr`에는 Block Design과 IP 설정이 있고, 최종 Sign-off는 project run
+database가 아니라 별도 `post_route.dcp`로 보존되어 있다. 실행기는 Sign-off
+증거를 보호하기 위해 `.xpr`를 **읽기 전용**으로 열고 다음 두 대상을 함께 표시한다.
 
-1. `design_1_lidar_ctrl_v3.bd`: 연결과 Generic을 확인하는 편집 가능한 설계
+1. `design_1_lidar_ctrl_v3.bd`: 연결과 Generic을 확인하는 읽기 전용 구조
 2. `post_route.dcp`: 실제 배치·배선, Timing path와 Device 배치를 확인하는 읽기용 결과
 
 GUI의 `Reports`에서 `SIGNOFF_W32_TIMING` 또는 `SIGNOFF_W64_TIMING`을 선택할 수
@@ -50,9 +50,60 @@ GUI report는 같은 checkpoint에서 다시 만든 열람용 report다.
 ./system_integration/v3/scripts/open_v3_gui_projects.ps1 -Target Vivado64
 ```
 
-Block Design을 수정했다고 기존 `post_route.dcp`가 갱신되는 것은 아니다. 수정 후에는
-Parent 재생성·합성·배치배선 Sign-off 절차를 다시 수행하고 새로운 증거 폴더를 만들어야
-한다.
+이 창에서는 `Upgrade IP`, `Reset Output Products`, `Generate Output Products` 또는
+Block Design 저장을 수행하지 않는다. 기존 `post_route.dcp`가 열린 상태에서 IP
+생성물을 Reset하면 Sign-off 증거와 무관한 `.gen` 폴더만 부분 삭제될 수 있다.
+
+### 2.1 최신 IP 수정 및 재검증용 Parent
+
+IP 또는 Parent Block Design을 수정할 때는 Sign-off 열람 Project를 Upgrade하지
+않고, 최신 packaged IP로 별도 개발 Project를 새로 생성한다. 32-bit 예시는 다음과
+같다.
+
+```powershell
+$repo = (Resolve-Path .).Path
+$editRoot = Join-Path $repo '.work\v3_parent_editable\w32'
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/parent_l0/run_v3_l0_parent.ps1 `
+  -OutputRoot $editRoot -OutputWidth 32 -Recreate
+
+& 'C:\AMDDesignTools\2025.2.1\Vivado\bin\vivado.bat' `
+  (Join-Path $editRoot 'project_4_lidar_v3_l0.xpr')
+```
+
+64-bit는 `w32`를 `w64`로, `-OutputWidth 32`를 `64`로 바꾼다. 새 Project는
+현재 `system_integration/v3/ip_repo`를 사용하므로 생성 직후 별도 `Upgrade IP`가
+필요하지 않다. GUI에서 확인한 구조 변경을 제품에 남기려면 `.work`의 BD만 저장하지
+말고 `system_integration/v3/parent_l0`의 생성 Tcl에도 같은 변경을 반영해야 한다.
+
+### 2.2 `Target 'Simulation' failed to remove` 오류
+
+다음 오류는 HLS 또는 RTL 기능 오류가 아니다.
+
+```text
+IP Reset error: Target 'Simulation' failed to remove previously generated files
+Unable to reset IP before upgrading
+```
+
+Sign-off 열람 창에서 `Upgrade IP`를 실행하면 Vivado가 기존 Simulation 생성물을
+삭제하려 하지만, 같은 창에서 열린 BD/checkpoint 또는 다른 Vivado가 파일을 참조해
+삭제가 막힐 수 있다. 이 경우 다음 순서를 따른다.
+
+2026-08-18 사례는 Project XCI와 현재 packaged IP가 모두 VLNV `3.0`, revision
+`1`이었지만, IP에 HLS 해설 문서를 추가하면서 file-group checksum이 변경되어
+Vivado가 Upgrade 대상으로 표시한 경우다. RTL 포트나 Generic 변경이 아니므로 기존
+Sign-off Project에 metadata Upgrade를 적용하지 않는다.
+
+1. Sign-off 창에서는 Upgrade를 취소하고 저장하지 않는다.
+2. 다른 Vivado와 실행 중인 simulation이 해당 Project를 사용하지 않는지 확인한다.
+3. 수정이 필요하면 2.1의 별도 개발 Project를 최신 IP로 재생성한다.
+4. 개발 Project에서 합성·배치배선 회귀를 완료한 뒤 새 Sign-off 증거를 만든다.
+
+생성 중간 파일인 `.gen/.../sim`이 부분 삭제되어도 원본 `.bd`, `.xci`와 별도
+`post_route.dcp`, Bitstream, XSA가 변경되지 않았다면 기존 물리 Sign-off 판정은
+유지된다. 다만 그 Project의 simulation 생성물은 완전하지 않으므로 개발·simulation
+용도로 계속 사용하지 않는다.
 
 ## 3. Vitis HLS workspace
 

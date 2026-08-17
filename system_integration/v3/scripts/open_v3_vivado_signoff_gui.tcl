@@ -15,7 +15,10 @@ if {![file exists $checkpoint_path]} {
     error "Routed sign-off checkpoint does not exist: $checkpoint_path"
 }
 
-open_project $project_path
+# A sign-off session is evidence inspection, not an IP upgrade workspace.
+# Read-only mode prevents generated-target resets from partially modifying the
+# project while the routed checkpoint is open.
+open_project -read_only $project_path
 
 # Keep the Block Design available as a GUI tab while the routed checkpoint is
 # opened as the active physical design. A BD open failure must not hide the
@@ -45,5 +48,6 @@ if {[catch {
 }
 
 puts "LIDAR_V3_VIVADO_SIGNOFF_GUI_READY profile=$profile"
+puts "LIDAR_V3_VIVADO_ACCESS_MODE=READ_ONLY"
 puts "LIDAR_V3_VIVADO_PROJECT=$project_path"
 puts "LIDAR_V3_VIVADO_CHECKPOINT=$checkpoint_path"

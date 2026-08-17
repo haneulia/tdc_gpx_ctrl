@@ -169,7 +169,7 @@ if ($NeedsVivado) {
     Assert-File -Path $VivadoLauncher -Purpose "Vivado sign-off GUI Tcl launcher"
     foreach ($Profile in $VivadoProfiles) {
         if ($Target -ne "All" -and $Target -ne $Profile.Target) { continue }
-        Assert-File -Path $Profile.Xpr -Purpose "$($Profile.Label) editable Vivado project"
+        Assert-File -Path $Profile.Xpr -Purpose "$($Profile.Label) Vivado source project"
         Assert-File -Path $Profile.Dcp -Purpose "$($Profile.Label) routed sign-off checkpoint"
         Assert-File -Path $Profile.Timing -Purpose "$($Profile.Label) routed timing report"
         Assert-File -Path $Profile.Bit -Purpose "$($Profile.Label) bitstream"
@@ -234,7 +234,9 @@ if ($NeedsVivado) {
             ) `
             -WorkingDirectory $ProfileSessionRoot `
             -PassThru
-        Write-Host "LIDAR_V3_VIVADO_GUI_STARTED profile=$($Profile.Label) pid=$($Process.Id)"
+        Write-Host (
+            "LIDAR_V3_VIVADO_GUI_STARTED profile=$($Profile.Label) " +
+            "access=READ_ONLY pid=$($Process.Id)")
     }
 }
 
