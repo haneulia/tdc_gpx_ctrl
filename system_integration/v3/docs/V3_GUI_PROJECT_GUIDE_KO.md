@@ -56,26 +56,25 @@ Block Design 저장을 수행하지 않는다. 기존 `post_route.dcp`가 열린
 
 ### 2.1 최신 IP 수정 및 재검증용 Parent
 
-IP 또는 Parent Block Design을 수정할 때는 Sign-off 열람 Project를 Upgrade하지
-않고, 최신 packaged IP로 별도 개발 Project를 새로 생성한다. 32-bit 예시는 다음과
-같다.
+IP XGUI를 확인하거나 Parent Block Design을 수정할 때는 Sign-off 열람 Project를
+Upgrade하지 않고, 최신 packaged IP로 별도 writable Parent를 생성한다. 다음 명령은
+32-bit Parent를 생성하고 IP lock 및 Upgrade 필요 여부를 검사한 뒤 Vivado를 연다.
 
 ```powershell
-$repo = (Resolve-Path .).Path
-$editRoot = Join-Path $repo '.work\v3_parent_editable\w32'
-
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-  ./system_integration/v3/parent_l0/run_v3_l0_parent.ps1 `
-  -OutputRoot $editRoot -OutputWidth 32 -Recreate
-
-& 'C:\AMDDesignTools\2025.2.1\Vivado\bin\vivado.bat' `
-  (Join-Path $editRoot 'project_4_lidar_v3_l0.xpr')
+  ./system_integration/v3/scripts/open_v3_custom_ip_gui.ps1 `
+  -OutputWidth 32 -Recreate
 ```
 
-64-bit는 `w32`를 `w64`로, `-OutputWidth 32`를 `64`로 바꾼다. 새 Project는
-현재 `system_integration/v3/ip_repo`를 사용하므로 생성 직후 별도 `Upgrade IP`가
-필요하지 않다. GUI에서 확인한 구조 변경을 제품에 남기려면 `.work`의 BD만 저장하지
-말고 `system_integration/v3/parent_l0`의 생성 Tcl에도 같은 변경을 반영해야 한다.
+64-bit는 `-OutputWidth 64`를 사용한다. 최초 생성 후 같은 프로젝트를 다시 열 때는
+`-Recreate`를 생략할 수 있다. IP package가 변경되어 stale 또는 locked 판정이 나면
+해당 writable 창을 닫고 `-Recreate`로 다시 생성한다.
+
+새 Project는 현재 `system_integration/v3/ip_repo`를 사용하므로 생성 직후 별도
+`Upgrade IP`가 필요하지 않다. Block Design의 `tdc_gpx_lidar_ctrl_v3_0`을 더블클릭하면
+쓰기 가능한 `Customize IP` 화면을 확인할 수 있다. GUI에서 확인한 구조 변경을 제품에
+남기려면 `.work`의 BD만 저장하지 말고 `system_integration/v3/parent_l0`의 생성 Tcl에도
+같은 변경을 반영해야 한다.
 
 ### 2.2 `Target 'Simulation' failed to remove` 오류
 
