@@ -622,7 +622,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>0982afe7</spirit:value>
+            <spirit:value>c82ae13b</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -3327,9 +3327,13 @@
         <spirit:name>doc/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md</spirit:name>
         <spirit:fileType>unknown</spirit:fileType>
       </spirit:file>
+      <spirit:file>
+        <spirit:name>doc/V3_DUAL_HLS_PACKAGING_GUIDE_KO.md</spirit:name>
+        <spirit:fileType>unknown</spirit:fileType>
+      </spirit:file>
     </spirit:fileSet>
   </spirit:fileSets>
-  <spirit:description>V3 integrated Motor/Laser, optional Echo LVDS frontend, four-chip TDC-GPX acquisition, HLS PACKED17 Rise/Fall 32/64-bit AXI streams, unified 32-control/32-status CSR and runtime IRQ.</spirit:description>
+  <spirit:description>V3 integrated controller with H1-H4 Vitis HLS generated RTL embedded directly in one self-contained packaged IP.</spirit:description>
   <spirit:parameters>
     <spirit:parameter>
       <spirit:name>G_CSR_CLK_MHZ</spirit:name>
@@ -3471,7 +3475,7 @@
       <xilinx:taxonomies>
         <xilinx:taxonomy>/VictekIP</xilinx:taxonomy>
       </xilinx:taxonomies>
-      <xilinx:displayName>TDC-GPX LiDAR Integrated Controller V3</xilinx:displayName>
+      <xilinx:displayName>TDC-GPX LiDAR Integrated Controller V3 (Embedded HLS RTL)</xilinx:displayName>
       <xilinx:definitionSource>package_project</xilinx:definitionSource>
       <xilinx:xpmLibraries>
         <xilinx:xpmLibrary>XPM_CDC</xilinx:xpmLibrary>
@@ -3480,13 +3484,13 @@
       <xilinx:vendorDisplayName>Victek Co., Ltd.</xilinx:vendorDisplayName>
       <xilinx:vendorURL>https://www.victek.co.kr</xilinx:vendorURL>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-18T01:38:14Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-18T03:42:32Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2.1</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="48ed89c2"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="183345d9"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="d1626347"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="bf2bbf1e"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="42379cbc"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="9f5a50b3"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="55e6eceb"/>

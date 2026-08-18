@@ -2,13 +2,14 @@
 # component.xml. The project is disposable; the packaged IP remains the source
 # consumed by downstream IP catalogs.
 
-if {$argc != 3} {
-    error "usage: create_v3_ip_packager_project.tcl <component.xml> <edit_dir> <project_name>"
+if {$argc != 4} {
+    error "usage: create_v3_ip_packager_project.tcl <component.xml> <edit_dir> <project_name> <expected_vlnv>"
 }
 
 set component [file normalize [lindex $argv 0]]
 set edit_dir [file normalize [lindex $argv 1]]
 set project_name [lindex $argv 2]
+set expected_vlnv [lindex $argv 3]
 
 if {![file exists $component]} {
     error "V3 component.xml does not exist: $component"
@@ -35,6 +36,9 @@ file mkdir $edit_dir
 # edit_ip_in_project is an IP catalog command and requires an active Vivado
 # project context even though it creates the actual edit project itself.
 create_project -in_memory ${project_name}_bootstrap -part xc7z020clg484-2
+set ip_repo [file dirname [file dirname $component]]
+set_property ip_repo_paths [list $ip_repo] [current_project]
+update_ip_catalog
 ipx::edit_ip_in_project -upgrade true -name $project_name \
     -directory $edit_dir $component
 
@@ -42,12 +46,13 @@ set project [current_project]
 if {$project eq {}} {
     error {Vivado did not create an IP Packager edit project}
 }
+set_property ip_repo_paths [list $ip_repo] $project
+update_ip_catalog
 set core [ipx::current_core]
 if {$core eq {}} {
     error {Vivado did not open the packaged V3 core}
 }
-if {[get_property vlnv $core] ne \
-        {victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0}} {
+if {[get_property vlnv $core] ne $expected_vlnv} {
     error "Unexpected V3 core in edit project: [get_property vlnv $core]"
 }
 

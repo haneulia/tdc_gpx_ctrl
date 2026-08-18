@@ -2,9 +2,16 @@
 
 ## 1. 목적
 
-이 문서는 `victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0`을 Vivado GUI의
-**Package IP** 화면에서 점검하고 유지보수하는 절차를 고정한다. GUI 프로젝트는
-형상관리 원본이 아니라, 재현 가능한 일회성 편집·검토 환경이다.
+이 문서는 다음 두 V3 통합 IP를 Vivado GUI의 **Package IP** 화면에서 점검하고
+유지보수하는 절차를 고정한다. 두 IP의 기능 계약은 같고 H1~H4 HLS 구현을 포함하는
+방법만 다르다.
+
+- 생성 RTL 포함형: `victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0`
+- HLS 하위 IP 참조형: `victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3_hls_ip:3.0`
+
+GUI 프로젝트는 형상관리 원본이 아니라, 재현 가능한 일회성 편집·검토 환경이다.
+버전 선택 기준과 전체 검증 절차는
+`V3_DUAL_HLS_PACKAGING_GUIDE_KO.md`를 함께 따른다.
 
 관리 대상은 다음과 같다.
 
@@ -19,47 +26,53 @@
 
 | 구분 | 형상관리 원본 | GUI에서 직접 수정 |
 |---|---|---|
-| RTL 및 HLS 생성 RTL 목록 | `ip_package/v3_ip_package_manifest.tcl`과 그 원본 파일 | 금지 |
+| RTL 및 생성 RTL 포함형 목록 | `ip_package/v3_ip_package_manifest.tcl`과 그 원본 파일 | 금지 |
 | HLS C++ 원본 | `hls/*/src`, `hls/common/include` | Vitis HLS에서 수정 |
 | XGUI 구현 | `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl` | 실험만 허용 |
 | IP-XACT 속성·Generic·Interface | `scripts/package_v3_ip.tcl` | 실험만 허용 |
-| 배포용 packaged IP | `ip_repo/tdc_gpx_lidar_ctrl_v3_3_0` | 스크립트로 재생성 |
-| Vivado IP Packager 프로젝트 | `.work/v3_ip_packager` | 자유롭게 재생성 |
+| 생성 RTL 포함형 package | `ip_repo/tdc_gpx_lidar_ctrl_v3_3_0` | 스크립트로 재생성 |
+| HLS 하위 IP 참조형 package | `ip_repo/tdc_gpx_lidar_ctrl_v3_hls_ip_3_0` | 스크립트로 재생성 |
+| HLS 하위 IP 4개 | `ip_repo/gpx_*_hls_3_0` | Vitis export로 명시적 갱신 |
+| 생성 RTL 포함형 GUI 프로젝트 | `.work/v3_ip_packager` | 자유롭게 재생성 |
+| HLS 하위 IP 참조형 GUI 프로젝트 | `.work/v3_hls_ip_packager` | 자유롭게 재생성 |
 
 `ip_repo/src`나 `ip_repo/xgui`를 직접 고친 내용은 다음 재패키징 때 지워진다.
 유지할 변경은 반드시 위 표의 canonical 원본에 먼저 반영한 뒤 패키지를 다시 만든다.
 
 ## 3. GUI 열기
 
-최초 생성 또는 package가 변경된 뒤에는 다음 명령을 사용한다.
+생성 RTL 포함형을 최초 생성하거나 package가 변경된 뒤에는 다음 명령을 사용한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   ./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1 `
-  -Recreate
+  -Variant EmbeddedRtl -Recreate
 ```
 
-변경 없이 다시 열 때는 `-Recreate`를 생략한다.
-
-```powershell
-./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1
-```
-
-GUI를 열지 않고 package와 편집 프로젝트만 처음부터 검증할 수도 있다.
+HLS 하위 IP 참조형은 다음과 같다.
 
 ```powershell
 ./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1 `
-  -Recreate -ValidateOnly
+  -Variant HlsIp -Recreate
+```
+
+변경 없이 다시 열 때는 `-Recreate`를 생략한다. GUI를 열지 않고 package와 편집
+프로젝트만 처음부터 검증하려면 선택한 명령에 `-ValidateOnly`를 추가한다.
+
+```powershell
+./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1 `
+  -Variant HlsIp -Recreate -ValidateOnly
 ```
 
 실행기는 GUI를 열기 전에 다음 항목을 자동 검사한다.
 
-1. canonical RTL/HLS/XGUI와 `ip_repo` 사본의 byte 단위 일치
-2. VLNV `victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0`
-3. 합성 파일 139개를 포함한 self-contained file closure
-4. `../HDL` 외부 참조 및 child `.xci` 부재
-5. 필수 Generic, 포트, AXI/clock interface 및 XGUI 계약
-6. IP Packager `check_integrity` DRC PASS
+1. canonical RTL/HLS/XGUI/문서와 `ip_repo` 사본의 일치
+2. 선택한 VLNV와 두 버전의 IP Catalog 공존
+3. 생성 RTL 포함형의 self-contained source closure와 child `.xci` 부재
+4. HLS 하위 IP 참조형의 정확한 subcore 4개와 생성 HLS RTL 중복 부재
+5. `../HDL` 외부 참조 부재
+6. 필수 Generic, 포트, AXI/clock interface 및 XGUI 계약
+7. 32/64-bit customization과 IP Packager `check_integrity` DRC PASS
 
 ## 4. 원본 변경 후 재패키징
 
@@ -71,18 +84,29 @@ RTL, HLS 생성 RTL, XGUI 또는 IP-XACT 속성을 바꾼 뒤에는 다음 순�
 
 ```powershell
 ./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1 `
-  -RefreshPackage -Recreate
+  -Variant EmbeddedRtl -RefreshPackage -Recreate
 ```
 
 검증된 HLS RTL을 이미 생성했고 HLS 합성을 반복할 필요가 없을 때만 다음 옵션을 쓴다.
 
 ```powershell
 ./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1 `
-  -RefreshPackage -SkipHlsSynthesis -Recreate
+  -Variant EmbeddedRtl -RefreshPackage -SkipHlsSynthesis -Recreate
 ```
 
 `-SkipHlsSynthesis`는 기존 `.work/v3_hls_*_component/hls/syn/verilog` 산출물을
 사용한다. HLS C++ 또는 공통 Header가 변경된 경우에는 이 옵션을 사용하지 않는다.
+
+HLS 하위 IP 참조형의 평상시 갱신은 형상관리된 하위 IP를 재사용한다.
+
+```powershell
+./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1 `
+  -Variant HlsIp -RefreshPackage -SkipHlsSynthesis -Recreate
+```
+
+HLS C++ 또는 공통 Header가 변경되어 네 HLS 하위 IP를 실제로 다시 export해야 할
+때만 `-RefreshHlsChildIp`를 추가한다. 이 옵션은 Vitis 도구 경로를 사용하므로 실행
+전에 Vivado/Vitis GUI를 모두 닫는다.
 
 ## 5. GUI 항목별 점검 방법
 
@@ -96,10 +120,14 @@ RTL, HLS 생성 RTL, XGUI 또는 IP-XACT 속성을 바꾼 뒤에는 다음 순�
 
 ### 5.2 File Groups
 
-- Synthesis와 Simulation은 동일한 self-contained 소스 집합을 사용한다.
+- 생성 RTL 포함형의 Synthesis와 Simulation은 동일한 self-contained 소스 집합을
+  사용한다.
 - 파일명은 `src/...` 또는 `xgui/...`처럼 package 내부 상대 경로여야 한다.
-- `../HDL/...`, 절대 경로와 child `.xci`가 보이면 저장하지 않는다.
-- HLS 생성 Verilog는 `src/hls_generated/...`에 포함되며 직접 수정하지 않는다.
+- 두 버전 모두 `../HDL/...`와 절대 경로가 없어야 한다.
+- 생성 RTL 포함형에는 child `.xci`가 없어야 하며 HLS 생성 Verilog는
+  `src/hls_generated/...`에 포함된다.
+- HLS 하위 IP 참조형에는 정확히 네 XCI가 Synthesis/Simulation에 각각 등록되고,
+  `src/hls_generated/...`는 없어야 한다.
 
 Customization Parameters의 **Merge changes**는 원본 HDL 프로젝트 경로를
 `../HDL` 형태로 다시 끌어올 수 있다. 이 package에서는 Merge로 파일 목록을
@@ -133,7 +161,8 @@ Block Design 표시 여부를 제어한다.
 `i_tdc_clk`에 연결 AXI bus가 없다는 알림이다. 다음 항목은 허용하지 않는다.
 
 - `[Common 17-680]` Windows 260자 경로 초과
-- external source reference 또는 child XCI 유입
+- external source reference 유입
+- 생성 RTL 포함형의 child XCI 또는 HLS 하위 IP 참조형의 잘못된 subcore 수
 - VLNV, XGUI, Generic, interface 불일치
 - `check_integrity` 실패
 
@@ -159,9 +188,10 @@ GUI에서 시험한 변경을 유지하려면 다음 위치로 옮긴다.
 - source closure/order/type: `ip_package/v3_ip_package_manifest.tcl`
 - 기능 RTL/HLS: 각 canonical source
 
-그 뒤 `-RefreshPackage -Recreate -ValidateOnly`를 실행하고, canonical 원본과
-`ip_repo` 변경만 Git에 포함한다. `.work/v3_ip_packager`, Vivado log/journal과
-가상 드라이브는 형상관리 대상이 아니다.
+그 뒤 해당 `-Variant`로 `-RefreshPackage -Recreate -ValidateOnly`를 실행하고,
+canonical 원본과 `ip_repo` 변경만 Git에 포함한다. `.work/v3_ip_packager`,
+`.work/v3_hls_ip_packager`, Vivado log/journal과 가상 드라이브는 형상관리 대상이
+아니다.
 
 ## 8. 오류 복구
 
@@ -171,10 +201,19 @@ GUI에서 시험한 변경을 유지하려면 다음 위치로 옮긴다.
 | Simulation target reset 실패 | 관련 Vivado 창을 모두 닫고 disposable project 재생성 |
 | XGUI가 이전 값 표시 | canonical XGUI 갱신, package 재생성, IP catalog refresh |
 | File Group에 `../HDL` 등장 | 저장 중단, package 재생성, Merge changes 사용 금지 |
-| IP Packager project 손상 | `.work/v3_ip_packager`만 `-Recreate`로 재생성 |
+| HLS 하위 IP가 locked | `ip_repo` 전체를 등록하고 HLS-IP GUI 프로젝트를 `-Recreate` |
+| `xcd.exe` 메모리 오류 | run manager를 쓰지 말고 dual OOC 검사 사용, 평상시 HLS IP export 생략 |
+| IP Packager project 손상 | 해당 Variant의 `.work/v3_*_ip_packager`를 `-Recreate` |
 
 배포 package 자체가 의심되면 다음 명령으로 HLS부터 package까지 완전 재생성한다.
 
 ```powershell
 ./system_integration/v3/scripts/run_v3_ip_package.ps1
+```
+
+두 패키지의 32/64-bit 합성은 별도 `xcd.exe` run manager를 사용하지 않는 다음
+검사로 닫는다.
+
+```powershell
+./system_integration/v3/scripts/run_v3_dual_package_ooc.ps1 -Selector ALL
 ```

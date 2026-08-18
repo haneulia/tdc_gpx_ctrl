@@ -86,6 +86,11 @@ Vivado Package IP GUI에서 V3의 File Groups, Generic, Interface와 XGUI를 유
 절차와 canonical 원본 소유권은
 [`docs/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md`](docs/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md)에
 기록한다.
+생성 RTL 포함형과 HLS 하위 IP 참조형의 VLNV, 선택 기준, 재패키징 및 32/64-bit
+합성 검증 절차는
+[`docs/V3_DUAL_HLS_PACKAGING_GUIDE_KO.md`](docs/V3_DUAL_HLS_PACKAGING_GUIDE_KO.md)에
+기록한다. 보드 Parent 배포 기준은 self-contained 생성 RTL 포함형이고, HLS 모듈별
+교체·분석에는 네 HLS 하위 IP를 참조하는 별도 통합 IP를 사용한다.
 H1의 계약, 시험 행렬과 수치는
 [`docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md`](docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md)에
 기록한다. H2의 계약과 검증 결과는

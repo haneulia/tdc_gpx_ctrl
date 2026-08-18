@@ -21,7 +21,7 @@ proc lidar_v3_append_entry {entries_name destinations_name source relative type}
     lappend entries [list $normalized $packaged $type]
 }
 
-proc lidar_v3_ip_package_manifest {hdl_root} {
+proc lidar_v3_ip_package_manifest {hdl_root {include_hls_generated true}} {
     set hdl_root [file normalize $hdl_root]
     set v2_order [file join $hdl_root system_integration v2 scripts \
         v2_rtl_compile_order.txt]
@@ -107,40 +107,50 @@ proc lidar_v3_ip_package_manifest {hdl_root} {
             [file join system_integration v3 $relative] $type
     }
 
-    set generated_roots [list \
-        [file join $hdl_root .work v3_hls_hit_decoder_component hls syn verilog] \
-        [file join $hdl_root .work v3_hls_cell_collector_component hls syn verilog] \
-        [file join $hdl_root .work v3_hls_frame_assembler_component hls syn verilog] \
-        [file join $hdl_root .work v3_hls_lane_word_formatter_component hls syn verilog]]
-    foreach generated_root $generated_roots {
-        if {![file isdirectory $generated_root]} {
-            error "Generated HLS RTL directory is missing: $generated_root"
-        }
-        set files [concat \
-            [glob -nocomplain -type f [file join $generated_root *.v]] \
-            [glob -nocomplain -type f [file join $generated_root *.dat]]]
-        if {[llength $files] == 0} {
-            error "Generated HLS RTL directory is empty: $generated_root"
-        }
-        foreach source [lsort $files] {
-            set extension [string tolower [file extension $source]]
-            set type [expr {$extension eq ".v" ? "verilog" : "data"}]
-            set component [file tail [file dirname [file dirname \
-                [file dirname [file dirname $generated_root]]]]]
-            # Derive a stable folder from the generated top module prefix.
-            set file_name [file tail $source]
-            if {[string match {gpx_hit_decoder_hls*} $file_name]} {
-                set component gpx_hit_decoder_hls
-            } elseif {[string match {gpx_cell_collector_hls*} $file_name]} {
-                set component gpx_cell_collector_hls
-            } elseif {[string match {gpx_frame_assembler_hls*} $file_name]} {
-                set component gpx_frame_assembler_hls
-            } else {
-                set component gpx_lane_word_formatter_hls
+    if {$include_hls_generated} {
+        set generated_roots [list \
+            [file join $hdl_root .work v3_hls_hit_decoder_component hls syn verilog] \
+            [file join $hdl_root .work v3_hls_cell_collector_component hls syn verilog] \
+            [file join $hdl_root .work v3_hls_frame_assembler_component hls syn verilog] \
+            [file join $hdl_root .work v3_hls_lane_word_formatter_component hls syn verilog]]
+        foreach generated_root $generated_roots {
+            if {![file isdirectory $generated_root]} {
+                error "Generated HLS RTL directory is missing: $generated_root"
             }
-            lidar_v3_append_entry entries destinations $source \
-                [file join hls_generated $component $file_name] $type
+            set files [concat \
+                [glob -nocomplain -type f [file join $generated_root *.v]] \
+                [glob -nocomplain -type f [file join $generated_root *.dat]]]
+            if {[llength $files] == 0} {
+                error "Generated HLS RTL directory is empty: $generated_root"
+            }
+            foreach source [lsort $files] {
+                set extension [string tolower [file extension $source]]
+                set type [expr {$extension eq ".v" ? "verilog" : "data"}]
+                set component [file tail [file dirname [file dirname \
+                    [file dirname [file dirname $generated_root]]]]]
+                # Derive a stable folder from the generated top module prefix.
+                set file_name [file tail $source]
+                if {[string match {gpx_hit_decoder_hls*} $file_name]} {
+                    set component gpx_hit_decoder_hls
+                } elseif {[string match {gpx_cell_collector_hls*} $file_name]} {
+                    set component gpx_cell_collector_hls
+                } elseif {[string match {gpx_frame_assembler_hls*} $file_name]} {
+                    set component gpx_frame_assembler_hls
+                } else {
+                    set component gpx_lane_word_formatter_hls
+                }
+                lidar_v3_append_entry entries destinations $source \
+                    [file join hls_generated $component $file_name] $type
+            }
         }
     }
     return $entries
+}
+
+# The child-IP variant shares every control/CDC/adapter/top source with the
+# embedded-RTL variant, but obtains the four HLS implementations from IP-XACT
+# subcores. Keeping this as a filtered view prevents two compile-order lists
+# from drifting apart.
+proc lidar_v3_hls_ip_parent_manifest {hdl_root} {
+    return [lidar_v3_ip_package_manifest $hdl_root false]
 }
