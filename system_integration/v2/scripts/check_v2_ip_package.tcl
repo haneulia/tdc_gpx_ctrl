@@ -19,6 +19,10 @@ set packaged_maintenance_guide [file join $package_dir doc \
     V2_RTL_MAINTENANCE_GUIDE_KO.md]
 set packaged_testbench_guide [file join $package_dir doc \
     V2_TESTBENCH_COVERAGE_GUIDE_KO.md]
+set packaged_packager_guide [file join $package_dir doc \
+    V2_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
+set packaged_xgui_rules [file join $package_dir doc \
+    V2_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
 set canonical_xgui [file join $v2_dir ip_package \
     tdc_gpx_lidar_ctrl_v2_xgui.tcl]
 set canonical_guide [file join $v2_dir ip_package PRODUCT_GUIDE_KO.md]
@@ -26,12 +30,31 @@ set canonical_maintenance_guide [file join $v2_dir .. v2_architecture \
     V2_RTL_MAINTENANCE_GUIDE_KO.md]
 set canonical_testbench_guide [file join $v2_dir .. v2_architecture \
     V2_TESTBENCH_COVERAGE_GUIDE_KO.md]
+set canonical_packager_guide [file join $v2_dir .. v2_architecture \
+    V2_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
+set canonical_xgui_rules [file join $v2_dir .. v2_architecture \
+    V2_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
+set xgui_checker [file join $script_dir check_v2_xgui_source_contract.tcl]
 foreach required [list $component $packaged_xgui $packaged_guide \
         $packaged_maintenance_guide $canonical_xgui $canonical_guide \
         $canonical_maintenance_guide $packaged_testbench_guide \
-        $canonical_testbench_guide] {
+        $canonical_testbench_guide $packaged_packager_guide \
+        $canonical_packager_guide $packaged_xgui_rules \
+        $canonical_xgui_rules $xgui_checker] {
     if {![file exists $required]} {
         error "Required v2 package artifact is missing: $required"
+    }
+}
+
+proc v2_read_text_normalized {path} {
+    set data [v2_read_binary $path]
+    return [string trimright [string map {\r\n \n \r \n} $data] "\n"]
+}
+
+proc v2_require_text_equal {canonical packaged label} {
+    if {[v2_read_text_normalized $canonical] ne \
+            [v2_read_text_normalized $packaged]} {
+        error "$label package copy is stale: $packaged"
     }
 }
 
@@ -62,16 +85,20 @@ foreach entry $entries {
     v2_require_file_equal $canonical [file join $package_dir src $relative] \
         "RTL $relative"
 }
-v2_require_file_equal $canonical_xgui $packaged_xgui {v2 XGUI}
+v2_require_text_equal $canonical_xgui $packaged_xgui {v2 XGUI}
 v2_require_file_equal $canonical_guide $packaged_guide {v2 Product Guide}
 v2_require_file_equal $canonical_maintenance_guide \
     $packaged_maintenance_guide {v2 RTL Maintenance Guide}
 v2_require_file_equal $canonical_testbench_guide \
     $packaged_testbench_guide {v2 Testbench Coverage Guide}
+v2_require_file_equal $canonical_packager_guide \
+    $packaged_packager_guide {v2 IP Packager Maintenance Guide}
+v2_require_file_equal $canonical_xgui_rules \
+    $packaged_xgui_rules {v2 IP-XACT XGUI Rules}
 if {[string first {C_MAX_CHIPS} [v2_read_binary $component]] >= 0} {
     error {component.xml exposes unresolved C_MAX_CHIPS in a public HDL type}
 }
-puts {LIDAR_V2_K010_SOURCE_SYNC_PASS files=92 rtl=88 xgui=1 guides=3}
+puts {LIDAR_V2_K010_SOURCE_SYNC_PASS files=94 rtl=88 xgui=1 guides=5}
 
 # Avoid the damaged per-user Tcl Store on this workstation.
 set install_tcl_store [file normalize \
@@ -257,11 +284,12 @@ foreach packaged_file $synth_files {
 set guide_group [v2_require_one [ipx::get_file_groups xilinx_productguide \
     -of_objects $core] {Product Guide group}]
 set guide_files [ipx::get_files -of_objects $guide_group]
-if {[llength $guide_files] != 3} {
-    error "Expected three Korean guide files, found [llength $guide_files]"
+if {[llength $guide_files] != 5} {
+    error "Expected five Korean guide files, found [llength $guide_files]"
 }
 foreach required_guide [list $packaged_guide $packaged_maintenance_guide \
-        $packaged_testbench_guide] {
+        $packaged_testbench_guide $packaged_packager_guide \
+        $packaged_xgui_rules] {
     set relative_guide [file join doc [file tail $required_guide]]
     if {[llength [ipx::get_files -quiet $relative_guide \
             -of_objects $guide_group]] != 1} {
@@ -270,38 +298,10 @@ foreach required_guide [list $packaged_guide $packaged_maintenance_guide \
 }
 puts {LIDAR_V2_K010_COMPONENT_CONTRACT_PASS}
 
-source $packaged_xgui
-if {[::tglcv2_xgui::vhdl_bit_string 0011 4 \
-        {Rising capability mask}] ne {"0011"}} {
-    error {XGUI did not convert the rising mask to a VHDL bit-string literal}
-}
-foreach {label command expected} [list \
-    async_tdc_faster \
-        {::tglcv2_xgui::validate_clock_contract 150 200 ASYNC} true \
-    async_proc_faster \
-        {::tglcv2_xgui::validate_clock_contract 200 150 ASYNC} true \
-    sync_equal \
-        {::tglcv2_xgui::validate_clock_contract 150 150 SYNC} true \
-    sync_split_invalid \
-        {::tglcv2_xgui::validate_clock_contract 150 200 SYNC} false \
-    dedicated_four_chip \
-        {::tglcv2_xgui::validate_topology 4 0011 1100} true \
-    all_dual_four_chip \
-        {::tglcv2_xgui::validate_topology 4 1111 1111} true \
-    rising_only_four_chip \
-        {::tglcv2_xgui::validate_topology 4 1111 0000} true \
-    one_chip_dual \
-        {::tglcv2_xgui::validate_topology 1 0001 0001} true \
-    more_fall_invalid \
-        {::tglcv2_xgui::validate_topology 3 0001 0110} false \
-    outside_chip_invalid \
-        {::tglcv2_xgui::validate_topology 2 0111 0000} false] {
-    lassign [uplevel #0 $command] actual message
-    if {$actual ne $expected} {
-        error "XGUI validation $label expected $expected, got $actual: $message"
-    }
-}
-puts {LIDAR_V2_K010_XGUI_CONTRACT_PASS}
+source $xgui_checker
+v2_check_xgui_source_contract $canonical_xgui
+v2_check_xgui_source_contract $packaged_xgui
+puts {LIDAR_V2_K010_XGUI_CONTRACT_PASS native=1 ipxact=1}
 
 ipx::unload_core $core
 

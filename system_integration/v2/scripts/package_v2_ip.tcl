@@ -24,12 +24,20 @@ set maintenance_guide_source [file join $v2_dir .. v2_architecture \
     V2_RTL_MAINTENANCE_GUIDE_KO.md]
 set testbench_guide_source [file join $v2_dir .. v2_architecture \
     V2_TESTBENCH_COVERAGE_GUIDE_KO.md]
+set packager_guide_source [file join $v2_dir .. v2_architecture \
+    V2_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
+set xgui_rules_source [file join $v2_dir .. v2_architecture \
+    V2_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
+set xgui_checker [file join $script_dir check_v2_xgui_source_contract.tcl]
 foreach required [list $manifest_source $xgui_source $product_guide_source \
-        $maintenance_guide_source $testbench_guide_source] {
+        $maintenance_guide_source $testbench_guide_source \
+        $packager_guide_source $xgui_rules_source $xgui_checker] {
     if {![file exists $required]} {
         error "Required package source is missing: $required"
     }
 }
+source $xgui_checker
+v2_check_xgui_source_contract $xgui_source
 source $manifest_source
 set entries [lidar_v2_ip_package_manifest $hdl_root]
 if {[llength $entries] != 88} {
@@ -70,6 +78,13 @@ set testbench_guide_name V2_TESTBENCH_COVERAGE_GUIDE_KO.md
 set testbench_guide_destination [file join $package_doc \
     $testbench_guide_name]
 file copy -force $testbench_guide_source $testbench_guide_destination
+set packager_guide_name V2_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md
+set packager_guide_destination [file join $package_doc \
+    $packager_guide_name]
+file copy -force $packager_guide_source $packager_guide_destination
+set xgui_rules_name V2_IP_XACT_XGUI_REGENERATION_RULES_KO.md
+set xgui_rules_destination [file join $package_doc $xgui_rules_name]
+file copy -force $xgui_rules_source $xgui_rules_destination
 
 # Avoid a stale per-user Tcl Store cache. Use the installed Vivado store as the
 # reproducible packaging source.
@@ -395,6 +410,8 @@ ipx::remove_all_file $product_guide_group
 ipx::add_file doc/$product_guide_name $product_guide_group
 ipx::add_file doc/$maintenance_guide_name $product_guide_group
 ipx::add_file doc/$testbench_guide_name $product_guide_group
+ipx::add_file doc/$packager_guide_name $product_guide_group
+ipx::add_file doc/$xgui_rules_name $product_guide_group
 
 foreach group [ipx::get_file_groups -of_objects $core] {
     set_property component_subcores {} $group
@@ -444,10 +461,37 @@ ipx::save_core $core
 ipx::unload_core $core
 close_project
 
+# Generate the editable Package IP Layout/Preview only after the final
+# IP-XACT parameter and interface state has been saved, unloaded, and reopened.
+# Generating from the still-open packaging object can retain stale parameter
+# relationships and collapse the maintained tab hierarchy into one flat page.
+set component [file join $package_dir component.xml]
+create_project -in_memory tdc_gpx_lidar_ctrl_v2_xgui_sync \
+    -part xc7z020clg484-2
+set core [ipx::open_core $component]
+common::load_features ipservices
+ipx::create_xgui_files $core
+# Vivado appends one empty line after the generated callback set. Keep exactly
+# one terminating newline so repeated packaging is Git-clean without changing
+# any native callback or visual Layout content.
+set xgui_channel [open $xgui_destination r]
+fconfigure $xgui_channel -translation binary
+set xgui_text [read $xgui_channel]
+close $xgui_channel
+set xgui_channel [open $xgui_destination w]
+fconfigure $xgui_channel -translation binary
+puts -nonewline $xgui_channel \
+    "[string trimright $xgui_text \"\r\n\"]\n"
+close $xgui_channel
+v2_check_xgui_source_contract $xgui_destination
+ipx::update_checksums $core
+ipx::save_core $core
+ipx::unload_core $core
+close_project
+
 if {[file exists $work_dir]} {
     file delete -force $work_dir
 }
-set component [file join $package_dir component.xml]
 set channel [open $component r]
 set component_text [read $channel]
 close $channel

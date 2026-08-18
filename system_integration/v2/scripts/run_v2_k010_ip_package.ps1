@@ -191,7 +191,7 @@ Set-Content -LiteralPath (Join-Path $session "WARNING_AUDIT.txt") `
 $summary = @(
     "LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS",
     "package=$packageDir",
-    "source_sync=88 RTL + XGUI + 3 Korean guides",
+    "source_sync=88 RTL + XGUI + 5 Korean guides",
     "catalog=v1 tdc_gpx_top:1.0 + v2 tdc_gpx_lidar_ctrl_v2:2.0",
     "ooc_profiles=async32(150/200), async128(200/150, echo off), sync64(150/150)",
     "warning_contract=new warning IDs or count increases fail sign-off",
