@@ -622,7 +622,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>a246d81b</spirit:value>
+            <spirit:value>0982afe7</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -3323,6 +3323,10 @@
         <spirit:name>doc/V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md</spirit:name>
         <spirit:fileType>unknown</spirit:fileType>
       </spirit:file>
+      <spirit:file>
+        <spirit:name>doc/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md</spirit:name>
+        <spirit:fileType>unknown</spirit:fileType>
+      </spirit:file>
     </spirit:fileSet>
   </spirit:fileSets>
   <spirit:description>V3 integrated Motor/Laser, optional Echo LVDS frontend, four-chip TDC-GPX acquisition, HLS PACKED17 Rise/Fall 32/64-bit AXI streams, unified 32-control/32-status CSR and runtime IRQ.</spirit:description>
@@ -3476,13 +3480,13 @@
       <xilinx:vendorDisplayName>Victek Co., Ltd.</xilinx:vendorDisplayName>
       <xilinx:vendorURL>https://www.victek.co.kr</xilinx:vendorURL>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-14T03:33:01Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-18T01:38:14Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2.1</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="48ed89c2"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="183345d9"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="e48e49f9"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="d1626347"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="42379cbc"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="9f5a50b3"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="55e6eceb"/>

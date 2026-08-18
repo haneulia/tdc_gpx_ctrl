@@ -28,10 +28,12 @@ set testbench_guide_source [file join $v3_dir docs \
     V3_H6_TESTBENCH_GUIDE_KO.md]
 set parent_checkpoint_source [file join $v3_dir docs \
     V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md]
+set ip_packager_guide_source [file join $v3_dir docs \
+    V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
 foreach required [list $manifest_source $xgui_source $product_guide_source \
         $maintenance_guide_source $code_reading_guide_source \
         $testbench_guide_source \
-        $parent_checkpoint_source] {
+        $parent_checkpoint_source $ip_packager_guide_source] {
     if {![file exists $required]} {
         error "Required package source is missing: $required"
     }
@@ -87,6 +89,10 @@ set parent_checkpoint_name V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md
 set parent_checkpoint_destination [file join $package_doc \
     $parent_checkpoint_name]
 file copy -force $parent_checkpoint_source $parent_checkpoint_destination
+set ip_packager_guide_name V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md
+set ip_packager_guide_destination [file join $package_doc \
+    $ip_packager_guide_name]
+file copy -force $ip_packager_guide_source $ip_packager_guide_destination
 
 # Avoid a stale per-user Tcl Store cache. Use the installed Vivado store as the
 # reproducible packaging source.
@@ -419,6 +425,7 @@ ipx::add_file doc/$maintenance_guide_name $product_guide_group
 ipx::add_file doc/$code_reading_guide_name $product_guide_group
 ipx::add_file doc/$testbench_guide_name $product_guide_group
 ipx::add_file doc/$parent_checkpoint_name $product_guide_group
+ipx::add_file doc/$ip_packager_guide_name $product_guide_group
 
 foreach group [ipx::get_file_groups -of_objects $core] {
     set_property component_subcores {} $group

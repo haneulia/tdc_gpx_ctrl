@@ -23,6 +23,8 @@ set packaged_testbench_guide [file join $package_dir doc \
     V3_H6_TESTBENCH_GUIDE_KO.md]
 set packaged_parent_checkpoint [file join $package_dir doc \
     V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md]
+set packaged_ip_packager_guide [file join $package_dir doc \
+    V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
 set canonical_xgui [file join $v3_dir ip_package \
     tdc_gpx_lidar_ctrl_v3_xgui.tcl]
 set canonical_guide [file join $v3_dir ip_package PRODUCT_GUIDE_KO.md]
@@ -34,12 +36,15 @@ set canonical_testbench_guide [file join $v3_dir docs \
     V3_H6_TESTBENCH_GUIDE_KO.md]
 set canonical_parent_checkpoint [file join $v3_dir docs \
     V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md]
+set canonical_ip_packager_guide [file join $v3_dir docs \
+    V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
 foreach required [list $component $packaged_xgui $packaged_guide \
         $packaged_maintenance_guide $canonical_xgui $canonical_guide \
         $canonical_maintenance_guide $packaged_code_reading_guide \
         $canonical_code_reading_guide $packaged_testbench_guide \
         $canonical_testbench_guide $packaged_parent_checkpoint \
-        $canonical_parent_checkpoint] {
+        $canonical_parent_checkpoint $packaged_ip_packager_guide \
+        $canonical_ip_packager_guide] {
     if {![file exists $required]} {
         error "Required v3 package artifact is missing: $required"
     }
@@ -82,10 +87,12 @@ v3_require_file_equal $canonical_testbench_guide \
     $packaged_testbench_guide {v3 Testbench Coverage Guide}
 v3_require_file_equal $canonical_parent_checkpoint \
     $packaged_parent_checkpoint {v3 Parent Implementation Checkpoint}
+v3_require_file_equal $canonical_ip_packager_guide \
+    $packaged_ip_packager_guide {v3 IP Packager Maintenance Guide}
 if {[string first {C_MAX_CHIPS} [v3_read_binary $component]] >= 0} {
     error {component.xml exposes unresolved C_MAX_CHIPS in a public HDL type}
 }
-puts "LIDAR_V3_SOURCE_SYNC_PASS rtl=[llength $entries] xgui=1 guides=5"
+puts "LIDAR_V3_SOURCE_SYNC_PASS rtl=[llength $entries] xgui=1 guides=6"
 
 # Avoid the damaged per-user Tcl Store on this workstation.
 set install_tcl_store [file normalize \
@@ -283,12 +290,12 @@ foreach packaged_file $synth_files {
 set guide_group [v3_require_one [ipx::get_file_groups xilinx_productguide \
     -of_objects $core] {Product Guide group}]
 set guide_files [ipx::get_files -of_objects $guide_group]
-if {[llength $guide_files] != 5} {
-    error "Expected five Korean guide files, found [llength $guide_files]"
+if {[llength $guide_files] != 6} {
+    error "Expected six Korean guide files, found [llength $guide_files]"
 }
 foreach required_guide [list $packaged_guide $packaged_maintenance_guide \
         $packaged_code_reading_guide $packaged_testbench_guide \
-        $packaged_parent_checkpoint] {
+        $packaged_parent_checkpoint $packaged_ip_packager_guide] {
     set relative_guide [file join doc [file tail $required_guide]]
     if {[llength [ipx::get_files -quiet $relative_guide \
             -of_objects $guide_group]] != 1} {

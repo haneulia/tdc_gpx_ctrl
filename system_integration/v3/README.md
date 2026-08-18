@@ -82,6 +82,10 @@ H0~H4 Header의 역할, 전체 Bit Map, 생산자·소비자와 ABI 수정 규�
 기록한다. 검증된 H1~H4 Vitis HLS workspace와 32/64-bit Parent Vivado
 Sign-off 결과를 GUI에서 여는 절차는
 [`docs/V3_GUI_PROJECT_GUIDE_KO.md`](docs/V3_GUI_PROJECT_GUIDE_KO.md)에 기록한다.
+Vivado Package IP GUI에서 V3의 File Groups, Generic, Interface와 XGUI를 유지보수하는
+절차와 canonical 원본 소유권은
+[`docs/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md`](docs/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md)에
+기록한다.
 H1의 계약, 시험 행렬과 수치는
 [`docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md`](docs/V3_H1_GPX_HIT_DECODER_SIGNOFF_KO.md)에
 기록한다. H2의 계약과 검증 결과는

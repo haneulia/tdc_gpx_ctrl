@@ -136,6 +136,23 @@ Sign-off Project에 metadata Upgrade를 적용하지 않는다.
 같은 `V:/w32` 또는 해당 실행에서 배정된 드라이브의 Project에서 Synthesis와
 Implementation을 수행한다.
 
+### 2.4 V3 IP Packager GUI
+
+V3 packaged IP의 Identification, File Groups, Customization Parameters,
+Ports and Interfaces, XGUI와 Review and Package를 직접 확인할 때는 다음 명령을 쓴다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  ./system_integration/v3/scripts/open_v3_ip_packager_gui.ps1 `
+  -Recreate
+```
+
+이 프로젝트는 `.work/v3_ip_packager`에 생성되는 일회성 편집 환경이다. 실행 전에
+canonical RTL/HLS/XGUI와 `ip_repo`의 일치, 외부 source/XCI 부재, 필수 interface와
+IP 무결성 DRC를 자동 검사한다. 상세 변경 책임과 안전한 재패키징 절차는
+[`V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md`](V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md)를
+따른다.
+
 ## 3. Vitis HLS workspace
 
 Vitis Unified IDE는 저장소의 `.work`를 workspace로 열며 다음 네 Component를
