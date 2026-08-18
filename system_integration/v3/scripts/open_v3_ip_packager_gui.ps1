@@ -216,6 +216,9 @@ try {
     Write-Output (
         "Keep $ShortDrive mapped while IP Packager is open. Close every " +
         "dependent Vivado window before: subst $ShortDrive /D")
+    Write-Output (
+        "Package IP edits metadata. To inspect the actual end-user XGUI, run " +
+        "open_v3_customize_ip_gui.ps1 -Variant $Variant")
 }
 finally {
     if ($LocationPushed) { Pop-Location }

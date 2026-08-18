@@ -100,6 +100,23 @@ GUI를 열지 않고 package와 편집 프로젝트를 검사하려면 `-Validat
 - 생성 RTL 포함형: `.work/v3_ip_packager/tdc_gpx_lidar_ctrl_v3_ip_packager.xpr`
 - HLS 하위 IP 참조형: `.work/v3_hls_ip_packager/tdc_gpx_lidar_ctrl_v3_hls_ip_packager.xpr`
 
+Package IP의 `Customization GUI`는 source-controlled 동적 XGUI Tcl을 완전히
+역변환하는 최종 사용자 화면이 아니다. 실제 Block Design 사용자가 보게 될
+Customize IP 창은 다음처럼 별도로 연다.
+
+```powershell
+./system_integration/v3/scripts/open_v3_customize_ip_gui.ps1 `
+  -Variant EmbeddedRtl -Recreate
+
+./system_integration/v3/scripts/open_v3_customize_ip_gui.ps1 `
+  -Variant HlsIp -Recreate
+```
+
+두 창에서 동일한 네 개 XGUI 탭과 32/64-bit, clock, topology 및 Echo Frontend
+제약이 표시되어야 한다. Package IP의 `IP_Flow 19-5661` 경고는 discrete GPX
+물리 핀을 구동하는 독립 `i_tdc_clk`에 연결할 표준 AXI/AXIS bus가 없다는
+메타데이터 알림이며, 현재 계약에서는 허용한다.
+
 ## 6. 32/64-bit 합성 검증
 
 ```powershell

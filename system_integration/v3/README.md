@@ -85,7 +85,8 @@ Sign-off 결과를 GUI에서 여는 절차는
 Vivado Package IP GUI에서 V3의 File Groups, Generic, Interface와 XGUI를 유지보수하는
 절차와 canonical 원본 소유권은
 [`docs/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md`](docs/V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md)에
-기록한다.
+기록한다. Package IP 메타데이터 편집 화면과 실제 사용자의 Customize IP XGUI는
+서로 다른 화면이며, 후자는 `scripts/open_v3_customize_ip_gui.ps1`로 재현한다.
 생성 RTL 포함형과 HLS 하위 IP 참조형의 VLNV, 선택 기준, 재패키징 및 32/64-bit
 합성 검증 절차는
 [`docs/V3_DUAL_HLS_PACKAGING_GUIDE_KO.md`](docs/V3_DUAL_HLS_PACKAGING_GUIDE_KO.md)에

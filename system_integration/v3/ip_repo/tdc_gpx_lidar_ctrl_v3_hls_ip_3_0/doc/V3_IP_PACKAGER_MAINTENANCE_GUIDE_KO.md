@@ -41,6 +41,21 @@ GUI 프로젝트는 형상관리 원본이 아니라, 재현 가능한 일회성
 
 ## 3. GUI 열기
 
+V3는 목적이 다른 두 GUI를 분리한다.
+
+- **Package IP GUI**: File Groups, Generic, Ports and Interfaces, IP-XACT DRC를
+  편집·점검한다.
+- **Customize IP GUI**: Block Design 사용자가 실제로 보는 XGUI 탭, 선택 상자,
+  입력 제약과 Optional port 표시를 점검한다.
+
+canonical XGUI는 `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl`에서 코드로 관리한다.
+따라서 Package IP의 `Customization GUI` 레이아웃 편집 화면은 이 Tcl의 동적
+callback과 반복문을 완전하게 역변환하지 못해 빈 화면으로 보일 수 있다. 이것을
+최종 XGUI 부재로 판정하지 않는다. 대신 아래 실제 Customize IP 창이 정상적으로
+열리고 모든 탭이 표시되는 것을 필수 PASS 조건으로 사용한다.
+
+### 3.1 Package IP GUI
+
 생성 RTL 포함형을 최초 생성하거나 package가 변경된 뒤에는 다음 명령을 사용한다.
 
 ```powershell
@@ -73,6 +88,27 @@ HLS 하위 IP 참조형은 다음과 같다.
 5. `../HDL` 외부 참조 부재
 6. 필수 Generic, 포트, AXI/clock interface 및 XGUI 계약
 7. 32/64-bit customization과 IP Packager `check_integrity` DRC PASS
+
+### 3.2 실제 Customize IP GUI
+
+생성 RTL 포함형의 실제 사용자 화면은 다음 명령으로 연다.
+
+```powershell
+./system_integration/v3/scripts/open_v3_customize_ip_gui.ps1 `
+  -Variant EmbeddedRtl -Recreate
+```
+
+HLS 하위 IP 참조형은 다음과 같다.
+
+```powershell
+./system_integration/v3/scripts/open_v3_customize_ip_gui.ps1 `
+  -Variant HlsIp -Recreate
+```
+
+이 창에서 `Clock and Output`, `TDC-GPX Topology`, `Echo Frontend`,
+`Physical Timing` 탭과 32/64-bit 선택, 1~4 Chip, Rising/Falling capability,
+Echo Receiver enablement 및 지원 clock 목록을 확인한다. `OK`를 누르면 미리보기
+XCI가 `.work/v3_customize_*` 아래에 생성되며, `Cancel`은 설정을 저장하지 않는다.
 
 ## 4. 원본 변경 후 재패키징
 
@@ -160,6 +196,14 @@ Block Design 표시 여부를 제어한다.
 경고는 설치된 Board Store의 다른 device용 board 파일 경고와, 물리 GPX clock인
 `i_tdc_clk`에 연결 AXI bus가 없다는 알림이다. 다음 항목은 허용하지 않는다.
 
+`[IP_Flow 19-5661] Bus Interface 'i_tdc_clk' does not have any bus interfaces
+associated with it`는 의도된 독립 clock-domain 경고다. `i_tdc_clk`는 내부 GPX
+획득 상태기계와 `WRN/RDN/CSN/ADR/DATA/OEN` 같은 discrete 물리 핀을 구동하지만,
+top-level AXI/AXIS bus를 직접 clock하지 않는다. `FREQ_HZ`와
+`i_tdc_aresetn` 연관성을 유지하기 위해 clock interface 자체는 보존한다. 향후
+물리 GPX 핀을 정식 custom bus interface로 묶을 때만 해당 bus를 연결해 경고를
+제거한다.
+
 - `[Common 17-680]` Windows 260자 경로 초과
 - external source reference 유입
 - 생성 RTL 포함형의 child XCI 또는 HLS 하위 IP 참조형의 잘못된 subcore 수
@@ -200,6 +244,8 @@ canonical 원본과 `ip_repo` 변경만 Git에 포함한다. `.work/v3_ip_packag
 | IP가 locked 상태 | 해당 Parent를 닫고 package 갱신 후 개발 Parent를 재생성 |
 | Simulation target reset 실패 | 관련 Vivado 창을 모두 닫고 disposable project 재생성 |
 | XGUI가 이전 값 표시 | canonical XGUI 갱신, package 재생성, IP catalog refresh |
+| Package IP의 Customization GUI가 비어 있음 | 동적 Tcl의 역변환 화면으로 판정하지 말고 `open_v3_customize_ip_gui.ps1`로 실제 사용자 XGUI 확인 |
+| 실제 Customize IP 창이 비어 있거나 오류 | XGUI의 `init_gui`, Generic 이름, callback 인자를 수정하고 package 재생성 |
 | File Group에 `../HDL` 등장 | 저장 중단, package 재생성, Merge changes 사용 금지 |
 | HLS 하위 IP가 locked | `ip_repo` 전체를 등록하고 HLS-IP GUI 프로젝트를 `-Recreate` |
 | `xcd.exe` 메모리 오류 | run manager를 쓰지 말고 dual OOC 검사 사용, 평상시 HLS IP export 생략 |
