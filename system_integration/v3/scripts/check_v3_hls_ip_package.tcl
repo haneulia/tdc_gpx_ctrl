@@ -27,8 +27,15 @@ set canonical_dual_guide [file join $v3_dir docs \
 set packaged_dual_guide [file join $repo \
     tdc_gpx_lidar_ctrl_v3_hls_ip_3_0 doc \
     V3_DUAL_HLS_PACKAGING_GUIDE_KO.md]
+set canonical_xgui_regeneration_rules [file join $v3_dir docs \
+    V3_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
+set packaged_xgui_regeneration_rules [file join $repo \
+    tdc_gpx_lidar_ctrl_v3_hls_ip_3_0 doc \
+    V3_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
 foreach required [list $parent_component $canonical_xgui $packaged_xgui \
-        $canonical_dual_guide $packaged_dual_guide] {
+        $canonical_dual_guide $packaged_dual_guide \
+        $canonical_xgui_regeneration_rules \
+        $packaged_xgui_regeneration_rules] {
     if {![file exists $required]} {
         error "Required V3 HLS-IP package artifact is missing: $required"
     }
@@ -55,6 +62,10 @@ v3_check_xgui_source_contract $packaged_xgui
 if {[v3_hls_ip_read_binary $canonical_dual_guide] ne \
         [v3_hls_ip_read_binary $packaged_dual_guide]} {
     error {V3 HLS-IP dual packaging guide copy is stale}
+}
+if {[v3_hls_ip_read_binary $canonical_xgui_regeneration_rules] ne \
+        [v3_hls_ip_read_binary $packaged_xgui_regeneration_rules]} {
+    error {V3 HLS-IP XGUI regeneration rules copy is stale}
 }
 
 set install_tcl_store [file normalize \

@@ -12,6 +12,8 @@
 GUI 프로젝트는 형상관리 원본이 아니라, 재현 가능한 일회성 편집·검토 환경이다.
 버전 선택 기준과 전체 검증 절차는
 `V3_DUAL_HLS_PACKAGING_GUIDE_KO.md`를 함께 따른다.
+IP-XACT 저장과 네이티브 XGUI 재생성의 순서는
+`V3_IP_XACT_XGUI_REGENERATION_RULES_KO.md`를 강제 규칙으로 따른다.
 
 관리 대상은 다음과 같다.
 

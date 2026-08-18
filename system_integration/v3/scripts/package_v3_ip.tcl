@@ -63,13 +63,15 @@ set parent_checkpoint_source [file join $v3_dir docs \
     V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md]
 set ip_packager_guide_source [file join $v3_dir docs \
     V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
+set xgui_regeneration_rules_source [file join $v3_dir docs \
+    V3_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
 set dual_packaging_guide_source [file join $v3_dir docs \
     V3_DUAL_HLS_PACKAGING_GUIDE_KO.md]
 foreach required [list $manifest_source $xgui_source $product_guide_source \
         $maintenance_guide_source $code_reading_guide_source \
         $testbench_guide_source \
         $parent_checkpoint_source $ip_packager_guide_source \
-        $dual_packaging_guide_source] {
+        $xgui_regeneration_rules_source $dual_packaging_guide_source] {
     if {![file exists $required]} {
         error "Required package source is missing: $required"
     }
@@ -165,6 +167,11 @@ set ip_packager_guide_name V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md
 set ip_packager_guide_destination [file join $package_doc \
     $ip_packager_guide_name]
 file copy -force $ip_packager_guide_source $ip_packager_guide_destination
+set xgui_regeneration_rules_name V3_IP_XACT_XGUI_REGENERATION_RULES_KO.md
+set xgui_regeneration_rules_destination [file join $package_doc \
+    $xgui_regeneration_rules_name]
+file copy -force $xgui_regeneration_rules_source \
+    $xgui_regeneration_rules_destination
 set dual_packaging_guide_name V3_DUAL_HLS_PACKAGING_GUIDE_KO.md
 set dual_packaging_guide_destination [file join $package_doc \
     $dual_packaging_guide_name]
@@ -542,6 +549,7 @@ ipx::add_file doc/$code_reading_guide_name $product_guide_group
 ipx::add_file doc/$testbench_guide_name $product_guide_group
 ipx::add_file doc/$parent_checkpoint_name $product_guide_group
 ipx::add_file doc/$ip_packager_guide_name $product_guide_group
+ipx::add_file doc/$xgui_regeneration_rules_name $product_guide_group
 ipx::add_file doc/$dual_packaging_guide_name $product_guide_group
 
 foreach group [ipx::get_file_groups -of_objects $core] {

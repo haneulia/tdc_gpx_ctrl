@@ -25,6 +25,8 @@ set packaged_parent_checkpoint [file join $package_dir doc \
     V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md]
 set packaged_ip_packager_guide [file join $package_dir doc \
     V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
+set packaged_xgui_regeneration_rules [file join $package_dir doc \
+    V3_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
 set packaged_dual_packaging_guide [file join $package_dir doc \
     V3_DUAL_HLS_PACKAGING_GUIDE_KO.md]
 set canonical_xgui [file join $v3_dir ip_package \
@@ -40,6 +42,8 @@ set canonical_parent_checkpoint [file join $v3_dir docs \
     V3_H6B3B_PARENT_IMPLEMENTATION_CHECKPOINT_KO.md]
 set canonical_ip_packager_guide [file join $v3_dir docs \
     V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md]
+set canonical_xgui_regeneration_rules [file join $v3_dir docs \
+    V3_IP_XACT_XGUI_REGENERATION_RULES_KO.md]
 set canonical_dual_packaging_guide [file join $v3_dir docs \
     V3_DUAL_HLS_PACKAGING_GUIDE_KO.md]
 foreach required [list $component $packaged_xgui $packaged_guide \
@@ -48,7 +52,8 @@ foreach required [list $component $packaged_xgui $packaged_guide \
         $canonical_code_reading_guide $packaged_testbench_guide \
         $canonical_testbench_guide $packaged_parent_checkpoint \
         $canonical_parent_checkpoint $packaged_ip_packager_guide \
-        $canonical_ip_packager_guide $packaged_dual_packaging_guide \
+        $canonical_ip_packager_guide $packaged_xgui_regeneration_rules \
+        $canonical_xgui_regeneration_rules $packaged_dual_packaging_guide \
         $canonical_dual_packaging_guide] {
     if {![file exists $required]} {
         error "Required v3 package artifact is missing: $required"
@@ -106,12 +111,14 @@ v3_require_file_equal $canonical_parent_checkpoint \
     $packaged_parent_checkpoint {v3 Parent Implementation Checkpoint}
 v3_require_file_equal $canonical_ip_packager_guide \
     $packaged_ip_packager_guide {v3 IP Packager Maintenance Guide}
+v3_require_file_equal $canonical_xgui_regeneration_rules \
+    $packaged_xgui_regeneration_rules {v3 IP-XACT XGUI Regeneration Rules}
 v3_require_file_equal $canonical_dual_packaging_guide \
     $packaged_dual_packaging_guide {v3 Dual HLS Packaging Guide}
 if {[string first {C_MAX_CHIPS} [v3_read_binary $component]] >= 0} {
     error {component.xml exposes unresolved C_MAX_CHIPS in a public HDL type}
 }
-puts "LIDAR_V3_SOURCE_SYNC_PASS rtl=[llength $entries] xgui=1 guides=7"
+puts "LIDAR_V3_SOURCE_SYNC_PASS rtl=[llength $entries] xgui=1 guides=8"
 
 # Avoid the damaged per-user Tcl Store on this workstation.
 set install_tcl_store [file normalize \
@@ -309,13 +316,13 @@ foreach packaged_file $synth_files {
 set guide_group [v3_require_one [ipx::get_file_groups xilinx_productguide \
     -of_objects $core] {Product Guide group}]
 set guide_files [ipx::get_files -of_objects $guide_group]
-if {[llength $guide_files] != 7} {
-    error "Expected seven Korean guide files, found [llength $guide_files]"
+if {[llength $guide_files] != 8} {
+    error "Expected eight Korean guide files, found [llength $guide_files]"
 }
 foreach required_guide [list $packaged_guide $packaged_maintenance_guide \
         $packaged_code_reading_guide $packaged_testbench_guide \
         $packaged_parent_checkpoint $packaged_ip_packager_guide \
-        $packaged_dual_packaging_guide] {
+        $packaged_xgui_regeneration_rules $packaged_dual_packaging_guide] {
     set relative_guide [file join doc [file tail $required_guide]]
     if {[llength [ipx::get_files -quiet $relative_guide \
             -of_objects $guide_group]] != 1} {
