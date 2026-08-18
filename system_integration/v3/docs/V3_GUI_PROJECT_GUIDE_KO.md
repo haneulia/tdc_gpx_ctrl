@@ -59,6 +59,8 @@ Block Design 저장을 수행하지 않는다. 기존 `post_route.dcp`가 열린
 IP XGUI를 확인하거나 Parent Block Design을 수정할 때는 Sign-off 열람 Project를
 Upgrade하지 않고, 최신 packaged IP로 별도 writable Parent를 생성한다. 다음 명령은
 32-bit Parent를 생성하고 IP lock 및 Upgrade 필요 여부를 검사한 뒤 Vivado를 연다.
+실행기는 Windows 260자 경로 제한을 피하기 위해 짧은 `.work\v3gui` 물리 경로를
+사용하고, Vivado에는 `V:`~`Z:` 중 비어 있는 가상 드라이브 경로를 전달한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
@@ -75,6 +77,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 쓰기 가능한 `Customize IP` 화면을 확인할 수 있다. GUI에서 확인한 구조 변경을 제품에
 남기려면 `.work`의 BD만 저장하지 말고 `system_integration/v3/parent_l0`의 생성 Tcl에도
 같은 변경을 반영해야 한다.
+
+가상 드라이브는 Vivado에서 IP Output Products, Synthesis, Implementation을 수행하는
+동안 유지해야 한다. 관련 Vivado 창을 모두 닫은 뒤 실행 로그에 표시된 드라이브가 더
+필요하지 않으면 다음처럼 해제한다.
+
+```powershell
+subst V: /D
+```
+
+실제 할당 문자는 실행 로그의 `short_map=` 값을 사용한다. 프로젝트를 긴
+`C:\Projects\...` 물리 경로로 직접 다시 열면 AXI Interconnect 자동 생성 경로가
+260자를 넘을 수 있으므로, 항상 위 실행기를 사용한다.
 
 ### 2.2 `Target 'Simulation' failed to remove` 오류
 
@@ -103,6 +117,24 @@ Sign-off Project에 metadata Upgrade를 적용하지 않는다.
 `post_route.dcp`, Bitstream, XSA가 변경되지 않았다면 기존 물리 Sign-off 판정은
 유지된다. 다만 그 Project의 simulation 생성물은 완전하지 않으므로 개발·simulation
 용도로 계속 사용하지 않는다.
+
+### 2.3 `[Common 17-680] Path length exceeds 260-Byte` 오류
+
+이 오류는 RTL 합성 오류가 아니라 Vivado가 AXI Interconnect와 Protocol Converter의
+긴 자동 생성 이름을 Project 경로 뒤에 붙이면서 Windows 260자 제한을 넘은 것이다.
+2026-08-18 사례에서 기존 `.work\v3_parent_editable\w32`의 실패 XCI는 264자였다.
+
+`open_v3_custom_ip_gui.ps1`은 다음 두 보호를 함께 적용한다.
+
+1. 물리 Project를 짧은 `.work\v3gui\w32` 또는 `w64`에 생성한다.
+2. Vivado는 이 폴더를 가리키는 `V:`~`Z:` 가상 드라이브로 Project를 연다.
+
+32-bit 생성물 전체를 확인한 결과 물리 경로는 최대 307자였지만, Vivado가 사용하는
+가상 드라이브 경로는 최대 256자였고 260자를 넘는 파일은 없었다. 따라서 파일 탐색기나
+최근 Project 목록에서 긴 물리 `.xpr`을 직접 열지 않는다. 오류가 발생한 기존 Project는
+닫고 2.1 명령에 `-Recreate`를 붙여 다시 생성한다. Output Products 생성이 완료된 뒤
+같은 `V:/w32` 또는 해당 실행에서 배정된 드라이브의 Project에서 Synthesis와
+Implementation을 수행한다.
 
 ## 3. Vitis HLS workspace
 
