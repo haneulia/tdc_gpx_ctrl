@@ -41,10 +41,17 @@ proc v3_hls_ip_read_binary {path} {
     close $channel
     return $data
 }
-if {[v3_hls_ip_read_binary $canonical_xgui] ne \
-        [v3_hls_ip_read_binary $packaged_xgui]} {
+set canonical_xgui_text [string trimright [string map \
+    [list "\r\n" "\n" "\r" "\n"] \
+    [v3_hls_ip_read_binary $canonical_xgui]]]
+set packaged_xgui_text [string trimright [string map \
+    [list "\r\n" "\n" "\r" "\n"] \
+    [v3_hls_ip_read_binary $packaged_xgui]]]
+if {$canonical_xgui_text ne $packaged_xgui_text} {
     error {V3 HLS-IP XGUI copy is stale}
 }
+source [file join $script_dir check_v3_xgui_source_contract.tcl]
+v3_check_xgui_source_contract $packaged_xgui
 if {[v3_hls_ip_read_binary $canonical_dual_guide] ne \
         [v3_hls_ip_read_binary $packaged_dual_guide]} {
     error {V3 HLS-IP dual packaging guide copy is stale}
@@ -115,14 +122,23 @@ puts "LIDAR_V3_HLS_IP_DEPENDENCY_PASS subcores=[llength $found_subcores]"
 
 foreach {label width} {hls_ip_w32 32 hls_ip_w64 64} {
     create_ip -vlnv $parent_vlnv -module_name $label
+    if {$width == 64} {
+        set rise_mask 1111
+        set fall_mask 1111
+    } else {
+        set rise_mask 0011
+        set fall_mask 1100
+    }
     set_property -dict [list CONFIG.G_OUTPUT_WIDTH $width \
         CONFIG.G_NUM_CHIPS 4 CONFIG.G_STOPS_PER_CHIP 8 \
-        CONFIG.G_MAX_RETURNS_PER_STOP 7] [get_ips $label]
+        CONFIG.G_MAX_RETURNS_PER_STOP 7 \
+        CONFIG.G_RISE_CAPABILITY_MASK $rise_mask \
+        CONFIG.G_FALL_CAPABILITY_MASK $fall_mask] [get_ips $label]
     generate_target instantiation_template [get_ips $label]
     if {[get_property IS_LOCKED [get_ips $label]]} {
         error "Generated V3 HLS-IP instance is locked: $label"
     }
-    puts "LIDAR_V3_HLS_IP_CUSTOMIZATION_PASS profile=$label width=$width"
+    puts "LIDAR_V3_HLS_IP_CUSTOMIZATION_PASS profile=$label width=$width rise=$rise_mask fall=$fall_mask"
 }
 
 puts {TDC_GPX_LIDAR_CTRL_V3_HLS_IP_CHECK_PASS}

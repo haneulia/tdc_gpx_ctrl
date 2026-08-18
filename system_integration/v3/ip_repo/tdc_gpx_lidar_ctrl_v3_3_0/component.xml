@@ -393,7 +393,7 @@
       <spirit:parameters>
         <spirit:parameter>
           <spirit:name>POLARITY</spirit:name>
-          <spirit:value spirit:id="BUSIFPARAM_VALUE.I_TDC_ARESETN.POLARITY" spirit:choiceRef="choice_list_74b5137e">ACTIVE_LOW</spirit:value>
+          <spirit:value spirit:id="BUSIFPARAM_VALUE.I_TDC_ARESETN.POLARITY" spirit:choiceRef="choice_list_9d8b0d81">ACTIVE_LOW</spirit:value>
         </spirit:parameter>
       </spirit:parameters>
     </spirit:busInterface>
@@ -415,7 +415,7 @@
       <spirit:parameters>
         <spirit:parameter>
           <spirit:name>POLARITY</spirit:name>
-          <spirit:value spirit:id="BUSIFPARAM_VALUE.PROC_ARESETN.POLARITY" spirit:choiceRef="choice_list_74b5137e">ACTIVE_LOW</spirit:value>
+          <spirit:value spirit:id="BUSIFPARAM_VALUE.PROC_ARESETN.POLARITY" spirit:choiceRef="choice_list_9d8b0d81">ACTIVE_LOW</spirit:value>
         </spirit:parameter>
       </spirit:parameters>
     </spirit:busInterface>
@@ -437,7 +437,7 @@
       <spirit:parameters>
         <spirit:parameter>
           <spirit:name>POLARITY</spirit:name>
-          <spirit:value spirit:id="BUSIFPARAM_VALUE.S_AXI_CSR_ARESETN.POLARITY" spirit:choiceRef="choice_list_74b5137e">ACTIVE_LOW</spirit:value>
+          <spirit:value spirit:id="BUSIFPARAM_VALUE.S_AXI_CSR_ARESETN.POLARITY" spirit:choiceRef="choice_list_9d8b0d81">ACTIVE_LOW</spirit:value>
         </spirit:parameter>
       </spirit:parameters>
     </spirit:busInterface>
@@ -545,7 +545,7 @@
       <spirit:parameters>
         <spirit:parameter>
           <spirit:name>SENSITIVITY</spirit:name>
-          <spirit:value spirit:resolve="user" spirit:id="BUSIFPARAM_VALUE.O_IRQ.SENSITIVITY" spirit:choiceRef="choice_list_9ca20931">LEVEL_HIGH</spirit:value>
+          <spirit:value spirit:resolve="user" spirit:id="BUSIFPARAM_VALUE.O_IRQ.SENSITIVITY" spirit:choiceRef="choice_list_99a1d2b9">LEVEL_HIGH</spirit:value>
         </spirit:parameter>
       </spirit:parameters>
     </spirit:busInterface>
@@ -578,7 +578,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>ab3139df</spirit:value>
+            <spirit:value>d73a226f</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -594,7 +594,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>ab3139df</spirit:value>
+            <spirit:value>d73a226f</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -608,7 +608,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>7b9026c2</spirit:value>
+            <spirit:value>c3b3c759</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -622,7 +622,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>c82ae13b</spirit:value>
+            <spirit:value>c0dd7acb</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -1915,7 +1915,7 @@
       <spirit:modelParameter spirit:dataType="integer">
         <spirit:name>G_OUTPUT_WIDTH</spirit:name>
         <spirit:displayName>G Output Width</spirit:displayName>
-        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.G_OUTPUT_WIDTH" spirit:minimum="0">32</spirit:value>
+        <spirit:value spirit:format="long" spirit:resolve="generated" spirit:id="MODELPARAM_VALUE.G_OUTPUT_WIDTH" spirit:minimum="0" spirit:rangeType="long">32</spirit:value>
       </spirit:modelParameter>
       <spirit:modelParameter spirit:dataType="integer">
         <spirit:name>G_NUM_FACES</spirit:name>
@@ -1971,14 +1971,7 @@
   </spirit:model>
   <spirit:choices>
     <spirit:choice>
-      <spirit:name>choice_list_256c6666</spirit:name>
-      <spirit:enumeration>1</spirit:enumeration>
-      <spirit:enumeration>2</spirit:enumeration>
-      <spirit:enumeration>3</spirit:enumeration>
-      <spirit:enumeration>4</spirit:enumeration>
-    </spirit:choice>
-    <spirit:choice>
-      <spirit:name>choice_list_2fc66e08</spirit:name>
+      <spirit:name>choice_list_070fff2f</spirit:name>
       <spirit:enumeration>1</spirit:enumeration>
       <spirit:enumeration>2</spirit:enumeration>
       <spirit:enumeration>3</spirit:enumeration>
@@ -1989,12 +1982,7 @@
       <spirit:enumeration>8</spirit:enumeration>
     </spirit:choice>
     <spirit:choice>
-      <spirit:name>choice_list_74b5137e</spirit:name>
-      <spirit:enumeration>ACTIVE_HIGH</spirit:enumeration>
-      <spirit:enumeration>ACTIVE_LOW</spirit:enumeration>
-    </spirit:choice>
-    <spirit:choice>
-      <spirit:name>choice_list_86f52a29</spirit:name>
+      <spirit:name>choice_list_51d58f04</spirit:name>
       <spirit:enumeration>1</spirit:enumeration>
       <spirit:enumeration>2</spirit:enumeration>
       <spirit:enumeration>3</spirit:enumeration>
@@ -2002,14 +1990,7 @@
       <spirit:enumeration>5</spirit:enumeration>
     </spirit:choice>
     <spirit:choice>
-      <spirit:name>choice_list_9ca20931</spirit:name>
-      <spirit:enumeration>LEVEL_HIGH</spirit:enumeration>
-      <spirit:enumeration>LEVEL_LOW</spirit:enumeration>
-      <spirit:enumeration>EDGE_RISING</spirit:enumeration>
-      <spirit:enumeration>EDGE_FALLING</spirit:enumeration>
-    </spirit:choice>
-    <spirit:choice>
-      <spirit:name>choice_list_acec45ba</spirit:name>
+      <spirit:name>choice_list_60883616</spirit:name>
       <spirit:enumeration>1</spirit:enumeration>
       <spirit:enumeration>2</spirit:enumeration>
       <spirit:enumeration>3</spirit:enumeration>
@@ -2017,6 +1998,25 @@
       <spirit:enumeration>5</spirit:enumeration>
       <spirit:enumeration>6</spirit:enumeration>
       <spirit:enumeration>7</spirit:enumeration>
+    </spirit:choice>
+    <spirit:choice>
+      <spirit:name>choice_list_99a1d2b9</spirit:name>
+      <spirit:enumeration>LEVEL_HIGH</spirit:enumeration>
+      <spirit:enumeration>LEVEL_LOW</spirit:enumeration>
+      <spirit:enumeration>EDGE_RISING</spirit:enumeration>
+      <spirit:enumeration>EDGE_FALLING</spirit:enumeration>
+    </spirit:choice>
+    <spirit:choice>
+      <spirit:name>choice_list_9d8b0d81</spirit:name>
+      <spirit:enumeration>ACTIVE_HIGH</spirit:enumeration>
+      <spirit:enumeration>ACTIVE_LOW</spirit:enumeration>
+    </spirit:choice>
+    <spirit:choice>
+      <spirit:name>choice_list_aa031417</spirit:name>
+      <spirit:enumeration>1</spirit:enumeration>
+      <spirit:enumeration>2</spirit:enumeration>
+      <spirit:enumeration>3</spirit:enumeration>
+      <spirit:enumeration>4</spirit:enumeration>
     </spirit:choice>
     <spirit:choice>
       <spirit:name>choice_pairs_319453a2</spirit:name>
@@ -3298,6 +3298,7 @@
       <spirit:file>
         <spirit:name>xgui/tdc_gpx_lidar_ctrl_v3_v3_0.tcl</spirit:name>
         <spirit:fileType>tclSource</spirit:fileType>
+        <spirit:userFileType>CHECKSUM_c3b3c759</spirit:userFileType>
         <spirit:userFileType>XGUI_VERSION_2</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
@@ -3363,19 +3364,19 @@
       <spirit:name>G_NUM_CHIPS</spirit:name>
       <spirit:displayName>Physical TDC-GPX chip count</spirit:displayName>
       <spirit:description>Controls all per-chip GPX bus and flag vector widths.</spirit:description>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_NUM_CHIPS" spirit:choiceRef="choice_list_256c6666">4</spirit:value>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_NUM_CHIPS" spirit:choiceRef="choice_list_aa031417">4</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
       <spirit:name>G_STOPS_PER_CHIP</spirit:name>
       <spirit:displayName>STOP channels per chip</spirit:displayName>
       <spirit:description>Controls Echo LVDS/STOP width and logical APD capacity.</spirit:description>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_STOPS_PER_CHIP" spirit:choiceRef="choice_list_2fc66e08">8</spirit:value>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_STOPS_PER_CHIP" spirit:choiceRef="choice_list_070fff2f">8</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
       <spirit:name>G_MAX_RETURNS_PER_STOP</spirit:name>
       <spirit:displayName>Maximum Returns per STOP</spirit:displayName>
       <spirit:description>Compile-time capacity. Runtime selection may use 1 through this value.</spirit:description>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_MAX_RETURNS_PER_STOP" spirit:choiceRef="choice_list_acec45ba">7</spirit:value>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_MAX_RETURNS_PER_STOP" spirit:choiceRef="choice_list_60883616">7</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
       <spirit:name>G_RISE_CAPABILITY_MASK</spirit:name>
@@ -3399,7 +3400,7 @@
       <spirit:name>G_NUM_FACES</spirit:name>
       <spirit:displayName>Mirror face count</spirit:displayName>
       <spirit:description>Build-time polygon face count; runtime geometry uses only these faces.</spirit:description>
-      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_NUM_FACES" spirit:choiceRef="choice_list_86f52a29">5</spirit:value>
+      <spirit:value spirit:format="long" spirit:resolve="user" spirit:id="PARAM_VALUE.G_NUM_FACES" spirit:choiceRef="choice_list_51d58f04">5</spirit:value>
     </spirit:parameter>
     <spirit:parameter>
       <spirit:name>G_ENABLE_ECHO_RECEIVER</spirit:name>
@@ -3484,16 +3485,16 @@
       <xilinx:vendorDisplayName>Victek Co., Ltd.</xilinx:vendorDisplayName>
       <xilinx:vendorURL>https://www.victek.co.kr</xilinx:vendorURL>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-18T03:42:32Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-18T06:31:11Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2.1</xilinx:xilinxVersion>
-      <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="48ed89c2"/>
+      <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="89b60290"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="183345d9"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="bf2bbf1e"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="265b5120"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="42379cbc"/>
-      <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="9f5a50b3"/>
-      <xilinx:checksum xilinx:scope="parameters" xilinx:value="55e6eceb"/>
+      <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="65661fe7"/>
+      <xilinx:checksum xilinx:scope="parameters" xilinx:value="396c78a4"/>
     </xilinx:packagingInfo>
   </spirit:vendorExtensions>
 </spirit:component>

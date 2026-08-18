@@ -72,6 +72,16 @@ proc v3_require_file_equal {canonical packaged label} {
     }
 }
 
+proc v3_require_text_equal {canonical packaged label} {
+    set canonical_text [string trimright [string map \
+        [list "\r\n" "\n" "\r" "\n"] [v3_read_binary $canonical]]]
+    set packaged_text [string trimright [string map \
+        [list "\r\n" "\n" "\r" "\n"] [v3_read_binary $packaged]]]
+    if {$canonical_text ne $packaged_text} {
+        error "$label package copy changed its maintained content: $packaged"
+    }
+}
+
 source [file join $v3_dir ip_package v3_ip_package_manifest.tcl]
 set entries [lidar_v3_ip_package_manifest $hdl_root]
 if {[llength $entries] < 100} {
@@ -82,7 +92,9 @@ foreach entry $entries {
     v3_require_file_equal $canonical [file join $package_dir src $relative] \
         "RTL $relative"
 }
-v3_require_file_equal $canonical_xgui $packaged_xgui {v3 XGUI}
+v3_require_text_equal $canonical_xgui $packaged_xgui {v3 XGUI}
+source [file join $script_dir check_v3_xgui_source_contract.tcl]
+v3_check_xgui_source_contract $packaged_xgui
 v3_require_file_equal $canonical_guide $packaged_guide {v3 Product Guide}
 v3_require_file_equal $canonical_maintenance_guide \
     $packaged_maintenance_guide {v3 RTL Maintenance Guide}
@@ -312,38 +324,11 @@ foreach required_guide [list $packaged_guide $packaged_maintenance_guide \
 }
 puts {LIDAR_V3_COMPONENT_CONTRACT_PASS}
 
-source $packaged_xgui
-if {[::tglcv3_xgui::vhdl_bit_string 0011 4 \
-        {Rising capability mask}] ne {"0011"}} {
-    error {XGUI did not convert the rising mask to a VHDL bit-string literal}
-}
-foreach {label command expected} [list \
-    async_tdc_faster \
-        {::tglcv3_xgui::validate_clock_contract 150 200 ASYNC} true \
-    async_proc_faster \
-        {::tglcv3_xgui::validate_clock_contract 200 150 ASYNC} true \
-    sync_equal \
-        {::tglcv3_xgui::validate_clock_contract 150 150 SYNC} true \
-    sync_split_invalid \
-        {::tglcv3_xgui::validate_clock_contract 150 200 SYNC} false \
-    dedicated_four_chip \
-        {::tglcv3_xgui::validate_topology 4 0011 1100} true \
-    all_dual_four_chip \
-        {::tglcv3_xgui::validate_topology 4 1111 1111} true \
-    rising_only_four_chip \
-        {::tglcv3_xgui::validate_topology 4 1111 0000} true \
-    one_chip_dual \
-        {::tglcv3_xgui::validate_topology 1 0001 0001} true \
-    more_fall_invalid \
-        {::tglcv3_xgui::validate_topology 3 0001 0110} false \
-    outside_chip_invalid \
-        {::tglcv3_xgui::validate_topology 2 0111 0000} false] {
-    lassign [uplevel #0 $command] actual message
-    if {$actual ne $expected} {
-        error "XGUI validation $label expected $expected, got $actual: $message"
-    }
-}
-puts {LIDAR_V3_XGUI_CONTRACT_PASS}
+# Single-parameter lists/ranges and Echo port enablement are verified above
+# from component.xml. Cross-parameter combinations are intentionally checked
+# by fn_validate_build_config so the XGUI file remains Vivado-native and the
+# IP Packager can expose its editable Layout and Preview panes.
+puts {LIDAR_V3_XGUI_IPXACT_AND_NATIVE_CONTRACT_PASS}
 
 ipx::unload_core $core
 
@@ -362,10 +347,11 @@ puts {LIDAR_V3_V1_V3_CATALOG_COEXIST_PASS}
 
 set v3_vlnv victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0
 foreach profile {
-    {async32_tdc_faster 150 200 ASYNC 32 true}
-    {async64_proc_faster 200 150 ASYNC 64 false}
+    {async32_tdc_faster 150 200 ASYNC 32 true 0011 1100}
+    {async64_proc_faster 200 150 ASYNC 64 false 1111 1111}
 } {
-    lassign $profile label proc_mhz tdc_mhz mode width echo_enabled
+    lassign $profile label proc_mhz tdc_mhz mode width echo_enabled \
+        rise_mask fall_mask
     set module_name v3_${label}
     create_ip -vlnv $v3_vlnv -module_name $module_name
     set packaged_ip [get_ips $module_name]
@@ -377,8 +363,8 @@ foreach profile {
         CONFIG.G_NUM_CHIPS 4 \
         CONFIG.G_STOPS_PER_CHIP 8 \
         CONFIG.G_MAX_RETURNS_PER_STOP 7 \
-        CONFIG.G_RISE_CAPABILITY_MASK 0011 \
-        CONFIG.G_FALL_CAPABILITY_MASK 1100 \
+        CONFIG.G_RISE_CAPABILITY_MASK $rise_mask \
+        CONFIG.G_FALL_CAPABILITY_MASK $fall_mask \
         CONFIG.G_OUTPUT_WIDTH $width \
         CONFIG.G_NUM_FACES 5 \
         CONFIG.G_ENABLE_ECHO_RECEIVER $echo_enabled \
@@ -389,6 +375,8 @@ foreach profile {
         CONFIG.G_TDC_CLK_MHZ $tdc_mhz \
         CONFIG.G_STREAM_CLK_MODE $mode \
         CONFIG.G_OUTPUT_WIDTH $width \
+        CONFIG.G_RISE_CAPABILITY_MASK $rise_mask \
+        CONFIG.G_FALL_CAPABILITY_MASK $fall_mask \
         CONFIG.G_ENABLE_ECHO_RECEIVER $echo_enabled] {
         if {[get_property $property $packaged_ip] ne $expected} {
             error "$label did not retain $property=$expected"

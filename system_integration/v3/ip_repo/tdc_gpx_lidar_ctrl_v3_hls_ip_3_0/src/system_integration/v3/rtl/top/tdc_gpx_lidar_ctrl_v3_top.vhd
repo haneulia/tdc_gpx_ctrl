@@ -334,7 +334,9 @@ begin
         report "V3-H6B-TOP-002 stream clock mode must be ASYNC or SYNC"
         severity failure;
     assert fn_validate_build_config(C_BUILD_CONFIG) = CFG_OK
-        report "V3-H6B-TOP-003 invalid build configuration"
+        report "V3-H6B-TOP-003 invalid build configuration: " &
+            lidar_cfg_error_t'image(
+                fn_validate_build_config(C_BUILD_CONFIG))
         severity failure;
     assert G_OEN_MODE = "DYNAMIC_CONNECTED" or
            G_OEN_MODE = "PULLUP_OR_NOT_CONNECTED"

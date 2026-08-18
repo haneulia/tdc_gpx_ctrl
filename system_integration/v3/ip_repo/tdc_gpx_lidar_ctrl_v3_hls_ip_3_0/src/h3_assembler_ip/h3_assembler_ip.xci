@@ -2,10 +2,9 @@
   "schema": "xilinx.com:schema:json_instance:1.0",
   "ip_inst": {
     "xci_name": "h3_assembler_ip",
-    "cell_name": "u_gpx_hls_parent_data/u_h5_data_path/u_h1_h3_pipeline/u_h3_frame_assembler/u_hls_frame_assembler",
     "component_reference": "victek.co.kr:hls_ip:gpx_frame_assembler_hls:3.0",
     "ip_revision": "2114746673",
-    "gen_directory": "q:/hdl/.work/v3_hls_ip_packager/tdc_gpx_lidar_ctrl_v3_hls_ip_packager.gen/sources_1/ip/h3_assembler_ip",
+    "gen_directory": "./",
     "parameters": {
       "component_parameters": {
         "Component_Name": [ { "value": "h3_assembler_ip", "resolve_type": "user", "usage": "all" } ],
@@ -32,7 +31,7 @@
         "IPCONTEXT": [ { "value": "IP_Flow" } ],
         "IPREVISION": [ { "value": "2114746673" } ],
         "MANAGED": [ { "value": "TRUE" } ],
-        "OUTPUTDIR": [ { "value": "q:/hdl/.work/v3_hls_ip_packager/tdc_gpx_lidar_ctrl_v3_hls_ip_packager.gen/sources_1/ip/h3_assembler_ip" } ],
+        "OUTPUTDIR": [ { "value": "./" } ],
         "SELECTEDSIMMODEL": [ { "value": "" } ],
         "SHAREDDIR": [ { "value": "." } ],
         "SWVERSION": [ { "value": "2025.2.1" } ],
@@ -289,5 +288,5 @@
       }
     }
   },
-  "checksum": "50c344d4"
+  "checksum": "a99550a2"
 }

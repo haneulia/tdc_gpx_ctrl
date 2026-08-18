@@ -74,6 +74,8 @@ foreach required [list $manifest_source $xgui_source $product_guide_source \
         error "Required package source is missing: $required"
     }
 }
+source [file join $script_dir check_v3_xgui_source_contract.tcl]
+v3_check_xgui_source_contract $xgui_source
 source $manifest_source
 if {$use_hls_subcores} {
     set entries [lidar_v3_hls_ip_parent_manifest $hdl_root]
@@ -253,6 +255,8 @@ if {$core eq {}} {
 }
 
 # package_project creates a default GUI. Restore the canonical tabbed GUI.
+# Its callbacks intentionally remain in Vivado-native generated form so the
+# Package IP editor can expose both Layout and Preview.
 file copy -force $xgui_source $xgui_destination
 set_property vendor victek.co.kr $core
 set_property library my_ip $core
@@ -604,10 +608,24 @@ ipx::save_core $core
 ipx::unload_core $core
 close_project
 
+# Synchronize the native XGUI only after the final IP-XACT Customization
+# Parameter state has been saved and reopened. Vivado records this relationship
+# in the packaged core; generating from the still-open packaging object falls
+# back to a flat default Layout and loses the maintained tab hierarchy.
+set component [file join $package_dir component.xml]
+create_project -in_memory ${project_name}_xgui_sync -part xc7z020clg484-2
+set core [ipx::open_core $component]
+common::load_features ipservices
+ipx::create_xgui_files $core
+v3_check_xgui_source_contract $xgui_destination
+ipx::update_checksums $core
+ipx::save_core $core
+ipx::unload_core $core
+close_project
+
 if {[file exists $work_dir]} {
     file delete -force $work_dir
 }
-set component [file join $package_dir component.xml]
 set channel [open $component r]
 set component_text [read $channel]
 close $channel
@@ -621,7 +639,18 @@ foreach forbidden $forbidden_items {
     }
 }
 
+# Vivado IP Packager requires a native generated XGUI callback structure and
+# also compares its modification time with component.xml. The source contract
+# checker protects the first condition. Git does not preserve timestamps, so
+# establish the second condition after every deterministic package build.
+set component_mtime [file mtime $component]
+file mtime $xgui_destination [expr {$component_mtime + 2}]
+if {[file mtime $xgui_destination] <= $component_mtime} {
+    error "Unable to establish XGUI preview freshness: $xgui_destination"
+}
+
 puts "TDC_GPX_LIDAR_CTRL_V3_IP_COMPONENT=$component"
 puts "TDC_GPX_LIDAR_CTRL_V3_IP_PACKAGE_PROFILE=$package_variant"
+puts "TDC_GPX_LIDAR_CTRL_V3_XGUI_PREVIEW_FRESH=1"
 puts {TDC_GPX_LIDAR_CTRL_V3_IP_PACKAGE_PASS}
 exit 0

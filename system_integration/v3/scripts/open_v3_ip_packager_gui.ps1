@@ -26,6 +26,7 @@ switch ($Variant) {
         $WorkRoot = Join-Path $HdlRoot ".work\v3_ip_packager"
         $ProjectName = "tdc_gpx_lidar_ctrl_v3_ip_packager"
         $PackageFolder = "tdc_gpx_lidar_ctrl_v3_3_0"
+        $XguiName = "tdc_gpx_lidar_ctrl_v3_v3_0.tcl"
         $ExpectedVlnv = "victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0"
         $PackageRunner = Join-Path $ScriptDir "run_v3_ip_package.ps1"
         $PackageCheckTcl = Join-Path $ScriptDir "check_v3_ip_package.tcl"
@@ -37,6 +38,7 @@ switch ($Variant) {
         $WorkRoot = Join-Path $HdlRoot ".work\v3_hls_ip_packager"
         $ProjectName = "tdc_gpx_lidar_ctrl_v3_hls_ip_packager"
         $PackageFolder = "tdc_gpx_lidar_ctrl_v3_hls_ip_3_0"
+        $XguiName = "tdc_gpx_lidar_ctrl_v3_hls_ip_v3_0.tcl"
         $ExpectedVlnv = "victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3_hls_ip:3.0"
         $PackageRunner = Join-Path $ScriptDir "run_v3_hls_ip_package.ps1"
         $PackageCheckTcl = Join-Path $ScriptDir "check_v3_hls_ip_package.tcl"
@@ -46,6 +48,8 @@ switch ($Variant) {
 }
 $ProjectPath = Join-Path $WorkRoot "$ProjectName.xpr"
 $Component = Join-Path $V3Root "ip_repo\$PackageFolder\component.xml"
+$PackagedXgui = Join-Path $V3Root (
+    "ip_repo\$PackageFolder\xgui\$XguiName")
 
 function Assert-File {
     param([string]$Path, [string]$Purpose)
@@ -73,6 +77,21 @@ function Resolve-VivadoRoot {
     throw "Vivado installation was not found. Supply -VivadoRoot."
 }
 
+function Set-XguiPreviewFreshness {
+    Assert-File -Path $Component -Purpose "V3 packaged component"
+    Assert-File -Path $PackagedXgui -Purpose "V3 packaged XGUI"
+    $ComponentTime = (Get-Item -LiteralPath $Component).LastWriteTimeUtc
+    $XguiItem = Get-Item -LiteralPath $PackagedXgui
+    if ($XguiItem.LastWriteTimeUtc -le $ComponentTime) {
+        # The source checker has already proved that callbacks remain in
+        # Vivado-native form. Correct only Git's lost timestamp ordering here.
+        $XguiItem.LastWriteTimeUtc = $ComponentTime.AddSeconds(2)
+    }
+    if ($XguiItem.LastWriteTimeUtc -le $ComponentTime) {
+        throw "Unable to establish XGUI preview freshness: $PackagedXgui"
+    }
+}
+
 foreach ($Required in @(
         $CreateTcl, $CheckTcl, $PackageCheckTcl, $OpenTcl,
         $PackageRunner)) {
@@ -94,6 +113,7 @@ if ($RefreshPackage) {
     }
 }
 Assert-File -Path $Component -Purpose "V3 $Variant packaged component"
+Assert-File -Path $PackagedXgui -Purpose "V3 $Variant packaged XGUI"
 
 $SubstExe = "C:\Windows\System32\subst.exe"
 $ExistingMaps = @{}
@@ -131,6 +151,7 @@ $MappedWorkRoot = if ($Variant -eq "EmbeddedRtl") {
 $MappedProjectPath = "$MappedWorkRoot\$ProjectName.xpr"
 $MappedIpRepo = "$MappedHdlRoot\system_integration\v3\ip_repo"
 $MappedComponent = "$MappedIpRepo\$PackageFolder\component.xml"
+$MappedXgui = "$MappedIpRepo\$PackageFolder\xgui\$XguiName"
 $MappedPackageDir = Split-Path -Parent $MappedComponent
 $MappedPackageCheckArgument = if ($PackageCheckUsesRepo) {
     $MappedIpRepo
@@ -203,10 +224,14 @@ try {
         exit 0
     }
 
+    # Reapply immediately before launch because project validation or a Git
+    # checkout can change component.xml/XGUI modification-time ordering.
+    Set-XguiPreviewFreshness
     $Process = Start-Process -FilePath $Vivado -ArgumentList @(
         "-mode", "gui", "-nolog", "-nojournal",
         "-source", $OpenTcl, "-tclargs",
-        $MappedProjectPath, $MappedComponent, $ExpectedVlnv) `
+        $MappedProjectPath, $MappedComponent, $ExpectedVlnv,
+        $MappedXgui) `
         -WorkingDirectory $WorkRoot -PassThru
     $GuiStarted = $true
     Write-Output (

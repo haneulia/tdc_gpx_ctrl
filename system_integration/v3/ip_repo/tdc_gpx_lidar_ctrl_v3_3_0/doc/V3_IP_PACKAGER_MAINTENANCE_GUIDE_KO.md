@@ -28,7 +28,7 @@ GUI 프로젝트는 형상관리 원본이 아니라, 재현 가능한 일회성
 |---|---|---|
 | RTL 및 생성 RTL 포함형 목록 | `ip_package/v3_ip_package_manifest.tcl`과 그 원본 파일 | 금지 |
 | HLS C++ 원본 | `hls/*/src`, `hls/common/include` | Vitis HLS에서 수정 |
-| XGUI 구현 | `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl` | 실험만 허용 |
+| XGUI 구현 | `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl` | Layout/Preview 편집 후 원본 동기화 |
 | IP-XACT 속성·Generic·Interface | `scripts/package_v3_ip.tcl` | 실험만 허용 |
 | 생성 RTL 포함형 package | `ip_repo/tdc_gpx_lidar_ctrl_v3_3_0` | 스크립트로 재생성 |
 | HLS 하위 IP 참조형 package | `ip_repo/tdc_gpx_lidar_ctrl_v3_hls_ip_3_0` | 스크립트로 재생성 |
@@ -48,11 +48,26 @@ V3는 목적이 다른 두 GUI를 분리한다.
 - **Customize IP GUI**: Block Design 사용자가 실제로 보는 XGUI 탭, 선택 상자,
   입력 제약과 Optional port 표시를 점검한다.
 
-canonical XGUI는 `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl`에서 코드로 관리한다.
-따라서 Package IP의 `Customization GUI` 레이아웃 편집 화면은 이 Tcl의 동적
-callback과 반복문을 완전하게 역변환하지 못해 빈 화면으로 보일 수 있다. 이것을
-최종 XGUI 부재로 판정하지 않는다. 대신 아래 실제 Customize IP 창이 정상적으로
-열리고 모든 탭이 표시되는 것을 필수 PASS 조건으로 사용한다.
+canonical XGUI는 `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl`에서 관리한다.
+이 파일은 Vivado가 생성한 callback 형식을 그대로 유지하고, `init_gui`는 시각
+편집기가 읽을 수 있는 명시적 `ipgui::add_*` 문장으로 구성한다. 따라서 Package
+IP의 `Customization GUI`에는 다음 두 영역이 모두 표시되어야 한다.
+
+- 왼쪽 `Layout`: Page, Group, Parameter, Static text 계층
+- 오른쪽 `Preview`: 실제 IP symbol과 Customize IP 탭 미리보기
+
+둘 중 하나가 비어 있으면 정상 상태가 아니다. Vivado 2025.2.1은 callback 본문을
+외부에서 한 줄만 추가해도 XGUI를 hand-edited로 판정하여 Preview를 숨길 수 있다.
+그러므로 다음 책임을 분리한다.
+
+- Page/Group/Parameter/Static text 배치: Vivado-native XGUI
+- 개별 값 목록, 범위, 표시명, Echo 포트 enablement: `package_v3_ip.tcl`의 IP-XACT
+- SYNC clock 일치, Chip/Slope mask 조합, Echo simulation 조합:
+  `fn_validate_build_config`와 `tb_lidar_config_types_pkg`
+
+실행기는 Git checkout 때문에 `component.xml`보다 XGUI 수정 시각이 과거로 보이는
+문제만 GUI 시작 직전에 자동 보정한다. 실제 Block Design 사용자가 보는 Customize
+IP 창도 별도로 열어 값 목록, 범위와 Optional port 조건까지 확인한다.
 
 ### 3.1 Package IP GUI
 
@@ -88,6 +103,22 @@ HLS 하위 IP 참조형은 다음과 같다.
 5. `../HDL` 외부 참조 부재
 6. 필수 Generic, 포트, AXI/clock interface 및 XGUI 계약
 7. 32/64-bit customization과 IP Packager `check_integrity` DRC PASS
+8. XGUI callback이 Vivado-native 형식이고 `component.xml`보다 최신으로 판정되어
+   Layout/Preview를 재구성할 수 있는 상태
+
+Package IP의 `Customization GUI`에서 Layout을 수정하고 `Review and Package`로
+저장한 뒤에는 Vivado를 닫고 다음 명령으로 생성된 네이티브 XGUI를 canonical
+원본에 반영한다.
+
+```powershell
+./system_integration/v3/scripts/import_v3_xgui_from_packager.ps1 `
+  -Variant HlsIp
+```
+
+이 명령은 callback이 Vivado-native 형식인지 먼저 검사하므로 외부 callback 로직이
+섞인 파일은 가져오지 않는다. 원본 동기화 뒤에는 4장의 절차로 두 Variant를 모두
+재패키징한다. `Regenerate and overwrite` 안내가 예기치 않게 다시 나타나면 즉시
+덮어쓰지 말고 package를 `-RefreshPackage -Recreate`로 복구한다.
 
 ### 3.2 실제 Customize IP GUI
 
@@ -175,8 +206,19 @@ canonical XGUI Tcl에서 수행한다.
 - 합성 시 고정되는 Generic만 노출한다.
 - 계산 전용 값은 XGUI의 read-only 표시값으로만 둔다.
 - Runtime 설정은 통합 AXI4-Lite CSR에서 관리하며 Generic으로 중복 노출하지 않는다.
-- XGUI 유효성 검사와 HDL Generic 범위는 같은 계약이어야 한다.
+- IP-XACT 값 목록·범위와 HDL Generic 범위는 같은 계약이어야 한다.
 - clock 주파수 표시는 실제 Block Design의 `FREQ_HZ`와 일치해야 한다.
+- `init_gui` 안에는 `foreach`, 동적 `proc` 생성 또는 helper 호출을 넣지
+  않는다. Page/Group/Parameter를 명시적으로 작성해야 Packager Layout/Preview가
+  유지된다.
+- `update_PARAM_VALUE.*`와 `validate_PARAM_VALUE.*`의 본문은 Vivado가 생성한
+  빈 callback 형태를 유지한다. 목록·범위 검사는 `component.xml`에 저장한다.
+- `update_MODELPARAM_VALUE.*`는 Parameter 값을 HDL Generic으로 직접 전달하는
+  Vivado 생성식을 유지한다. Rising/Falling 4-bit mask 전달은 32/64-bit
+  customization 회귀에서 실제 XCI 생성값으로 검사한다.
+- 여러 Generic의 관계를 함께 판단하는 계약은 XGUI callback에 중복 구현하지
+  않는다. `fn_validate_build_config`의 오류 열거형과
+  `tb_lidar_config_types_pkg`가 단일 검증원이다.
 
 ### 5.4 Ports and Interfaces
 
@@ -227,7 +269,9 @@ subst P: /D
 
 GUI에서 시험한 변경을 유지하려면 다음 위치로 옮긴다.
 
-- XGUI 탭·표시·validation: `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl`
+- XGUI 탭·표시: `import_v3_xgui_from_packager.ps1`로 canonical XGUI 동기화
+- 값 목록·범위·enablement: `scripts/package_v3_ip.tcl`
+- 교차 Generic 계약: `lidar_build_pkg.vhd`와 `tb_lidar_config_types_pkg.vhd`
 - IP 속성·Generic·port/interface: `scripts/package_v3_ip.tcl`
 - source closure/order/type: `ip_package/v3_ip_package_manifest.tcl`
 - 기능 RTL/HLS: 각 canonical source
@@ -244,7 +288,8 @@ canonical 원본과 `ip_repo` 변경만 Git에 포함한다. `.work/v3_ip_packag
 | IP가 locked 상태 | 해당 Parent를 닫고 package 갱신 후 개발 Parent를 재생성 |
 | Simulation target reset 실패 | 관련 Vivado 창을 모두 닫고 disposable project 재생성 |
 | XGUI가 이전 값 표시 | canonical XGUI 갱신, package 재생성, IP catalog refresh |
-| Package IP의 Customization GUI가 비어 있음 | 동적 Tcl의 역변환 화면으로 판정하지 말고 `open_v3_customize_ip_gui.ps1`로 실제 사용자 XGUI 확인 |
+| Package IP의 Customization GUI가 비어 있음 | XGUI에 hand-edited callback이 없는지 source contract를 확인하고 `open_v3_ip_packager_gui.ps1 -RefreshPackage -Recreate`로 다시 연다. |
+| `Customization Tcl ... older` 안내 표시 | package 실행기로 다시 열어 native 형식과 수정 시각을 함께 복구한다. `Regenerate and overwrite`로 배포본을 바로 덮어쓰지 않는다. |
 | 실제 Customize IP 창이 비어 있거나 오류 | XGUI의 `init_gui`, Generic 이름, callback 인자를 수정하고 package 재생성 |
 | File Group에 `../HDL` 등장 | 저장 중단, package 재생성, Merge changes 사용 금지 |
 | HLS 하위 IP가 locked | `ip_repo` 전체를 등록하고 HLS-IP GUI 프로젝트를 `-Recreate` |

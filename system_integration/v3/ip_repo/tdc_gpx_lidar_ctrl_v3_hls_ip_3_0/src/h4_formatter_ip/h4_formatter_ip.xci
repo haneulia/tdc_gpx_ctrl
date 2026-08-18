@@ -2,10 +2,9 @@
   "schema": "xilinx.com:schema:json_instance:1.0",
   "ip_inst": {
     "xci_name": "h4_formatter_ip",
-    "cell_name": "u_gpx_hls_parent_data/u_h5_data_path/u_h4_axis_output/gen_rise.u_h4_rise/u_hls_lane_word_formatter",
     "component_reference": "victek.co.kr:hls_ip:gpx_lane_word_formatter_hls:3.0",
     "ip_revision": "2114746673",
-    "gen_directory": "q:/hdl/.work/v3_hls_ip_packager/tdc_gpx_lidar_ctrl_v3_hls_ip_packager.gen/sources_1/ip/h4_formatter_ip",
+    "gen_directory": "./",
     "parameters": {
       "component_parameters": {
         "Component_Name": [ { "value": "h4_formatter_ip", "resolve_type": "user", "usage": "all" } ],
@@ -32,7 +31,7 @@
         "IPCONTEXT": [ { "value": "IP_Flow" } ],
         "IPREVISION": [ { "value": "2114746673" } ],
         "MANAGED": [ { "value": "TRUE" } ],
-        "OUTPUTDIR": [ { "value": "q:/hdl/.work/v3_hls_ip_packager/tdc_gpx_lidar_ctrl_v3_hls_ip_packager.gen/sources_1/ip/h4_formatter_ip" } ],
+        "OUTPUTDIR": [ { "value": "./" } ],
         "SELECTEDSIMMODEL": [ { "value": "" } ],
         "SHAREDDIR": [ { "value": "." } ],
         "SWVERSION": [ { "value": "2025.2.1" } ],
@@ -189,5 +188,5 @@
       }
     }
   },
-  "checksum": "17813f4c"
+  "checksum": "db92fd8f"
 }
