@@ -303,6 +303,13 @@ v2_check_xgui_source_contract $canonical_xgui
 v2_check_xgui_source_contract $packaged_xgui
 puts {LIDAR_V2_K010_XGUI_CONTRACT_PASS native=1 ipxact=1}
 
+set component_mtime [file mtime $component]
+set xgui_mtime [file mtime $packaged_xgui]
+if {$xgui_mtime <= $component_mtime} {
+    error "Packaged XGUI is not newer than component.xml: component=$component_mtime xgui=$xgui_mtime"
+}
+puts {LIDAR_V2_K010_XGUI_PREVIEW_FRESH_PASS}
+
 ipx::unload_core $core
 
 # The new v2 IP must coexist with the board-proven v1 core in one catalog.

@@ -346,3 +346,4 @@ proc update_MODELPARAM_VALUE.G_DRAIN_MARGIN_TIME_NS { MODELPARAM_VALUE.G_DRAIN_M
 	# Procedure called to set VHDL generic/Verilog parameter value(s) based on TCL parameter value
 	set_property value [get_property value ${PARAM_VALUE.G_DRAIN_MARGIN_TIME_NS}] ${MODELPARAM_VALUE.G_DRAIN_MARGIN_TIME_NS}
 }
+

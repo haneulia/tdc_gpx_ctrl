@@ -127,7 +127,7 @@ subst P: /D
 | 증상 | 조치 |
 |---|---|
 | Layout/Preview가 비어 있음 | 네이티브 XGUI 검사 후 package와 편집 project 재생성 |
-| `Customization Tcl ... older` | 저장·unload·reopen·생성 순서를 공식 실행기로 복구 |
+| `Customization Tcl ... older` | 관련 Vivado 창을 닫고 `-RefreshPackage -Recreate`로 다시 연다. 실행기는 생성 XGUI 무수정과 `component.xml` 이후 수정시각을 함께 복구한다. 이미 실패를 표시한 열린 core는 판정을 캐시하므로 페이지 이동만으로 회복되지 않는다. |
 | 기본 Page 하나만 표시 | 같은 core 객체에서 생성된 XGUI를 폐기하고 재패키징 |
 | `../HDL` 등장 | 저장 중단, package 재생성, Merge changes 사용 금지 |
 | IP locked | 관련 Parent와 Customize 창을 닫고 package 갱신 |

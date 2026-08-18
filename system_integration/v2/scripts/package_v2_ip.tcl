@@ -471,18 +471,9 @@ create_project -in_memory tdc_gpx_lidar_ctrl_v2_xgui_sync \
 set core [ipx::open_core $component]
 common::load_features ipservices
 ipx::create_xgui_files $core
-# Vivado appends one empty line after the generated callback set. Keep exactly
-# one terminating newline so repeated packaging is Git-clean without changing
-# any native callback or visual Layout content.
-set xgui_channel [open $xgui_destination r]
-fconfigure $xgui_channel -translation binary
-set xgui_text [read $xgui_channel]
-close $xgui_channel
-set xgui_channel [open $xgui_destination w]
-fconfigure $xgui_channel -translation binary
-puts -nonewline $xgui_channel \
-    "[string trimright $xgui_text \"\r\n\"]\n"
-close $xgui_channel
+# Do not rewrite the generated file, including trailing whitespace. Vivado's
+# Package IP preview treats any post-generation rewrite as a hand edit even
+# when the Tcl procedures remain textually equivalent.
 v2_check_xgui_source_contract $xgui_destination
 ipx::update_checksums $core
 ipx::save_core $core
@@ -501,6 +492,18 @@ foreach forbidden {.xci ../} {
     }
 }
 
+# Vivado IP Packager compares the generated XGUI modification time with the
+# final component.xml modification time. ipx::save_core updates component.xml
+# after ipx::create_xgui_files, so restore the required ordering explicitly.
+# Git does not preserve file timestamps; every deterministic package build
+# must therefore establish this preview freshness contract again.
+set component_mtime [file mtime $component]
+file mtime $xgui_destination [expr {$component_mtime + 2}]
+if {[file mtime $xgui_destination] <= $component_mtime} {
+    error "Unable to establish V2 XGUI preview freshness: $xgui_destination"
+}
+
 puts "TDC_GPX_LIDAR_CTRL_V2_IP_COMPONENT=$component"
+puts {TDC_GPX_LIDAR_CTRL_V2_XGUI_PREVIEW_FRESH=1}
 puts {TDC_GPX_LIDAR_CTRL_V2_IP_PACKAGE_PASS}
 exit 0

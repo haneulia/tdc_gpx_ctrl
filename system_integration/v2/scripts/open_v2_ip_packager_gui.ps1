@@ -119,6 +119,11 @@ $MappedComponent = "$MappedIpRepo\$PackageFolder\component.xml"
 $MappedXgui = "$MappedIpRepo\$PackageFolder\xgui\tdc_gpx_lidar_ctrl_v2_v2_0.tcl"
 $MappedPackageDir = Split-Path -Parent $MappedComponent
 
+# Git checkout and a later component.xml save can reverse the timestamp order
+# required by Vivado's Package IP preview. Repair it before package validation,
+# not only immediately before launching the GUI, so the check is meaningful.
+Set-XguiPreviewFreshness
+
 $AllowedRoot = [System.IO.Path]::GetFullPath((Join-Path $HdlRoot ".work"))
 $ResolvedWorkRoot = [System.IO.Path]::GetFullPath($WorkRoot)
 if (-not $ResolvedWorkRoot.StartsWith(

@@ -26,6 +26,16 @@ Vivado가 `ipx::create_xgui_files`로 생성하여 Package IP 화면에서 시�
 8. `ipx::create_xgui_files`를 실행한다.
 9. `check_v2_xgui_source_contract.tcl`로 생성된 XGUI를 검사한다.
 10. checksum 갱신, core 저장, unload, project close 순으로 종료한다.
+11. 최종 `component.xml`보다 XGUI 수정시각이 2초 뒤인지 검사한다.
+
+Vivado는 native callback 구조뿐 아니라 두 파일의 수정시각도 비교한다. 최종
+`ipx::save_core`가 `component.xml`을 다시 쓰기 때문에, 패키징 종료부에서 XGUI의
+수정시각을 다시 맞추지 않으면 `Customization Tcl ... older` 안내와 함께 Preview가
+숨겨진다. Git은 수정시각을 보존하지 않으므로 GUI 실행기도 같은 계약을 복구한다.
+
+또한 `ipx::create_xgui_files`가 생성한 XGUI는 파일 끝의 빈 줄을 포함해 다시 쓰지
+않는다. 줄 끝이나 공백만 정규화해도 Vivado는 생성 이후의 수동 편집으로 판단하여
+같은 안내를 표시할 수 있다. Git diff 정리보다 Vivado 생성 파일 보존이 우선이다.
 
 기준 구현은 `system_integration/v2/scripts/package_v2_ip.tcl`이다.
 
@@ -54,6 +64,7 @@ Vivado가 `ipx::create_xgui_files`로 생성하여 Package IP 화면에서 시�
 7. `Regenerate and overwrite` 안내에서 원인 확인 없이 덮어쓰기
 8. `ip_repo/xgui`만 수정하고 canonical XGUI 동기화 생략
 9. 수정 시각만 변경하고 source contract 검사 생략
+10. 생성된 XGUI의 줄 끝, 빈 줄 또는 공백을 후처리로 정규화
 
 ## 5. 승인된 변경 절차
 
@@ -82,6 +93,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | 검사 | PASS 표식 | 확인 내용 |
 |---|---|---|
 | XGUI source 검사 | `LIDAR_V2_XGUI_NATIVE_VISUAL_CONTRACT_PASS` | 명시적 4개 Page, 20개 callback, 직접 Generic 전달 |
+| Preview 최신성 검사 | `LIDAR_V2_K010_XGUI_PREVIEW_FRESH_PASS` | XGUI 수정시각이 최종 `component.xml`보다 뒤임 |
 | package 검사 | `LIDAR_V2_K010_IP_PACKAGE_CHECK_PASS` | IP-XACT, 88개 RTL, 5개 문서, XGUI 동기화 |
 | Packager project 검사 | `TDC_GPX_LIDAR_CTRL_V2_IP_PACKAGER_CHECK_PASS` | 편집 project와 canonical core 무결성 |
 | customization 검사 | 32/64/128 profile PASS | 폭, clock mode와 Echo 선택 보존 |
