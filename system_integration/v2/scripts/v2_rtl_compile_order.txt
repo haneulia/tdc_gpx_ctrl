@@ -14,8 +14,8 @@ system_integration/v2/pkg/lidar_gpx_vdma_pkg.vhd
 system_integration/v2/pkg/lidar_echo_pkg.vhd
 system_integration/v2/pkg/lidar_status_pkg.vhd
 system_integration/v2/pkg/lidar_csr_map_pkg.vhd
-../ip_repo/src/csr/axil_fsm_32.vhd
-../ip_repo/src/csr/axil_intr_32.vhd
+system_integration/common/rtl/csr/axil_fsm_32.vhd
+system_integration/common/rtl/csr/axil_intr_32.vhd
 tdc_gpx_bus_phy.vhd
 tdc_gpx_skid_buffer.vhd
 tdc_gpx_chip_init.vhd

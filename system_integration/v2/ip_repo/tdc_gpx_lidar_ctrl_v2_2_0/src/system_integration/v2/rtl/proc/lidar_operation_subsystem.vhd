@@ -48,6 +48,7 @@ architecture rtl of lidar_operation_subsystem is
     signal status_source_r    : operation_status_bits_t := (others => '0');
     signal status_meta_r      : operation_status_bits_t := (others => '0');
     signal status_sync_r      : operation_status_bits_t := (others => '0');
+    signal state_csr_c        : operation_state_t := C_OPERATION_STATE_SAFE;
 
     attribute ASYNC_REG : string;
     attribute SHREG_EXTRACT : string;
@@ -59,7 +60,20 @@ architecture rtl of lidar_operation_subsystem is
 begin
 
     o_state_proc <= state_proc;
-    o_state_csr <= fn_unpack_operation_state(status_sync_r);
+    o_state_csr <= state_csr_c;
+
+    -- scheduler_enable은 physical/simulation 실행 허가의 OR 결과다. 이 값을
+    -- 별도 CDC bit로 다시 넘기면 시뮬레이션 모드에서 동일 source FF가 두
+    -- synchronizer로 fan-out되어 CDC-11이 발생한다. 독립 상태 bit만 2-FF로
+    -- 동기화한 뒤 CSR 도메인에서 동일 의미를 다시 도출한다.
+    p_state_csr : process (all)
+        variable value : operation_state_t;
+    begin
+        value := fn_unpack_operation_state(status_sync_r);
+        value.scheduler_enable := value.physical_fire_enable or
+                                  value.simulation_enable;
+        state_csr_c <= value;
+    end process p_state_csr;
 
     u_command_cdc : entity work.lidar_operation_command_cdc
         port map (
@@ -108,6 +122,7 @@ begin
             status_source_r <= (others => '0');
         elsif rising_edge(i_proc_clk) then
             status_source_r <= fn_pack_operation_state(state_proc);
+            status_source_r(5) <= '0';
         end if;
     end process p_status_source;
 

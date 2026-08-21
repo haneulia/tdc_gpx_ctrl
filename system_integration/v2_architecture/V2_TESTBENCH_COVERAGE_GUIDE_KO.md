@@ -7,7 +7,7 @@
 
 | 종류 | 파일 수 | 의미 |
 |---|---:|---|
-| Primary self-checking TB | 47 | DUT를 구동하고 assertion 및 고유 PASS marker로 기능을 판정한다. |
+| Primary self-checking TB | 48 | DUT를 구동하고 assertion 및 고유 PASS marker로 기능을 판정한다. |
 | Profile wrapper | 11 | 공통 TB를 주파수, Face 수 또는 clock 관계별 top entity로 구체화한다. |
 | Implementation harness | 13 | 합성/구현 timing, CDC, DRC와 자원 사용을 재현한다. 기능 PASS를 대신하지 않는다. |
 
@@ -51,7 +51,7 @@
 |---|---|---|---|---|
 | `tb_motor_position_core.vhd` | CW/CCW, x1/x2/x4, virtual x4, Z/wrap, latency, LO/HI별 Z 폭 제한 사전 계산 | `motor_position_core` | `run_v2_motor_position.ps1` | 동일 A/B/Z 벡터로 양 방향을 비교한다. 선택된 `ticks_next`에서 Z 폭 비교기를 다시 만들지 않는다. |
 | `tb_face_tracker.vhd` | Face 1~5, lower/upper, wrap, 방향, overlap | `face_tracker` | `run_v2_face_tracker.ps1` | 경계의 inclusive 의미를 보존한다. |
-| `tb_lidar_operation_subsystem.vhd` | RUN/STOP/ARM/DISARM, permit, mode, fail-safe reset | operation manager/subsystem | `run_v2_operation.ps1` | 허용/금지 전이를 쌍으로 추가한다. |
+| `tb_lidar_operation_subsystem.vhd` | RUN/STOP/ARM/DISARM, permit, mode, fail-safe reset, CSR 동기화 뒤 scheduler 상태 재도출 | operation manager/subsystem | `run_v2_operation.ps1` | Physical/Simulation 상호배제와 파생 scheduler 상태를 함께 확인하고 같은 source FF를 중복 synchronizer로 fan-out하지 않는다. |
 | `tb_shot_scheduler.vhd` | 광학각 간격, 방향/wrap, 등록된 GPX admission(후보점 1클럭 전 안정), busy 억제, late-angle 금지 | `shot_scheduler` | `run_v2_shot_scheduler.ps1` | exact/overshoot 위치와 GPX busy 해제 후 off-grid 재시도 금지를 모두 확인한다. |
 | `tb_laser_executor.vhd` | fire, fire_done, start/stop TDC, timeout, sim/physical 배제 | `laser_executor` | `run_v2_laser_executor.ps1` | fire_done 경로는 cycle 정확도를 유지한다. |
 | `tb_v2_processing_control_chain.vhd` | operation→Face→scheduler B0~B2 직접 event 연결 | 세 Processing core | `run_v2_shot_scheduler.ps1` | AXIS monitor가 제어를 막지 않아야 한다. |
@@ -68,7 +68,7 @@
 | `tb_lidar_stream_gateway_reset.vhd` | 200 MHz Source→150 MHz Destination 비동기 FIFO에서 Source/Destination Reset 전 보류 payload 폐기, Reset 중 ready/valid 차단, 복구 후 첫 새 payload 일치 | `lidar_stream_gateway` | `run_v2_stream_gateway_reset.ps1` | Destination Reset은 4단 XPM으로 Source에 전달된다. Reset pulse를 줄이거나 FIFO Reset 소유 clock을 바꾸면 stale payload와 Reset busy를 함께 재검증한다. |
 | `tb_lidar_gpx_event_merge.vhd` | multi-lane ordered merge, terminal, backpressure | `lidar_gpx_event_merge` | `run_v2_gpx_acquisition_coordinator.ps1` | starvation과 terminal 누락을 검사한다. |
 | `tb_lidar_gpx_acquisition_lane.vhd` | 한 Chip IFIFO1/2 drain, timeout, cap/purge | acquisition lane/chip run | `run_v2_gpx_acquisition_lane.ps1` | EF 정상 종료와 fault 종료를 분리한다. |
-| `tb_lidar_gpx_acquisition_coordinator.vhd` | Shot fanout, runtime mask, terminal merge, 등록된 lane config-ready, config와 부팅 중 외부 GPX Register Read 보존 | acquisition coordinator | `run_v2_gpx_acquisition_coordinator.ps1`, `run_v2_k14_signoff.ps1` | inactive lane 무동작, config-ready의 1클럭 보수적 상승, 전역/강제 리셋 중 `ready=0`, 리셋 해제 후 held-valid 단일 수락, 1-entry 요청 버퍼와 응답 stall 안정성을 함께 확인한다. |
+| `tb_lidar_gpx_acquisition_coordinator.vhd` | Shot fanout, runtime mask, terminal merge, 등록된 lane Shot/config-ready, config와 부팅 중 외부 GPX Register Read 보존 | acquisition coordinator | `run_v2_gpx_acquisition_coordinator.ps1`, `run_v2_k14_signoff.ps1` | inactive lane 무동작, ready의 1클럭 보수적 상승, Run 해제 즉시 stale-ready 차단과 재무장, 전역/강제 리셋 중 `ready=0`, held-valid 단일 수락, 요청 버퍼와 응답 stall 안정성을 함께 확인한다. |
 | `tb_lidar_gpx_acquisition_subsystem.vhd` | external pin부터 B5, 32 physical STOP lane, fault/CDC | acquisition subsystem | `run_v2_gpx_acquisition_subsystem.ps1` | routine 두 clock 관계를 모두 유지한다. |
 | `tb_lidar_face_close_owner.vhd` | trailing/all-hole Face close, overlap, exactly-once | `lidar_face_close_owner` | `run_v2_gpx_b5_b8_subsystem.ps1` | 조기 close와 누락 close를 함께 본다. |
 

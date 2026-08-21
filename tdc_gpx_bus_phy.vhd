@@ -219,6 +219,12 @@ architecture rtl of tdc_gpx_bus_phy is
 
     signal s_state_r        : t_bus_state := ST_IDLE;
 
+    -- 200 MHz에서 상태 decode 결과가 28-bit DATA 방향 제어 IOB까지 전파된다.
+    -- One-hot 인코딩은 상태 수만큼 FF를 사용해 이 decode cone을 줄이지만,
+    -- 상태 전이와 외부 TDC-GPX 버스 파형의 clock 단위 계약은 바꾸지 않는다.
+    attribute fsm_encoding : string;
+    attribute fsm_encoding of s_state_r : signal is "one_hot";
+
     -- =========================================================================
     -- Tick counter
     -- In ST_READ: runs 1 .. i_bus_ticks-1. ST_WRITE starts at 0 after its

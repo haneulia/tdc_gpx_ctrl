@@ -508,6 +508,18 @@ begin
         wait_until_high(shot_ready,
             "V2-GPX-COORD-TB all-active-lane arm timeout");
 
+        -- Shot ready 축약은 timing을 위해 등록되지만 run 해제는 같은
+        -- cycle에 즉시 차단되어야 한다. 이전 cycle의 ready가 남아 있는
+        -- 동안 새 Shot이 수락되는 회귀를 여기서 방지한다.
+        run_enable <= '0';
+        wait for 1 ps;
+        assert shot_ready = '0'
+            report "V2-GPX-COORD-TB stale registered ready escaped run disable"
+            severity failure;
+        run_enable <= '1';
+        wait_until_high(shot_ready,
+            "V2-GPX-COORD-TB did not re-arm after ready-pipeline gate test");
+
         fifo_load <= '1';
         wait_clocks(1);
         fifo_load <= '0';

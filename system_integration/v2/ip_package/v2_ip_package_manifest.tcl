@@ -24,7 +24,11 @@ proc lidar_v2_ip_package_manifest {hdl_root} {
             error "Canonical source is missing: $source"
         }
 
-        if {[string match "../*" $source_entry]} {
+        # The CSR transport RTL is canonical inside this repository so a
+        # branch checkout is self-contained. Keep the established package
+        # layout for compatibility with existing IP-XACT file groups.
+        if {[string match "system_integration/common/rtl/csr/*" \
+                $source_entry]} {
             set packaged_path [file join external_csr [file tail $source]]
         } else {
             set packaged_path [string map {\\ /} $source_entry]

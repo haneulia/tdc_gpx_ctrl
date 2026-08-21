@@ -3,6 +3,9 @@
 This tree contains the clean v2 implementation. The verified v1 RTL remains
 unchanged and is used as the observable-behavior reference during migration.
 
+독립 V2 완성 브랜치의 포함 범위, 정본 경로와 재현 절차는
+[`V2_COMPLETE_BRANCH_KO.md`](V2_COMPLETE_BRANCH_KO.md)를 기준으로 한다.
+
 ## Directory Contract
 
 | Path | Purpose | Synthesis source |
@@ -16,6 +19,7 @@ unchanged and is used as the observable-behavior reference during migration.
 | `pkg/lidar_gpx_image_pkg.vhd` | Adapter to the single board-proven v1 GPX default image | Yes |
 | `pkg/lidar_gpx_data_pkg.vhd` | I-Mode fields plus typed B6 Hit, B7 Cell and B8 Frame-lane contracts | Yes |
 | `pkg/lidar_config_reference_pkg.vhd` | Exact arithmetic oracle for tests and equivalence checks | No |
+| `../common/rtl/csr/` | Repository-owned AXI4-Lite transport and IRQ RTL shared by V2/V3 | Yes |
 | `rtl/config/` | Sequential validator, derivation controller and shared arithmetic | Yes |
 | `rtl/csr/` | AXI4-Lite shadow/status/IRQ bank and atomic-config boundary | Yes |
 | `rtl/proc/` | Direct registered Motor/Face/Shot/Laser Processing path | Yes |

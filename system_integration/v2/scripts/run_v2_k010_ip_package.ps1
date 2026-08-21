@@ -155,12 +155,20 @@ foreach ($marker in @(
     "LIDAR_V2_K010_SOURCE_SYNC_PASS",
     "LIDAR_V2_K010_COMPONENT_CONTRACT_PASS",
     "LIDAR_V2_K010_XGUI_CONTRACT_PASS",
-    "LIDAR_V2_K010_V1_V2_CATALOG_COEXIST_PASS",
     "LIDAR_V2_K010_IP_PACKAGE_CHECK_PASS"
 )) {
     if (-not (Select-String -LiteralPath $checkLog -SimpleMatch $marker -Quiet)) {
         throw "Package check marker '$marker' is missing: $checkLog"
     }
+}
+$catalogMode = if (Select-String -LiteralPath $checkLog -SimpleMatch `
+        "LIDAR_V2_K010_V1_V2_CATALOG_COEXIST_PASS" -Quiet) {
+    "v1 tdc_gpx_top:1.0 + v2 tdc_gpx_lidar_ctrl_v2:2.0"
+} elseif (Select-String -LiteralPath $checkLog -SimpleMatch `
+        "LIDAR_V2_K010_STANDALONE_CATALOG_PASS" -Quiet) {
+    "standalone v2 tdc_gpx_lidar_ctrl_v2:2.0"
+} else {
+    throw "Neither coexistence nor standalone catalog marker was emitted: $checkLog"
 }
 $warningAudit += Assert-VivadoWarningContract -Name "02_check" `
     -Log $checkLog -AllowedMaximum @{}
@@ -191,8 +199,8 @@ Set-Content -LiteralPath (Join-Path $session "WARNING_AUDIT.txt") `
 $summary = @(
     "LIDAR_V2_K010_IP_PACKAGE_SIGNOFF_PASS",
     "package=$packageDir",
-    "source_sync=88 RTL + XGUI + 3 Korean guides",
-    "catalog=v1 tdc_gpx_top:1.0 + v2 tdc_gpx_lidar_ctrl_v2:2.0",
+    "source_sync=88 RTL + XGUI + 5 Korean guides",
+    "catalog=$catalogMode",
     "ooc_profiles=async32(150/200), async128(200/150, echo off), sync64(150/150)",
     "warning_contract=new warning IDs or count increases fail sign-off",
     "session=$session"

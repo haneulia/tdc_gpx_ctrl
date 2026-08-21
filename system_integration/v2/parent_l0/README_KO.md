@@ -40,6 +40,15 @@ VDMA의 입력 AXIS 폭은 합성 Generic `G_OUTPUT_WIDTH`와 같다. 현재 GUI
 64-bit로 변환한다. Rise는 HP0, Fall은 HP1을 사용하며 각 VDMA는 3개의 Frame
 Buffer를 갖는다.
 
+V3 PS adapter를 사용할 때 3개 Frame Buffer는 최소값이며, AXI VDMA는
+`MM2S=0`, `S2MM=1`인 전용 인스턴스여야 한다. Adapter는 AMD 드라이버의 S2MM
+완료 임계값을 `1 Face Frame`으로 설정한다. Vivado 2025.2.1 AXI VDMA 6.3의 내부
+Model Parameter `C_ENABLE_DEBUG_INFO_14/15`는 생성 XCI에서 모두 1이다. 이 둘은
+Block Design에서 편집하는 `CONFIG`가 아니므로 Parent Tcl에서 직접 설정하지 않는다.
+재현 검사는 `check_vdma_frame_irq_contract.tcl`이 담당한다.
+VDMA `EnableFrameCounter=0`은 S2MM이 Face마다 멈추지 않고 계속 순환한다는 뜻이며,
+별도로 설정한 `1 Face Frame` 완료 인터럽트 임계값은 그대로 유지된다.
+
 Rise/Fall VDMA의 메모리 Master는 AXI4이고 Zynq-7000 HP0/HP1은 AXI3이므로
 각 1:1 경로에 전용 `AXI Protocol Converter`를 둔다. AXI Interconnect와
 SmartConnect도 AXI4→AXI3 변환이 가능하지만, 현재처럼 Master 하나와 HP 포트
