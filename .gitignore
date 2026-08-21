@@ -50,3 +50,7 @@ sim_results/
 .board_signoff_project4_rev20/
 .package_work_unified_csr/
 NA/
+
+# Vivado Tcl-store caches occasionally emitted in the launch directory.
+/2025.2.1/
+/tclapp/

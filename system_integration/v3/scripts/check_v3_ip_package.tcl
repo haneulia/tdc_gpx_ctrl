@@ -339,20 +339,30 @@ puts {LIDAR_V3_XGUI_IPXACT_AND_NATIVE_CONTRACT_PASS}
 
 ipx::unload_core $core
 
-# The new v3 IP must coexist with the board-proven v1 core in one catalog.
+# V3 is self-contained. If the historical V1 package exists beside this
+# repository, also prove catalog coexistence without making that external
+# development artifact mandatory for an independent V3 checkout.
 set v1_repo [file normalize [file join $hdl_root .. ip_repo]]
 set v3_repo [file dirname $package_dir]
-set_property ip_repo_paths [list $v3_repo $v1_repo] [current_project]
-update_ip_catalog -rebuild
-foreach vlnv {
-    victek.co.kr:my_ip:tdc_gpx_top:1.0
-    victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0
-} {
-    v3_require_one [get_ipdefs -all $vlnv] "catalog definition $vlnv"
+set repo_paths [list $v3_repo]
+set have_v1_repo [file exists [file join $v1_repo component.xml]]
+if {$have_v1_repo} {
+    lappend repo_paths $v1_repo
 }
-puts {LIDAR_V3_V1_V3_CATALOG_COEXIST_PASS}
-
+set_property ip_repo_paths $repo_paths [current_project]
+update_ip_catalog -rebuild
 set v3_vlnv victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v3:3.0
+v3_require_one [get_ipdefs -all $v3_vlnv] \
+    "catalog definition $v3_vlnv"
+if {$have_v1_repo} {
+    set v1_vlnv victek.co.kr:my_ip:tdc_gpx_top:1.0
+    v3_require_one [get_ipdefs -all $v1_vlnv] \
+        "catalog definition $v1_vlnv"
+    puts {LIDAR_V3_V1_V3_CATALOG_COEXIST_PASS}
+} else {
+    puts {LIDAR_V3_STANDALONE_CATALOG_PASS legacy_v1=absent}
+}
+
 foreach profile {
     {async32_tdc_faster 150 200 ASYNC 32 true 0011 1100}
     {async64_proc_faster 200 150 ASYNC 64 false 1111 1111}

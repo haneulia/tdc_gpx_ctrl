@@ -11,7 +11,6 @@ Set-StrictMode -Version Latest
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $V3Root = Split-Path -Parent $ScriptDir
 $HdlRoot = (Resolve-Path (Join-Path $V3Root "..\..")).Path
-$ControllerRoot = Split-Path -Parent $HdlRoot
 $IpRepo = Join-Path $V3Root "ip_repo"
 $CheckTcl = Join-Path $ScriptDir "check_v3_dual_package_ooc.tcl"
 
@@ -47,7 +46,7 @@ foreach ($Line in @(& $SubstExe)) {
     }
 }
 $ShortDrive = @($ExistingMaps.Keys) |
-    Where-Object { $ExistingMaps[$_] -eq $ControllerRoot } |
+    Where-Object { $ExistingMaps[$_] -eq $HdlRoot } |
     Select-Object -First 1
 $MapCreated = $false
 if ($null -eq $ShortDrive) {
@@ -58,14 +57,14 @@ if ($null -eq $ShortDrive) {
     if ($null -eq $ShortDrive) {
         throw "No free P: through U: drive is available for V3 OOC synthesis."
     }
-    & $SubstExe $ShortDrive $ControllerRoot
+    & $SubstExe $ShortDrive $HdlRoot
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to map $ShortDrive to $ControllerRoot"
+        throw "Failed to map $ShortDrive to $HdlRoot"
     }
     $MapCreated = $true
 }
 
-$MappedHdlRoot = "$ShortDrive\HDL"
+$MappedHdlRoot = "$ShortDrive\"
 $MappedIpRepo = "$MappedHdlRoot\system_integration\v3\ip_repo"
 $MappedCheckTcl = "$MappedHdlRoot\system_integration\v3\scripts\check_v3_dual_package_ooc.tcl"
 $RunSelectors = if ($Selector -eq "ALL") {

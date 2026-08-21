@@ -590,7 +590,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>f77155bc</spirit:value>
+            <spirit:value>2933ec3a</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -618,7 +618,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>f77155bc</spirit:value>
+            <spirit:value>2933ec3a</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -646,7 +646,7 @@
         <spirit:parameters>
           <spirit:parameter>
             <spirit:name>viewChecksum</spirit:name>
-            <spirit:value>a2a3b934</spirit:value>
+            <spirit:value>a47d5b4f</spirit:value>
           </spirit:parameter>
         </spirit:parameters>
       </spirit:view>
@@ -2444,7 +2444,7 @@
       <spirit:file>
         <spirit:name>src/system_integration/v3/rtl/top/tdc_gpx_lidar_ctrl_v3_top.vhd</spirit:name>
         <spirit:fileType>vhdlSource</spirit:fileType>
-        <spirit:userFileType>CHECKSUM_faaad683</spirit:userFileType>
+        <spirit:userFileType>CHECKSUM_703403c1</spirit:userFileType>
       </spirit:file>
     </spirit:fileSet>
     <spirit:fileSet>
@@ -3102,13 +3102,13 @@
       <xilinx:vendorDisplayName>Victek Co., Ltd.</xilinx:vendorDisplayName>
       <xilinx:vendorURL>https://www.victek.co.kr</xilinx:vendorURL>
       <xilinx:coreRevision>1</xilinx:coreRevision>
-      <xilinx:coreCreationDateTime>2026-08-18T06:46:44Z</xilinx:coreCreationDateTime>
+      <xilinx:coreCreationDateTime>2026-08-21T10:06:36Z</xilinx:coreCreationDateTime>
     </xilinx:coreExtensions>
     <xilinx:packagingInfo>
       <xilinx:xilinxVersion>2025.2.1</xilinx:xilinxVersion>
       <xilinx:checksum xilinx:scope="busInterfaces" xilinx:value="89b60290"/>
       <xilinx:checksum xilinx:scope="memoryMaps" xilinx:value="183345d9"/>
-      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="352abc48"/>
+      <xilinx:checksum xilinx:scope="fileGroups" xilinx:value="4495d2b8"/>
       <xilinx:checksum xilinx:scope="ports" xilinx:value="42379cbc"/>
       <xilinx:checksum xilinx:scope="hdlParameters" xilinx:value="65661fe7"/>
       <xilinx:checksum xilinx:scope="parameters" xilinx:value="6929850b"/>

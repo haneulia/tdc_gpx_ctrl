@@ -65,7 +65,11 @@ proc lidar_v3_ip_package_manifest {hdl_root {include_hls_generated true}} {
         if {$source_entry in $replaced_v2_sources} {
             continue
         }
-        if {[string match "../*" $source_entry]} {
+        # The shared AXI4-Lite transport RTL is canonical inside this Git
+        # repository. Preserve the established package destination so the
+        # generated IP-XACT file layout remains backward compatible.
+        if {[string match "system_integration/common/rtl/csr/*" \
+                $source_entry]} {
             set relative [file join external_csr [file tail $source_entry]]
         } else {
             set relative $source_entry

@@ -21,10 +21,8 @@ set v2_vlnv victek.co.kr:my_ip:tdc_gpx_lidar_ctrl_v2:2.0
 set v1_vlnv victek.co.kr:my_ip:tdc_gpx_top:1.0
 set report_dir [file join $project_dir gui_signoff_reports]
 
-foreach path [list $v2_repo $v1_repo] {
-    if {![file isdirectory $path]} {
-        error "Required IP repository is missing: $path"
-    }
+if {![file isdirectory $v2_repo]} {
+    error "Required V2 IP repository is missing: $v2_repo"
 }
 file mkdir $project_dir
 file mkdir $report_dir
@@ -51,13 +49,20 @@ create_project -force $project_name $project_dir -part $part_name
 set_property target_language VHDL [current_project]
 set_property simulator_language Mixed [current_project]
 set_property default_lib xil_defaultlib [current_project]
-set_property ip_repo_paths [list $v2_repo $v1_repo] [current_project]
+set repo_paths [list $v2_repo]
+set have_v1_repo [file exists [file join $v1_repo component.xml]]
+if {$have_v1_repo} {
+    lappend repo_paths $v1_repo
+}
+set_property ip_repo_paths $repo_paths [current_project]
 update_ip_catalog -rebuild
 
-foreach vlnv [list $v1_vlnv $v2_vlnv] {
-    if {[llength [get_ipdefs -all -quiet $vlnv]] != 1} {
-        error "Expected exactly one catalog definition for $vlnv"
-    }
+if {[llength [get_ipdefs -all -quiet $v2_vlnv]] != 1} {
+    error "Expected exactly one catalog definition for $v2_vlnv"
+}
+if {$have_v1_repo &&
+        [llength [get_ipdefs -all -quiet $v1_vlnv]] != 1} {
+    error "Expected exactly one catalog definition for $v1_vlnv"
 }
 
 proc v2_externalize_cell {cell} {
@@ -139,7 +144,7 @@ set summary_lines [list \
     {LIDAR_V2_K010_GUI_PROJECT_PASS} \
     "project=[file join $project_dir ${project_name}.xpr]" \
     "part=$part_name" \
-    "v1=$v1_vlnv" \
+    "legacy_v1_present=$have_v1_repo" \
     "v2=$v2_vlnv"]
 
 foreach profile $profiles {

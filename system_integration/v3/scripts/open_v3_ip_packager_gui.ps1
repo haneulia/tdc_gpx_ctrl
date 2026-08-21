@@ -16,7 +16,6 @@ Set-StrictMode -Version Latest
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $V3Root = Split-Path -Parent $ScriptDir
 $HdlRoot = (Resolve-Path (Join-Path $V3Root "..\..")).Path
-$ControllerRoot = Split-Path -Parent $HdlRoot
 $CreateTcl = Join-Path $ScriptDir "create_v3_ip_packager_project.tcl"
 $CheckTcl = Join-Path $ScriptDir "check_v3_ip_packager_project.tcl"
 $OpenTcl = Join-Path $ScriptDir "open_v3_ip_packager_gui.tcl"
@@ -124,7 +123,7 @@ foreach ($Line in @(& $SubstExe)) {
     }
 }
 $ShortDrive = @($ExistingMaps.Keys) |
-    Where-Object { $ExistingMaps[$_] -eq $ControllerRoot } |
+    Where-Object { $ExistingMaps[$_] -eq $HdlRoot } |
     Select-Object -First 1
 $MapCreated = $false
 if ($null -eq $ShortDrive) {
@@ -135,14 +134,14 @@ if ($null -eq $ShortDrive) {
     if ($null -eq $ShortDrive) {
         throw "No free P: through U: drive is available for V3 IP Packager."
     }
-    & $SubstExe $ShortDrive $ControllerRoot
+    & $SubstExe $ShortDrive $HdlRoot
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to map $ShortDrive to $ControllerRoot"
+        throw "Failed to map $ShortDrive to $HdlRoot"
     }
     $MapCreated = $true
 }
 
-$MappedHdlRoot = "$ShortDrive\HDL"
+$MappedHdlRoot = "$ShortDrive\"
 $MappedWorkRoot = if ($Variant -eq "EmbeddedRtl") {
     "$MappedHdlRoot\.work\v3_ip_packager"
 } else {
@@ -237,7 +236,7 @@ try {
     Write-Output (
         "TDC_GPX_LIDAR_CTRL_V3_IP_PACKAGER_GUI_STARTED " +
         "variant=$Variant pid=$($Process.Id) project=$MappedProjectPath " +
-        "component=$MappedComponent short_map=$ShortDrive=>$ControllerRoot")
+        "component=$MappedComponent short_map=$ShortDrive=>$HdlRoot")
     Write-Output (
         "Keep $ShortDrive mapped while IP Packager is open. Close every " +
         "dependent Vivado window before: subst $ShortDrive /D")

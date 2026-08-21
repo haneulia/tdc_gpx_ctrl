@@ -5,6 +5,9 @@ Vitis HLS 2025.2로 단계적으로 교체한다. V2의 기능 ABI와 Golden 결
 기준으로 고정한다. V3가 공유하는 V2 제어·물리 RTL에 결함 또는 타이밍 문제가
 발견되면 재현 TB를 먼저 보강한 뒤 V2/V3에 함께 적용한다.
 
+독립 V3 완성 브랜치의 포함 범위, 정본 경로, 두 IP 패키지 방식과 재현 절차는
+[`V3_COMPLETE_BRANCH_KO.md`](V3_COMPLETE_BRANCH_KO.md)를 기준으로 한다.
+
 ## 구현 경계
 
 RTL에 유지하는 항목:

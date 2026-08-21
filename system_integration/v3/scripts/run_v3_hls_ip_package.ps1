@@ -12,7 +12,6 @@ Set-StrictMode -Version Latest
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $V3Root = Split-Path -Parent $ScriptDir
 $HdlRoot = (Resolve-Path (Join-Path $V3Root "..\..")).Path
-$ControllerRoot = Split-Path -Parent $HdlRoot
 $IpRepo = Join-Path $V3Root "ip_repo"
 $StageRoot = Join-Path $HdlRoot ".work\v3hip"
 $ToolHome = Join-Path ([System.IO.Path]::GetTempPath()) `
@@ -79,8 +78,9 @@ $InstalledTclStore = Join-Path $ResolvedVivadoRoot "data\XilinxTclStore"
 # HLS-generated LUTRAM filenames are long enough to exceed the legacy Windows
 # 260-character path when expanded below the repository. Use one short drive
 # for export, extraction, installation, and Vivado parent packaging. Map the
-# controller root, not HDL itself: the canonical compile order intentionally
-# reaches the sibling ../ip_repo CSR source tree.
+# HDL Git root itself. The V2/V3 shared AXI4-Lite transport RTL is
+# repository-owned under system_integration/common, so the mapped checkout
+# remains self-contained while all generated HLS filenames stay below 260 chars.
 $SubstExe = "C:\Windows\System32\subst.exe"
 $ExistingMaps = @{}
 foreach ($Line in @(& $SubstExe)) {
@@ -90,7 +90,7 @@ foreach ($Line in @(& $SubstExe)) {
     }
 }
 $ShortDrive = @($ExistingMaps.Keys) |
-    Where-Object { $ExistingMaps[$_] -eq $ControllerRoot } |
+    Where-Object { $ExistingMaps[$_] -eq $HdlRoot } |
     Select-Object -First 1
 $MapCreated = $false
 if ($null -eq $ShortDrive) {
@@ -101,17 +101,19 @@ if ($null -eq $ShortDrive) {
     if ($null -eq $ShortDrive) {
         throw "No free P: through U: drive is available for HLS IP export."
     }
-    & $SubstExe $ShortDrive $ControllerRoot
+    & $SubstExe $ShortDrive $HdlRoot
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to map $ShortDrive to $HdlRoot"
     }
     $MapCreated = $true
 }
-$MappedHdlRoot = "$ShortDrive\HDL"
+$MappedHdlRoot = "$ShortDrive\"
 $MappedV3Root = "$MappedHdlRoot\system_integration\v3"
 $MappedIpRepo = "$MappedV3Root\ip_repo"
 $MappedStageRoot = "$MappedHdlRoot\.work\v3hip"
 $MappedParentPackage = "$MappedIpRepo\tdc_gpx_lidar_ctrl_v3_hls_ip_3_0"
+$MappedPackageTcl = "$MappedV3Root\scripts\package_v3_ip.tcl"
+$MappedCheckTcl = "$MappedV3Root\scripts\check_v3_hls_ip_package.tcl"
 
 $Components = @(
     [pscustomobject]@{
@@ -335,12 +337,13 @@ try {
 
     Invoke-Checked -Executable $Vivado -ToolArguments @(
         "-mode", "batch", "-notrace", "-nolog", "-nojournal",
-        "-source", $PackageTcl, "-tclargs", $MappedParentPackage, "HLS_IP") `
+        "-source", $MappedPackageTcl, "-tclargs", $MappedParentPackage,
+        "HLS_IP") `
         -PassMarker "TDC_GPX_LIDAR_CTRL_V3_IP_PACKAGE_PASS"
 
     Invoke-Checked -Executable $Vivado -ToolArguments @(
         "-mode", "batch", "-notrace", "-nolog", "-nojournal",
-        "-source", $CheckTcl, "-tclargs", $MappedIpRepo) `
+        "-source", $MappedCheckTcl, "-tclargs", $MappedIpRepo) `
         -PassMarker "TDC_GPX_LIDAR_CTRL_V3_HLS_IP_CHECK_PASS"
 }
 finally {

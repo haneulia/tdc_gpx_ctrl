@@ -2,3 +2,6 @@
 # it makes IP Packager classify the XGUI as hand-edited and hides Preview.
 system_integration/v2/ip_package/tdc_gpx_lidar_ctrl_v2_xgui.tcl whitespace=-blank-at-eof
 system_integration/v2/ip_repo/tdc_gpx_lidar_ctrl_v2_2_0/xgui/tdc_gpx_lidar_ctrl_v2_v2_0.tcl whitespace=-blank-at-eof
+system_integration/v3/ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl whitespace=-blank-at-eof
+system_integration/v3/ip_repo/tdc_gpx_lidar_ctrl_v3_3_0/xgui/tdc_gpx_lidar_ctrl_v3_v3_0.tcl whitespace=-blank-at-eof
+system_integration/v3/ip_repo/tdc_gpx_lidar_ctrl_v3_hls_ip_3_0/xgui/tdc_gpx_lidar_ctrl_v3_hls_ip_v3_0.tcl whitespace=-blank-at-eof

@@ -29,6 +29,7 @@ IP-XACT 저장과 네이티브 XGUI 재생성의 순서는
 | 구분 | 형상관리 원본 | GUI에서 직접 수정 |
 |---|---|---|
 | RTL 및 생성 RTL 포함형 목록 | `ip_package/v3_ip_package_manifest.tcl`과 그 원본 파일 | 금지 |
+| 공통 AXI4-Lite 전송/IRQ RTL | `../common/rtl/csr` | 금지 |
 | HLS C++ 원본 | `hls/*/src`, `hls/common/include` | Vitis HLS에서 수정 |
 | XGUI 구현 | `ip_package/tdc_gpx_lidar_ctrl_v3_xgui.tcl` | Layout/Preview 편집 후 원본 동기화 |
 | IP-XACT 속성·Generic·Interface | `scripts/package_v3_ip.tcl` | 실험만 허용 |
@@ -197,6 +198,11 @@ HLS C++ 또는 공통 Header가 변경되어 네 HLS 하위 IP를 실제로 다�
   `src/hls_generated/...`에 포함된다.
 - HLS 하위 IP 참조형에는 정확히 네 XCI가 Synthesis/Simulation에 각각 등록되고,
   `src/hls_generated/...`는 없어야 한다.
+- HLS 하위 IP 참조형의 통합 VHDL은 `src/system_integration/...`,
+  `src/external_csr/...`, `src/shared/...`에 둔다. 단, 저장소 최상위 TDC-GPX 핵심
+  파일 8개는 `component.xml`에 `src/tdc_gpx_*.vhd`로 등록되므로 그 위치에 둔다.
+  이 8개 외에 `component.xml`에 등록되지 않은 `src/*.vhd` 평면 중복 사본은
+  만들지 않으며 재패키징 시 제거되는 것이 정상이다.
 
 Customization Parameters의 **Merge changes**는 원본 HDL 프로젝트 경로를
 `../HDL` 형태로 다시 끌어올 수 있다. 이 package에서는 Merge로 파일 목록을
