@@ -99,6 +99,8 @@ foreach profile $profiles {
     create_bd_design $bd_name
     current_bd_design $bd_name
     set cell [create_bd_cell -type ip -vlnv $v2_vlnv u_lidar_ctrl]
+    # Keep the VHDL std_logic_vector literal quotes in generated wrappers.
+    # Bare 0011/1100 values are emitted as invalid VHDL integer literals.
     set_property -dict [list \
         CONFIG.G_CSR_CLK_MHZ 100 \
         CONFIG.G_PROC_CLK_MHZ $proc_mhz \
@@ -107,8 +109,8 @@ foreach profile $profiles {
         CONFIG.G_NUM_CHIPS 4 \
         CONFIG.G_STOPS_PER_CHIP 8 \
         CONFIG.G_MAX_RETURNS_PER_STOP 7 \
-        CONFIG.G_RISE_CAPABILITY_MASK 0011 \
-        CONFIG.G_FALL_CAPABILITY_MASK 1100 \
+        CONFIG.G_RISE_CAPABILITY_MASK {"0011"} \
+        CONFIG.G_FALL_CAPABILITY_MASK {"1100"} \
         CONFIG.G_OUTPUT_WIDTH $width \
         CONFIG.G_NUM_FACES 5 \
         CONFIG.G_ENABLE_ECHO_RECEIVER $echo_enabled \
