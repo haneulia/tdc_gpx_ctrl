@@ -40,12 +40,18 @@ if (Test-Path -LiteralPath $OutputRoot) {
 
     $AllowedParent = [System.IO.Path]::GetFullPath(
         'C:\Projects\my_sp\ALINX\Logic')
+    $AllowedWorkRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $HdlRoot '.work'))
     $AllowedLeaf = 'project_4_lidar_v2_l0'
     $OutputItem = Get-Item -LiteralPath $OutputRoot
-    if (-not $OutputItem.FullName.StartsWith(
-            $AllowedParent,
-            [System.StringComparison]::OrdinalIgnoreCase) -or
-        $OutputItem.Name -ne $AllowedLeaf) {
+    $IsLegacyParent = $OutputItem.FullName.StartsWith(
+        $AllowedParent,
+        [System.StringComparison]::OrdinalIgnoreCase) -and
+        $OutputItem.Name -eq $AllowedLeaf
+    $IsWorkspaceProject = $OutputItem.FullName.StartsWith(
+        "$AllowedWorkRoot\",
+        [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $IsLegacyParent -and -not $IsWorkspaceProject) {
         throw "Refusing to recreate unexpected directory: $OutputRoot"
     }
     Remove-Item -LiteralPath $OutputRoot -Recurse -Force

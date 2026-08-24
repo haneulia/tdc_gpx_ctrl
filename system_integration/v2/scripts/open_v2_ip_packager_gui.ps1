@@ -12,7 +12,6 @@ Set-StrictMode -Version Latest
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $V2Root = Split-Path -Parent $ScriptDir
 $HdlRoot = (Resolve-Path (Join-Path $V2Root "..\..")).Path
-$ControllerRoot = Split-Path -Parent $HdlRoot
 $WorkRoot = Join-Path $HdlRoot ".work\v2_ip_packager"
 $ProjectName = "tdc_gpx_lidar_ctrl_v2_ip_packager"
 $ProjectPath = Join-Path $WorkRoot "$ProjectName.xpr"
@@ -93,7 +92,7 @@ foreach ($Line in @(& $SubstExe)) {
     }
 }
 $ShortDrive = @($ExistingMaps.Keys) |
-    Where-Object { $ExistingMaps[$_] -eq $ControllerRoot } |
+    Where-Object { $ExistingMaps[$_] -eq $HdlRoot } |
     Select-Object -First 1
 $MapCreated = $false
 if ($null -eq $ShortDrive) {
@@ -104,17 +103,17 @@ if ($null -eq $ShortDrive) {
     if ($null -eq $ShortDrive) {
         throw "No free P: through U: drive is available for V2 IP Packager."
     }
-    & $SubstExe $ShortDrive $ControllerRoot
+    & $SubstExe $ShortDrive $HdlRoot
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to map $ShortDrive to $ControllerRoot"
+        throw "Failed to map $ShortDrive to $HdlRoot"
     }
     $MapCreated = $true
 }
 
-$MappedHdlRoot = "$ShortDrive\HDL"
-$MappedWorkRoot = "$MappedHdlRoot\.work\v2_ip_packager"
+$MappedHdlRoot = "$ShortDrive\"
+$MappedWorkRoot = Join-Path $MappedHdlRoot ".work\v2_ip_packager"
 $MappedProjectPath = "$MappedWorkRoot\$ProjectName.xpr"
-$MappedIpRepo = "$MappedHdlRoot\system_integration\v2\ip_repo"
+$MappedIpRepo = Join-Path $MappedHdlRoot "system_integration\v2\ip_repo"
 $MappedComponent = "$MappedIpRepo\$PackageFolder\component.xml"
 $MappedXgui = "$MappedIpRepo\$PackageFolder\xgui\tdc_gpx_lidar_ctrl_v2_v2_0.tcl"
 $MappedPackageDir = Split-Path -Parent $MappedComponent
@@ -208,9 +207,9 @@ try {
         $ExpectedVlnv, $MappedXgui) -WorkingDirectory $WorkRoot -PassThru
     $GuiStarted = $true
     Write-Output (
-        "TDC_GPX_LIDAR_CTRL_V2_IP_PACKAGER_GUI_STARTED " +
-        "pid=$($Process.Id) project=$MappedProjectPath " +
-        "component=$MappedComponent short_map=$ShortDrive=>$ControllerRoot")
+            "TDC_GPX_LIDAR_CTRL_V2_IP_PACKAGER_GUI_STARTED " +
+            "pid=$($Process.Id) project=$MappedProjectPath " +
+            "component=$MappedComponent short_map=$ShortDrive=>$HdlRoot")
     Write-Output (
         "Keep $ShortDrive mapped while IP Packager is open. Close every " +
         "dependent Vivado window before: subst $ShortDrive /D")
