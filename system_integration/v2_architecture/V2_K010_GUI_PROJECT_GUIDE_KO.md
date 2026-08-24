@@ -6,14 +6,18 @@
 직접 확인하기 위한 **독립 IP 검증 프로젝트**다. 실제 parent Block Design,
 Zynq PS, AXI VDMA, HP port, DDR, 보드 핀은 포함하지 않는다.
 
-2026-08-07 기준 세 Block Design validation, IP별 OOC 합성, black box 0,
-latch 0 및 기존 프로젝트 재검증을 완료했다.
+2026-08-24 기준 세 Block Design validation, IP별 OOC 합성, black box 0,
+latch 0 및 기존 프로젝트 재개방 검증을 완료했다.
 
 ## 2. 프로젝트 위치
 
-기본 생성 위치:
+저장소 상대 기본 위치:
 
-`C:/Projects/my_sp/lib/IP/tdc_gpx_ctrl/HDL/.work/tdc_gpx_lidar_ctrl_v2_gui/tdc_gpx_lidar_ctrl_v2_gui.xpr`
+`.work/tdc_gpx_lidar_ctrl_v2_gui/tdc_gpx_lidar_ctrl_v2_gui.xpr`
+
+유지보수 복사본의 실제 위치:
+
+`C:/fpga_ws/tdc_gpx_v2/.work/tdc_gpx_lidar_ctrl_v2_gui/tdc_gpx_lidar_ctrl_v2_gui.xpr`
 
 `.work` 아래의 Vivado 산출물은 Git에 넣지 않는다. 프로젝트를 동일하게 다시
 만드는 Tcl/PowerShell과 이 가이드만 Git으로 관리한다.

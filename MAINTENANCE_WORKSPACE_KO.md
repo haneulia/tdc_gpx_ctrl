@@ -65,6 +65,19 @@ Vivado File Group, IP-XACT `component.xml`, Tcl 컴파일 목록과 과거 회�
 Vitis HLS와 xsim을 먼저 닫고, 재현 가능한 요약 보고서와 PASS marker만 보존한다.
 자동 점검기는 생성물의 존재를 보고만 하며 삭제하지 않는다.
 
+### 4.1 유지보수 복사본에 두는 GUI 프로젝트
+
+`C:\fpga_ws\tdc_gpx_v2\.work`에는 다음 항목을 재생성 가능한 GUI 작업물로
+유지한다.
+
+| 구분 | 상대 경로 | 역할 |
+|---|---|---|
+| V2 IP Packager | `v2_ip_packager\tdc_gpx_lidar_ctrl_v2_ip_packager.xpr` | File Group, Parameter, Port, XGUI와 IP-XACT 확인 |
+| V2 통합 IP 검증 | `tdc_gpx_lidar_ctrl_v2_gui\tdc_gpx_lidar_ctrl_v2_gui.xpr` | 32/64/128-bit 및 SYNC/ASYNC 대표 구성 확인 |
+
+두 Project는 `.work` 생성물이므로 Git에 넣지 않는다. 정본 RTL/XGUI를 변경한 뒤
+각 실행기로 재생성하며, Project 내부 생성 VHDL을 직접 제품 소스로 수정하지 않는다.
+
 ## 5. 표준 유지보수 순서
 
 1. `codex/tdc-gpx-lidar-v2-maintenance`를 최신 상태로 맞춘다.

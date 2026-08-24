@@ -30,6 +30,9 @@ IP-XACT 저장과 XGUI 생성 순서는
 | GUI 편집 project | `.work/v2_ip_packager` | 삭제 후 재생성 가능 |
 | Customize preview project | `.work/v2_customize_ip` | 삭제 후 재생성 가능 |
 
+유지보수 복사본에서 GUI 편집 Project의 실제 시작 파일은
+`C:\fpga_ws\tdc_gpx_v2\.work\v2_ip_packager\tdc_gpx_lidar_ctrl_v2_ip_packager.xpr`다.
+
 `ip_repo/src`를 직접 수정한 내용은 재패키징 때 사라진다. 기능 수정은 canonical RTL,
 XGUI 수정은 canonical XGUI, IP-XACT 수정은 package 스크립트에 반영한다.
 

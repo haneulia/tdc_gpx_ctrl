@@ -27,3 +27,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 성공 표시는 `LIDAR_V2_MAINTENANCE_WORKSPACE_AUDIT_PASS`다. 이 점검은 파일을
 삭제하거나 수정하지 않는다.
+
+## GUI 프로젝트 바로 열기
+
+유지보수 복사본 `C:\fpga_ws\tdc_gpx_v2`에는 다음 Vivado 프로젝트를 둔다.
+
+| 목적 | 프로젝트 |
+|---|---|
+| IP-XACT/IP Packager 유지보수 | `.work\v2_ip_packager\tdc_gpx_lidar_ctrl_v2_ip_packager.xpr` |
+| 3-profile 통합 IP 검증 | `.work\tdc_gpx_lidar_ctrl_v2_gui\tdc_gpx_lidar_ctrl_v2_gui.xpr` |
+
+통합 IP 검증 Project에는 32-bit 비동기 150/200 MHz, 128-bit 비동기
+200/150 MHz 및 64-bit 동기 150/150 MHz Block Design과 OOC 합성 결과가 들어
+있다. 상세 확인 순서는
+[`system_integration/v2_architecture/V2_K010_GUI_PROJECT_GUIDE_KO.md`](system_integration/v2_architecture/V2_K010_GUI_PROJECT_GUIDE_KO.md)를 따른다.
