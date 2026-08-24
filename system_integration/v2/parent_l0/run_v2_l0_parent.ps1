@@ -1,6 +1,5 @@
 param(
-    [string]$OutputRoot =
-        'C:\Projects\my_sp\ALINX\Logic\project_4_lidar_v2_l0',
+    [string]$OutputRoot = '',
     [string]$ReferenceBd =
         'C:\Projects\my_sp\ALINX\Logic\project_4\project_4.srcs\sources_1\bd\design_1_lidar_ctrl\design_1_lidar_ctrl.bd',
     [string]$ExtensionPinXdc =
@@ -13,6 +12,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $HdlRoot = (Resolve-Path (Join-Path $ScriptDir '..\..\..')).Path
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    $OutputRoot = Join-Path $HdlRoot '.work\v2_parent_l0\w32'
+}
 $Vivado = if ($env:XILINX_VIVADO) {
     Join-Path $env:XILINX_VIVADO 'bin\vivado.bat'
 } else {
@@ -71,9 +73,9 @@ if ($null -eq $ReferencePs) {
 }
 
 $PsProperties = @($ReferencePs.PSObject.Properties | Sort-Object Name)
-$PsConfigDirectory = Join-Path $HdlRoot 'signoff_results\work'
+$PsConfigDirectory = Join-Path $HdlRoot '.work\v2_parent_l0\generated'
 New-Item -ItemType Directory -Force -Path $PsConfigDirectory | Out-Null
-$VivadoAppData = Join-Path $HdlRoot 'tmp\vivado_l0_appdata'
+$VivadoAppData = Join-Path $HdlRoot '.work\v2_parent_l0\tool_home'
 New-Item -ItemType Directory -Force -Path $VivadoAppData | Out-Null
 $PsConfigPath = Join-Path $PsConfigDirectory (
     "lidar_v2_l0_ps7_config_{0}.tcl" -f $PID)

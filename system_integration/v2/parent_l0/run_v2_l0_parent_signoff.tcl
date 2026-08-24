@@ -275,8 +275,16 @@ set reviewed_waiver_counts [l0_apply_reviewed_waivers \
 l0_report_design post_synth $result_dir
 set synth_wns [l0_worst_slack max]
 set synth_whs [l0_worst_slack min]
-if {$synth_wns < 0.0 || $synth_whs < 0.0} {
-    error "Synthesized timing failed: WNS=$synth_wns WHS=$synth_whs"
+if {$synth_wns < 0.0} {
+    error "Synthesized setup timing failed: WNS=$synth_wns"
+}
+# 배치 전 hold는 실제 셀 위치와 배선 지연이 없는 추정값이다. 음수이면
+# 결과에 명시하되 구현을 중단하지 않고, 최종 route WHS에서 엄격히 판정한다.
+# setup은 구조적 장경로를 조기에 검출할 수 있으므로 기존 gate를 유지한다.
+set synth_hold_advisory {NONNEGATIVE}
+if {$synth_whs < 0.0} {
+    set synth_hold_advisory {NEGATIVE_PRE_ROUTE_ESTIMATE}
+    puts "WARNING: post-synth hold is advisory until placement: WHS=$synth_whs"
 }
 set synth_report_gate_counts [l0_verify_report_gates post_synth $result_dir]
 close_design
@@ -315,12 +323,15 @@ if {$run_mode eq {IMPL}} {
     set route_report_gate_counts [l0_verify_report_gates \
         post_route $result_dir]
     write_checkpoint -force [file join $result_dir post_route.dcp]
-    set bitstream_path [file normalize [file join $project_root \
+    set generated_bitstream [file normalize [file join $project_root \
         project_4_lidar_v2_l0.runs impl_1 \
         design_1_lidar_ctrl_v2_wrapper.bit]]
-    if {![file exists $bitstream_path]} {
-        error "Implementation completed without bitstream: $bitstream_path"
+    if {![file exists $generated_bitstream]} {
+        error "Implementation completed without bitstream: $generated_bitstream"
     }
+    set bitstream_path [file join $result_dir \
+        design_1_lidar_ctrl_v2_wrapper.bit]
+    file copy -force $generated_bitstream $bitstream_path
     set bitstream_size_bytes [file size $bitstream_path]
     if {$bitstream_size_bytes <= 0} {
         error "Generated bitstream is empty: $bitstream_path"
@@ -335,6 +346,7 @@ puts $summary "project=$project_root"
 puts $summary "synth_status=$synth_status"
 puts $summary "synth_wns_ns=$synth_wns"
 puts $summary "synth_whs_ns=$synth_whs"
+puts $summary "synth_hold_advisory=$synth_hold_advisory"
 puts $summary "service_pin_count=$service_pin_count"
 puts $summary "synth_gpx_iob_register_count=$synth_gpx_iob_register_count"
 puts $summary "route_gpx_iob_register_count=$route_gpx_iob_register_count"

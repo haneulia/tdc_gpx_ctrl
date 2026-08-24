@@ -103,8 +103,8 @@ foreach {property expected} [list \
         CONFIG.G_NUM_CHIPS 4 \
         CONFIG.G_STOPS_PER_CHIP 8 \
         CONFIG.G_MAX_RETURNS_PER_STOP 7 \
-        CONFIG.G_RISE_CAPABILITY_MASK 0011 \
-        CONFIG.G_FALL_CAPABILITY_MASK 1100 \
+        CONFIG.G_RISE_CAPABILITY_MASK {"0011"} \
+        CONFIG.G_FALL_CAPABILITY_MASK {"1100"} \
         CONFIG.G_OUTPUT_WIDTH $output_width \
         CONFIG.G_ENABLE_ECHO_RECEIVER false \
         CONFIG.G_ENABLE_ECHO_SIMULATION false \
@@ -205,6 +205,32 @@ foreach address {0x40000000 0x43000000 0x43010000} {
 }
 
 validate_bd_design
+
+# Block Design validation은 생성 VHDL Generic Map의 타입까지 컴파일하지 않는다.
+# Tcl 값에서 따옴표를 잃으면 wrapper에 정수 literal 0011/1100이 기록될 수
+# 있으므로 실제 생성 wrapper를 확인하여 std_logic_vector 비트 문자열 보존을
+# 합성 전에 검사한다.
+set lidar_wrapper [file join $output_root \
+    project_4_lidar_v2_l0.gen sources_1 bd design_1_lidar_ctrl_v2 ip \
+    design_1_lidar_ctrl_v2_tdc_gpx_lidar_ctrl_v2_0_0 synth \
+    design_1_lidar_ctrl_v2_tdc_gpx_lidar_ctrl_v2_0_0.vhd]
+if {![file exists $lidar_wrapper]} {
+    error "Generated V2 IP wrapper is missing: $lidar_wrapper"
+}
+set wrapper_channel [open $lidar_wrapper r]
+set wrapper_text [read $wrapper_channel]
+close $wrapper_channel
+foreach {generic literal} {
+        G_RISE_CAPABILITY_MASK 0011
+        G_FALL_CAPABILITY_MASK 1100} {
+    # Vivado may canonicalize a VHDL-2008 bit string as B"....". Both
+    # "...." and B"...." preserve the required vector type; bare digits do not.
+    set literal_pattern [format {%s\s*=>\s*(B)?"%s"} $generic $literal]
+    if {![regexp $literal_pattern $wrapper_text]} {
+        error "V2 bit-string Generic Map lost its VHDL quotes: $generic=$literal"
+    }
+}
+
 puts "LIDAR_V2_L0_PARENT_VALIDATE_PASS output=$output_root width=$output_width"
 close_project
 exit 0

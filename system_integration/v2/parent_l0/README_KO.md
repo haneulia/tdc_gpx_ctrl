@@ -6,18 +6,23 @@
 `xc7z020clg484-2` Parent에 실제로 배치하고, Rise/Fall AXI VDMA와 PS7 HP
 포트까지 연결한 재생성 가능한 Vivado 프로젝트를 소유한다.
 
-2026-08-09 4-chip Parent 최종 구현 판정은 다음과 같다.
+2026-08-24 4-chip 32/64-bit Parent 최종 구현 판정은 다음과 같다.
 
 - Parent Block Design 생성과 재개방 계약 검사: **PASS**
-- 4-chip 합성, 배치·배선, DRC와 비트스트림 생성: **PASS**
+- 32-bit 및 64-bit 합성, 배치·배선, DRC와 비트스트림 생성: **PASS**
 - 물리 PCB의 TDC-GPX, 레이저, DDR cache 및 Ethernet 장시간 운용: **미검증**
 - 따라서 이 결과는 **Parent 구현 Sign-off**이며 최종 보드 Release Sign-off는 아니다.
 
-GUI 프로젝트:
+GUI 프로젝트는 폭별로 독립되어 있으며, `.xpr`를 열면 Block Design과 이번 실행의
+`synth_1`/`impl_1` 완료 상태를 확인할 수 있다.
 
 ```text
-C:\Projects\my_sp\ALINX\Logic\project_4_lidar_v2_l0\project_4_lidar_v2_l0.xpr
+32-bit: C:\fpga_ws\tdc_gpx_v2\.work\v2_parent_l0\w32\project_4_lidar_v2_l0.xpr
+64-bit: C:\fpga_ws\tdc_gpx_v2\.work\v2_parent_l0\w64\project_4_lidar_v2_l0.xpr
 ```
+
+`.work`는 생성 산출물이므로 Git에 넣지 않는다. 프로젝트가 없어지면 9절의 명령으로
+같은 구조를 재생성하고 구현한다.
 
 ## 2. Parent 데이터 흐름
 
@@ -26,8 +31,8 @@ flowchart LR
     PS["Zynq PS7"] -->|"M_AXI_GP0 / 100 MHz"| CSR["통합 CSR"]
     ENC["Encoder A/B/Z"] --> LIDAR["tdc_gpx_lidar_ctrl_v2"]
     GPX["TDC-GPX 4 chips"] <--> LIDAR
-    LIDAR -->|"Rise AXIS 32-bit / 150 MHz"| RV["Rise AXI VDMA"]
-    LIDAR -->|"Fall AXIS 32-bit / 150 MHz"| FV["Fall AXI VDMA"]
+    LIDAR -->|"Rise AXIS 32/64-bit / 150 MHz"| RV["Rise AXI VDMA"]
+    LIDAR -->|"Fall AXIS 32/64-bit / 150 MHz"| FV["Fall AXI VDMA"]
     RV -->|"AXI4→AXI3 64-bit"| HP0["PS7 HP0 / DDR"]
     FV -->|"AXI4→AXI3 64-bit"| HP1["PS7 HP1 / DDR"]
     LIDAR -->|"IRQ[0]"| IRQ["PS IRQ_F2P"]
@@ -35,10 +40,10 @@ flowchart LR
     FV -->|"IRQ[2]"| IRQ
 ```
 
-VDMA의 입력 AXIS 폭은 합성 Generic `G_OUTPUT_WIDTH`와 같다. 현재 GUI
-프로젝트는 32-bit이고, 각 VDMA의 DDR측 Master는 PS7 HP 포트 계약에 맞춰
-64-bit로 변환한다. Rise는 HP0, Fall은 HP1을 사용하며 각 VDMA는 3개의 Frame
-Buffer를 갖는다.
+VDMA의 입력 AXIS 폭은 합성 Generic `G_OUTPUT_WIDTH`와 같다. 32-bit 프로젝트는
+32-bit, 64-bit 프로젝트는 64-bit로 통합 IP와 VDMA S_AXIS 폭이 일치한다. 각
+VDMA의 DDR측 Master는 PS7 HP 포트 계약에 맞춰 64-bit AXI3로 전달한다. Rise는
+HP0, Fall은 HP1을 사용하며 각 VDMA는 3개의 Frame Buffer를 갖는다.
 
 V3 PS adapter를 사용할 때 3개 Frame Buffer는 최소값이며, AXI VDMA는
 `MM2S=0`, `S2MM=1`인 전용 인스턴스여야 한다. Adapter는 AMD 드라이버의 S2MM
@@ -66,7 +71,7 @@ HP 포트를 공유하게 되면 그때 SmartConnect로 전환하는 것이 합�
 | Processing clock | 150 MHz | PS FCLK1 100 MHz를 Clock Wizard로 변환 |
 | TDC clock | 200 MHz | PS FCLK2, TDC-GPX 버스/수집 도메인 |
 | `G_STREAM_CLK_MODE` | `ASYNC` | Processing/TDC가 서로 다른 물리 clock |
-| `G_OUTPUT_WIDTH` | 32 bit | VDMA S_AXIS 폭과 동일 |
+| `G_OUTPUT_WIDTH` | 32 또는 64 bit | 폭별 GUI Project의 VDMA S_AXIS와 동일 |
 | `G_NUM_CHIPS` | 4 | TDC0~TDC3 활성 |
 | `G_STOPS_PER_CHIP` | 8 | Chip당 STOP 8개 |
 | `G_MAX_RETURNS_PER_STOP` | 7 | STOP당 최대 Return 7개 |
@@ -185,43 +190,38 @@ TDC 제어 출력은 반환 clock이 없는 외부 장치 인터페이스다. fa
 데이터가 안정된다는 계약과 Runtime TDC-GPX 버스 읽기 타이밍
 (`BUS_CLK_DIV/BUS_TICKS`)의 최소 25 ns 유지시간을 함께 사용한다.
 
-최종 4-chip Parent 구현 세션은 `260809_iob_ps_ref_l0_impl_v2`이다.
+| 항목 | 32-bit | 64-bit |
+|---|---:|---:|
+| 구현 세션 | `260824_v2_w32_impl3` | `260824_v2_w64_impl1` |
+| Synthesis WNS | `+0.357 ns` | `+0.357 ns` |
+| Synthesis WHS | `-0.001 ns` 참고치 | `-0.001 ns` 참고치 |
+| Route WNS | `+0.046 ns` | `+0.184 ns` |
+| Route WHS | `+0.043 ns` | `+0.017 ns` |
+| GPX 병렬 버스 IOB 계약 | `364 / 364 PASS` | `364 / 364 PASS` |
+| Active critical CDC | 0 | 0 |
+| Bus-skew 위반 | 0 | 0 |
+| Blocking DRC | 0 | 0 |
+| 비트스트림 | 4,045,708 bytes | 4,045,708 bytes |
 
-| 항목 | 결과 |
-|---|---:|
-| Synthesis WNS/WHS | `+0.357 / +0.036 ns` |
-| Route WNS/WHS | `+0.240 / +0.030 ns` |
-| CSR 100 MHz 내부 WNS | `+1.021 ns` |
-| Processing 150 MHz 내부 WNS | `+0.686 ns` |
-| TDC 200 MHz 내부 WNS | `+0.240 ns` |
-| 최악 TDC 내부 경로 | GPX bus FSM → D tri-state IOB FF, 2 LUT |
-| 최악 경로 배선 비중 | `85.363%` |
-| GPX 병렬 버스 IOB 계약 | `364 / 364 PASS` |
-| Active critical CDC | 0 |
-| Bus-skew 위반 | 0 |
-| Blocking DRC | 0 |
-| Critical Warning | 0 |
-| 비트스트림 | 4,045,708 bytes |
+Synthesis WHS는 실제 배치와 배선 지연이 없는 사전 추정값이므로 음수여도 기록만
+하고, 최종 Route WHS는 반드시 0 이상이어야 한다. 위 두 프로젝트는 최종 setup과
+hold를 모두 통과했다. 결과 원본은 다음 폴더의
+`l0_parent_signoff_summary.txt`, `post_route_timing_summary.rpt`,
+`post_route.dcp`, bitstream이다.
 
-첫 4-chip 구현에서는 Lane 상태와 BUS ready가 coordinator의 Register-read 요청
-소유권 enable까지 한 사이클에 이어져 `WNS -0.007 ns`가 발생했다.
-`lane_register_ready_r` 파이프라인을 추가해 요청 payload는 기존 1-entry 버퍼에
-그대로 보존하면서 승인 경로만 끊었다. coordinator, acquisition subsystem,
-B5-B8 회귀와 최종 Parent 구현을 모두 다시 실행한 결과 위 양수 여유를 확보했다.
+```text
+32-bit: C:\fpga_ws\tdc_gpx_v2\.work\v2_parent_signoff\260824_v2_w32_impl3
+64-bit: C:\fpga_ws\tdc_gpx_v2\.work\v2_parent_signoff\260824_v2_w64_impl1
+```
 
-최신 K0-10 패키지 runner는 32-bit 150/200 MHz,
-128-bit 200/150 MHz Echo 비활성, 64-bit 150/150 MHz SYNC의 세 OOC profile을
-통과했다. Parent 최종 결과는 4 chips, 8 STOP/chip, 최대 7 Return,
-Rising `0011`, Falling `1100`, 32-bit AXIS 출력 조건이다.
-
-TDC 200 MHz의 `+0.240 ns`는 Sign-off 기준을 통과했지만 장기 PCB 운용 여유까지
-보장하는 값은 아니다. 실제 PCB 초도 검증은 150 MHz부터 시작해 Runtime
+32-bit의 `+0.046 ns`는 Sign-off 기준을 통과했지만 구현 재현성과 장기 PCB 운용
+여유까지 보장하는 큰 값은 아니다. 실제 PCB 초도 검증은 150 MHz부터 시작해 Runtime
 TDC-GPX 버스 읽기 타이밍(`BUS_CLK_DIV/BUS_TICKS`), 외부 GPX Register readback,
 IFIFO Drain과 데이터 무결성을 확인한 뒤 200 MHz로 올린다. 핀맵, bus PHY,
 합성 전략 또는 주변 로직이 바뀌면 이 Parent 구현 검사를 반드시 다시 실행한다.
 
 PS의 CSR, VDMA, PACKED17 복원 및 Ethernet 전송 예제는
-
+`../sw_reference/zynq_ps_example/README_KO.md`를 따른다.
 
 ## 9. 재생성과 Sign-off 실행
 
@@ -231,7 +231,11 @@ PS의 CSR, VDMA, PACKED17 복원 및 Ethernet 전송 예제는
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/v2/parent_l0/run_v2_l0_parent.ps1 `
-  -OutputWidth 32 -Recreate
+  -OutputRoot ./.work/v2_parent_l0/w32 -OutputWidth 32 -Recreate
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/parent_l0/run_v2_l0_parent.ps1 `
+  -OutputRoot ./.work/v2_parent_l0/w64 -OutputWidth 64 -Recreate
 ```
 
 합성만 확인:
@@ -239,7 +243,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/v2/parent_l0/run_v2_l0_parent_signoff.ps1 `
-  -Mode SYNTH -SessionTag <unique_session>
+  -ProjectRoot ./.work/v2_parent_l0/w32 `
+  -Mode SYNTH -SessionTag <unique_w32_session>
 ```
 
 배치·배선과 비트스트림까지 확인:
@@ -247,7 +252,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File system_integration/v2/parent_l0/run_v2_l0_parent_signoff.ps1 `
-  -Mode IMPL -SessionTag <unique_session>
+  -ProjectRoot ./.work/v2_parent_l0/w32 `
+  -Mode IMPL -SessionTag <unique_w32_session>
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v2/parent_l0/run_v2_l0_parent_signoff.ps1 `
+  -ProjectRoot ./.work/v2_parent_l0/w64 `
+  -Mode IMPL -SessionTag <unique_w64_session>
 ```
 
 ## 10. 아직 남은 보드 Sign-off

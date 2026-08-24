@@ -1,6 +1,5 @@
 param(
-    [string]$ProjectRoot =
-        'C:\Projects\my_sp\ALINX\Logic\project_4_lidar_v2_l0',
+    [string]$ProjectRoot = '',
     [ValidateSet('SYNTH', 'IMPL')]
     [string]$Mode = 'IMPL',
     [string]$SessionTag = ''
@@ -9,6 +8,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $HdlRoot = (Resolve-Path (Join-Path $ScriptDir '..\..\..')).Path
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = Join-Path $HdlRoot '.work\v2_parent_l0\w32'
+}
 $Vivado = if ($env:XILINX_VIVADO) {
     Join-Path $env:XILINX_VIVADO 'bin\vivado.bat'
 } else {
@@ -31,20 +33,20 @@ if ($SessionTag -notmatch '^[A-Za-z0-9_.-]+$') {
     throw "SessionTag contains unsupported characters: $SessionTag"
 }
 
-$ResultDir = Join-Path $HdlRoot "signoff_results\sessions\$SessionTag"
+$ResultDir = Join-Path $HdlRoot ".work\v2_parent_signoff\$SessionTag"
 if (Test-Path -LiteralPath $ResultDir) {
     throw "Sign-off result directory already exists: $ResultDir"
 }
 New-Item -ItemType Directory -Path $ResultDir | Out-Null
 $LogPath = Join-Path $ResultDir 'vivado.log'
-$VivadoAppData = Join-Path $HdlRoot 'tmp\vivado_l0_appdata'
+$VivadoAppData = Join-Path $HdlRoot '.work\v2_parent_signoff\tool_home'
 New-Item -ItemType Directory -Force -Path $VivadoAppData | Out-Null
 
-$ShortPathRoot = [System.IO.Path]::GetFullPath('C:\Projects\my_sp')
+$ShortPathRoot = [System.IO.Path]::GetFullPath($HdlRoot)
 if (-not $ProjectRoot.StartsWith(
-        $ShortPathRoot,
+        $ShortPathRoot + [System.IO.Path]::DirectorySeparatorChar,
         [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "ProjectRoot must be below $ShortPathRoot for the Vivado short-path mapping."
+    throw "ProjectRoot must be inside the V2 maintenance workspace: $ShortPathRoot"
 }
 $SubstExe = 'C:\Windows\System32\subst.exe'
 $ShortDrive = @('V:', 'W:', 'X:') |
@@ -79,8 +81,18 @@ try {
         throw "Failed to map $ShortDrive to $ShortPathRoot"
     }
     $Mapped = $true
-    $Output = & $Vivado @Arguments 2>&1
-    $ExitCode = $LASTEXITCODE
+    $SavedNativeErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $Output = & $Vivado @Arguments 2>&1
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $SavedNativeErrorAction
+    }
+    $Output = @($Output | Where-Object {
+            ([string]$_) -notmatch '^Google Cpuprofiler is only supported on Linux\.$'
+        })
 } finally {
     if ($LocationPushed) {
         Pop-Location
