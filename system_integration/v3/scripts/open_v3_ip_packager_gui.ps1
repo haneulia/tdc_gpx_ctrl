@@ -49,6 +49,11 @@ $ProjectPath = Join-Path $WorkRoot "$ProjectName.xpr"
 $Component = Join-Path $V3Root "ip_repo\$PackageFolder\component.xml"
 $PackagedXgui = Join-Path $V3Root (
     "ip_repo\$PackageFolder\xgui\$XguiName")
+$SnapshotContainer = Join-Path $HdlRoot (
+    ".work\v3_ip_packager_snapshot\$($Variant.ToLowerInvariant())")
+$SnapshotIpRepo = Join-Path $SnapshotContainer "ip_repo"
+$SnapshotComponent = Join-Path $SnapshotIpRepo "$PackageFolder\component.xml"
+$SnapshotXgui = Join-Path $SnapshotIpRepo "$PackageFolder\xgui\$XguiName"
 
 function Assert-File {
     param([string]$Path, [string]$Purpose)
@@ -77,18 +82,22 @@ function Resolve-VivadoRoot {
 }
 
 function Set-XguiPreviewFreshness {
-    Assert-File -Path $Component -Purpose "V3 packaged component"
-    Assert-File -Path $PackagedXgui -Purpose "V3 packaged XGUI"
-    $ComponentTime = (Get-Item -LiteralPath $Component).LastWriteTimeUtc
+    param(
+        [Parameter(Mandatory = $true)][string]$ComponentPath,
+        [Parameter(Mandatory = $true)][string]$XguiPath
+    )
+    Assert-File -Path $ComponentPath -Purpose "V3 packaged component"
+    Assert-File -Path $XguiPath -Purpose "V3 packaged XGUI"
+    $ComponentTime = (Get-Item -LiteralPath $ComponentPath).LastWriteTimeUtc
     $MinimumXguiTime = $ComponentTime.AddSeconds(2)
-    $XguiItem = Get-Item -LiteralPath $PackagedXgui
+    $XguiItem = Get-Item -LiteralPath $XguiPath
     if ($XguiItem.LastWriteTimeUtc -lt $MinimumXguiTime) {
         # The source checker has already proved that callbacks remain in
         # Vivado-native form. Correct only Git's lost timestamp ordering here.
         $XguiItem.LastWriteTimeUtc = $MinimumXguiTime
     }
     if ($XguiItem.LastWriteTimeUtc -lt $MinimumXguiTime) {
-        throw "Unable to establish XGUI preview freshness: $PackagedXgui"
+        throw "Unable to establish XGUI preview freshness: $XguiPath"
     }
 }
 
@@ -149,12 +158,16 @@ $MappedWorkRoot = if ($Variant -eq "EmbeddedRtl") {
     "$MappedHdlRoot\.work\v3_hls_ip_packager"
 }
 $MappedProjectPath = "$MappedWorkRoot\$ProjectName.xpr"
-$MappedIpRepo = "$MappedHdlRoot\system_integration\v3\ip_repo"
-$MappedComponent = "$MappedIpRepo\$PackageFolder\component.xml"
-$MappedXgui = "$MappedIpRepo\$PackageFolder\xgui\$XguiName"
-$MappedPackageDir = Split-Path -Parent $MappedComponent
+$MappedCanonicalIpRepo = "$MappedHdlRoot\system_integration\v3\ip_repo"
+$MappedCanonicalComponent = (
+    "$MappedCanonicalIpRepo\$PackageFolder\component.xml")
+$MappedSnapshotIpRepo = "$MappedHdlRoot\.work\v3_ip_packager_snapshot\" +
+    "$($Variant.ToLowerInvariant())\ip_repo"
+$MappedComponent = "$MappedSnapshotIpRepo\$PackageFolder\component.xml"
+$MappedXgui = "$MappedSnapshotIpRepo\$PackageFolder\xgui\$XguiName"
+$MappedPackageDir = Split-Path -Parent $MappedCanonicalComponent
 $MappedPackageCheckArgument = if ($PackageCheckUsesRepo) {
-    $MappedIpRepo
+    $MappedCanonicalIpRepo
 } else {
     $MappedPackageDir
 }
@@ -169,6 +182,12 @@ if (-not $ResolvedWorkRoot.StartsWith(
         [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to manage an IP Packager project outside $AllowedRoot"
 }
+$ResolvedSnapshotContainer = [System.IO.Path]::GetFullPath($SnapshotContainer)
+if (-not $ResolvedSnapshotContainer.StartsWith(
+        "$AllowedRoot\",
+        [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to manage an IP snapshot outside $AllowedRoot"
+}
 if ($Recreate -and (Test-Path -LiteralPath $WorkRoot)) {
     Remove-Item -LiteralPath $WorkRoot -Recurse -Force
 }
@@ -182,7 +201,8 @@ try {
 
     # Refuse to open a stale or externally referenced package. This is the
     # same source/XGUI/IP-XACT contract used by the batch release workflow.
-    Set-XguiPreviewFreshness
+    Set-XguiPreviewFreshness -ComponentPath $Component `
+        -XguiPath $PackagedXgui
     $PackageCheckOutput = & $Vivado @(
         "-mode", "batch", "-nolog", "-nojournal", "-notrace",
         "-source", $PackageCheckTcl, "-tclargs",
@@ -192,6 +212,20 @@ try {
             $PackageCheckMarker)) {
         throw "Canonical V3 packaged IP validation failed."
     }
+
+    # edit_ip_in_project may update child-XCI output paths while opening an
+    # HLS-subcore package. Work only on a disposable snapshot so the canonical
+    # ip_repo remains byte-stable after GUI inspection or validation.
+    if (Test-Path -LiteralPath $SnapshotContainer) {
+        Remove-Item -LiteralPath $SnapshotContainer -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $SnapshotContainer | Out-Null
+    Copy-Item -LiteralPath (Join-Path $V3Root "ip_repo") `
+        -Destination $SnapshotContainer -Recurse -Force
+    Assert-File -Path $SnapshotComponent -Purpose "V3 IP snapshot component"
+    Assert-File -Path $SnapshotXgui -Purpose "V3 IP snapshot XGUI"
+    Set-XguiPreviewFreshness -ComponentPath $SnapshotComponent `
+        -XguiPath $SnapshotXgui
 
     if (-not (Test-Path -LiteralPath $ProjectPath -PathType Leaf)) {
         $CreateOutput = & $Vivado @(
@@ -227,7 +261,8 @@ try {
 
     # Reapply immediately before launch because project validation or a Git
     # checkout can change component.xml/XGUI modification-time ordering.
-    Set-XguiPreviewFreshness
+    Set-XguiPreviewFreshness -ComponentPath $SnapshotComponent `
+        -XguiPath $SnapshotXgui
     $Process = Start-Process -FilePath $Vivado -ArgumentList @(
         "-mode", "gui", "-nolog", "-nojournal",
         "-source", $OpenTcl, "-tclargs",
@@ -238,7 +273,9 @@ try {
     Write-Output (
         "TDC_GPX_LIDAR_CTRL_V3_IP_PACKAGER_GUI_STARTED " +
         "variant=$Variant pid=$($Process.Id) project=$MappedProjectPath " +
-        "component=$MappedComponent short_map=$ShortDrive=>$HdlRoot")
+        "component_snapshot=$MappedComponent " +
+        "canonical_component=$MappedCanonicalComponent " +
+        "short_map=$ShortDrive=>$HdlRoot")
     Write-Output (
         "Keep $ShortDrive mapped while IP Packager is open. Close every " +
         "dependent Vivado window before: subst $ShortDrive /D")

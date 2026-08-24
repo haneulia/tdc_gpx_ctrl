@@ -30,3 +30,26 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 성공 표시는 `LIDAR_V3_MAINTENANCE_WORKSPACE_AUDIT_PASS`다. 이 점검은 파일을
 삭제하거나 수정하지 않는다.
+
+## GUI 프로젝트 바로 열기
+
+유지보수 복사본 `C:\fpga_ws\tdc_gpx_v3`에는 다음 생성 프로젝트를 둔다.
+
+| 목적 | 프로젝트 |
+|---|---|
+| 생성 RTL 포함형 IP Packager | `.work\v3_ip_packager\tdc_gpx_lidar_ctrl_v3_ip_packager.xpr` |
+| HLS 하위 IP 참조형 IP Packager | `.work\v3_hls_ip_packager\tdc_gpx_lidar_ctrl_v3_hls_ip_packager.xpr` |
+| 32-bit 통합 Parent Block Design | `.work\v3_parent_l0\w32\project_4_lidar_v3_l0.xpr` |
+| 64-bit 통합 Parent Block Design | `.work\v3_parent_l0\w64\project_4_lidar_v3_l0.xpr` |
+| H1~H4 Vitis HLS Component | `.work\v3_hls_*_component\vitis-comp.json` |
+
+전체 존재 여부와 재개방 가능 여부는 다음 명령으로 확인한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File system_integration/v3/scripts/open_v3_gui_projects.ps1 `
+  -Target All -ValidateOnly
+```
+
+상세 열기·재생성 절차와 최종 구현 checkpoint 위치는
+[`system_integration/v3/docs/V3_GUI_PROJECT_GUIDE_KO.md`](system_integration/v3/docs/V3_GUI_PROJECT_GUIDE_KO.md)를 따른다.

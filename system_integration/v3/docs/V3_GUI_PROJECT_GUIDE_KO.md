@@ -28,6 +28,10 @@ Vivado의 임시 GUI session 파일은 `.work/v3_gui_sessions/W32`와 `W64`로
 | 32-bit | `.work/v3_parent_l0/w32/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260813_200mhz_adaptive_reset_w32_impl1/post_route.dcp` |
 | 64-bit | `.work/v3_parent_l0/w64/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260813_200mhz_adaptive_reset_w64_impl1/post_route.dcp` |
 
+유지보수 복사본의 절대 경로는 각각
+`C:\fpga_ws\tdc_gpx_v3\.work\v3_parent_l0\w32\project_4_lidar_v3_l0.xpr`와
+`C:\fpga_ws\tdc_gpx_v3\.work\v3_parent_l0\w64\project_4_lidar_v3_l0.xpr`다.
+
 두 Profile은 모두 `xc7z020clg484-2`, TDC-GPX 4 Chip, Processing/AXIS
 150 MHz, TDC-GPX bus/IFIFO acquisition 200 MHz를 사용한다. 최종 AXI4-Stream
 출력 폭만 합성 시 32-bit 또는 64-bit로 다르다.
@@ -147,11 +151,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
   -Recreate
 ```
 
-이 프로젝트는 `.work/v3_ip_packager`에 생성되는 일회성 편집 환경이다. 실행 전에
+생성 RTL 포함형은 `.work/v3_ip_packager`, HLS 하위 IP 참조형은
+`.work/v3_hls_ip_packager`에 생성되는 일회성 편집 환경이다. 유지보수 복사본의
+실제 프로젝트 경로는 다음과 같다.
+
+- `C:\fpga_ws\tdc_gpx_v3\.work\v3_ip_packager\tdc_gpx_lidar_ctrl_v3_ip_packager.xpr`
+- `C:\fpga_ws\tdc_gpx_v3\.work\v3_hls_ip_packager\tdc_gpx_lidar_ctrl_v3_hls_ip_packager.xpr`
+
+실행 전에
 canonical RTL/HLS/XGUI와 `ip_repo`의 일치, 외부 source/XCI 부재, 필수 interface와
 IP 무결성 DRC를 자동 검사한다. 상세 변경 책임과 안전한 재패키징 절차는
 [`V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md`](V3_IP_PACKAGER_MAINTENANCE_GUIDE_KO.md)를
 따른다.
+
+Packager GUI는 정본 `ip_repo`가 아니라 `.work/v3_ip_packager_snapshot`의 사본을
+연다. Vivado `edit_ip_in_project`가 HLS 자식 XCI의 `OUTPUTDIR`을 현재 Project
+경로로 갱신하더라도 정본 패키지는 바뀌지 않는다. GUI에서 확인한 변경을 제품에
+반영할 때는 정본 XGUI/manifest/HLS 원본을 수정한 뒤 패키징 실행기를 사용한다.
 
 ## 3. Vitis HLS workspace
 
@@ -169,6 +185,13 @@ Vitis Unified IDE는 저장소의 `.work`를 workspace로 열며 다음 네 Comp
 참조한다. 따라서 GUI의 Sources에서 C++와 Testbench를 열어 수정하면 저장소의
 형상관리 대상 원본이 수정된다. 반대로 `.work/*_component/hls/` 아래 생성 RTL,
 log 및 report는 도구가 다시 만드는 산출물이므로 직접 수정하지 않는다.
+
+유지보수 복사본에서 네 Component의 실제 시작 파일은 다음과 같다.
+
+- `C:\fpga_ws\tdc_gpx_v3\.work\v3_hls_hit_decoder_component\vitis-comp.json`
+- `C:\fpga_ws\tdc_gpx_v3\.work\v3_hls_cell_collector_component\vitis-comp.json`
+- `C:\fpga_ws\tdc_gpx_v3\.work\v3_hls_frame_assembler_component\vitis-comp.json`
+- `C:\fpga_ws\tdc_gpx_v3\.work\v3_hls_lane_word_formatter_component\vitis-comp.json`
 
 HLS GUI만 여는 명령은 다음과 같다.
 

@@ -38,9 +38,16 @@ IP-XACT 저장과 네이티브 XGUI 재생성의 순서는
 | HLS 하위 IP 4개 | `ip_repo/gpx_*_hls_3_0` | Vitis export로 명시적 갱신 |
 | 생성 RTL 포함형 GUI 프로젝트 | `.work/v3_ip_packager` | 자유롭게 재생성 |
 | HLS 하위 IP 참조형 GUI 프로젝트 | `.work/v3_hls_ip_packager` | 자유롭게 재생성 |
+| Packager 입력 snapshot | `.work/v3_ip_packager_snapshot` | 실행기가 매번 정본에서 복사, 직접 제품 반영 금지 |
 
 `ip_repo/src`나 `ip_repo/xgui`를 직접 고친 내용은 다음 재패키징 때 지워진다.
 유지할 변경은 반드시 위 표의 canonical 원본에 먼저 반영한 뒤 패키지를 다시 만든다.
+
+Package IP GUI는 canonical `ip_repo`를 직접 열지 않는다. Vivado의
+`edit_ip_in_project`가 HLS 자식 XCI의 `OUTPUTDIR`과 `gen_directory`를 현재
+Project 경로로 바꿀 수 있기 때문이다. 실행기는 먼저 canonical package를 검사한
+뒤 전체 `ip_repo`를 `.work/v3_ip_packager_snapshot`에 복사하고 그 snapshot으로
+GUI Project를 만든다. 따라서 GUI 검사 전후 canonical Git diff는 없어야 한다.
 
 ## 3. GUI 열기
 
