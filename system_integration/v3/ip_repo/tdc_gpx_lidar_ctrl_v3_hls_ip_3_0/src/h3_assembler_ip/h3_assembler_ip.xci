@@ -3,7 +3,7 @@
   "ip_inst": {
     "xci_name": "h3_assembler_ip",
     "component_reference": "victek.co.kr:hls_ip:gpx_frame_assembler_hls:3.0",
-    "ip_revision": "2114755247",
+    "ip_revision": "2114755261",
     "gen_directory": "./",
     "parameters": {
       "component_parameters": {
@@ -29,7 +29,7 @@
       },
       "runtime_parameters": {
         "IPCONTEXT": [ { "value": "IP_Flow" } ],
-        "IPREVISION": [ { "value": "2114755247" } ],
+        "IPREVISION": [ { "value": "2114755261" } ],
         "MANAGED": [ { "value": "TRUE" } ],
         "OUTPUTDIR": [ { "value": "./" } ],
         "SELECTEDSIMMODEL": [ { "value": "" } ],
@@ -288,5 +288,5 @@
       }
     }
   },
-  "checksum": "213b05ed"
+  "checksum": "9b71bc21"
 }
