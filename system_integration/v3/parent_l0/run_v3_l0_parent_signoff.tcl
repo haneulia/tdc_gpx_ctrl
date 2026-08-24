@@ -126,6 +126,27 @@ proc l0_tdc_reset_replication_net {} {
     return $reset_net
 }
 
+# 각 TDC-GPX chip controller의 phase 상태는 init/run/register-access
+# 선택과 진단에 함께 쓰여 fanout이 50~86까지 증가한다.  이 net들을
+# chip별로 지역 복제하면 기능 지연을 추가하지 않고 bus PHY IOB 주변의
+# 장거리 CE 배선을 줄일 수 있다.  L0 Parent는 4 chip x 3 phase bit이다.
+proc l0_tdc_phase_replication_nets {} {
+    set phase_cells [lsort [get_cells -quiet -hier -regexp \
+        {^.*/u_controller/s_phase_r_reg\[[0-9]+\]$}]]
+    if {[llength $phase_cells] != 12} {
+        error "TDC phase register count mismatch: expected=12 actual=[llength $phase_cells]"
+    }
+    set phase_nets {}
+    foreach cell $phase_cells {
+        set net [get_nets -quiet -of_objects [get_pins -quiet "$cell/Q"]]
+        if {[llength $net] != 1} {
+            error "TDC phase source net mismatch for $cell"
+        }
+        lappend phase_nets $net
+    }
+    return $phase_nets
+}
+
 proc l0_tdc_output_budget_metrics {} {
     set tdc_outputs [get_ports -quiet [list \
         {io_tdc_d[*]} {o_tdc_adr[*]} {o_tdc_csn[*]} {o_tdc_rdn[*]} \
@@ -476,6 +497,7 @@ set route_tdc_setup_margin_advisory {NOT_RUN}
 set route_initial_tdc_reset_wns {NA}
 set route_initial_tdc_regular_wns {NA}
 set route_reset_replication_applied {false}
+set route_phase_replication_applied {false}
 set route_tdc_reset_wns {NA}
 set route_tdc_regular_wns {NA}
 set route_tdc_reset_lt_0p100_count {NA}
@@ -506,16 +528,25 @@ if {$run_mode eq {IMPL}} {
     set initial_class_metrics [l0_tdc_setup_class_metrics]
     set route_initial_tdc_reset_wns [lindex $initial_class_metrics 0]
     set route_initial_tdc_regular_wns [lindex $initial_class_metrics 1]
-    if {$route_initial_tdc_reset_wns < 0.100} {
-        puts "WARNING: TDC Reset distribution is sensitive after initial route: WNS=$route_initial_tdc_reset_wns ns"
+    if {$route_initial_tdc_reset_wns < 0.100 ||
+        $route_initial_tdc_regular_wns < 0.100} {
+        puts "WARNING: TDC 200 MHz routing is sensitive after initial route: reset=$route_initial_tdc_reset_wns regular=$route_initial_tdc_regular_wns ns"
         write_checkpoint -force [file join $result_dir post_initial_route.dcp]
         close_design
         open_checkpoint $pre_route_checkpoint
         set reset_net [l0_tdc_reset_replication_net]
+        set phase_nets [l0_tdc_phase_replication_nets]
         puts "TDC_RESET_REPLICATION_APPLY net=$reset_net fanout=[get_property FLAT_PIN_COUNT $reset_net]"
-        phys_opt_design -force_replication_on_nets $reset_net
+        foreach phase_net $phase_nets {
+            puts "TDC_PHASE_REPLICATION_APPLY net=$phase_net fanout=[get_property FLAT_PIN_COUNT $phase_net]"
+        }
+        # Reset과 phase 고팬아웃 경계를 같은 pre-route 배치에서 함께
+        # 복제해야 한쪽 회복 과정이 다른 쪽의 장거리 배선을 만들지 않는다.
+        phys_opt_design -force_replication_on_nets \
+            [concat $reset_net $phase_nets]
         route_design -directive AggressiveExplore -tns_cleanup
         set route_reset_replication_applied {true}
+        set route_phase_replication_applied {true}
     }
 
     set impl_status {COMPLETE_DIRECT_BATCH}
@@ -638,6 +669,7 @@ puts $summary "route_tdc_setup_margin_advisory=$route_tdc_setup_margin_advisory"
 puts $summary "route_initial_tdc_reset_wns_ns=$route_initial_tdc_reset_wns"
 puts $summary "route_initial_tdc_regular_wns_ns=$route_initial_tdc_regular_wns"
 puts $summary "route_reset_replication_applied=$route_reset_replication_applied"
+puts $summary "route_phase_replication_applied=$route_phase_replication_applied"
 puts $summary "route_tdc_reset_wns_ns=$route_tdc_reset_wns"
 puts $summary "route_tdc_regular_wns_ns=$route_tdc_regular_wns"
 puts $summary "route_tdc_reset_lt_0p100_count=$route_tdc_reset_lt_0p100_count"
