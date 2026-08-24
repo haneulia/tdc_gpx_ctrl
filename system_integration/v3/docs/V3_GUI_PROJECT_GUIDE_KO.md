@@ -25,8 +25,8 @@ Vivado의 임시 GUI session 파일은 `.work/v3_gui_sessions/W32`와 `W64`로
 
 | Profile | 구조 참조 Project | 최종 물리 결과 |
 |---|---|---|
-| 32-bit | `.work/v3_parent_l0/w32/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260813_200mhz_adaptive_reset_w32_impl1/post_route.dcp` |
-| 64-bit | `.work/v3_parent_l0/w64/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260813_200mhz_adaptive_reset_w64_impl1/post_route.dcp` |
+| 32-bit | `.work/v3_parent_l0/w32/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260824_v3_w32_impl2/post_route.dcp` |
+| 64-bit | `.work/v3_parent_l0/w64/project_4_lidar_v3_l0.xpr` | `.work/v3_parent_signoff/260824_v3_w64_impl2/post_route.dcp` |
 
 유지보수 복사본의 절대 경로는 각각
 `C:\fpga_ws\tdc_gpx_v3\.work\v3_parent_l0\w32\project_4_lidar_v3_l0.xpr`와
@@ -53,6 +53,12 @@ GUI report는 같은 checkpoint에서 다시 만든 열람용 report다.
 ./system_integration/v3/scripts/open_v3_gui_projects.ps1 -Target Vivado32
 ./system_integration/v3/scripts/open_v3_gui_projects.ps1 -Target Vivado64
 ```
+
+2026-08-24 최종 route 결과는 32-bit `WNS/WHS=+0.222/+0.018 ns`,
+64-bit `WNS/WHS=+0.123/+0.013 ns`다. 두 결과 모두 DRC 오류 0,
+TDC-GPX IOB 레지스터 `364/364`, 200 MHz TDC setup 경로 `+0.100 ns`
+미만 0개를 만족한다. 이 수치는 위 checkpoint와 같은 폴더의
+`l0_parent_signoff_summary.txt`에서 확인한다.
 
 이 창에서는 `Upgrade IP`, `Reset Output Products`, `Generate Output Products` 또는
 Block Design 저장을 수행하지 않는다. 기존 `post_route.dcp`가 열린 상태에서 IP

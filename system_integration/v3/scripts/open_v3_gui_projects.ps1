@@ -63,19 +63,19 @@ $VivadoProfiles = @(
         Target = "Vivado32"
         Label = "W32"
         Xpr = Join-Path $WorkRoot "v3_parent_l0\w32\project_4_lidar_v3_l0.xpr"
-        Dcp = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w32_impl1\post_route.dcp"
-        Timing = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w32_impl1\post_route_timing_summary.rpt"
-        Bit = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w32_impl1\design_1_lidar_ctrl_v3_wrapper.bit"
-        Xsa = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w32_impl1\tdc_gpx_lidar_ctrl_v3_4chip.xsa"
+        Dcp = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w32_impl2\post_route.dcp"
+        Timing = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w32_impl2\post_route_timing_summary.rpt"
+        Bit = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w32_impl2\design_1_lidar_ctrl_v3_wrapper.bit"
+        Xsa = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w32_impl2\tdc_gpx_lidar_ctrl_v3_4chip.xsa"
     },
     [pscustomobject]@{
         Target = "Vivado64"
         Label = "W64"
         Xpr = Join-Path $WorkRoot "v3_parent_l0\w64\project_4_lidar_v3_l0.xpr"
-        Dcp = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w64_impl1\post_route.dcp"
-        Timing = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w64_impl1\post_route_timing_summary.rpt"
-        Bit = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w64_impl1\design_1_lidar_ctrl_v3_wrapper.bit"
-        Xsa = Join-Path $WorkRoot "v3_parent_signoff\260813_200mhz_adaptive_reset_w64_impl1\tdc_gpx_lidar_ctrl_v3_4chip.xsa"
+        Dcp = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w64_impl2\post_route.dcp"
+        Timing = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w64_impl2\post_route_timing_summary.rpt"
+        Bit = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w64_impl2\design_1_lidar_ctrl_v3_wrapper.bit"
+        Xsa = Join-Path $WorkRoot "v3_parent_signoff\260824_v3_w64_impl2\tdc_gpx_lidar_ctrl_v3_4chip.xsa"
     }
 )
 
