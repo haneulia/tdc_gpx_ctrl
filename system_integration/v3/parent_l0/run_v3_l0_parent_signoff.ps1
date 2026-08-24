@@ -42,12 +42,9 @@ $LogPath = Join-Path $ResultDir 'vivado.log'
 $VivadoAppData = Join-Path $HdlRoot '.work\v3_parent_signoff\tool_home'
 New-Item -ItemType Directory -Force -Path $VivadoAppData | Out-Null
 
-$ShortPathRoot = [System.IO.Path]::GetFullPath($HdlRoot)
-if (-not $ProjectRoot.StartsWith(
-        $ShortPathRoot + [System.IO.Path]::DirectorySeparatorChar,
-        [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "ProjectRoot must be inside the V3 maintenance workspace: $ShortPathRoot"
-}
+# Map the immediate project parent so HLS-generated file names remain below
+# the Windows 260-character limit (for example W:\w64\project_4...).
+$ShortPathRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $ProjectRoot))
 $SubstExe = 'C:\Windows\System32\subst.exe'
 $ShortDrive = @('V:', 'W:', 'X:') |
     Where-Object { -not (Test-Path -LiteralPath "$_\") } |

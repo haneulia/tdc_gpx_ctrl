@@ -422,7 +422,18 @@ proc l0_verify_service_pins {result_dir} {
     return [llength $service_ports]
 }
 
+# result_dir는 subst 밖의 실제 유지보수 작업공간 경로다. 프로젝트를
+# W:\w32 또는 W:\w64처럼 짧게 열더라도 IP 저장소는 이 절대 경로로
+# 다시 등록하여 XPR의 상대경로가 가상 드라이브 밖을 가리키지 않게 한다.
+set hdl_root [file normalize [file join $result_dir .. .. ..]]
+set v3_repo [file join $hdl_root system_integration v3 ip_repo]
+if {![file exists [file join $v3_repo \
+        tdc_gpx_lidar_ctrl_v3_3_0 component.xml]]} {
+    error "V3 packaged IP repository is missing: $v3_repo"
+}
 open_project $project_path
+set_property ip_repo_paths [list $v3_repo] [current_project]
+update_ip_catalog
 set_param general.maxThreads 4
 update_compile_order -fileset sources_1
 # HLS-generated RTL has long file names.  Compiling every IP inside this one
