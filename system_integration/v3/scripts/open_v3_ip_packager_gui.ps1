@@ -80,13 +80,14 @@ function Set-XguiPreviewFreshness {
     Assert-File -Path $Component -Purpose "V3 packaged component"
     Assert-File -Path $PackagedXgui -Purpose "V3 packaged XGUI"
     $ComponentTime = (Get-Item -LiteralPath $Component).LastWriteTimeUtc
+    $MinimumXguiTime = $ComponentTime.AddSeconds(2)
     $XguiItem = Get-Item -LiteralPath $PackagedXgui
-    if ($XguiItem.LastWriteTimeUtc -le $ComponentTime) {
+    if ($XguiItem.LastWriteTimeUtc -lt $MinimumXguiTime) {
         # The source checker has already proved that callbacks remain in
         # Vivado-native form. Correct only Git's lost timestamp ordering here.
-        $XguiItem.LastWriteTimeUtc = $ComponentTime.AddSeconds(2)
+        $XguiItem.LastWriteTimeUtc = $MinimumXguiTime
     }
-    if ($XguiItem.LastWriteTimeUtc -le $ComponentTime) {
+    if ($XguiItem.LastWriteTimeUtc -lt $MinimumXguiTime) {
         throw "Unable to establish XGUI preview freshness: $PackagedXgui"
     }
 }
@@ -181,6 +182,7 @@ try {
 
     # Refuse to open a stale or externally referenced package. This is the
     # same source/XGUI/IP-XACT contract used by the batch release workflow.
+    Set-XguiPreviewFreshness
     $PackageCheckOutput = & $Vivado @(
         "-mode", "batch", "-nolog", "-nojournal", "-notrace",
         "-source", $PackageCheckTcl, "-tclargs",
