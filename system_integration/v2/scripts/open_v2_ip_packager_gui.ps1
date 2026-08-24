@@ -57,11 +57,12 @@ function Set-XguiPreviewFreshness {
     Assert-File $Component "V2 packaged component"
     Assert-File $PackagedXgui "V2 packaged XGUI"
     $ComponentTime = (Get-Item -LiteralPath $Component).LastWriteTimeUtc
+    $MinimumXguiTime = $ComponentTime.AddSeconds(2)
     $XguiItem = Get-Item -LiteralPath $PackagedXgui
-    if ($XguiItem.LastWriteTimeUtc -le $ComponentTime) {
-        $XguiItem.LastWriteTimeUtc = $ComponentTime.AddSeconds(2)
+    if ($XguiItem.LastWriteTimeUtc -lt $MinimumXguiTime) {
+        $XguiItem.LastWriteTimeUtc = $MinimumXguiTime
     }
-    if ($XguiItem.LastWriteTimeUtc -le $ComponentTime) {
+    if ($XguiItem.LastWriteTimeUtc -lt $MinimumXguiTime) {
         throw "Unable to establish V2 XGUI preview freshness."
     }
 }
