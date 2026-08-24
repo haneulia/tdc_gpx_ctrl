@@ -3,7 +3,7 @@
   "ip_inst": {
     "xci_name": "h2_collector_ip",
     "component_reference": "victek.co.kr:hls_ip:gpx_cell_collector_hls:3.0",
-    "ip_revision": "2114746672",
+    "ip_revision": "2114755246",
     "gen_directory": "./",
     "parameters": {
       "component_parameters": {
@@ -29,7 +29,7 @@
       },
       "runtime_parameters": {
         "IPCONTEXT": [ { "value": "IP_Flow" } ],
-        "IPREVISION": [ { "value": "2114746672" } ],
+        "IPREVISION": [ { "value": "2114755246" } ],
         "MANAGED": [ { "value": "TRUE" } ],
         "OUTPUTDIR": [ { "value": "./" } ],
         "SELECTEDSIMMODEL": [ { "value": "" } ],
@@ -232,5 +232,5 @@
       }
     }
   },
-  "checksum": "d4511ef1"
+  "checksum": "f87fce22"
 }
